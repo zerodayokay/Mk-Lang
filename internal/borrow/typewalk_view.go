@@ -187,7 +187,7 @@ func (s *keepScan) method(it *types.Item, n int, args []types.GenericArg, free [
 		}
 		return false
 	}
-	if !w.resultIs(sig.Result, s.view) {
+	if it.BorrowedConstructorResult(w.tab) != s.view {
 		return false
 	}
 	for _, src := range sig.Flows.Sources {

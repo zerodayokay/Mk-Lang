@@ -6,9 +6,9 @@
 // What: ModuleKeepsKey and ModuleKeepsPath (the read's key), keepsNS (a
 // module's keeping view methods as one hashed part) and declaresKeep.
 //
-// How: keepsNS lists every view method whose signature declares a store into
-// self, a keep or a hand-out, private ones included, by key and declaration
-// hash; a method that declares none of them changes nothing.
+// How: keepsNS lists view methods that declare a store into self, a keep
+// or a hand-out, and non-generic free constructors that return a local view from a
+// parameter, private ones included, by key and declaration hash.
 
 package iface
 
@@ -33,7 +33,8 @@ func ModuleKeepsPath(k types.Key) (string, bool) { return strings.CutSuffix(k.St
 const keepsSuffix = "#keeps"
 
 // keepsNS is module m's keeping view methods, memoized per world: every
-// Type.Name method of a view struct of m whose signature declaresKeep, by its
+// Type.Name method of a view struct of m whose signature declaresKeep and
+// each non-generic free constructor with a borrowed result of such a view, by its
 // key and the hash of its declaration, private ones included. A method added,
 // removed or changed there changes the hash; a method that declares none of
 // them does not, so it costs no reader a miss (the type namespace, which lists
@@ -51,13 +52,23 @@ func (w *SessionWorld) keepsNS(m types.ModuleID) *namespace {
 	var ns []nameEntry
 	for _, id := range w.H.moduleItems(m) {
 		it := items.Get(id)
-		if it.Kind != types.KindFunc || it.Owner == types.NoItem {
+		if it.Kind != types.KindFunc {
 			continue
 		}
-		owner := items.Get(it.Owner)
+		fd, ok := it.Decl.(*types.FuncDecl)
+		if !ok || fd == nil || !declaresKeep(&fd.Sig) {
+			continue
+		}
+		ownerID := it.Owner
+		if ownerID == types.NoItem {
+			ownerID = it.BorrowedConstructorResult(w.Env.Types)
+			if ownerID == types.NoItem {
+				continue
+			}
+		}
+		owner := items.Get(ownerID)
 		sd, isStruct := owner.Decl.(*types.StructDecl)
-		fd, isFunc := it.Decl.(*types.FuncDecl)
-		if owner.Module != m || !isStruct || sd == nil || !sd.View || !isFunc || fd == nil || !declaresKeep(&fd.Sig) {
+		if owner.Module != m || !isStruct || sd == nil || !sd.View {
 			continue
 		}
 		h := w.H.Decl(it)

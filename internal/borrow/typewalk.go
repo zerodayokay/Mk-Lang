@@ -431,8 +431,9 @@ func (w *walker) firstTakes(t types.TypeID, gen genMode, seen map[types.TypeID]b
 //   - a method hands out such a value read from self (`Get(&self):
 //     &Mutex[?&i32] from self`), or
 //   - the view keeps such a value, by a parameter stored into self (`m:
-//     &Mutex[?&i32] into self`, `*q into self`) or by a namespace function
-//     whose result is the view made from it (`V.Of(m): V from m`), and some
+//     &Mutex[?&i32] into self`, `*q into self`), by a namespace constructor
+//     (`V.Of(m): V from m`), or by a non-generic free constructor of the
+//     view's module, and some
 //     method stores into self, so a store may reach what it keeps.
 //
 // A view that keeps such a value but neither hands it out nor takes a store
@@ -495,7 +496,7 @@ func (w *walker) viewKeepsScan(ty *types.Type, gen genMode) bool {
 		return false
 	}
 	if w.reads != nil {
-		// The view module's keeping methods, private ones included
+		// The view module's keeping methods and free constructors, private ones included
 		// (iface.ModuleKeepsKey: m's path and "#keeps"): the loop below
 		// counts a private `V.Stow(mut self, x: &i32 into self)`, a keep
 		// or a hand-out for a body of any module, but neither the API hash
@@ -505,8 +506,12 @@ func (w *walker) viewKeepsScan(ty *types.Type, gen genMode) bool {
 	}
 	s := keepScan{w: w, view: ty.Item, gen: gen}
 	for _, id := range m.Items {
-		if it := w.items.Get(id); it.Owner == ty.Item && s.method(it, len(ty.Args), ty.Args, nil) {
+		it := w.items.Get(id)
+		if it.Owner == ty.Item && s.method(it, len(ty.Args), ty.Args, nil) {
 			return true
+		}
+		if it.Owner == types.NoItem && it.BorrowedConstructorResult(w.tab) == ty.Item {
+			s.method(it, 0, nil, nil)
 		}
 	}
 	// The view's impl methods count as its own do (`impl Keep[&Mutex[?&i32]]
@@ -841,21 +846,6 @@ func (w *walker) paramFrom(t types.TypeID, n int) bool {
 		return w.paramFrom(ty.Fn.Result, n)
 	}
 	return false
-}
-
-// resultIs reports whether result type r is item's type, through ? and E!.
-func (w *walker) resultIs(r types.TypeID, item types.ItemID) bool {
-	for {
-		ty := w.tab.Get(r)
-		switch ty.Kind {
-		case types.KOptional, types.KErrorUnion:
-			r = ty.Elem
-			continue
-		case types.KNamed:
-			return ty.Item == item
-		}
-		return false
-	}
 }
 
 // mayWritable reports whether t is writable by type at some instance: it

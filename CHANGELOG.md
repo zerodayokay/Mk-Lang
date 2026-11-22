@@ -2,6 +2,12 @@
 
 Every user-visible change to Mk, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). What a 0.x release may change, at each stability level, is in [stability](doc/std/README.md#9-stability).
 
+## Unreleased
+
+### Fixed
+
+- The borrow checker now counts a non-generic free constructor in a view's defining module when its result borrows from memory that can take stores. It applies the same rule to private constructors and to optional or error results.
+
 ## 0.4.1 (2026-11-22)
 
 ### Changed

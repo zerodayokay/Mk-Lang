@@ -223,6 +223,39 @@ export V.Put(&self, io: Io, x: &i32 into self) {
 		hold("priv-store", vkPrivStore, refused),
 		hold("priv-handout", vkPrivHandout, refused),
 		vkPrivKeep("priv-keep", false),
+		// Empty always contains a literal. Adding a private constructor with
+		// a writable source changes how another module must treat its result.
+		{name: "free-constructor", file: "v/v.mk", wantWith: "main.mk:5:5:E0602", wantWithout: "ok", files: map[string]string{
+			"pkg.mk": manifest(map[string]string{"name": `"vk"`}),
+			"main.mk": `import v
+
+Forward(d: &i32): v.V from d {
+    _ = d
+    return v.Empty()
+}
+`,
+			"v/v.mk": `export view struct V {
+    text: str
+}
+
+export Empty(): V {
+    return V(text: "")
+}
+
+V.Note(mut self, x: &i32 into self) {
+}
+
+ReadOnly(m: &i32): OutOfMemory!?V from m {
+    return none
+}
+
+//A-BEGIN
+Make(m: &Mutex[?&i32]): OutOfMemory!?V from m {
+    return none
+}
+//A-END
+`,
+		}},
 		vkThird(hold("priv-store-third", vkPrivStore, refused), "b.mk:11:5:E0605"),
 		vkThird(hold("priv-handout-third", vkPrivHandout, refused), "b.mk:11:5:E0605"),
 		vkPrivKeep("priv-keep-third", true),

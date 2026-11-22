@@ -224,6 +224,35 @@ func (s *Signature) ParamByName(n source.Symbol) ParamIndex {
 // the function can fail, else Result.
 func (s *Signature) ReturnType(t *Table) TypeID { return t.ReturnType(s.Result, s.Errors) }
 
+// BorrowedConstructorResult is the named result considered by the view
+// keep scan, also through optional and error results. A free constructor
+// qualifies only when non-generic: a generic one can forward a caller's T.
+func (it *Item) BorrowedConstructorResult(t *Table) ItemID {
+	if it.Kind != KindFunc {
+		return NoItem
+	}
+	fd, ok := it.Decl.(*FuncDecl)
+	if !ok || fd == nil {
+		return NoItem
+	}
+	s := &fd.Sig
+	if s.Receiver != NoReceiver || len(s.Flows.Sources) == 0 || (it.Owner == NoItem && len(s.Generics) != 0) {
+		return NoItem
+	}
+	for r := s.Result; r != NoType; {
+		ty := t.Get(r)
+		switch ty.Kind {
+		case KOptional, KErrorUnion:
+			r = ty.Elem
+		case KNamed:
+			return ty.Item
+		default:
+			return NoItem
+		}
+	}
+	return NoItem
+}
+
 // FnType is the fn type of a non-generic function value of this signature:
 // names dropped, flows positional.
 func (s *Signature) FnType(t *Table) TypeID {

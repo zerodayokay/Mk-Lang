@@ -1536,7 +1536,7 @@ A `Cell`, `Mutex`, `Chan`, `Arena` or `view`, or a type holding one inline, **ta
 The rules:
 
 - A carrier result holds the static pseudo-loan when its type can reach memory that takes stores and either its signature names no source (by R9 only statics qualify then), or it comes from a `fn` value or an interface method, which may stand for such a function.
-- The same holds for a result that holds inline a `view` whose type arguments hold loans, or whose own methods hand out such a reference `from self`, or keep one and take a store `into self` (or, through another item of its module, into a parameter that holds it).
+- The same holds for a result that holds inline a `view` whose type arguments hold loans, whose own methods hand out such a reference `from self`, or which both keeps such a reference and takes a store. A constructor in the view's namespace or a non-generic free function in its defining module can declare the keep by returning the view from a parameter, including in an optional or error result. A method may also declare the keep with `into self`. A store can be into `self` or, through another item of the view's module, into a parameter that holds it.
 - A raw-pointer parameter (`Io` does not count) exempts a direct callee only.
 - A result whose signature names a source, or that has a raw-pointer parameter, may not hold the static pseudo-loan of such memory (E0602).
 - Storing such a static into a parameter whose type may point into such memory is E0604, since no clause can name a static.
@@ -1574,13 +1574,14 @@ These rules refuse some sound programs:
 - A `const` of another module whose value holds a reference to a `view`, even one with no methods, counts by the `view`'s type.
 - A generic body that returns or stores a `fn` value's `T` under a source is E0602 or E0604: `OrElse[T](x: ?T, f: fn(): T): T`, a `Map` adapter, `Apply[T, U](f: fn(x: &T): U, x: &T): U`, or an out-parameter `Fill[T](out: mut ?&T, ...)`.
 - A `view` that keeps such a reference and takes no store into itself counts as soon as any function of its module stores into a holder of it.
+- A non-generic free constructor that returns one instantiation of a view counts for the named view, including its other instantiations.
 
 Known gaps: the compiler does not count the following stores into a `view`, and each can leave a reference to a dead frame. Avoid them in code that keeps references in global memory:
 
 - a store through a free function of another module reached by the view's raw accessor;
 - a store through a `fn` value whose impl the reading module does not see;
 - a store through a storing `fn` literal bound to a local;
-- a keep by a free constructor, or a hand-out by a function without a receiver;
+- a keep by a generic free constructor or one outside the view's defining module, or a hand-out by a function without a receiver;
 - a store through an exported function whose `into` parameter is a bare type parameter.
 
 A `view`'s raw pointer must reach only memory its signatures name. An `unsafe` module whose safe code points it elsewhere, such as a `V.Global(): V` that sets it to a global, breaks its `unsafe` blocks' obligation, and no rule checks that.
