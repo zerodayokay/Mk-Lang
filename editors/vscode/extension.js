@@ -2,8 +2,7 @@
 // into the mk command; without one, .mk files get colors and nothing else.
 //
 // What: activate and deactivate for the extension, the commands
-// mk.restartServer and mk.showServerOutput, and serverPath, stdDir and
-// serverArgs, which the integration test also calls.
+// mk.restartServer and mk.showServerOutput, and the server arguments.
 //
 // How: finds the mk executable (the mk.server.path setting, then mk at a
 // workspace folder's root, then mk on PATH), builds the arguments of
@@ -17,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
+const { findServer } = require('./server-path');
 const { LanguageClient, RevealOutputChannelOn } = require('vscode-languageclient/node');
 
 /** @type {LanguageClient | undefined} */
@@ -53,48 +53,15 @@ function isDir(p) {
   }
 }
 
-// serverPath is mk.server.path, else mk.exe (or mk) at a workspace
-// folder's root, else mk on PATH.
-function serverPath(cfg) {
-  const set = expand(cfg.get('server.path', ''));
-  if (set) return set;
-  const names = process.platform === 'win32' ? ['mk.exe'] : ['mk'];
-  for (const dir of folders()) {
-    for (const n of names) {
-      const p = path.join(dir, n);
-      if (isFile(p)) return p;
-    }
-  }
-  return 'mk';
-}
-
-// resolve returns the file a command runs, or "" when there is none: a path
-// is checked as it is, a bare name is searched on PATH (with PATHEXT's
-// extensions on Windows).
-function resolve(command) {
-  if (path.isAbsolute(command) || command.includes('/') || command.includes('\\')) {
-    return isFile(command) ? command : '';
-  }
-  const exts = process.platform === 'win32' ? ['', ...(process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')] : [''];
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-    if (!dir) continue;
-    for (const e of exts) {
-      const p = path.join(dir, command + e);
-      if (isFile(p)) return p;
-    }
-  }
-  return '';
-}
-
 const installURL = 'https://github.com/zerodayokay/Mk-Lang/blob/main/doc/editors.md';
 
 // notFound tells the user that no mk executable was found, how to build one
 // and how to point the extension at it.
-async function notFound(command, fromSetting) {
+async function notFound(configured) {
   const exe = process.platform === 'win32' ? 'mk.exe' : 'mk';
-  const where = fromSetting
-    ? `mk.server.path is "${command}", which is not a file.`
-    : `No "${command}" on PATH and mk.server.path is not set.`;
+  const where = configured
+    ? `mk.server.path is "${configured}", which could not be resolved to an executable.`
+    : 'No mk executable found in the workspace or on PATH.';
   output.appendLine(`mk lsp not started: ${where}`);
   const pick = await vscode.window.showErrorMessage(
     `Mk: the language server was not found. ${where} ` +
@@ -148,10 +115,10 @@ async function startClient() {
   }
   if (client) return;
   const cfg = vscode.workspace.getConfiguration('mk');
-  const command = serverPath(cfg);
-  const resolved = resolve(command);
+  const configured = expand(cfg.get('server.path', ''));
+  const resolved = findServer(configured, folders());
   if (!resolved) {
-    await notFound(command, !!expand(cfg.get('server.path', '')));
+    await notFound(configured);
     return;
   }
   const args = serverArgs(cfg);
@@ -174,7 +141,7 @@ async function startClient() {
     output.appendLine(`mk lsp did not start: ${e && e.stack ? e.stack : e}`);
     client = undefined;
     const pick = await vscode.window.showErrorMessage(
-      `Mk: could not start "${command} lsp": ${e && e.message ? e.message : e}. ` +
+      `Mk: could not start "${resolved} lsp": ${e && e.message ? e.message : e}. ` +
         'Check that it is a current mk build ("mk version"), and see the Mk output channel.',
       'Open Settings',
     );
@@ -219,4 +186,4 @@ function deactivate() {
   return stopClient();
 }
 
-module.exports = { activate, deactivate, serverArgs, stdDir, serverPath };
+module.exports = { activate, deactivate, serverArgs, stdDir };

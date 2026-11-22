@@ -129,7 +129,7 @@
     }
   },
   "scripts": {
-    "test": "node test/grammar.test.js",
+    "test": "node test/server-path.test.js && node test/grammar.test.js",
     "test:vscode": "node test/vscode/run.js",
     "package": "vsce package"
   },

@@ -54,7 +54,7 @@ Reload VS Code and open a folder with `.mk` files. To remove the extension: `cod
 2. `mk` (`mk.exe` on Windows) at the root of a workspace folder;
 3. `mk` on `PATH`.
 
-If there is none, a message says so, explains how to build `mk`, and offers to open the setting. Highlighting and snippets work without the server. After you fix the path, the server restarts by itself when you change a `mk.server.*` setting, or run **Mk: Restart the language server**.
+On Linux and macOS the search skips files without execute permission. If no executable is found, a message says so, explains how to build `mk`, and offers to open the setting. Highlighting and snippets work without the server. After you fix the path, the server restarts by itself when you change a `mk.server.*` setting, or run **Mk: Restart the language server**.
 
 The server starts only in a trusted folder, because it runs the package's generators and reads its manifests. In Restricted Mode the Mk output channel says it is waiting; trust the folder with **Workspaces: Manage Workspace Trust**.
 
