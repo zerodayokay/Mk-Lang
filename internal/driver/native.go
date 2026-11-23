@@ -743,12 +743,7 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 			}
 		}
 	}
-	var objs []string
-	j.timed("clang", func() { objs, ds = w.compilePacks(ctx, tools, st, ir, cfg, work) })
-	if len(ds) > 0 {
-		return "", ds
-	}
-	libs, ds := w.writeImportLibs(ctx, tools, st, specs, work)
+	objs, libs, ds := w.compileAndImportLibs(ctx, tools, st, ir, cfg, specs, work, j.timed)
 	if len(ds) > 0 {
 		return "", ds
 	}
@@ -816,14 +811,17 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 		// placement: the output path is the user's, and another process
 		// may replace it before this one reads it back.
 		stagedExe, stagedPDB := "", ""
+		var exeHash, pdbHash source.Hash
+		var exeSize, pdbSize int64
 		if build {
 			stagedExe = job.Output + ".store"
-			if copyOut(job.Output, stagedExe) != nil {
+			var err error
+			if exeHash, exeSize, err = copyOutHash(job.Output, stagedExe); err != nil {
 				stagedExe = ""
 			}
 			if stagedExe != "" && pdb != "" {
 				stagedPDB = pdb + ".store"
-				if copyOut(pdb, stagedPDB) != nil {
+				if pdbHash, pdbSize, err = copyOutHash(pdb, stagedPDB); err != nil {
 					stagedExe = ""
 				}
 			}
@@ -834,7 +832,8 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 			// PDB's; a failure costs the next build a link.
 			if storedPDB == "" || storeStaged(st, stagedPDB, storedPDB) {
 				if storeStaged(st, stagedExe, dest) && j.stored != nil {
-					j.stored.storedExe, j.stored.storedPDB = dest, storedPDB
+					j.stored.storedExe, j.stored.exeSize, j.stored.exeHash = dest, exeSize, exeHash
+					j.stored.storedPDB, j.stored.pdbSize, j.stored.pdbHash = storedPDB, pdbSize, pdbHash
 				}
 			}
 		}

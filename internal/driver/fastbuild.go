@@ -53,11 +53,47 @@ const (
 	fastBuildFileDom          = "mk.driver.fastbuild.file.v1"
 )
 
-// fastBinOut receives the cache/bin paths written or reused by world.native.
+// fastBinOut receives the cache/bin paths written or reused by world.native,
+// plus optional precomputed SHA-256 hashes from staging copyOutHash so
+// recordFastBuild avoids re-reading the freshly linked executable.
 type fastBinOut struct {
 	name      string
 	storedExe string
+	exeSize   int64
+	exeHash   source.Hash
 	storedPDB string
+	pdbSize   int64
+	pdbHash   source.Hash
+}
+
+// copyOutHash copies src to dst (like copyOut) while computing src's SHA-256
+// and byte length in a single streaming pass.
+func copyOutHash(src, dst string) (source.Hash, int64, error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return source.Hash{}, 0, err
+	}
+	defer in.Close()
+	fi, err := in.Stat()
+	if err != nil {
+		return source.Hash{}, 0, err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
+	if err != nil {
+		return source.Hash{}, 0, err
+	}
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(out, h), in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(dst)
+		return source.Hash{}, 0, err
+	}
+	var sum source.Hash
+	copy(sum[:], h.Sum(nil))
+	return sum, n, nil
 }
 
 type fastDirEntry struct {
@@ -290,6 +326,10 @@ func (s *Session) tryFastBuild(out string) (Result, []string, bool) {
 		Trace:   tr,
 		Notes:   slices.Clone(rec.notes),
 	}
+	if s.w == nil {
+		// Callers/tests may inspect s.w.probeRuns / s.w.cpuRuns after Build.
+		s.w = newWorld(s.cfg)
+	}
 	if s.cfg.Timings != nil {
 		res.Timings = []StageTime{{Stage: "cache", Took: time.Since(start)}}
 	}
@@ -344,60 +384,19 @@ func copyStoredTo(stored, dst string) bool {
 	return true
 }
 
-// verifyFastInputs verifies every tracked directory digest and file hash in
-// parallel across at most Config.Jobs guarded workers.
+// verifyFastInputs verifies every tracked file hash and directory digest in
+// parallel across at most Config.Jobs guarded workers. Files are verified
+// first so an edited build fails fast without reading all tracked directories.
 func (s *Session) verifyFastInputs(st *cache.Store, rec *fastBuildRec) bool {
 	hints := st.LoadHints(s.root.dir)
 	statAt := st.Now()
 
 	jobs := max(1, s.cfg.Jobs)
 	var failed atomic.Bool
+	var hintsDirty atomic.Bool
 
-	// Step 1: verify all tracked directories in parallel and capture DirEntry
-	// FileInfos for regular .mk files so file verification avoids extra stats.
-	var infoMu sync.Mutex
-	infos := make(map[string]os.FileInfo, len(rec.files))
-	if len(rec.dirs) > 0 {
-		wjobs := min(jobs, len(rec.dirs))
-		var next atomic.Int64
-		var wg sync.WaitGroup
-		for range wjobs {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if ie := source.Guard("fastbuild verify dirs", source.Span{}, func() {
-					local := make(map[string]os.FileInfo, 8)
-					for !failed.Load() {
-						i := int(next.Add(1) - 1)
-						if i >= len(rec.dirs) {
-							break
-						}
-						d := &rec.dirs[i]
-						sig, ok := computeDirSig(d.path, d.recursive, d.skipDirs, local)
-						if !ok || sig != d.sig {
-							failed.Store(true)
-							return
-						}
-					}
-					if len(local) > 0 {
-						infoMu.Lock()
-						for k, v := range local {
-							infos[k] = v
-						}
-						infoMu.Unlock()
-					}
-				}); ie != nil {
-					failed.Store(true)
-				}
-			}()
-		}
-		wg.Wait()
-	}
-	if failed.Load() {
-		return false
-	}
-
-	// Step 2: verify every tracked file's content hash in parallel.
+	// Step 1: verify every tracked file's content hash in parallel first so
+	// single-file edit builds miss immediately without scanning directories.
 	if len(rec.files) > 0 {
 		wjobs := min(jobs, len(rec.files))
 		var next atomic.Int64
@@ -413,14 +412,10 @@ func (s *Session) verifyFastInputs(st *cache.Store, rec *fastBuildRec) bool {
 							break
 						}
 						f := &rec.files[i]
-						fi := infos[f.path]
-						if fi == nil {
-							var err error
-							fi, err = os.Lstat(f.path)
-							if err != nil {
-								failed.Store(true)
-								return
-							}
+						fi, err := os.Lstat(f.path)
+						if err != nil {
+							failed.Store(true)
+							return
 						}
 						if fi.Mode().IsRegular() {
 							if h, ok := hints.Lookup(f.path, fi); ok {
@@ -443,6 +438,7 @@ func (s *Session) verifyFastInputs(st *cache.Store, rec *fastBuildRec) bool {
 						}
 						if fi.Mode().IsRegular() {
 							hints.Record(f.path, fi, statAt, h)
+							hintsDirty.Store(true)
 						}
 					}
 				}); ie != nil {
@@ -455,7 +451,43 @@ func (s *Session) verifyFastInputs(st *cache.Store, rec *fastBuildRec) bool {
 	if failed.Load() {
 		return false
 	}
-	_ = hints.Save()
+
+	// Step 2: verify all tracked directories in parallel so added/removed/renamed
+	// .mk files or subdirectories invalidate the fast build.
+	if len(rec.dirs) > 0 {
+		wjobs := min(jobs, len(rec.dirs))
+		var next atomic.Int64
+		var wg sync.WaitGroup
+		for range wjobs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if ie := source.Guard("fastbuild verify dirs", source.Span{}, func() {
+					for !failed.Load() {
+						i := int(next.Add(1) - 1)
+						if i >= len(rec.dirs) {
+							break
+						}
+						d := &rec.dirs[i]
+						sig, ok := computeDirSig(d.path, d.recursive, d.skipDirs, nil)
+						if !ok || sig != d.sig {
+							failed.Store(true)
+							return
+						}
+					}
+				}); ie != nil {
+					failed.Store(true)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	if failed.Load() {
+		return false
+	}
+	if hintsDirty.Load() {
+		_ = hints.Save()
+	}
 	return true
 }
 
@@ -501,14 +533,18 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 
 	var rec fastBuildRec
 
-	// Collect stored bin entries.
+	// Collect stored bin entries (reusing hashes captured during copyOutHash).
 	for i, o := range outs {
 		if o.storedExe == "" {
 			return
 		}
-		eh, esz, err := hashFileSHA256(o.storedExe)
-		if err != nil {
-			return
+		eh, esz := o.exeHash, o.exeSize
+		if eh.IsZero() {
+			var err error
+			eh, esz, err = hashFileSHA256(o.storedExe)
+			if err != nil {
+				return
+			}
 		}
 		be := fastBinEntry{
 			name:      bins[i].name,
@@ -517,9 +553,13 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 			exeHash:   eh,
 		}
 		if o.storedPDB != "" {
-			ph, psz, err := hashFileSHA256(o.storedPDB)
-			if err != nil {
-				return
+			ph, psz := o.pdbHash, o.pdbSize
+			if ph.IsZero() {
+				var err error
+				ph, psz, err = hashFileSHA256(o.storedPDB)
+				if err != nil {
+					return
+				}
 			}
 			be.storedPDB, be.pdbSize, be.pdbHash = o.storedPDB, psz, ph
 		}
@@ -556,7 +596,7 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 		if s.pkgMan != nil {
 			skipped = s.pkgMan.walkSkipped()
 		}
-		if !collectPackageDirSigs(s.root.dir, skipped, &rec.dirs) {
+		if !collectPackageDirSigsParallel(s.root.dir, skipped, max(1, s.cfg.Jobs), &rec.dirs) {
 			return
 		}
 		// Also snapshot target-selected directories active for this OS.
@@ -633,6 +673,7 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 	slices.Sort(filePaths)
 	rec.files = make([]fastFileEntry, len(filePaths))
 	var failed atomic.Bool
+	var hintsDirty atomic.Bool
 	wjobs := min(max(1, s.cfg.Jobs), max(1, len(filePaths)))
 	var next atomic.Int64
 	var wg sync.WaitGroup
@@ -667,6 +708,7 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 					rec.files[i] = fastFileEntry{path: p, hash: h}
 					if fi.Mode().IsRegular() {
 						hints.Record(p, fi, statAt, h)
+						hintsDirty.Store(true)
 					}
 				}
 			}); ie != nil {
@@ -678,7 +720,9 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 	if failed.Load() {
 		return
 	}
-	_ = hints.Save()
+	if hintsDirty.Load() {
+		_ = hints.Save()
+	}
 
 	slices.SortFunc(rec.dirs, func(a, b fastDirEntry) int { return strings.Compare(a.path, b.path) })
 	slices.Sort(rec.absent)
@@ -697,16 +741,14 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 	_ = st.Put(cache.KindManifest, key, encodeFastBuildRec(&rec))
 }
 
-// collectPackageDirSigs walks root and snapshots every non-skipped directory
-// (skipping hidden/gen dirs, manifest-selected dirs, and nested sub-packages).
-func collectPackageDirSigs(root string, skipped []string, out *[]fastDirEntry) bool {
-	var walk func(absDir, relDir string) bool
-	walk = func(absDir, relDir string) bool {
-		// Compute local skip names for direct children of relDir.
+// collectPackageDirSigsParallel walks root and snapshots every non-skipped
+// directory, fanning out top-level subdirectories across up to jobs guarded
+// workers so large multi-module packages don't scan directories serially.
+func collectPackageDirSigsParallel(root string, skipped []string, jobs int, out *[]fastDirEntry) bool {
+	localSkips := func(relDir string) []string {
 		var childSkips []string
 		for _, sk := range skipped {
-			parent := dirOf(sk)
-			if parent == relDir {
+			if dirOf(sk) == relDir {
 				base := sk
 				if relDir != "" {
 					base = strings.TrimPrefix(sk, relDir+"/")
@@ -715,42 +757,111 @@ func collectPackageDirSigs(root string, skipped []string, out *[]fastDirEntry) b
 			}
 		}
 		slices.Sort(childSkips)
-		ents, err := os.ReadDir(absDir)
-		if err != nil {
-			return false
+		return childSkips
+	}
+	rootSkips := localSkips("")
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	sig, ok := hashDirEntries(root, ents, true, rootSkips, nil)
+	if !ok {
+		return false
+	}
+	*out = append(*out, fastDirEntry{path: root, recursive: true, skipDirs: rootSkips, sig: sig})
+	type subJob struct {
+		absDir string
+		relDir string
+	}
+	var subs []subJob
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
 		}
-		// Nested package check (matches packageDirs).
-		if relDir != "" {
+		name := e.Name()
+		if walkSkips(name) || slices.Contains(rootSkips, name) {
+			continue
+		}
+		subs = append(subs, subJob{absDir: filepath.Join(root, name), relDir: name})
+	}
+	if len(subs) == 0 {
+		return true
+	}
+	walkSub := func(absDir, relDir string, dst *[]fastDirEntry) bool {
+		var walk func(absDir, relDir string) bool
+		walk = func(absDir, relDir string) bool {
+			childSkips := localSkips(relDir)
+			ents, err := os.ReadDir(absDir)
+			if err != nil {
+				return false
+			}
 			for _, e := range ents {
 				if !e.IsDir() && e.Name() == "pkg.mk" {
 					return true
 				}
 			}
+			sig, ok := hashDirEntries(absDir, ents, true, childSkips, nil)
+			if !ok {
+				return false
+			}
+			*dst = append(*dst, fastDirEntry{path: absDir, recursive: true, skipDirs: childSkips, sig: sig})
+			for _, e := range ents {
+				if !e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				if walkSkips(name) || slices.Contains(childSkips, name) {
+					continue
+				}
+				if !walk(filepath.Join(absDir, name), relDir+"/"+name) {
+					return false
+				}
+			}
+			return true
 		}
-		sig, ok := hashDirEntries(absDir, ents, true, childSkips, nil)
-		if !ok {
-			return false
-		}
-		*out = append(*out, fastDirEntry{path: absDir, recursive: true, skipDirs: childSkips, sig: sig})
-		for _, e := range ents {
-			if !e.IsDir() {
-				continue
-			}
-			name := e.Name()
-			if walkSkips(name) || slices.Contains(childSkips, name) {
-				continue
-			}
-			subRel := name
-			if relDir != "" {
-				subRel = relDir + "/" + name
-			}
-			if !walk(filepath.Join(absDir, name), subRel) {
+		return walk(absDir, relDir)
+	}
+	if len(subs) == 1 || jobs <= 1 {
+		for _, sj := range subs {
+			if !walkSub(sj.absDir, sj.relDir, out) {
 				return false
 			}
 		}
 		return true
 	}
-	return walk(root, "")
+	results := make([][]fastDirEntry, len(subs))
+	var failed atomic.Bool
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	wjobs := min(jobs, len(subs))
+	for range wjobs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ie := source.Guard("fastbuild walk dirs", source.Span{}, func() {
+				for !failed.Load() {
+					i := int(next.Add(1) - 1)
+					if i >= len(subs) {
+						break
+					}
+					if !walkSub(subs[i].absDir, subs[i].relDir, &results[i]) {
+						failed.Store(true)
+						return
+					}
+				}
+			}); ie != nil {
+				failed.Store(true)
+			}
+		}()
+	}
+	wg.Wait()
+	if failed.Load() {
+		return false
+	}
+	for _, r := range results {
+		*out = append(*out, r...)
+	}
+	return true
 }
 
 // computeDirSig reads dir and hashes the sorted names and kinds of its .mk

@@ -108,7 +108,7 @@ func newBuilder(env Env, item types.ItemID, gb *mir.Body, args []types.GenericAr
 			ice("instance of %s: open argument %s", env.Items().Get(item).Key, bl.tab.GenericArgString(a, nil))
 		}
 	}
-	bl.s = substituter{tab: bl.tab, args: gen, fold: bl.sizeOf, memo: map[types.TypeID]types.TypeID{}, sliceSelf: true}
+	bl.s = substituter{tab: bl.tab, args: gen, fold: bl.sizeOf, sliceSelf: true}
 	it := env.Items().Get(item)
 	if fd, ok := it.Decl.(*types.FuncDecl); ok {
 		bl.sig = &fd.Sig
@@ -143,9 +143,15 @@ func newBuilder(env Env, item types.ItemID, gb *mir.Body, args []types.GenericAr
 // fields loops; they are the last of Body.GenericCount (lower's input
 // GenericCount).
 func hiddenGenerics(b *mir.Body) int {
-	seen := map[uint32]bool{}
+	if b.GenericCount == 0 || len(b.Loops) == 0 {
+		return 0
+	}
+	var seen map[uint32]bool
 	for _, lp := range b.Loops {
 		if lp.FieldsOf != types.NoType {
+			if seen == nil {
+				seen = map[uint32]bool{}
+			}
 			seen[lp.FieldsParam] = true
 		}
 	}
@@ -192,6 +198,7 @@ func (bl *builder) build() *mir.Body {
 		!bl.mentionsSizeOf(gb) && !bl.constArgs(gb, false) && !bl.canonLiterals(gb, false) {
 		return gb
 	}
+	bl.s.memo = map[types.TypeID]types.TypeID{}
 	b := cloneBody(gb)
 	bl.b = b
 	b.GenericCount = 0

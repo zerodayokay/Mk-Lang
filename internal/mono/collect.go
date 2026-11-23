@@ -28,7 +28,7 @@ import (
 // worklist runs level by level in key order, on one goroutine (mono cannot
 // start a guarded goroutine without source.Guard).
 func Collect(env Env, roots []Root, opt Options) (*Instances, []*diag.Diagnostic) {
-	c := &collector{env: env, opt: opt.withDefaults(), index: map[string]int{}, lits: newLiterals(env)}
+	c := &collector{env: env, opt: opt.withDefaults(), index: map[string]int{}, plainIndex: map[types.ItemID]int{}, lits: newLiterals(env)}
 	c.tasksInit()
 	c.libcInit() // the system-libc fold (libcfold.go)
 	return c.run(roots)
@@ -74,11 +74,12 @@ type request struct {
 }
 
 type collector struct {
-	env   Env
-	opt   Options
-	nodes []*node
-	index map[string]int
-	diags []*diag.Diagnostic
+	env        Env
+	opt        Options
+	nodes      []*node
+	index      map[string]int
+	plainIndex map[types.ItemID]int // non-literal items with no generic args and no extra CPU features
+	diags      []*diag.Diagnostic
 	// relocMemo caches the fn relocations reachable from a const.
 	relocMemo map[types.ConstID][]relocFn
 	// io is the dead-entry and task-use state (deadio.go, tasks.go).
@@ -182,6 +183,9 @@ func (c *collector) add(n *node) int {
 	c.nodes = append(c.nodes, n)
 	i := len(c.nodes) - 1
 	c.index[n.inst.Key.Text] = i
+	if len(n.inst.Args) == 0 && len(n.extra) == 0 && c.env.Items().Get(n.inst.Item).Kind != types.KindLiteral {
+		c.plainIndex[n.inst.Item] = i
+	}
 	return i
 }
 
@@ -190,6 +194,15 @@ func (c *collector) add(n *node) int {
 // limit stops it. It returns the new node, or -1.
 func (c *collector) merge(caller int, r request) int {
 	set, extra := c.instanceCPU(c.nodes[caller].inst.CPU, r) // the caller's cpu features
+	if len(r.args) == 0 && len(extra) == 0 {
+		if i, ok := c.plainIndex[r.item]; ok {
+			n := c.nodes[i]
+			c.edge(caller, i, r.ioField-1)
+			n.inst.AddrTaken = n.inst.AddrTaken || r.addrTaken
+			n.inst.Spawned = n.inst.Spawned || r.spawned
+			return -1
+		}
+	}
 	k := c.keyCPU(keyOf(c.env, r.item, r.args), r.item, r.args, extra)
 	if i, ok := c.index[k.Text]; ok {
 		n := c.nodes[i]

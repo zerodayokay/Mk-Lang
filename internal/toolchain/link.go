@@ -730,6 +730,7 @@ func (t *Tools) thinBackends(ctx context.Context, j LinkJob, work string, module
 		return ia < ib
 	})
 
+	emptyCache := j.LTOCacheDir != "" && thinCacheEmpty(j.LTOCacheDir)
 	natives := make([]string, len(modules))
 	errs := make([]error, len(modules))
 	var next atomic.Int64
@@ -748,7 +749,7 @@ func (t *Tools) thinBackends(ctx context.Context, j LinkJob, work string, module
 					i := order[k]
 					name := modules[i]
 					ie := source.Guard("ThinLTO backend "+name, source.Span{}, func() {
-						natives[i], errs[i] = t.thinBackend(ctx, j, work, name, read)
+						natives[i], errs[i] = t.thinBackend(ctx, j, work, name, read, emptyCache)
 					})
 					if ie != nil {
 						errs[i] = errors.New(ie.String())
@@ -792,9 +793,24 @@ func (t *Tools) thinBackends(ctx context.Context, j LinkJob, work string, module
 // while keeping LRU mtime updates well within thinCacheMaxAge (48h).
 const thinCacheTouchInterval = 5 * time.Minute
 
+// thinCacheEmpty reports whether dir currently contains no mkdt-*.o cache files.
+func thinCacheEmpty(dir string) bool {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return true
+	}
+	for _, e := range ents {
+		name := e.Name()
+		if strings.HasPrefix(name, "mkdt-") && strings.HasSuffix(name, ".o") {
+			return false
+		}
+	}
+	return true
+}
+
 // thinBackend compiles one module of work with its index, through the
 // cache, and returns its native object's path.
-func (t *Tools) thinBackend(ctx context.Context, j LinkJob, work, name string, read func(string) ([]byte, error)) (string, error) {
+func (t *Tools) thinBackend(ctx context.Context, j LinkJob, work, name string, read func(string) ([]byte, error), emptyCache bool) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -802,26 +818,59 @@ func (t *Tools) thinBackend(ctx context.Context, j LinkJob, work, name string, r
 	args := thinBackendArgs(name, name+".thinlto.bc", out, j.Tune)
 	native := filepath.Join(work, out)
 	cached := ""
+	var keyDone chan struct{}
+	var keyErr error
 	if j.LTOCacheDir != "" {
-		imports, err := read(name + ".imports")
-		if err != nil {
-			return "", err
-		}
-		key, err := ThinCacheKey(t.Version.Line, args, name, name+".thinlto.bc", imports, read)
-		if err != nil {
-			return "", err
-		}
-		cached = filepath.Join(j.LTOCacheDir, "mkdt-"+key+".o")
-		if linkOrCopy(cached, native) == nil {
-			now := time.Now()
-			if fi, err := os.Stat(cached); err != nil || now.Sub(fi.ModTime()) > thinCacheTouchInterval {
-				os.Chtimes(cached, now, now) // the prune keeps what is used
+		if emptyCache {
+			// On a cold cache no lookup can hit; overlap ThinCacheKey I/O and
+			// SHA-256 with clang so the largest module starts at t=0.
+			keyDone = make(chan struct{})
+			go func() {
+				defer close(keyDone)
+				if ie := source.Guard("ThinLTO cache key "+name, source.Span{}, func() {
+					imports, err := read(name + ".imports")
+					if err != nil {
+						keyErr = err
+						return
+					}
+					key, err := ThinCacheKey(t.Version.Line, args, name, name+".thinlto.bc", imports, read)
+					if err != nil {
+						keyErr = err
+						return
+					}
+					cached = filepath.Join(j.LTOCacheDir, "mkdt-"+key+".o")
+				}); ie != nil {
+					keyErr = errors.New(ie.String())
+				}
+			}()
+		} else {
+			imports, err := read(name + ".imports")
+			if err != nil {
+				return "", err
 			}
-			return native, nil
+			key, err := ThinCacheKey(t.Version.Line, args, name, name+".thinlto.bc", imports, read)
+			if err != nil {
+				return "", err
+			}
+			cached = filepath.Join(j.LTOCacheDir, "mkdt-"+key+".o")
+			if linkOrCopy(cached, native) == nil {
+				now := time.Now()
+				if fi, err := os.Stat(cached); err != nil || now.Sub(fi.ModTime()) > thinCacheTouchInterval {
+					os.Chtimes(cached, now, now) // the prune keeps what is used
+				}
+				return native, nil
+			}
 		}
 	}
-	if _, err := run(ctx, NameClang, t.Clang, args, work); err != nil {
-		return "", err
+	_, runErr := run(ctx, NameClang, t.Clang, args, work)
+	if keyDone != nil {
+		<-keyDone
+	}
+	if runErr != nil {
+		return "", runErr
+	}
+	if keyErr != nil {
+		return "", keyErr
 	}
 	if cached != "" {
 		storeThinCache(native, cached)

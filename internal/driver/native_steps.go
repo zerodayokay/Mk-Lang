@@ -462,6 +462,39 @@ func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *link
 	return addSystemLibs(libs, all), nil
 }
 
+// compileAndImportLibs runs compilePacks (under j.timed("clang", ...)) while
+// overlapping writeImportLibs on a guarded goroutine when specs is non-empty,
+// hiding llvm-lib latency behind clang on cold caches.
+func (w *world) compileAndImportLibs(ctx context.Context, tools *toolchain.Tools, st *cache.Store, ir packIR, cfg codegen.Config, specs []importLib, work string, timed func(string, func())) ([]string, []string, []*diag.Diagnostic) {
+	var libs []string
+	var lds []*diag.Diagnostic
+	var libDone chan struct{}
+	if len(specs) > 0 {
+		libDone = make(chan struct{})
+		go func() {
+			defer close(libDone)
+			if ie := source.Guard("import libs", source.Span{}, func() {
+				libs, lds = w.writeImportLibs(ctx, tools, st, specs, work)
+			}); ie != nil {
+				lds = append(lds, diag.FromInternal(ie))
+			}
+		}()
+	}
+	var objs []string
+	var ds []*diag.Diagnostic
+	timed("clang", func() { objs, ds = w.compilePacks(ctx, tools, st, ir, cfg, work) })
+	if libDone != nil {
+		<-libDone
+	}
+	if len(ds) > 0 {
+		return nil, nil, ds
+	}
+	if len(lds) > 0 {
+		return nil, nil, lds
+	}
+	return objs, libs, nil
+}
+
 // writeImportLibs writes each library of specs into work with llvm-lib and
 // returns their paths in the same order. With a store, a library whose key
 // (libKey) hits is read from the store, and a new one enters it.
