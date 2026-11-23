@@ -485,7 +485,7 @@ func TestSoleCallExclusions(t *testing.T) {
 	}{
 		{name: "plain", want: true},
 		{name: "loop-into-thin", loopCallee: true, extra: 1, want: true},
-		{name: "loop-into-loop", loopCallee: true, loopCaller: true, want: false},
+		{name: "flat-loop-into-leaf-spine", loopCallee: true, loopCaller: true, want: true},
 		{name: "loop-into-wide", loopCallee: true, extra: thinCallerBlocks, want: false},
 		{name: "loop-free-into-loop", loopCaller: true, want: true},
 		{name: "loop-free-into-wide", extra: thinCallerBlocks, want: true},
@@ -513,4 +513,99 @@ func TestSoleCallExclusions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSoleCallFlatLoopGuards tests each guard of the flat single-loop leaf-spine
+// exception (smallFlatLoop, onLeafLoopSpine): a small single-loop helper on the
+// unconditional spine of a leaf loop is inlined, while a conditional call in a
+// loop, a call in an outer (non-leaf) loop, a nested-loop callee, an oversized
+// looping callee, and a callee taking a large mutable state reference stay out
+// of line.
+func TestSoleCallFlatLoopGuards(t *testing.T) {
+	t.Run("conditional-branch-in-loop", func(t *testing.T) {
+		e := newTestEnv()
+		leaf, l := soleLeaf(e, "Leaf", smallOps, true)
+		f := e.body(e.fn("Caller", []types.TypeID{types.Int}, types.Int, 0))
+		f.assign(place(0), use(mir.Imm(types.Int, 0)), f.at(6, 3))
+		countLoop(f, 1, func() {
+			cond := f.local(types.Bool)
+			f.assign(place(cond), bin(mir.Eq, mir.Copy(place(1)), mir.Imm(types.Int, 7)), f.at(6, 5))
+			thenB, joinB := f.newBlock(), f.newBlock()
+			f.term(mir.Terminator{Kind: mir.TermSwitch, On: mir.Copy(place(cond)),
+				Cases: f.b.AddCases(mir.SwitchCase{Value: 1, Target: thenB}), Default: joinB, Span: f.at(6, 5)})
+			f.cur = thenB
+			v := f.call(leaf, nil, types.Int, mir.Copy(place(1)))
+			f.assign(place(0), use(mir.Copy(place(v))), f.at(6, 9))
+			f.term(mir.Terminator{Kind: mir.TermGoto, Target: joinB, Span: f.at(6, 9)})
+			f.cur = joinB
+		})
+		f.ret(f.at(7, 3))
+		ll := emit(t, e, unitOf(e, []*mir.Body{l.b, f.b}), types.X86_64Linux, types.Release)
+		if soleMarked(t, ll, "Caller", "Leaf") {
+			t.Errorf("conditional call inside a loop was marked alwaysinline")
+		}
+	})
+
+	t.Run("outer-non-leaf-loop", func(t *testing.T) {
+		e := newTestEnv()
+		leaf, l := soleLeaf(e, "Leaf", smallOps, true)
+		f := e.body(e.fn("Caller", []types.TypeID{types.Int}, types.Int, 0))
+		f.assign(place(0), use(mir.Imm(types.Int, 0)), f.at(6, 3))
+		countLoop(f, 1, func() {
+			countLoop(f, 1, func() {})
+			v := f.call(leaf, nil, types.Int, mir.Copy(place(1)))
+			f.assign(place(0), use(mir.Copy(place(v))), f.at(6, 9))
+		})
+		f.ret(f.at(7, 3))
+		ll := emit(t, e, unitOf(e, []*mir.Body{l.b, f.b}), types.X86_64Linux, types.Release)
+		if soleMarked(t, ll, "Caller", "Leaf") {
+			t.Errorf("call in an outer (non-leaf) loop was marked alwaysinline")
+		}
+	})
+
+	t.Run("nested-loop-callee", func(t *testing.T) {
+		e := newTestEnv()
+		it := e.fn("Nested", []types.TypeID{types.Int}, types.Int, 0)
+		l := e.body(it)
+		l.assign(place(0), use(mir.Copy(place(1))), l.at(2, 3))
+		countLoop(l, 1, func() { countLoop(l, 1, func() {}) })
+		l.ret(l.at(3, 3))
+		f := soleCaller(e, "Caller", it, true, 0)
+		ll := emit(t, e, unitOf(e, []*mir.Body{l.b, f.b}), types.X86_64Linux, types.Release)
+		if soleMarked(t, ll, "Caller", "Nested") {
+			t.Errorf("nested-loop callee was marked alwaysinline in a caller loop")
+		}
+	})
+
+	t.Run("oversized-flat-loop-callee", func(t *testing.T) {
+		e := newTestEnv()
+		leaf, l := soleLeaf(e, "BigLoop", smallLoopSoleOps, true)
+		f := soleCaller(e, "Caller", leaf, true, 0)
+		ll := emit(t, e, unitOf(e, []*mir.Body{l.b, f.b}), types.X86_64Linux, types.Release)
+		if soleMarked(t, ll, "Caller", "BigLoop") {
+			t.Errorf("oversized looping callee (%d ops) was marked alwaysinline", bodyOps(l.b))
+		}
+	})
+
+	t.Run("large-pointee-param", func(t *testing.T) {
+		e := newTestEnv()
+		arr := e.tt.Array(types.ConstArg{Kind: types.CAValue, Value: e.intConst(types.Int, 32)}, types.F64) // 256 bytes > 128
+		mutArr := e.tt.Mut(arr)
+		it := e.fn("BigState", []types.TypeID{mutArr, types.Int}, types.Int, 0)
+		l := e.body(it)
+		l.assign(place(0), use(mir.Copy(place(2))), l.at(2, 3))
+		countLoop(l, 2, func() {})
+		l.ret(l.at(3, 3))
+		f := e.body(e.fn("Caller", []types.TypeID{mutArr, types.Int}, types.Int, 0))
+		f.assign(place(0), use(mir.Imm(types.Int, 0)), f.at(6, 3))
+		countLoop(f, 2, func() {
+			v := f.call(it, nil, types.Int, mir.Copy(place(1)), mir.Copy(place(2)))
+			f.assign(place(0), use(mir.Copy(place(v))), f.at(6, 9))
+		})
+		f.ret(f.at(7, 3))
+		ll := emit(t, e, unitOf(e, []*mir.Body{l.b, f.b}), types.X86_64Linux, types.Release)
+		if soleMarked(t, ll, "Caller", "BigState") {
+			t.Errorf("looping callee with 256-byte mut pointee was marked alwaysinline")
+		}
+	})
 }

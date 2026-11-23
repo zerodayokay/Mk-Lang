@@ -344,6 +344,8 @@ type fnGen struct {
 	// pnoneLocals mapping each pure-tail table local to its const item.
 	pnone       bool
 	pnoneLocals []types.ItemID
+	// loopBlks memoizes natural-loop membership per MIR block (solecall.go).
+	loopBlks []bool
 }
 
 // addr is a memory address and the alignment known for it.
