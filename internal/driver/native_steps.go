@@ -40,12 +40,14 @@ import (
 )
 
 // packIR is emitPacks' result: per pack, then the support pack, the .ll
-// path ("" when the object key hit, so no .ll was written), the object key
-// and, on a hit, the stored object.
+// path ("" when the object key hit, so no .ll was written), the .ll byte
+// size (for LPT scheduling in compilePacks), the object key and, on a hit,
+// the stored object.
 type packIR struct {
-	lls  []string
-	keys []source.Hash
-	hits []string
+	lls   []string
+	sizes []int
+	keys  []source.Hash
+	hits  []string
 }
 
 // emitPacks generates each pack and the support pack in parallel, at most
@@ -63,7 +65,7 @@ type packIR struct {
 // copy is in no key. A codegen ICE is E0000.
 func (w *world) emitPacks(u *codegen.Unit, cfg codegen.Config, work, llDir string, tools *toolchain.Tools, st *cache.Store) (packIR, []*diag.Diagnostic) {
 	n := len(u.Packs)
-	out := packIR{lls: make([]string, n+1), keys: make([]source.Hash, n+1), hits: make([]string, n+1)}
+	out := packIR{lls: make([]string, n+1), sizes: make([]int, n+1), keys: make([]source.Hash, n+1), hits: make([]string, n+1)}
 	errs := make([]*diag.Diagnostic, n+1)
 	env := cgEnv{w}
 	pks := w.prekeysFor(u, tools, st, llDir) // nil emits every pack
@@ -138,6 +140,7 @@ func (w *world) emitPacks(u *codegen.Unit, cfg codegen.Config, work, llDir strin
 			return
 		}
 		out.lls[i] = ll
+		out.sizes[i] = b.Len()
 	})
 	return out, append(collect(errs), faults...)
 }
@@ -213,7 +216,23 @@ func (w *world) compilePacks(ctx context.Context, tools *toolchain.Tools, st *ca
 		w.packs.note(name, true)
 		return true
 	}
-	faults := w.parallel(n+1, func(i int) string { return "clang " + packFile(i, n) }, func(i int) {
+	// Schedule packs largest .ll first (LPT) so giant packs like main start at
+	// t=0 instead of forming a single-core tail. Results still write to slot i,
+	// so object order and outputs are identical.
+	order := make([]int, n+1)
+	for i := range order {
+		order[i] = i
+	}
+	sort.Slice(order, func(a, b int) bool {
+		ia, ib := order[a], order[b]
+		sa, sb := ir.sizes[ia], ir.sizes[ib]
+		if sa != sb {
+			return sa > sb
+		}
+		return ia < ib
+	})
+	faults := w.parallel(n+1, func(k int) string { return "clang " + packFile(order[k], n) }, func(k int) {
+		i := order[k]
 		name := packFile(i, n)
 		obj := filepath.Join(work, name+".o")
 		if ir.hits[i] != "" {

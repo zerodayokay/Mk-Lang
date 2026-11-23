@@ -164,8 +164,11 @@ func (w *world) unitOf(in *mono.Instances, packs []mono.Pack, pkg []*modNode) *c
 func (w *world) globalsOf(in *mono.Instances, packs []mono.Pack, pkg []*modNode) []codegen.Global {
 	firstOf := map[types.ModuleID]int{} // lookup only
 	for p, pk := range packs {
-		if _, ok := firstOf[pk.Owner]; !ok {
-			firstOf[pk.Owner] = p
+		for _, fi := range pk.Members {
+			mod := in.List[fi].Owner
+			if _, ok := firstOf[mod]; !ok {
+				firstOf[mod] = p
+			}
 		}
 	}
 	refBy := map[types.ItemID]int{} // global -> first referencing pack; lookup only

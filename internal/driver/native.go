@@ -560,7 +560,9 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 		j.place, j.keyed = nil, ""
 	}
 	var packs []mono.Pack
-	if ie := source.Guard("partition of "+j.mainMod, source.Span{}, func() { packs = mono.Partition(env, insts, opt) }); ie != nil {
+	if ie := source.Guard("partition of "+j.mainMod, source.Span{}, func() {
+		packs = w.coalescePacks(insts, mono.Partition(env, insts, opt))
+	}); ie != nil {
 		return "", []*diag.Diagnostic{diag.FromInternal(ie)}
 	}
 	unit := w.unitOf(insts, packs, j.pkg)
