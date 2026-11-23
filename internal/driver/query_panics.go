@@ -148,6 +148,9 @@ func (l *PanicSiteList) Text() string {
 // member. It is nil, with the Result saying why, when the package does not
 // check as far as types.
 func (s *Session) PanicSites(member string) (*PanicSiteList, Result) {
+	if strings.HasPrefix(member, "std.") {
+		s.fullStd = true
+	}
 	res := s.Check()
 	if s.w == nil || s.w.sem5 == nil || !checkedToTypes(res) {
 		return nil, res

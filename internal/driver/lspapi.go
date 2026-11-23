@@ -636,6 +636,10 @@ func (s *Session) QueryChecked(q string, args []string) (*QueryAnswer, error) {
 	if s.memo() == nil {
 		return nil, usagef("query %s: the session has not checked", q)
 	}
+	if !s.lastFullStd {
+		s.fullStd = true
+		s.Check()
+	}
 	qx := s.index()
 	if qx == nil {
 		return nil, nil

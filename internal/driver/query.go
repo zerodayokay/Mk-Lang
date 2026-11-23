@@ -143,6 +143,7 @@ func (s *Session) Query(q string, args []string) (*QueryAnswer, Result, error) {
 		// from the module cache does not keep (lspapi.go).
 		s.cfg.KeepSyntax = true
 	}
+	s.fullStd = true
 	res := s.Check()
 	if q == "perimeter" { // from the manifest step alone, a missing grant included
 		return perimeterAnswer(s), res, nil

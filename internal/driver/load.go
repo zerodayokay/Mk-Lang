@@ -75,6 +75,9 @@ type build struct {
 	// keepSyntax: the build's modules keep their front-end output after
 	// their check (release.go): the manifest's, whose AST decode reads.
 	keepSyntax bool
+	// skipStdTests omits std unit-test files (tests_*.mk, *_test.mk) in
+	// listStd when not running std tests or browsing std (stdlazy.go).
+	skipStdTests bool
 }
 
 // reservedDirEntry is a directory refused because its import path would
@@ -217,6 +220,9 @@ func (b *build) listStd(t *srcTree, man *Manifest) error {
 	if err != nil {
 		return err
 	}
+	if b.skipStdTests {
+		files = slices.DeleteFunc(files, isStdTestFile)
+	}
 	dirs, byDir := groupByDir(files)
 	for _, d := range dirs {
 		if d == "" { // std/pkg.mk and nothing else lives at the root
@@ -240,6 +246,9 @@ func (b *build) listStd(t *srcTree, man *Manifest) error {
 				fs, err := t.mkFiles(ms.Dir, true, nil)
 				if err != nil {
 					return err
+				}
+				if b.skipStdTests {
+					fs = slices.DeleteFunc(fs, isStdTestFile)
 				}
 				m := moduleFrom(t, ms.Dir, fs)
 				m.name, m.std, m.selected = "std."+ms.Name, true, true

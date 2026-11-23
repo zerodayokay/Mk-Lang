@@ -186,6 +186,7 @@ func apiFacts(cfg Config, std bool) (map[string][]apiFact, map[string]apiMeta, R
 	if err != nil {
 		return nil, nil, Result{}, err
 	}
+	s.fullStd = std
 	res := s.Check()
 	if s.w == nil || s.w.sem5 == nil || s.stdB == nil || !checkedToTypes(res) {
 		return nil, nil, res, nil

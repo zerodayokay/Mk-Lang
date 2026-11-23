@@ -102,6 +102,9 @@ type DocMember struct {
 // Doc checks the package and returns its documented surface; nil when the
 // check did not reach the types phase (the Result says why).
 func (s *Session) Doc(opt DocOptions) (*DocPackage, Result, error) {
+	if opt.Std != "" {
+		s.fullStd = true
+	}
 	res := s.Check()
 	if s.w == nil || s.w.sem5 == nil || s.stdB == nil || !checkedToTypes(res) {
 		return nil, res, nil

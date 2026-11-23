@@ -90,6 +90,11 @@ type Session struct {
 	// lsp is lspapi.go's memo of the last Check's answers, dropped when a
 	// Check makes a new world.
 	lsp *lspMemo
+	// fullStd forces all std modules and std test files to load (apidiff,
+	// doc --std, query, StdTests, BrowseStd; stdlazy.go). lastFullStd records
+	// whether the last Check ran with fullStd.
+	fullStd     bool
+	lastFullStd bool
 }
 
 // NewSession validates the config and finds the root. The error is a
@@ -210,6 +215,9 @@ type pipeline struct {
 	deferWalk bool
 	tail      *walkTail
 	walkBad   bool // the joined walk reported something
+	// lazyStd loads only transitively reached std modules (stdlazy.go).
+	lazyStd bool
+	testing bool
 }
 
 // step runs one barrier: f's diagnostics are recorded, and the pipeline
@@ -233,6 +241,11 @@ func (p *pipeline) stepNamed(name string, st Stage, f func() []*diag.Diagnostic)
 func (p *pipeline) front() bool {
 	var tooLarge []*diag.Diagnostic
 	if !p.step(StageLoad, func() []*diag.Diagnostic {
+		if p.lazyStd && len(p.builds) > 1 && p.builds[0].isStd {
+			var fails []*diag.Diagnostic
+			fails, tooLarge = p.loadLazyStd(p.testing)
+			return fails
+		}
 		var fails []*diag.Diagnostic
 		for _, b := range p.builds {
 			for _, ci := range p.w.allCImports() {
@@ -361,6 +374,11 @@ func (s *Session) run(p *pipeline, stdT, pkgT *srcTree, stdMan, pkgMan *Manifest
 	w := p.w
 	stdB := newBuild(w, nil)
 	pkgB := newBuild(w, stdB)
+	fullStd := s.fullStd || s.cfg.StdTests != "" || s.cfg.BrowseStd || s.cfg.KeepSyntax || s.root.kind == rootNone || (!s.forBuild && s.cfg.StdDir != "")
+	s.lastFullStd = fullStd
+	stdB.skipStdTests = !fullStd
+	p.lazyStd = !fullStd
+	p.testing = s.testing
 	if err := stdB.listStd(stdT, stdMan); err != nil {
 		p.diags = append(p.diags, listFailure(stdT, err))
 		return
