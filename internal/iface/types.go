@@ -173,14 +173,14 @@ func (w *walker) writeErrSet(ms []types.ErrorMember) {
 	}
 }
 
+// emptyArgsHash is the constant mk.args hash of an empty generic argument list.
+var emptyArgsHash = source.HashBytes(DomArgs, []byte{0})
+
 // Type is the mk.ty hash of t. Infer and Poison raise an ICE:
 // they never reach a hash. NoType is an ICE too; walks write the zero
 // hash for an absent type themselves.
 func (h *Hasher) Type(t types.TypeID) source.Hash {
-	h.mu.Lock()
-	v, ok := h.tyMemo[t]
-	h.mu.Unlock()
-	if ok {
+	if v, ok := h.tyMemo.get(uint32(t)); ok {
 		return v
 	}
 	if t == types.NoType {
@@ -189,35 +189,31 @@ func (h *Hasher) Type(t types.TypeID) source.Hash {
 	var e Encoder
 	w := walker{e: &e, h: h}
 	w.writeType(h.tab.Get(t))
-	v = e.sum(DomType)
-	h.mu.Lock()
-	h.tyMemo[t] = v
-	h.mu.Unlock()
+	v := e.sum(DomType)
+	h.tyMemo.set(uint32(t), v)
 	return v
 }
 
 // ErrorSet hashes the members in set order (params by index, then errors by
 // key, internal/types' canonical order). The empty set has a hash too.
 func (h *Hasher) ErrorSet(es types.ErrorSetID) source.Hash {
-	h.mu.Lock()
-	v, ok := h.esMemo[es]
-	h.mu.Unlock()
-	if ok {
+	if v, ok := h.esMemo.get(uint32(es)); ok {
 		return v
 	}
 	var e Encoder
 	w := walker{e: &e, h: h}
 	w.writeErrSet(h.tab.Members(es))
-	v = e.sum(DomErrSet)
-	h.mu.Lock()
-	h.esMemo[es] = v
-	h.mu.Unlock()
+	v := e.sum(DomErrSet)
+	h.esMemo.set(uint32(es), v)
 	return v
 }
 
 // GenericArgs is the mk.args hash of a generic argument list: count, then
 // each argument (1 + type hash, or 2 + const arg).
 func (h *Hasher) GenericArgs(a []types.GenericArg) source.Hash {
+	if len(a) == 0 {
+		return emptyArgsHash
+	}
 	var e Encoder
 	w := walker{e: &e, h: h}
 	w.genericArgs(a)

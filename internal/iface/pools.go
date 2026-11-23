@@ -58,7 +58,12 @@ type pools struct {
 	own types.ModuleID
 	// prefer are the anchors tried first when rebasing a span (the record's
 	// own item), before Env.Anchors.Locate.
-	prefer []AnchorKey
+	prefer        []AnchorKey
+	preferDone    bool
+	preferAnchors []poolAnchor
+	lastKey       AnchorKey
+	lastAnchor    Anchor
+	lastLeaf      bool
 
 	strs    []string
 	strIdx  map[string]uint32
@@ -213,6 +218,13 @@ func (p *pools) anchor(k AnchorKey, a Anchor) uint32 {
 	return i
 }
 
+// anchorFastLocator is optionally implemented by Anchors implementations
+// (AnchorSet, driver.anchorLayers) to return the anchor and leaf status in a
+// single lookup without a second map lookup.
+type anchorFastLocator interface {
+	LocateAnchor(file source.FileID, off uint32) (AnchorKey, Anchor, bool, bool)
+}
+
 // span writes a span as (anchor index, start ordinal, start delta, end
 // ordinal, end delta); the zero span is anchor 0 alone. The anchor is the
 // first preferred one whose file and token range hold the start, else
@@ -229,17 +241,36 @@ func (p *pools) span(e *Encoder, sp source.Span) {
 	if p.env.Anchors == nil {
 		source.ICEf(sp, "iface: span stored with no Env.Anchors")
 	}
+	if !p.preferDone {
+		p.preferDone = true
+		for _, k := range p.prefer {
+			if c, ok := p.env.Anchors.Anchor(k); ok {
+				p.preferAnchors = append(p.preferAnchors, poolAnchor{key: k, a: c})
+			}
+		}
+	}
 	var key AnchorKey
 	var a Anchor
 	found := false
-	for _, k := range p.prefer {
-		if c, ok := p.env.Anchors.Anchor(k); ok && c.File == sp.File && c.contains(sp.Start) {
-			key, a, found = k, c, true
+	for i := range p.preferAnchors {
+		pa := &p.preferAnchors[i]
+		if pa.a.File == sp.File && pa.a.contains(sp.Start) {
+			key, a, found = pa.key, pa.a, true
 			break
 		}
 	}
+	if !found && p.lastLeaf && p.lastAnchor.File == sp.File && p.lastAnchor.contains(sp.Start) {
+		key, a, found = p.lastKey, p.lastAnchor, true
+	}
 	if !found {
-		if k, ok := p.env.Anchors.Locate(sp.File, sp.Start); ok {
+		if fl, ok := p.env.Anchors.(anchorFastLocator); ok {
+			if k, c, isLeaf, ok := fl.LocateAnchor(sp.File, sp.Start); ok && c.File == sp.File {
+				key, a, found = k, c, true
+				if isLeaf {
+					p.lastKey, p.lastAnchor, p.lastLeaf = k, c, true
+				}
+			}
+		} else if k, ok := p.env.Anchors.Locate(sp.File, sp.Start); ok {
 			if c, ok := p.env.Anchors.Anchor(k); ok && c.File == sp.File {
 				key, a, found = k, c, true
 			}

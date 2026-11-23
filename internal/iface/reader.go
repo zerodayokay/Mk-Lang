@@ -68,7 +68,31 @@ func decodeRecord(env *Env, b []byte, tag uint64, own ownFunc, body func(r *read
 	if err := r.resolveForeign(); err != nil {
 		return err
 	}
-	// Dry pass: validate every value and the body.
+	// Records that define no own items (FuncResult, EvalRecord, GenOutput,
+	// Types) mutate no item or module table, only interning harmless symbols,
+	// types and consts after per-value validation; decoding them in a single
+	// pass halves warm decode cost.
+	if own == nil {
+		for _, it := range r.items {
+			if it.own {
+				return fmt.Errorf("%w: own item %s in a record that defines none", ErrCorrupt, r.keys[it.key])
+			}
+		}
+		r.dry = false
+		r.tyIDs = make([]types.TypeID, len(r.vals)+1)
+		r.esIDs = make([]types.ErrorSetID, len(r.vals)+1)
+		r.cIDs = make([]types.ConstID, len(r.vals)+1)
+		for i := range r.vals {
+			if err := r.value(uint32(i + 1)); err != nil {
+				return err
+			}
+		}
+		if err := body(r); err != nil {
+			return err
+		}
+		return r.d.Done()
+	}
+	// Dry pass: validate every value and the body before creating own items.
 	r.dry = true
 	r.tyIDs = make([]types.TypeID, len(r.vals)+1)
 	r.esIDs = make([]types.ErrorSetID, len(r.vals)+1)

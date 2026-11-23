@@ -26,6 +26,7 @@ import (
 	"path"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"mk/internal/ast"
 	"mk/internal/iface"
@@ -37,9 +38,10 @@ import (
 // complete after the parse step, and the generated files' anchors, added
 // while modules run.
 type anchorLayers struct {
-	base  *iface.AnchorSet
-	mu    sync.RWMutex
-	extra *iface.AnchorSet
+	base     *iface.AnchorSet
+	hasExtra atomic.Bool
+	mu       sync.RWMutex
+	extra    *iface.AnchorSet
 }
 
 func newAnchorLayers(base *iface.AnchorSet) *anchorLayers {
@@ -50,6 +52,9 @@ func newAnchorLayers(base *iface.AnchorSet) *anchorLayers {
 func (l *anchorLayers) Anchor(k iface.AnchorKey) (iface.Anchor, bool) {
 	if a, ok := l.base.Anchor(k); ok {
 		return a, true
+	}
+	if !l.hasExtra.Load() {
+		return iface.Anchor{}, false
 	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -62,9 +67,25 @@ func (l *anchorLayers) Locate(file source.FileID, off uint32) (iface.AnchorKey, 
 	if k, ok := l.base.Locate(file, off); ok {
 		return k, true
 	}
+	if !l.hasExtra.Load() {
+		return "", false
+	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.extra.Locate(file, off)
+}
+
+// LocateAnchor implements iface's fast single-lookup anchor locator.
+func (l *anchorLayers) LocateAnchor(file source.FileID, off uint32) (iface.AnchorKey, iface.Anchor, bool, bool) {
+	if k, a, leaf, ok := l.base.LocateAnchor(file, off); ok {
+		return k, a, leaf, true
+	}
+	if !l.hasExtra.Load() {
+		return "", iface.Anchor{}, false, false
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.extra.LocateAnchor(file, off)
 }
 
 // addFile adds the anchors of a generated file: its file anchor and its
@@ -76,6 +97,7 @@ func (l *anchorLayers) addFile(sum *iface.ParseSummary) {
 	for _, it := range sum.Items {
 		l.extra.Add(it.Key, it.Anchor)
 	}
+	l.hasExtra.Store(true)
 }
 
 // anchorGen adds the anchors of a generated file f, parsed as a, and

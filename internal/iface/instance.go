@@ -61,6 +61,13 @@ type instFact struct {
 	a, b  source.Hash
 }
 
+// declWorld is optionally implemented by a World whose declarations are frozen
+// (such as driver's packWorld during emitPacks) so InstanceContentHash reuses
+// memoized Decl hashes across parallel pack workers.
+type declWorld interface {
+	DeclHash(it *types.Item) source.Hash
+}
+
 // InstanceContentHash is what the instance's code depends on:
 // mk.instance over the substituted body's mk.body hash, then the sorted
 // external facts the code bakes in: per direct callee and function value
@@ -76,17 +83,44 @@ type instFact struct {
 // An external fact w cannot answer is an ICE: hash form is total, and the
 // driver loads layouts before codegen.
 func (h *Hasher) InstanceContentHash(w World, b *mir.Body) source.Hash {
+	dw, _ := w.(declWorld)
+	declOf := func(it *types.Item) source.Hash {
+		if dw != nil {
+			return dw.DeclHash(it)
+		}
+		return h.Decl(it)
+	}
 	var facts []instFact
-	seenFn := map[source.Hash]bool{}
+	var seenFnBuf [8]source.Hash
+	seenFnN := 0
+	var seenFn map[source.Hash]bool
 	addFn := func(f mir.FnRef) {
 		if f.Item == types.NoItem {
 			return
 		}
 		fh := h.FnRef(types.FnRef{Item: f.Item, Args: b.GenericArgs[f.Args.Start:f.Args.End()]})
-		if seenFn[fh] {
-			return
+		if seenFn != nil {
+			if seenFn[fh] {
+				return
+			}
+			seenFn[fh] = true
+		} else {
+			for k := 0; k < seenFnN; k++ {
+				if seenFnBuf[k] == fh {
+					return
+				}
+			}
+			if seenFnN < len(seenFnBuf) {
+				seenFnBuf[seenFnN] = fh
+				seenFnN++
+			} else {
+				seenFn = make(map[source.Hash]bool, len(seenFnBuf)*2)
+				for k := 0; k < seenFnN; k++ {
+					seenFn[seenFnBuf[k]] = true
+				}
+				seenFn[fh] = true
+			}
 		}
-		seenFn[fh] = true
 		it := h.items.Get(f.Item)
 		if it.Kind == types.KindLiteral {
 			// A fn literal is its content, never its site. Its
@@ -99,12 +133,15 @@ func (h *Hasher) InstanceContentHash(w World, b *mir.Body) source.Hash {
 			facts = append(facts, instFact{class: 1, a: fh, b: h.sig(&fd.Sig, true)})
 			return
 		}
-		facts = append(facts, instFact{class: 1, key: it.Key.String(), a: fh, b: h.Decl(it)})
+		facts = append(facts, instFact{class: 1, key: it.Key.String(), a: fh, b: declOf(it)})
 	}
-	seenItem := map[types.ItemID]bool{}
+	var seenItem map[types.ItemID]bool
 	addRef := func(id types.ItemID) {
 		if id == types.NoItem || seenItem[id] {
 			return
+		}
+		if seenItem == nil {
+			seenItem = map[types.ItemID]bool{}
 		}
 		seenItem[id] = true
 		it := h.items.Get(id)
@@ -127,10 +164,13 @@ func (h *Hasher) InstanceContentHash(w World, b *mir.Body) source.Hash {
 	// with Name "" (errors are not generic). AggError and SelCase name errors
 	// of the set their place or destination has, so the set's members cover
 	// them.
-	seenErr := map[types.ItemID]bool{}
+	var seenErr map[types.ItemID]bool
 	addErr := func(id types.ItemID) {
 		if id == types.NoItem || seenErr[id] {
 			return
+		}
+		if seenErr == nil {
+			seenErr = map[types.ItemID]bool{}
 		}
 		seenErr[id] = true
 		it := h.items.Get(id)
@@ -141,7 +181,7 @@ func (h *Hasher) InstanceContentHash(w World, b *mir.Body) source.Hash {
 		if !ok {
 			source.ICEf(it.Span, "iface: no layout of error %s for an instance hash", it.Key)
 		}
-		facts = append(facts, instFact{class: 4, key: it.Key.String(), a: h.Decl(it), b: lay})
+		facts = append(facts, instFact{class: 4, key: it.Key.String(), a: declOf(it), b: lay})
 	}
 	addErrs := func(es types.ErrorSetID) {
 		for _, m := range h.tab.Members(es) {
@@ -150,13 +190,28 @@ func (h *Hasher) InstanceContentHash(w World, b *mir.Body) source.Hash {
 			}
 		}
 	}
-	seenTy := map[types.TypeID]bool{}
+	var seenTyLow uint64
+	var seenTy map[types.TypeID]bool
 	var addTy func(t types.TypeID)
 	addTy = func(t types.TypeID) {
-		if t == types.NoType || seenTy[t] {
+		if t == types.NoType {
 			return
 		}
-		seenTy[t] = true
+		if t < 64 {
+			bit := uint64(1) << t
+			if seenTyLow&bit != 0 {
+				return
+			}
+			seenTyLow |= bit
+		} else {
+			if seenTy[t] {
+				return
+			}
+			if seenTy == nil {
+				seenTy = map[types.TypeID]bool{}
+			}
+			seenTy[t] = true
+		}
 		ty := h.tab.Get(t)
 		switch ty.Kind {
 		case types.KNamed:

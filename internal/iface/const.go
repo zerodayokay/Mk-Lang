@@ -101,19 +101,14 @@ func (r *reader) readConst(d *Decoder, own uint32) types.ConstValue {
 // Const is the deep mk.const hash of an interned value: a
 // RelocData contributes its pointee's Const hash, a RelocFn its FnRef hash.
 func (h *Hasher) Const(c types.ConstID) source.Hash {
-	h.mu.Lock()
-	v, ok := h.cMemo[c]
-	h.mu.Unlock()
-	if ok {
+	if v, ok := h.cMemo.get(uint32(c)); ok {
 		return v
 	}
 	var e Encoder
 	w := walker{e: &e, h: h}
 	w.writeConst(h.consts.Get(c))
-	v = e.sum(DomConst)
-	h.mu.Lock()
-	h.cMemo[c] = v
-	h.mu.Unlock()
+	v := e.sum(DomConst)
+	h.cMemo.set(uint32(c), v)
 	return v
 }
 
@@ -126,13 +121,22 @@ func (h *Hasher) Const(c types.ConstID) source.Hash {
 // The literal's generic arguments are written because one
 // literal instantiated twice is two functions.
 func (h *Hasher) FnRef(f types.FnRef) source.Hash {
+	if len(f.Args) == 0 {
+		if v, ok := h.plainFnMemo.get(uint32(f.Item)); ok {
+			return v
+		}
+	}
 	it := h.items.Get(f.Item)
 	var e Encoder
 	if it.Kind != types.KindLiteral {
 		e.Uvarint(1)
 		e.String(it.Key.String())
 		e.Hash(h.GenericArgs(f.Args))
-		return e.sum(DomFn)
+		v := e.sum(DomFn)
+		if len(f.Args) == 0 {
+			h.plainFnMemo.set(uint32(f.Item), v)
+		}
+		return v
 	}
 	fd, ok := it.Decl.(*types.FuncDecl)
 	if !ok {

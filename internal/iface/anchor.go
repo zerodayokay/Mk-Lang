@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"mk/internal/source"
 )
@@ -89,12 +90,25 @@ type Anchors interface {
 	Locate(file source.FileID, off uint32) (AnchorKey, bool)
 }
 
+// anchorSpan is one indexed item anchor of a file, sorted by start offset.
+type anchorSpan struct {
+	key      AnchorKey
+	anchor   Anchor
+	start    uint32
+	end      uint32
+	maxEnd   uint32
+	hasChild bool // true if another item anchor in the file overlaps [start, end]
+}
+
 // AnchorSet is an Anchors over anchors added one by one. Not safe for
 // concurrent Add; safe for concurrent reads after the last Add.
 type AnchorSet struct {
 	m      map[AnchorKey]Anchor
 	byFile map[source.FileID][]AnchorKey
 	file   map[source.FileID]AnchorKey
+
+	once    sync.Once
+	indexed map[source.FileID][]anchorSpan
 }
 
 // NewAnchorSet returns an empty set.
@@ -117,6 +131,60 @@ func (s *AnchorSet) Add(k AnchorKey, a Anchor) {
 		}
 	}
 	s.m[k] = a
+	s.once = sync.Once{}
+	s.indexed = nil
+}
+
+// buildIndex builds the sorted interval index per file once on first Locate.
+func (s *AnchorSet) buildIndex() {
+	idx := make(map[source.FileID][]anchorSpan, len(s.byFile))
+	for file, keys := range s.byFile {
+		es := make([]anchorSpan, 0, len(keys))
+		for _, k := range keys {
+			a := s.m[k]
+			if len(a.Starts) == 0 {
+				continue
+			}
+			es = append(es, anchorSpan{
+				key:    k,
+				anchor: a,
+				start:  a.Starts[0],
+				end:    a.Ends[len(a.Ends)-1],
+			})
+		}
+		slices.SortFunc(es, func(a, b anchorSpan) int {
+			if a.start != b.start {
+				if a.start < b.start {
+					return -1
+				}
+				return 1
+			}
+			if a.end != b.end {
+				if a.end > b.end {
+					return -1
+				}
+				return 1
+			}
+			return strings.Compare(string(a.key), string(b.key))
+		})
+		var maxEnd uint32
+		for i := range es {
+			if i > 0 && maxEnd >= es[i].start {
+				es[i].hasChild = true
+				for j := i - 1; j >= 0 && es[j].maxEnd >= es[i].start; j-- {
+					if es[j].end >= es[i].start {
+						es[j].hasChild = true
+					}
+				}
+			}
+			if i == 0 || es[i].end > maxEnd {
+				maxEnd = es[i].end
+			}
+			es[i].maxEnd = maxEnd
+		}
+		idx[file] = es
+	}
+	s.indexed = idx
 }
 
 // Anchor returns the anchor of k.
@@ -125,26 +193,42 @@ func (s *AnchorSet) Anchor(k AnchorKey) (Anchor, bool) {
 	return a, ok
 }
 
+// LocateAnchor returns the smallest item anchor of file containing off (ties by
+// key bytes), else the file anchor, along with the anchor itself and whether
+// it is a non-overlapping leaf item anchor (safe to cache across consecutive
+// spans in the same range).
+func (s *AnchorSet) LocateAnchor(file source.FileID, off uint32) (AnchorKey, Anchor, bool, bool) {
+	s.once.Do(s.buildIndex)
+	es := s.indexed[file]
+	if len(es) > 0 {
+		idx := sort.Search(len(es), func(i int) bool { return es[i].start > off })
+		var best int
+		var bestLen uint64
+		found := false
+		for i := idx - 1; i >= 0 && es[i].maxEnd >= off; i-- {
+			if off > es[i].end {
+				continue
+			}
+			n := uint64(es[i].end - es[i].start)
+			if !found || n < bestLen || (n == bestLen && es[i].key < es[best].key) {
+				best, bestLen, found = i, n, true
+			}
+		}
+		if found {
+			e := &es[best]
+			return e.key, e.anchor, !e.hasChild, true
+		}
+	}
+	if k, ok := s.file[file]; ok {
+		return k, s.m[k], false, true
+	}
+	return "", Anchor{}, false, false
+}
+
 // Locate returns the smallest item anchor of file containing off (ties by
 // key bytes), else the file anchor.
 func (s *AnchorSet) Locate(file source.FileID, off uint32) (AnchorKey, bool) {
-	var best AnchorKey
-	var bestLen uint64
-	found := false
-	for _, k := range s.byFile[file] {
-		a := s.m[k]
-		if !a.contains(off) {
-			continue
-		}
-		n := uint64(a.Ends[len(a.Ends)-1] - a.Starts[0])
-		if !found || n < bestLen || (n == bestLen && k < best) {
-			best, bestLen, found = k, n, true
-		}
-	}
-	if found {
-		return best, true
-	}
-	k, ok := s.file[file]
+	k, _, _, ok := s.LocateAnchor(file, off)
 	return k, ok
 }
 

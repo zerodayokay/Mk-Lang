@@ -49,7 +49,7 @@ func (w *world) prekeysFor(u *codegen.Unit, tools *toolchain.Tools, st *cache.St
 		return nil
 	}
 	pk := &preKeys{w: w, tools: tools, world: newPackWorld(w)}
-	if ie := source.Guard("pack keys", source.Span{}, func() { pk.unit = w.unitDigest(u) }); ie != nil {
+	if ie := source.Guard("pack keys", source.Span{}, func() { pk.unit = w.unitDigestInto(u, pk.world.decls) }); ie != nil {
 		return nil
 	}
 	return pk
@@ -65,10 +65,13 @@ func (w *world) prekeysFor(u *codegen.Unit, tools *toolchain.Tools, st *cache.St
 // an edit that adds or removes an instance, or changes a flag of one,
 // misses every pack; an edit of one body keeps the others.
 func (w *world) unitDigest(u *codegen.Unit) source.Hash {
+	return w.unitDigestInto(u, map[types.ItemID]source.Hash{})
+}
+
+func (w *world) unitDigestInto(u *codegen.Unit, decls map[types.ItemID]source.Hash) source.Hash {
 	hs := w.sem5.hash
 	h := source.NewHasher("mk.driver.prekey.unit.v1")
 	h.Uvarint(uint64(len(u.Funcs)))
-	decls := map[types.ItemID]source.Hash{}
 	for i := range u.Funcs {
 		f := &u.Funcs[i]
 		it := w.items.Get(f.Item)
@@ -95,7 +98,12 @@ func (w *world) unitDigest(u *codegen.Unit) source.Hash {
 	for _, gl := range u.Globals {
 		it := w.items.Get(gl.Item)
 		h.String(it.Key.String())
-		h.Hash(hs.Decl(it))
+		d, ok := decls[gl.Item]
+		if !ok {
+			d = hs.Decl(it)
+			decls[gl.Item] = d
+		}
+		h.Hash(d)
 		switch d := it.Decl.(type) {
 		case *types.GlobalDecl:
 			h.Hash(hs.Type(d.Type))
@@ -213,16 +221,33 @@ func memoVerify(st *cache.Store, pre, obj source.Hash) *diag.Diagnostic {
 // IR changed. An error item's part is the same closure from its fields.
 type packWorld struct {
 	w       *world
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	shallow map[types.TypeID]source.Hash
 	errs    map[types.ItemID]source.Hash
 	deep    map[types.TypeID]source.Hash
 	deepErr map[types.ItemID]source.Hash
+	decls   map[types.ItemID]source.Hash
 }
 
 func newPackWorld(w *world) *packWorld {
 	return &packWorld{w: w, shallow: map[types.TypeID]source.Hash{}, errs: map[types.ItemID]source.Hash{},
-		deep: map[types.TypeID]source.Hash{}, deepErr: map[types.ItemID]source.Hash{}}
+		deep: map[types.TypeID]source.Hash{}, deepErr: map[types.ItemID]source.Hash{},
+		decls: map[types.ItemID]source.Hash{}}
+}
+
+// DeclHash memoizes Hasher.Decl for frozen declarations during emitPacks.
+func (pw *packWorld) DeclHash(it *types.Item) source.Hash {
+	pw.mu.RLock()
+	h, ok := pw.decls[it.ID]
+	pw.mu.RUnlock()
+	if ok {
+		return h
+	}
+	h = pw.w.sem5.hash.Decl(it)
+	pw.mu.Lock()
+	pw.decls[it.ID] = h
+	pw.mu.Unlock()
+	return h
 }
 
 // Part answers no read by key: InstanceContentHash asks LayoutPart.
@@ -242,17 +267,17 @@ const (
 
 // LayoutPart is the deep layout part of t, or of the error e.
 func (pw *packWorld) LayoutPart(t types.TypeID, e types.ItemID) (source.Hash, bool) {
-	pw.mu.Lock()
+	pw.mu.RLock()
 	if t != types.NoType {
 		if h, ok := pw.deep[t]; ok {
-			pw.mu.Unlock()
+			pw.mu.RUnlock()
 			return h, true
 		}
 	} else if h, ok := pw.deepErr[e]; ok {
-		pw.mu.Unlock()
+		pw.mu.RUnlock()
 		return h, true
 	}
-	pw.mu.Unlock()
+	pw.mu.RUnlock()
 	var parts []source.Hash
 	seenT := map[types.TypeID]bool{}
 	seenE := map[types.ItemID]bool{}
@@ -371,9 +396,9 @@ func (pw *packWorld) LayoutPart(t types.TypeID, e types.ItemID) (source.Hash, bo
 
 // namedFact is one named type's own facts in a deep part.
 func (pw *packWorld) namedFact(t types.TypeID) source.Hash {
-	pw.mu.Lock()
+	pw.mu.RLock()
 	h, ok := pw.shallow[t]
-	pw.mu.Unlock()
+	pw.mu.RUnlock()
 	if ok {
 		return h
 	}
@@ -383,7 +408,7 @@ func (pw *packWorld) namedFact(t types.TypeID) source.Hash {
 	x := source.NewHasher("mk.driver.prekey.named.v1")
 	x.Hash(hs.Type(t))
 	x.Hash(hs.Layout(&l))
-	x.Hash(hs.Decl(it))
+	x.Hash(pw.DeclHash(it))
 	x.String(fmt.Sprintf("%+v", w.sem5.chk.Facts(t)))
 	h = x.Sum()
 	pw.mu.Lock()
@@ -395,16 +420,16 @@ func (pw *packWorld) namedFact(t types.TypeID) source.Hash {
 // errFact is one error item's own facts in a deep part: its key and its
 // mk.decl.v1 hash.
 func (pw *packWorld) errFact(e types.ItemID) source.Hash {
-	pw.mu.Lock()
+	pw.mu.RLock()
 	h, ok := pw.errs[e]
-	pw.mu.Unlock()
+	pw.mu.RUnlock()
 	if ok {
 		return h
 	}
 	it := pw.w.items.Get(e)
 	x := source.NewHasher("mk.driver.prekey.error.v1")
 	x.String(it.Key.String())
-	x.Hash(pw.w.sem5.hash.Decl(it))
+	x.Hash(pw.DeclHash(it))
 	h = x.Sum()
 	pw.mu.Lock()
 	pw.errs[e] = h

@@ -97,7 +97,13 @@ type Encoder struct {
 }
 
 // Uvarint writes u in unsigned LEB128.
-func (e *Encoder) Uvarint(u uint64) { e.buf = binary.AppendUvarint(e.buf, u) }
+func (e *Encoder) Uvarint(u uint64) {
+	if u < 0x80 {
+		e.buf = append(e.buf, byte(u))
+		return
+	}
+	e.buf = binary.AppendUvarint(e.buf, u)
+}
 
 // Varint writes i zigzag-encoded as a uvarint.
 func (e *Encoder) Varint(i int64) { e.buf = binary.AppendVarint(e.buf, i) }
@@ -245,7 +251,19 @@ func (d *Decoder) Count(min int) int {
 }
 
 // String reads a length-prefixed string.
-func (d *Decoder) String() string { return string(d.Bytes()) }
+func (d *Decoder) String() string {
+	n := d.Uvarint()
+	if d.Err != nil {
+		return ""
+	}
+	if n > uint64(len(d.buf)-d.off) {
+		d.fail("length %d exceeds remaining bytes", n)
+		return ""
+	}
+	s := string(d.buf[d.off : d.off+int(n)])
+	d.off += int(n)
+	return s
+}
 
 // Bytes reads a length-prefixed byte string; the result is a copy.
 func (d *Decoder) Bytes() []byte {
