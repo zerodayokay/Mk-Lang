@@ -44,8 +44,9 @@ func (p *pipeline) startWalk(b *build) {
 		defer close(t.done)
 		if ie := source.Guard("instance-limit walk", source.Span{}, func() {
 			start := time.Now()
+			t.ds = append(t.ds, w.front.joinCompute()...)
 			w.front.joinWrites() // the walk keys read the stores' ifKey
-			t.ds = w.walk(b, nil)
+			t.ds = append(t.ds, w.walk(b, nil)...)
 			t.ds = append(t.ds, w.front.join()...)
 			t.took = time.Since(start)
 		}); ie != nil {

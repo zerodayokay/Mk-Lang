@@ -116,6 +116,7 @@ func (s *Session) Build(out string) (Result, []string, error) {
 	s.forBuild = true
 	s.startTools()
 	defer s.joinTools()
+	defer s.joinNativePrep()
 	if r, paths, ok := s.tryFastBuild(out); ok {
 		return r, paths, nil
 	}

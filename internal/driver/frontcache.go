@@ -41,6 +41,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -60,9 +61,10 @@ import (
 // world (--no-cache, a corpus session, a test hook that changes what a
 // stage computes, or a store that does not open).
 type frontCache struct {
-	st      *cache.Store
-	ctx     source.Hash   // the build ID, target and profile (context)
-	anchors *anchorLayers // the parse summaries' and the generated files' (genref.go)
+	st          *cache.Store
+	noManifests bool          // true when <cache>/v1/manifest did not exist at startFront (cold cache)
+	ctx         source.Hash   // the build ID, target and profile (context), initialized in anchorFiles
+	anchors     *anchorLayers // the parse summaries' and the generated files' (genref.go)
 	// bodyHashes memoizes a ReadBody's hash per MIR body (genref.go): every
 	// module a generator ran in reads the generator's bodies.
 	bodyHashes sync.Map
@@ -131,11 +133,8 @@ func (w *world) startFront(dir string) {
 	if st == nil {
 		return
 	}
-	c := source.NewHasher("mk.driver.front.v1")
-	c.Hash(w.buildID())
-	c.String(w.cfg.Target.Name)
-	c.Uvarint(uint64(w.cfg.Profile))
-	w.front = &frontCache{st: st, ctx: c.Sum(), verify: w.cfg.CacheVerify, writeDelay: h.StoreWritesDelay}
+	_, err := os.Stat(filepath.Join(dir, "v1", string(cache.KindManifest)))
+	w.front = &frontCache{st: st, noManifests: err != nil, verify: w.cfg.CacheVerify, writeDelay: h.StoreWritesDelay}
 }
 
 // anchorFiles gives every parsed file of the builds its file anchor, after
@@ -157,6 +156,11 @@ func (fc *frontCache) anchorFiles(w *world, builds []*build) {
 		}
 	}
 	fc.anchors = newAnchorLayers(set)
+	c := source.NewHasher("mk.driver.front.v1")
+	c.Hash(w.buildID())
+	c.String(w.cfg.Target.Name)
+	c.Uvarint(uint64(w.cfg.Profile))
+	fc.ctx = c.Sum()
 	fc.ctx = fc.stdContext(w, builds)
 	if w.libcBuild() {
 		// A system-libc build folds std.sys.LibcBuild() to true, so
@@ -211,6 +215,13 @@ func (fc *frontCache) skip(m *modNode, why string) {
 	fc.mu.Lock()
 	fc.notStored = append(fc.notStored, m.path+": "+why)
 	fc.mu.Unlock()
+}
+
+// copyNotStored returns a snapshot of the recorded not-stored reasons.
+func (fc *frontCache) copyNotStored() []string {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	return append([]string(nil), fc.notStored...)
 }
 
 // closure is m's transitive dependency closure, in slot order of each

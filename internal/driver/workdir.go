@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"mk/internal/cache"
 	"mk/internal/diag"
@@ -180,8 +181,28 @@ func (w *world) buildCPU(ctx context.Context, tools *toolchain.Tools, st *cache.
 		}
 	}
 	w.cpuRuns++
+	// When want != "native" on hosted x86_64, ResolveCPU and cpuFloor(want) are
+	// independent clang invocations. Run cpuFloor concurrently so a valid --cpu
+	// pays one clang startup instead of two; if ResolveCPU fails we still return
+	// ResolveCPU's diagnostic.
+	var floorCh chan *diag.Diagnostic
+	if want != toolchain.CPUNative && w.cfg.Target.Arch == types.ArchX64 && !isFree(w.cfg.Target) {
+		floorCh = make(chan *diag.Diagnostic, 1)
+		var fd *diag.Diagnostic
+		go func() {
+			defer func() { floorCh <- fd }()
+			if ie := source.Guard("cpu floor", source.Span{}, func() {
+				fd = w.cpuFloor(ctx, tools, triple, want, want)
+			}); ie != nil {
+				fd = diag.FromInternal(ie)
+			}
+		}()
+	}
 	name, err := tools.ResolveCPU(ctx, triple, want)
 	if err != nil {
+		if floorCh != nil {
+			<-floorCh
+		}
 		var te *toolchain.ToolError
 		if errors.As(err, &te) && te.Started() && !te.Cancelled && te.Signal == "" {
 			msg := fmt.Sprintf("clang does not accept the CPU %q for %s (--cpu=%s)", want, w.cfg.Target.Name, want)
@@ -190,14 +211,90 @@ func (w *world) buildCPU(ctx context.Context, tools *toolchain.Tools, st *cache.
 		}
 		return "", toolErr(err, fmt.Sprintf("cannot resolve --cpu=%s for %s", want, w.cfg.Target.Name)).Text("flag", "--cpu")
 	}
-	if d := w.cpuFloor(ctx, tools, triple, want, name); d != nil {
-		return "", d
+	var floorDiag *diag.Diagnostic
+	if floorCh != nil {
+		floorDiag = <-floorCh
+		if name != want {
+			floorDiag = w.cpuFloor(ctx, tools, triple, want, name)
+		}
+	} else {
+		floorDiag = w.cpuFloor(ctx, tools, triple, want, name)
+	}
+	if floorDiag != nil {
+		return "", floorDiag
 	}
 	if st != nil && want != toolchain.CPUNative {
 		_ = st.Put(cache.KindLayout, key, []byte(name))
 	}
 	w.cpuName = name
 	return name, nil
+}
+
+// startNativePrep overlaps clang target-layout probing and explicit --cpu
+// resolution with runCheck on mk build, once startTools finishes. Both results
+// are memoized on w under probeMu/cpuMu so world.native reuses them without
+// running clang again.
+func (s *Session) startNativePrep(w *world) {
+	if s.prepDone != nil {
+		return
+	}
+	tools := s.cfg.Tools
+	discDone := s.disc.done
+	if tools == nil && discDone == nil {
+		return
+	}
+	var st *cache.Store
+	if !s.cfg.NoCache {
+		st = w.openStore(s.cacheDir())
+	}
+	triple := s.cfg.Target.LLVMTriple
+	hasCPU := w.cfg.CPU != ""
+	done := make(chan struct{})
+	s.prepDone = done
+	go func() {
+		defer close(done)
+		_ = source.Guard("native prep", source.Span{}, func() {
+			t := tools
+			if t == nil {
+				<-discDone
+				if s.disc.err != nil {
+					return
+				}
+				t = s.disc.t
+			}
+			if t == nil {
+				return
+			}
+			ctx := context.Background()
+			if !hasCPU {
+				_, _ = w.probe(ctx, t, st, triple)
+				return
+			}
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_ = source.Guard("probe", source.Span{}, func() {
+					_, _ = w.probe(ctx, t, st, triple)
+				})
+			}()
+			go func() {
+				defer wg.Done()
+				_ = source.Guard("build cpu", source.Span{}, func() {
+					_, _ = w.buildCPU(ctx, t, st, triple)
+				})
+			}()
+			wg.Wait()
+		})
+	}()
+}
+
+// joinNativePrep waits for startNativePrep if one was launched.
+func (s *Session) joinNativePrep() {
+	if s.prepDone != nil {
+		<-s.prepDone
+		s.prepDone = nil
+	}
 }
 
 // cpuKey is the store key of an explicit --cpu name clang accepted:

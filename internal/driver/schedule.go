@@ -193,6 +193,9 @@ func (b *build) pipelineAll(checkOn bool) {
 		}
 		b.checkModule(m)
 		m.dropNames()
+		if m.info != nil {
+			m.genKnown, m.genLines = true, len(m.info.Gens)
+		}
 		if fc != nil {
 			b.store(m)
 		}

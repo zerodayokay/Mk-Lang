@@ -533,11 +533,12 @@ func (b *build) parseAll() []*diag.Diagnostic {
 	keys := make([]source.Hash, len(files))
 	encs := make([][]byte, len(files))
 	put := make([]bool, len(files))
+	coldParse := fc != nil && fc.noManifests && !fc.verify
 	faults := b.w.parallel(len(files), func(i int) string { return "parse " + files[i].f.src.Path }, func(i int) {
 		m, f := files[i].m, files[i].f
 		var key source.Hash
 		var stored []byte
-		if fc != nil {
+		if fc != nil && !coldParse {
 			var content source.Hash
 			key, content = fc.parseSummaryKeyOf(b.w, m, f)
 			keys[i] = key
@@ -555,7 +556,17 @@ func (b *build) parseAll() []*diag.Diagnostic {
 		}
 		slots[i], encs[i], put[i] = b.parseFile(f, key, stored)
 	})
-	faults = append(faults, b.storeParseIndexes(mods, keys, encs, put)...)
+	if coldParse {
+		// On a cold cache build, defer key computation (which joins async
+		// buildID) and parse-index writes to storeParseIndexes.
+		fNodes := make([]*fileNode, len(files))
+		for i, j := range files {
+			fNodes[i] = j.f
+		}
+		faults = append(faults, b.storeParseIndexesCold(mods, fNodes, encs, put)...)
+	} else {
+		faults = append(faults, b.storeParseIndexes(mods, keys, encs, put)...)
+	}
 	releaseParseIndexes(mods)
 	var out []*diag.Diagnostic
 	for i, j := range files {

@@ -83,8 +83,9 @@ type Session struct {
 	// as testing for the Main rule, with no runner.
 	prop bool
 	// disc is the toolchain discovery a native command starts before its
-	// check (startTools).
-	disc discovery
+	// check (startTools); prepDone joins startNativePrep (workdir.go).
+	disc     discovery
+	prepDone chan struct{}
 	// cres is clang's resource directory, once asked (cimport.go).
 	cres string
 	// lsp is lspapi.go's memo of the last Check's answers, dropped when a
@@ -323,8 +324,23 @@ func (s *Session) runCheck() Result {
 	s.p, s.pkgB, s.pkgMan, s.deps, s.depBs = p, nil, nil, nil, nil
 	p.guard("check "+s.root.name, func() {
 		w.startFront(s.cacheDir())
+		if w.front != nil {
+			w.front.deferWrites = s.deferWalk
+		}
+		if s.deferWalk && s.cfg.Target.Built && s.cfg.TestHooks.OnStage == nil {
+			s.startNativePrep(w)
+		}
 		s.check(p)
 	})
+	if p.tail == nil {
+		// No deferred walk outlives runCheck: drain any background store writes
+		// (e.g. deferred parse-index writes after an early parse error) and the
+		// async buildID hash before returning.
+		p.diags = append(p.diags, w.front.join()...)
+		if w.store.idDone != nil {
+			<-w.store.idDone
+		}
+	}
 	s.localizeDiags(p.diags) // a dependency by its local name (deps_walk.go)
 	// The manifest step's notes (an older-layout vendor/, an ignored members
 	// or replace) are the pipeline's, so every result of it carries them:
@@ -511,13 +527,18 @@ func (p *pipeline) modules(testPrelude, checkOn bool, builds ...*build) {
 		// writes first (walktail.go), so they need not end the stage.
 		w.front.deferWrites = p.deferWalk
 	}
+	deferCompute := p.deferWalk && w.front != nil && !w.front.verify && len(p.gro) == 0
 	p.timed("signatures, bodies, flow", func() {
 		for _, b := range builds {
 			b.pipelineAll(checkOn)
 		}
 		// Every store is encoded by now, and written unless deferWrites
 		// (lazybody.go); a hit's function results are decoded when read.
-		p.diags = append(p.diags, w.front.joinCompute()...)
+		// On a clean Build with deferred walk, store encoding finishes beside
+		// native and is joined before the walk reads m.ifKey (walktail.go).
+		if !deferCompute {
+			p.diags = append(p.diags, w.front.joinCompute()...)
+		}
 	})
 	for _, b := range builds {
 		p.diags = append(p.diags, b.stageDiags()...)
@@ -535,6 +556,7 @@ func (p *pipeline) modules(testPrelude, checkOn bool, builds ...*build) {
 			p.startWalk(builds[len(builds)-1]) // joined by Build (walktail.go)
 		} else {
 			p.timed("instance-limit walk", func() {
+				p.diags = append(p.diags, w.front.joinCompute()...)
 				w.front.joinWrites() // the walk keys read the stores' ifKey
 				p.diags = append(p.diags, w.walk(builds[len(builds)-1], p.diags)...)
 				p.diags = append(p.diags, w.groWalk(builds[len(builds)-1], p.gro, p.diags)...)
@@ -596,7 +618,7 @@ func (p *pipeline) result(w *world, max int) Result {
 		tr.ModulesWalked = append(tr.ModulesWalked, b.trace.ModulesWalked...)
 	}
 	if w.front != nil {
-		tr.NotStored = append(tr.NotStored, w.front.notStored...)
+		tr.NotStored = append(tr.NotStored, w.front.copyNotStored()...)
 		p.diags = append(p.diags, w.front.takeVerify()...)
 	}
 	w.packs.into(tr)
