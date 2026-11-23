@@ -989,6 +989,37 @@ func (p *rangePass) refineStep(st []ival, k int32, r *mir.Rvalue, nw wi, depth i
 	case r.A.Kind == mir.OpImm && (!sub || p.mut == mutStepCMinusA):
 		a, imm = p.defB[k], r.A
 	default:
+		// Two-local exact step: t = a + b or t = a - b (checked or proved).
+		// refine already verified both operands still hold the versions read
+		// by r; invert in exact 128-bit arithmetic so narrowing t (e.g. from
+		// a slice bounds check on base + off) narrows both operands.
+		if p.mut == mutStepWrap && (r.Bin == mir.AddWrap || r.Bin == mir.SubWrap) {
+			return true
+		}
+		da, db := p.defA[k], p.defB[k]
+		if da < 0 || db < 0 || da == k || db == k {
+			return true
+		}
+		ai := p.info[da].load(st[da])
+		bi := p.info[db].load(st[db])
+		var na, nb wi
+		if sub {
+			na = wi{nw.lo.add(bi.lo), nw.hi.add(bi.hi)}
+			nb = wi{ai.lo.sub(nw.hi), ai.hi.sub(nw.lo)}
+		} else {
+			na = wi{nw.lo.sub(bi.hi), nw.hi.sub(bi.lo)}
+			nb = wi{nw.lo.sub(ai.hi), nw.hi.sub(ai.lo)}
+		}
+		if na.lo.cmp(ai.lo) > 0 || na.hi.cmp(ai.hi) < 0 {
+			if !p.refineTo(st, da, na, depth) {
+				return false
+			}
+		}
+		if nb.lo.cmp(bi.lo) > 0 || nb.hi.cmp(bi.hi) < 0 {
+			if !p.refineTo(st, db, nb, depth) {
+				return false
+			}
+		}
 		return true
 	}
 	if a < 0 || a == k && p.mut != mutStepSelf {

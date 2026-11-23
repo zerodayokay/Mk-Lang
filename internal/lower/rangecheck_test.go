@@ -824,7 +824,7 @@ var pcKernelWant = map[string]string{
 	"nbody/mk":        "nbody/mk: off add=15 sub=10 mul=29 nowrap=0 casts=1 bounds=49/49 | on add=13 sub=10 mul=29 nowrap=2 casts=1 bounds=6/49 | fold bounds=6/49",
 	"sieve/mk":        "sieve/mk: off add=6 sub=0 mul=1 nowrap=0 casts=0 bounds=5/5 | on add=4 sub=0 mul=1 nowrap=2 casts=0 bounds=2/5 | fold bounds=2/5",
 	"sieve/mkwrap":    "sieve/mkwrap: off add=3 sub=0 mul=1 nowrap=0 casts=0 bounds=5/5 | on add=3 sub=0 mul=1 nowrap=0 casts=0 bounds=2/5 | fold bounds=2/5",
-	"sortints/mk":     "sortints/mk: off add=47 sub=51 mul=6 nowrap=0 casts=6 bounds=102/102 | on add=33 sub=23 mul=2 nowrap=46 casts=2 bounds=42/102 | fold bounds=42/102",
+	"sortints/mk":     "sortints/mk: off add=47 sub=51 mul=6 nowrap=0 casts=6 bounds=102/102 | on add=31 sub=22 mul=2 nowrap=49 casts=2 bounds=42/102 | fold bounds=42/102",
 	"spectralnorm/mk": "spectralnorm/mk: off add=9 sub=0 mul=6 nowrap=0 casts=1 bounds=10/10 | on add=9 sub=0 mul=6 nowrap=0 casts=1 bounds=3/10 | fold bounds=3/10",
 }
 
@@ -906,5 +906,103 @@ func TestPC_SubMulNoWrap(t *testing.T) {
 		if !strings.Contains(got, c.want) || strings.Contains(got, c.not) {
 			t.Errorf("want %s and no %s in\n%s", c.want, c.not, got)
 		}
+	}
+}
+
+// TestPC_TwoOpRefineStep verifies interval inversion through two-local exact
+// additions and subtractions (t = a + b, t = a - b), including soundness
+// against wrapping arithmetic, stale operands, and overflow traps.
+func TestPC_TwoOpRefineStep(t *testing.T) {
+	// Indexing s[base + b] narrows base via s.Len() <= 2^56/8, proving
+	// subsequent base + c and base + a cannot overflow (vm Exec pattern).
+	vmLike := `
+F(s: mut []i64, base: int, a: u8, b: u8, c: u8) {
+	ia := int(a)
+	ib := int(b)
+	ic := int(c)
+	s[base + ia] = s[base + ib] +% s[base + ic]
+}
+`
+	got := pcLower(t, vmLike, pcOpt{})
+	if c := got.counts("F"); c.add != 1 || c.nowrap != 2 {
+		t.Errorf("vmLike: got add=%d nowrap=%d, want add=1 nowrap=2\n%s", c.add, c.nowrap, got.print("F"))
+	}
+
+	// Same for subtraction: s[base - ib] bounds base, proving base - ic no-wrap.
+	subLike := `
+F(s: []i64, base: int, b: u8, c: u8): i64 {
+	ib := int(b)
+	ic := int(c)
+	return s[base - ib] +% s[base - ic]
+}
+`
+	gotSub := pcLower(t, subLike, pcOpt{})
+	if c := gotSub.counts("F"); c.sub != 1 || c.nowrap != 1 {
+		t.Errorf("subLike: got sub=%d nowrap=%d, want sub=1 nowrap=1\n%s", c.sub, c.nowrap, gotSub.print("F"))
+	}
+
+	// Eval equivalence on edge inputs: wrapping +% must NOT narrow base,
+	// stale overwrite of base must NOT narrow the new base, and actual
+	// overflow on base + b must still trap identically.
+	for _, tc := range []struct {
+		name, src string
+		wantPanic bool
+	}{
+		{
+			name: "wrap-must-not-refine",
+			src: pvV + `
+H(): int {
+	var a: [4]int = [1, 2, 3, 4]
+	s := a[0..V(4)]
+	base := V(9223372036854775807)
+	off := V(-9223372036854775807)
+	x := s[base +% off]
+	return x + (base + V(1))
+}
+`,
+			wantPanic: true,
+		},
+		{
+			name: "stale-base-must-not-refine",
+			src: pvV + `
+H(): int {
+	var a: [4]int = [1, 2, 3, 4]
+	s := a[0..V(4)]
+	var base := V(0)
+	off := V(1)
+	t := base + off
+	base = V(9223372036854775807)
+	if t < s.Len() {
+		return base + off
+	}
+	return 0
+}
+`,
+			wantPanic: true,
+		},
+		{
+			name: "exact-add-ok",
+			src: pvV + `
+H(): int {
+	var a: [8]i64 = [10, 20, 30, 40, 50, 60, 70, 80]
+	s := a[0..V(8)]
+	base := V(2)
+	b := Cast[u8](V(1))
+	c := Cast[u8](V(3))
+	return Cast[int](s[base + int(b)] +% s[base + int(c)])
+}
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			off := pcEval(t, tc.src, func(c *Config) { c.NoRanges = true })
+			on := pcEval(t, tc.src, nil)
+			if on != off {
+				t.Fatalf("eval mismatch: on=%q off=%q", on, off)
+			}
+			if tc.wantPanic && !strings.Contains(on, "panic") {
+				t.Fatalf("expected panic, got %q", on)
+			}
+		})
 	}
 }

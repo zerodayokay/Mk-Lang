@@ -302,7 +302,7 @@ var piKernelWant = map[string]string{
 	"nbody/mk":        "inlined 0 | off add=13 sub=10 mul=29 nowrap=2 casts=1 bounds=6/49 | on add=13 sub=10 mul=29 nowrap=2 casts=1 bounds=6/49",
 	"sieve/mk":        "inlined 0 | off add=4 sub=0 mul=1 nowrap=2 casts=0 bounds=2/5 | on add=4 sub=0 mul=1 nowrap=2 casts=0 bounds=2/5",
 	"sieve/mkwrap":    "inlined 0 | off add=3 sub=0 mul=1 nowrap=0 casts=0 bounds=2/5 | on add=3 sub=0 mul=1 nowrap=0 casts=0 bounds=2/5",
-	"sortints/mk":     "inlined 0 | off add=33 sub=23 mul=2 nowrap=46 casts=2 bounds=42/102 | on add=33 sub=23 mul=2 nowrap=46 casts=2 bounds=42/102",
+	"sortints/mk":     "inlined 0 | off add=31 sub=22 mul=2 nowrap=49 casts=2 bounds=42/102 | on add=31 sub=22 mul=2 nowrap=49 casts=2 bounds=42/102",
 	"spectralnorm/mk": "inlined 2 | off add=9 sub=0 mul=6 nowrap=0 casts=1 bounds=3/10 | on add=9 sub=0 mul=8 nowrap=10 casts=1 bounds=3/10",
 }
 
