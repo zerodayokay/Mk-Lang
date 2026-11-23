@@ -84,12 +84,9 @@ const (
 	verMaxDepth   = 6       // definitions followed back from one operand
 )
 
-// VersionLoops is b with its bounds versions (unless opt.NoBounds) and
-// then its reduction versions (unless opt.NoReduce), or b itself when
-// no loop qualifies. b is never modified: a new body shares none of the
-// slices it appends to. b must be an instance body (GenericCount 0) that
-// borrow accepted; cfg gives the type and const tables. With cfg.NoRanges
-// it returns b.
+// VersionLoops returns b with accumulator tail-recursion elimination
+// (rectre.go), bounds versions (!opt.NoBounds), and reduction versions
+// (!opt.NoReduce), leaving b unmodified. b must be an instance body.
 func VersionLoops(cfg *Config, b *mir.Body, opt VersionOptions) *mir.Body {
 	out, _, _ := versionLoops(cfg, b, opt)
 	return out
@@ -97,10 +94,13 @@ func VersionLoops(cfg *Config, b *mir.Body, opt VersionOptions) *mir.Body {
 
 // versionLoops is VersionLoops, and how many loops each rewrite versioned.
 func versionLoops(cfg *Config, b *mir.Body, opt VersionOptions) (out *mir.Body, bounds, reduce int) {
-	if cfg.NoRanges || b == nil || b.GenericCount != 0 || len(b.Blocks) > verMaxBlocks || !hasLatch(b) {
+	if cfg.NoRanges || b == nil || b.GenericCount != 0 || len(b.Blocks) > verMaxBlocks {
 		return b, 0, 0
 	}
-	out = b
+	out = elimAccTailRec(cfg, b, opt)
+	if !hasLatch(out) || len(out.Blocks) > verMaxBlocks {
+		return out, 0, 0
+	}
 	if !opt.NoBounds {
 		out, bounds = versionBounds(cfg, out, opt.mut)
 	}
