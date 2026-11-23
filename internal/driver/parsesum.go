@@ -448,11 +448,11 @@ func (b *build) storeParseIndexes(mods []*modNode, keys []source.Hash, encs [][]
 	})
 }
 
-// storeParseIndexesCold computes parse summary keys (joining async buildID)
-// and writes the parse indexes for a cold cache build. Under fc.deferWrites
-// both key computation and disk writes run in the background beside later
+// storeParseIndexesCold encodes summaries, computes parse summary keys
+// (joining async buildID), and writes the parse indexes for a cold cache
+// build. Under fc.deferWrites all of it runs in the background beside later
 // stages; nothing in the current build reads parse indexes after parseAll.
-func (b *build) storeParseIndexesCold(mods []*modNode, files []*fileNode, encs [][]byte, put []bool) []*diag.Diagnostic {
+func (b *build) storeParseIndexesCold(mods []*modNode, files []*fileNode, put []bool) []*diag.Diagnostic {
 	fc := b.w.front
 	if fc == nil {
 		return nil
@@ -460,51 +460,50 @@ func (b *build) storeParseIndexesCold(mods []*modNode, files []*fileNode, encs [
 	type item struct {
 		m   *modNode
 		f   *fileNode
-		enc []byte
-		put bool
+		sum *iface.ParseSummary
 	}
 	var items []item
-	anyDirty := false
 	for i, m := range mods {
-		if encs[i] == nil {
+		if !put[i] || files[i].sum == nil {
 			continue
 		}
-		items = append(items, item{m: m, f: files[i], enc: encs[i], put: put[i]})
-		if put[i] {
-			anyDirty = true
-		}
+		items = append(items, item{m: m, f: files[i], sum: files[i].sum})
 	}
-	if !anyDirty {
+	if len(items) == 0 {
 		return nil
 	}
 	run := func() []*diag.Diagnostic {
 		type job struct {
-			m       *modNode
-			current map[source.Hash][]byte
-			dirty   bool
+			m     *modNode
+			items []item
 		}
 		var jobs []*job
 		by := map[*modNode]*job{}
 		for _, it := range items {
-			k := fc.parseSummaryKey(b.w, it.m, it.f)
 			j := by[it.m]
 			if j == nil {
-				j = &job{m: it.m, current: map[source.Hash][]byte{}}
+				j = &job{m: it.m}
 				by[it.m] = j
 				jobs = append(jobs, j)
 			}
-			j.current[k] = it.enc
-			j.dirty = j.dirty || it.put
+			j.items = append(j.items, it)
 		}
-		jobs = slices.DeleteFunc(jobs, func(j *job) bool { return !j.dirty })
+		writeJob := func(j *job) {
+			current := make(map[source.Hash][]byte, len(j.items))
+			for _, it := range j.items {
+				k := fc.parseSummaryKey(b.w, it.m, it.f)
+				current[k] = iface.EncodeParseSummary(it.sum)
+			}
+			fc.updateParseIndex(b.w, j.m, current)
+		}
 		if fc.deferWrites {
 			for _, j := range jobs {
-				fc.updateParseIndex(b.w, j.m, j.current)
+				writeJob(j)
 			}
 			return nil
 		}
 		return b.w.parallel(len(jobs), func(i int) string { return "store the parse index of " + jobs[i].m.path }, func(i int) {
-			fc.updateParseIndex(b.w, jobs[i].m, jobs[i].current)
+			writeJob(jobs[i])
 		})
 	}
 	if fc.deferWrites {

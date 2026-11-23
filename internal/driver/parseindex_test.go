@@ -628,3 +628,25 @@ func TestVerifyReportsMisfiledSummary(t *testing.T) {
 		t.Errorf("plain check after the verify parsed %q, want nothing (the entry replaced)", rn.Trace.FilesParsed)
 	}
 }
+
+// TestParseIndexPopulatedOnColdBuild verifies that a cold build (missing
+// v1/manifest, deferWrites active) still populates parse indexes so the very
+// first subsequent check parses zero files.
+func TestParseIndexPopulatedOnColdBuild(t *testing.T) {
+	tools := needTools(t)
+	dir := writeTree(t, incPkg("x + 1"))
+	cdir := t.TempDir()
+	s, err := NewSession(Config{Root: dir, CacheDir: cdir, Tools: tools})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, paths, err := s.Build(filepath.Join(t.TempDir(), "bin"))
+	if err != nil || len(r.Report.Diags) > 0 || len(paths) != 1 {
+		t.Fatalf("cold build: err %v paths %v\n%s", err, paths, r.Report.Text(r.Sources))
+	}
+	rc := frontCheck(t, Config{Root: dir, CacheDir: cdir})
+	clean(t, rc)
+	if len(rc.Trace.FilesParsed) > 0 {
+		t.Errorf("warm check after cold build parsed %q, want nothing", rc.Trace.FilesParsed)
+	}
+}

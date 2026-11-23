@@ -557,13 +557,14 @@ func (b *build) parseAll() []*diag.Diagnostic {
 		slots[i], encs[i], put[i] = b.parseFile(f, key, stored)
 	})
 	if coldParse {
-		// On a cold cache build, defer key computation (which joins async
-		// buildID) and parse-index writes to storeParseIndexes.
+		// On a cold cache build, defer encoding, key computation (which joins
+		// async buildID), and parse-index writes to storeParseIndexesCold.
 		fNodes := make([]*fileNode, len(files))
 		for i, j := range files {
 			fNodes[i] = j.f
+			put[i] = len(slots[i]) == 0 && j.f.sum != nil
 		}
-		faults = append(faults, b.storeParseIndexesCold(mods, fNodes, encs, put)...)
+		faults = append(faults, b.storeParseIndexesCold(mods, fNodes, put)...)
 	} else {
 		faults = append(faults, b.storeParseIndexes(mods, keys, encs, put)...)
 	}
