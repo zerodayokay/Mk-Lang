@@ -57,8 +57,8 @@ func envKeyHasPrefix(kv, prefix string) bool {
 	return strings.HasPrefix(k, prefix)
 }
 
-// runEnv is base with the variables of runEnvClear and runEnvSet removed and
-// runEnvSet appended.
+// runEnv is base with the variables of runEnvClear, csRuntimeUnset and
+// runEnvSet removed and runEnvSet appended.
 func runEnv(base []string) []string {
 	out := slices.DeleteFunc(slices.Clone(base), func(kv string) bool {
 		if envKeyHasPrefix(kv, runEnvClearPrefix) {
@@ -66,6 +66,15 @@ func runEnv(base []string) []string {
 		}
 		for _, k := range runEnvClear {
 			if envKeyIs(kv, k) {
+				return true
+			}
+		}
+		for _, k := range csRuntimeUnset {
+			if p, ok := strings.CutSuffix(k, "*"); ok {
+				if envKeyHasPrefix(kv, p) {
+					return true
+				}
+			} else if envKeyIs(kv, k) {
 				return true
 			}
 		}
@@ -78,6 +87,16 @@ func runEnv(base []string) []string {
 		return false
 	})
 	return append(out, runEnvSet...)
+}
+
+// cellEnv is rowEnv(r) plus any column-specific runtime pins (RyuJIT's ISA
+// pinning for the cs column so it matches the AOT columns' CPU target).
+func cellEnv(r *row, c column) []string {
+	env := rowEnv(r)
+	if extra := csRunEnv(r, c); len(extra) > 0 {
+		env = append(env, extra...)
+	}
+	return env
 }
 
 // rowEnv is the environment of row r's programs: runEnv, and for a

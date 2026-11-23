@@ -16,7 +16,8 @@
   "quick_checksum": "66754401813",
   "sources": {
     "mk": "mk",
-    "go": "testdata/regex.go"
+    "go": "testdata/regex.go",
+    "cs": "regex.cs"
   },
   "skip": {
     "c": "no std regex in C (POSIX regex.h is not ISO C, and the MSVC CRT has none)",
@@ -32,6 +33,6 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries; the checksum (a million per match plus its length) checks that both engines found the same matches",
   "notes": [
-    "Pattern status=5[0-9][0-9] dur=[0-9]{4,}ms: the server errors that took at least a second. Both engines are RE2-style, linear in the input."
+    "Pattern status=5[0-9][0-9] dur=[0-9]{4,}ms: the server errors that took at least a second. All three engines (Mk std.regex, Go regexp, C# RegexOptions.NonBacktracking) are linear-time finite-automaton matchers."
   ]
 }

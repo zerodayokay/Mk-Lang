@@ -17,7 +17,8 @@
   "sources": {
     "mk": "mk",
     "zig": "gzip.zig",
-    "go": "testdata/gzip.go"
+    "go": "testdata/gzip.go",
+    "cs": "gzip.cs"
   },
   "skip": {
     "c": "no std gzip in C (zlib is not std)",

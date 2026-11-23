@@ -21,7 +21,8 @@
     "c": "intsum.c",
     "rust": "intsum.rs",
     "zig": "intsum.zig",
-    "go": "testdata/intsum.go"
+    "go": "testdata/intsum.go",
+    "cs": "intsum.cs"
   },
   "skip": {},
   "no_counts": "B24: no data-dependent control flow; every trip count is fixed by n and rounds, and the checksum is exact integer arithmetic over that fixed loop nest",

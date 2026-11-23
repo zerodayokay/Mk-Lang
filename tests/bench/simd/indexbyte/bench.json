@@ -9,7 +9,8 @@
     "c": "indexbyte.c",
     "rust": "indexbyte.rs",
     "zig": "indexbyte.zig",
-    "go": "testdata/indexbyte.go"
+    "go": "testdata/indexbyte.go",
+    "cs": "indexbyte.cs"
   },
   "skip": {
     "mk-wrap": "no integer arithmetic to wrap in the kernel"

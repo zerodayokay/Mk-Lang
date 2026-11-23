@@ -55,6 +55,17 @@ func output(name string, args ...string) string {
 	return strings.TrimSpace(string(b))
 }
 
+// outputEnv runs a command with extra env vars and returns its trimmed output.
+func outputEnv(env []string, name string, args ...string) string {
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), env...)
+	b, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 func firstLine(s string) string {
 	l, _, _ := strings.Cut(s, "\n")
 	return strings.TrimSpace(l)
@@ -96,7 +107,7 @@ func gatherFacts(root string, t *toolchain) facts {
 		}
 		f.Power, f.Defender = "n/a (Linux guest)", "n/a (Linux guest)"
 	}
-	for lang, path := range map[string]string{"c": t.Clang, "rust": t.Rustc, "zig": t.Zig, "go": t.Go, "hyperfine": t.Hyperfine} {
+	for lang, path := range map[string]string{"c": t.Clang, "rust": t.Rustc, "zig": t.Zig, "go": t.Go, "cs": t.Dotnet, "hyperfine": t.Hyperfine} {
 		if path != "" {
 			f.Versions[lang] = t.version(lang, path)
 		}
@@ -139,6 +150,8 @@ func (t *toolchain) version(lang, path string) string {
 		v = "zig " + output(path, "version") + ", " + firstLine(output(path, "cc", "--version"))
 	case "go":
 		v = output(path, "version")
+	case "cs":
+		v = "dotnet " + firstLine(outputEnv(dotnetVersionEnv, path, "--version"))
 	case "hyperfine":
 		v = output(path, "--version")
 	case "cargo":
@@ -164,7 +177,7 @@ func regValue(s string) string {
 }
 
 // busyNames are the programs whose presence makes a timing suspect.
-var busyNames = []string{"go.exe", "mk.exe", "clang.exe", "rustc.exe", "zig.exe", "lld-link.exe", "cargo.exe", "hyperfine.exe"}
+var busyNames = []string{"go.exe", "mk.exe", "clang.exe", "rustc.exe", "zig.exe", "lld-link.exe", "cargo.exe", "dotnet.exe", "ilc.exe", "hyperfine.exe"}
 
 // busyNow is busyProcesses of the processes running now (none outside
 // Windows, where the Linux run is pinned inside WSL).

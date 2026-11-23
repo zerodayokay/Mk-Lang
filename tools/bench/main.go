@@ -56,6 +56,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -166,7 +167,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fpCount                              = "time"
 		// publish inside WSL, and publish-linux
 		platform, prebuilt, only, mkLabel, mkSHA, mkVersion string
-		noLock                                              bool
+		noLock, treeOnly                                    bool
 		distroWork                                          string
 	)
 	switch sub {
@@ -189,6 +190,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fs.StringVar(&mkVersion, "mk-version", "", "the commit it was built from and its LLVM (mkIdentity)")
 		fs.BoolVar(&budgets, "budgets", false, "the check-budget table: the same rows' Mk columns with and without bounds and overflow checks, into results/<date>/budgets (budgets.go)")
 		fs.BoolVar(&pgoTable, "pgo", false, "the labelled PGO table: the same rows' Mk column built with --pgo=off and with a profile trained on the row's quick input, into results/<date>/pgo (pgo.go)")
+		fs.BoolVar(&treeOnly, "tree", false, "tree rows under tests/bench only (leave out tests/bench-lanes)")
 	case "publish-linux":
 		fs.StringVar(&lockPath, "lock", lockPath, "machine lock file (tools/machinelock)")
 		fs.StringVar(&date, "date", date, "results directory name")
@@ -282,6 +284,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fs.BoolVar(&pubSize, "publish-size", false, "run the publish arguments instead of the quick ones")
 		fs.BoolVar(&budgets, "budgets", false, "build and check the check-budget columns too (mk-nobounds, mk-noovf)")
 		fs.BoolVar(&pgoTable, "pgo", false, "the PGO table's columns only: mk, then a training run at the quick arguments and mk-pgo, for the same rows with an mk source (pgo.go)")
+		fs.BoolVar(&treeOnly, "tree", false, "tree rows under tests/bench only (leave out tests/bench-lanes)")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -391,6 +394,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		rows, err := discover(root)
 		if err == nil {
 			logBroken(rows, log)
+			if treeOnly {
+				rows = slices.DeleteFunc(rows, func(r *row) bool { return r.Lane != "" })
+			}
 			rows, err = selectRows(rows, *table, fs.Args())
 		}
 		if err != nil {
@@ -511,7 +517,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		err = publish(publishOptions{Root: root, Work: *work, Mk: m, Rows: fs.Args(), Table: *table, LockPath: lockPath,
 			Mask: mv, Sweeps: sweeps, HF: hfOptions{Warmup: warmup, Runs: runs}, Date: date, Merge: merge, Resume: resume, Log: log,
-			Platform: platform, NoLock: noLock, Prebuilt: prebuilt, Only: onlyCols, MkLabel: mkLabel, MkSHA: mkSHA, MkVersion: mkVersion, Budgets: budgets, PGO: pgoTable})
+			Platform: platform, NoLock: noLock, Prebuilt: prebuilt, Only: onlyCols, MkLabel: mkLabel, MkSHA: mkSHA, MkVersion: mkVersion, Budgets: budgets, PGO: pgoTable, Tree: treeOnly})
 		if err != nil {
 			return fail(err)
 		}

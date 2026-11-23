@@ -21,7 +21,8 @@
     "mk-keyed": "mkkeyed",
     "rust": "mapiter.rs",
     "zig": "mapiter.zig",
-    "go": "testdata/mapiter.go"
+    "go": "testdata/mapiter.go",
+    "cs": "mapiter.cs"
   },
   "skip": {
     "c": "no std hash map in C",
@@ -29,7 +30,7 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries, each with its own table layout and order; the sum over every entry is order-free and checks every result",
   "notes": [
-    "Hashes and DoS posture (B20): mk Map.New, DD-5's fixed fast hash, public key; mk-keyed Map.NewKeyed, SipHash-1-3 under a random per-process key (HashKey.New); Rust HashMap, SipHash-1-3 under RandomState's random key; Zig AutoHashMap over std.heap.smp_allocator, wyhash-based autoHash with seed 0, fixed; Go map (swiss table), AES-based runtime hash seeded per map, randomised iteration start. Iteration does not hash; the one fill (2^20 inserts) is inside the time, and its share is not measured.",
+    "Hashes and DoS posture (B20): mk Map.New, DD-5's fixed fast hash, public key; mk-keyed Map.NewKeyed, SipHash-1-3 under a random per-process key (HashKey.New); Rust HashMap, SipHash-1-3 under RandomState's random key; Zig AutoHashMap over std.heap.smp_allocator, wyhash-based autoHash with seed 0, fixed; Go map (swiss table), AES-based runtime hash seeded per map, randomised iteration start; C# Dictionary<ulong, ulong>, default ulong.GetHashCode() (fixed/unkeyed), dense entry-array iteration. Iteration does not hash; the one fill (2^20 inserts) is inside the time, and its share is not measured.",
     "Written by lane L4b of M9 item 11.22, the Mk side from doc/reference.md and the twins by the same agent (programme section 16 asked for different agents; the coordinator's question). Publish size unsized until the coordinator's verify -publish-size."
   ]
 }

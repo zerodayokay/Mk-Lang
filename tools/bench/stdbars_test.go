@@ -75,7 +75,7 @@ func TestRenderStdBars(t *testing.T) {
 	}
 	bars, _, _ = strings.Cut(bars, "## Table")
 	for _, want := range []string{
-		"| Row | Mk column | Best checked peer | Mk / peer [95%] | 1.25 (bar) | 2.0 | Best of C, Rust, Zig and Go | Mk / best [95%] | 1.25 | 2.0 |",
+		"| Row | Mk column | Best checked peer | Mk / peer [95%] | 1.25 (bar) | 2.0 | Best of C, Rust, Zig, Go and C# | Mk / best [95%] | 1.25 | 2.0 |",
 		"| maprow | mk | zig-safe | 1.10 [",
 		"] | within | within | zig-fast | 2.20 [",
 		"] | over | over |",

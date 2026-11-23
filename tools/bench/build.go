@@ -181,6 +181,11 @@ func buildOne(b *built, log func(string)) (string, error) {
 			}
 		}
 	}
+	if b.Cmd.Prep != nil {
+		if err := b.Cmd.Prep(); err != nil {
+			return "", err
+		}
+	}
 	start := time.Now()
 	cmd := exec.Command(b.Cmd.Args[0], b.Cmd.Args[1:]...)
 	cmd.Dir = b.Cmd.Dir
@@ -190,10 +195,15 @@ func buildOne(b *built, log func(string)) (string, error) {
 		return string(outb), fmt.Errorf("%v: %s", err, firstLines(string(outb), 20))
 	}
 	if b.Cmd.Product != "" {
-		// A build that names its own output (cargo): copied to the
-		// column's executable.
+		// A build that names its own output (cargo, dotnet): copied to the
+		// column's executable (plus any managed runtime sidecar files).
 		if err := copyVendorFile(b.Cmd.Product, b.Exe); err != nil {
 			return string(outb), fmt.Errorf("copying the build's product: %w", err)
+		}
+		if len(b.Cmd.Sidecars) > 0 {
+			if err := copySidecars(b.Cmd.Product, b.Exe, b.Cmd.Sidecars); err != nil {
+				return string(outb), err
+			}
 		}
 	}
 	log(fmt.Sprintf("built %s %s in %.1fs", b.Row.id(), b.Col.ID, time.Since(start).Seconds()))
@@ -276,7 +286,7 @@ func verify(bs []*built, args []string, want string) ([]checkResult, string, boo
 		case b.Row.Table == "app":
 			cr = checkApp1(b, args)
 		default:
-			cr.Sum, cr.Time, cr.Err = runOnceEnv(b.Exe, args, rowEnv(b.Row))
+			cr.Sum, cr.Time, cr.Err = runOnceEnv(b.Exe, args, cellEnv(b.Row, b.Col))
 		}
 		if cr.Err == nil {
 			counts[cr.Sum]++

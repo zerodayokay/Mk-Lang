@@ -1,0 +1,27 @@
+{
+  "name": "regex-redux",
+  "table": "idiomatic",
+  "std": ["std.regex.Compile", "std.regex.Regex.FindAll", "std.regex.Regex.Replace"],
+  "algorithm": "Regex-redux workload over a generated FASTA DNA sequence (Homo sapiens + IUB sections): strip FASTA headers and newlines, count non-overlapping matches for 9 classic DNA alternation/class patterns, and perform 5 sequential IUB-style regex replacements with each language's std regex engine, folding all counts and sequence lengths into a checksum (README.md).",
+  "overflow": "wraps",
+  "args": ["1000000", "56"],
+  "quick": ["50000", "2"],
+  "checksum": "3676099772158368152",
+  "quick_checksum": "4605541440568842582",
+  "sources": {
+    "mk": "mk",
+    "go": "testdata/regex-redux.go",
+    "cs": "regex-redux.cs"
+  },
+  "skip": {
+    "c": "no std regex in C",
+    "rust": "no std regex in Rust",
+    "zig": "no std regex in Zig",
+    "mk-wrap": "the checksum already uses the wrapping operators; there is no checked arithmetic to remove"
+  },
+  "no_counts": "B24 does not apply: an idiomatic row compares standard library regex engines; folding the raw length, cleaned length, all 9 match counts and final length checks that every engine found the exact same matches and produced the exact same replacements",
+  "notes": [
+    "All 15 regular expressions (header/newline cleanup, 9 classic DNA alternation/class match-count patterns, and 5 cascading IUB replacement patterns) are compiled once before the timed rounds.",
+    "Mk's std.regex and Go's regexp are RE2-style linear-time engines; C# uses System.Text.RegularExpressions.Regex with RegexOptions.Compiled | RegexOptions.CultureInvariant and Regex.Count."
+  ]
+}

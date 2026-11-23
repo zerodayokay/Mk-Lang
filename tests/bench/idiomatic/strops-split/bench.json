@@ -18,7 +18,8 @@
     "mk": "mk",
     "rust": "strops-split.rs",
     "zig": "strops-split.zig",
-    "go": "testdata/strops-split.go"
+    "go": "testdata/strops-split.go",
+    "cs": "strops-split.cs"
   },
   "skip": {
     "c": "no std split in C (strtok writes its input and is not reentrant)",
@@ -32,7 +33,7 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries; every splitter keeps empty pieces and every trim and word iterator strips the same ASCII bytes of this text, so the checksum checks every result",
   "notes": [
-    "Iterators named: mk str.Split, str.Trim, str.Words; rust str::split(char), str::trim, str::split_whitespace; zig std.mem.splitScalar, std.mem.trim (an ASCII set), std.mem.tokenizeAny; go strings.SplitSeq, strings.TrimSpace, strings.FieldsSeq. Mk, Rust and Go trim and split words at whitespace, Zig at the ASCII set it is given; the text is ASCII letters, spaces and newlines, so all strip the same bytes.",
+    "Iterators named: mk str.Split, str.Trim, str.Words; rust str::split(char), str::trim, str::split_whitespace; zig std.mem.splitScalar, std.mem.trim (an ASCII set), std.mem.tokenizeAny; go strings.SplitSeq, strings.TrimSpace, strings.FieldsSeq; cs MemoryExtensions.Split, ReadOnlySpan<char>.Trim, MemoryExtensions.SplitAny(SearchValues<char>). Mk, Rust and Go trim and split words at whitespace, Zig and C# split words at an ASCII whitespace set; the text is ASCII letters, spaces and newlines, so all strip the same bytes.",
     "The input is wordfreq's file (the same data spec, so one generated file serves both rows).",
     "Written by lane L4b of M9 item 11.22, the Mk side from doc/reference.md and the twins by the same agent (programme section 16 asked for different agents; the coordinator's question). Publish size unsized until the coordinator's verify -publish-size."
   ]

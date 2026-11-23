@@ -20,7 +20,8 @@
     "c": "matmul.c",
     "rust": "matmul.rs",
     "zig": "matmul.zig",
-    "go": "testdata/matmul.go"
+    "go": "testdata/matmul.go",
+    "cs": "matmul.cs"
   },
   "skip": {
     "mk-wrap": "only index arithmetic is integer; a wrapping column is not needed for the budgets"

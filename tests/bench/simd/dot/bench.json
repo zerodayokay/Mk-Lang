@@ -9,7 +9,8 @@
     "c": "dot.c",
     "rust": "dot.rs",
     "zig": "dot.zig",
-    "go": "testdata/dot.go"
+    "go": "testdata/dot.go",
+    "cs": "dot.cs"
   },
   "skip": {
     "mk-wrap": "a float kernel: no integer arithmetic to wrap"

@@ -1,0 +1,27 @@
+{
+  "name": "deflate",
+  "table": "idiomatic",
+  "std": ["std.compress.Deflate", "std.compress.Inflate"],
+  "algorithm": "Raw DEFLATE (RFC 1951) compress-then-decompress round trip over a generated mixed text buffer in memory at each std library's default compression level, verifying exact decompressed byte length and FNV-1a 64 checksum on every round (README.md).",
+  "overflow": "wraps",
+  "args": ["4194304", "52", "1"],
+  "quick": ["262144", "4", "1"],
+  "checksum": "14370483003890191482",
+  "quick_checksum": "10654187985128517874",
+  "sources": {
+    "mk": "mk",
+    "zig": "deflate.zig",
+    "go": "testdata/deflate.go",
+    "cs": "deflate.cs"
+  },
+  "skip": {
+    "c": "no std deflate/gzip in C",
+    "rust": "no std deflate/gzip in Rust (flate2 is a crate)",
+    "mk-wrap": "the checksum already uses the wrapping operators; there is no checked arithmetic to remove"
+  },
+  "no_counts": "B24 does not apply: an idiomatic row compares standard library DEFLATE encoders and decoders, which may emit different valid RFC 1951 bitstreams; every round verifies exact output length and FNV-1a 64 equality against the original source bytes",
+  "notes": [
+    "All four columns run raw RFC 1951 DEFLATE at their standard default compression level (Mk std.compress.Deflate/Inflate, Zig std.compress.flate Compress .default/Decompress .raw, Go compress/flate DefaultCompression/Resetter, C# System.IO.Compression.DeflateStream CompressionLevel.Optimal).",
+    "Each round verifies that decompression reproduces the exact source byte length and FNV-1a 64 checksum (exiting non-zero on any mismatch), folds checksum + length, and flips one source byte via XOR 0x01 so no round can be hoisted."
+  ]
+}

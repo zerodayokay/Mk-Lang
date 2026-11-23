@@ -126,14 +126,11 @@ type publishOptions struct {
 	MkLabel   string   // the mk that built Prebuilt, its SHA-256 and its identity (mkIdentity), for the facts
 	MkSHA     string
 	MkVersion string
-	// Budgets runs the check-budget table instead (budgets.go): the same
-	// rows' Mk columns only, the check-budget columns included, into
-	// results/<date>/budgets.
+	// Budgets runs the check-budget table (budgets.go), PGO the labelled PGO
+	// table (pgo.go), and Tree restricts selection to tree rows (no lanes).
 	Budgets bool
-	// PGO runs the labelled PGO table instead (pgo.go): the same
-	// rows' mk column and mk-pgo, built with the profile of a training run
-	// at the row's quick arguments, into results/<date>/pgo.
-	PGO bool
+	PGO     bool
+	Tree    bool
 }
 
 func publish(o publishOptions) error {
@@ -175,6 +172,9 @@ func publish(o publishOptions) error {
 		if table != "same" {
 			return fmt.Errorf("-pgo measures the same-algorithm rows, not %q", table)
 		}
+	}
+	if o.Tree {
+		all = slices.DeleteFunc(all, func(r *row) bool { return r.Lane != "" })
 	}
 	rows, err := selectRows(all, table, o.Rows)
 	if err == nil && o.Budgets {
@@ -948,7 +948,7 @@ func renderTables(w *strings.Builder, res *results, f facts) {
 		}
 		p("| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", c.ID, strings.ReplaceAll(legendVersion(res, f, langKey(c.Lang)), "|", "\\|"), c.Bounds, c.Overflow, c.Panic, c.LTO, c.Linker, c.CRT, c.StdV2)
 	}
-	p("\nThe build command of every cell is in `results.json` (`builds`). Only Mk and C share an LLVM (clang 21); against Rust (its own LLVM), Zig (its bundled LLVM) and Go (gc), a row compares whole toolchains and their std, not code generators alone. On Windows, Mk's release path is distributed ThinLTO (internal/toolchain `thinLink`, the default since b166ee6): lld-link writes the index and clang runs each backend at -O3, so the SLP vectorizer runs as in clang -O3 and on Linux's ld.lld; an mk older than b166ee6 ran lld-link's in-process backend, which runs none.\n\n")
+	p("\nThe build command of every cell is in `results.json` (`builds`). Only Mk and C share an LLVM (clang 21); against Rust (its own LLVM), Zig (its bundled LLVM), Go (gc) and C# (.NET 11 RyuJIT / NativeAOT), a row compares whole toolchains and their std, not code generators alone. `cs` includes JIT start-up in the process time and `cs-aot` does not. On Windows, Mk's release path is distributed ThinLTO (internal/toolchain `thinLink`, the default since b166ee6): lld-link writes the index and clang runs each backend at -O3, so the SLP vectorizer runs as in clang -O3 and on Linux's ld.lld; an mk older than b166ee6 ran lld-link's in-process backend, which runs none.\n\n")
 
 	tables := []string{}
 	for _, r := range res.Rows {
@@ -971,7 +971,7 @@ func renderTables(w *strings.Builder, res *results, f facts) {
 			// Outside the same-algorithm table a language with no std
 			// facility keeps its column, so its reason is read in the
 			// table ("no std JSON in C"), not lost.
-			if tb != "same" && !c.Budget && slices.Contains([]string{"mk", "c", "rust", "zig", "go"}, c.Lang) && !slices.Contains(cols, c.ID) {
+			if tb != "same" && !c.Budget && slices.Contains([]string{"mk", "c", "rust", "zig", "go", "cs"}, c.Lang) && !slices.Contains(cols, c.ID) {
 				for _, r := range res.Rows {
 					if r.Table == tb && r.Skip[c.Lang] != "" {
 						cols = append(cols, c.ID)
@@ -1133,7 +1133,7 @@ var tableIntro = map[string]string{
 	"startup":   "Startup: process start and one line of output. Reported, never subtracted from another row. Cells: median wall time, and the ratio of medians to the fastest cell.",
 	"idiomatic": "Idiomatic standard library: each row states a task, and each language does it with its own standard library in its idiomatic form (the row's `README.md`), so a row compares libraries and their algorithms, not code generators. A language with no standard facility for the task has no cell and says so; no third-party library stands in. Cells: median wall time, and the ratio of medians to the fastest cell of the row.",
 	"app":       "Applications: each row is a real program that uses its language's standard library, and states its task, its input and its output (the row's `README.md`), not its code. Each cell has a kind: `std` (the standard library only), `eco` (named libraries pinned to a version) or `hand` (the program writes a facility itself). Cells: median wall time, and the ratio of medians to the fastest cell of the row. These ratios never feed the median mk / c or the 1.10 bar; the table has no verdict beyond the defect line of each row.",
-	"simd":      "SIMD: each row is one vector kernel written with each language's own SIMD layer (C `<immintrin.h>`, Rust `std::arch`, Zig `@Vector`, Go scalar or its assembly-backed std, Mk `std.simd`) at one fixed CPU target with no run-time dispatch, at an L1, an L3 and a DRAM size, every buffer starting on a 64-byte boundary. Cells: median time and the ratio of medians to the fastest cell of the row; in a row with a baseline the time is the kernel's, the whole run minus the baseline's median, and otherwise the whole program's, its input fill included. GB/s in the row's own table.",
+	"simd":      "SIMD: each row is one vector kernel written with each language's own SIMD layer (C `<immintrin.h>`, Rust `std::arch`, Zig `@Vector`, Go scalar or its assembly-backed std, C# `System.Numerics.Vector<T>`, Mk `std.simd`) at one fixed CPU target with no run-time dispatch, at an L1, an L3 and a DRAM size, every buffer starting on a 64-byte boundary. Cells: median time and the ratio of medians to the fastest cell of the row; in a row with a baseline the time is the kernel's, the whole run minus the baseline's median, and otherwise the whole program's, its input fill included. GB/s in the row's own table.",
 }
 
 // skipText is the cell of a column row r does not have: in the

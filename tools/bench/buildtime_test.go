@@ -25,8 +25,8 @@ func TestBuildTimeFreshCommands(t *testing.T) {
 	dir := t.TempDir()
 	rdir := filepath.Join(dir, "row")
 	writeFile(t, filepath.Join(rdir, "mk", "pkg.mk"), "")
-	r := &row{Name: "x", Table: "same", Dir: rdir, Sources: map[string]string{"mk": "mk", "c": "x.c", "rust": "x.rs", "zig": "x.zig", "go": "x.go"}}
-	tc := &toolchain{Mk: "mk", Clang: "clang", Rustc: "rustc", Zig: "zig", Go: "go", Work: filepath.Join(dir, "work"), versions: map[string]string{}}
+	r := &row{Name: "x", Table: "same", Dir: rdir, Sources: map[string]string{"mk": "mk", "c": "x.c", "rust": "x.rs", "zig": "x.zig", "go": "x.go", "cs": "x.cs"}}
+	tc := &toolchain{Mk: "mk", Clang: "clang", Rustc: "rustc", Zig: "zig", Go: "go", Dotnet: "dotnet", Work: filepath.Join(dir, "work"), versions: map[string]string{}}
 	fresh := filepath.Join(dir, "fresh")
 	for _, c := range rowColumns(r) {
 		before, err := tc.command(r, c, filepath.Join(dir, "exe"))

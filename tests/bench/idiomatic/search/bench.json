@@ -21,14 +21,15 @@
     "c": "search.c",
     "rust": "search.rs",
     "zig": "search.zig",
-    "go": "testdata/search.go"
+    "go": "testdata/search.go",
+    "cs": "search.cs"
   },
   "skip": {
     "mk-wrap": "the checksum already uses the wrapping operators; a search has no arithmetic to wrap"
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries, each with its own search loop; the keys are distinct, so every correct search gives the one checksum",
   "notes": [
-    "Binary searches (B20's naming): mk Slice.Search (lower bound, comparator a const fn argument); c bsearch, exact match only, an indirect comparator through a function pointer (labelled); rust binary_search; zig std.sort.lowerBound; go slices.BinarySearch.",
+    "Binary searches (B20's naming): mk Slice.Search (lower bound, comparator a const fn argument); c bsearch, exact match only, an indirect comparator through a function pointer (labelled); rust binary_search; zig std.sort.lowerBound; go slices.BinarySearch; cs MemoryExtensions.BinarySearch.",
     "Written by lane L4b of M9 item 11.22, the Mk side from doc/reference.md and the twins by the same agent (programme section 16 asked for different agents; the coordinator's question). Publish size unsized until the coordinator's verify -publish-size."
   ]
 }

@@ -1,0 +1,47 @@
+{
+  "name": "vm",
+  "table": "app",
+  "algorithm": "Run a 23-opcode register-based bytecode virtual machine (flat register file, call-frame stack, bounds-checked array heap, switch dispatch) over four deterministic bytecode programs (recursive fibonacci, iterative prime sieve, loop arithmetic/checksum, and Shell sort plus weighted dot product) parameterized by CLI arguments (README.md).",
+  "overflow": "never",
+  "args": [
+    "28",
+    "50000",
+    "250000",
+    "6000",
+    "120"
+  ],
+  "quick": [
+    "20",
+    "5000",
+    "10000",
+    "500",
+    "2"
+  ],
+  "checksum": "fib=38137320 sieve=961592655 arith=830185914 sortdot=19540588 total=849456470",
+  "quick_checksum": "fib=13530 sieve=339096265 arith=446937657 sortdot=495503411 total=281550856",
+  "sources": {
+    "mk": "mk",
+    "c": "vm.c",
+    "rust": "vm.rs",
+    "zig": "vm.zig",
+    "go": "testdata/vm.go",
+    "cs": "vm.cs"
+  },
+  "kinds": {
+    "mk": "std",
+    "c": "std",
+    "rust": "std",
+    "zig": "std",
+    "go": "std",
+    "cs": "std"
+  },
+  "env": {
+    "MK_CARRIERS": "1"
+  },
+  "notes": [
+    "The bytecode VM and its four programs are the task itself (README.md), so every cell is kind std with zero external dependencies.",
+    "Standard switch/match dispatch everywhere: no computed goto, no unsafe, no unchecked indexing, no inlining or branch hints.",
+    "Overflow class never: all arithmetic uses signed 64-bit integers and stays well within i64 bounds.",
+    "The publish arguments are provisional until verify -publish-size confirms the 1 s floor on a quiet machine."
+  ]
+}

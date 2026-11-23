@@ -16,7 +16,8 @@
   "quick_checksum": "49995000",
   "sources": {
     "mk": "mk",
-    "go": "testdata/spawn.go"
+    "go": "testdata/spawn.go",
+    "cs": "spawn.cs"
   },
   "skip": {
     "c": "no std tasks in C (threads only; 1 M OS threads cannot be created on Windows, B19)",
@@ -29,7 +30,8 @@
     "threads": 8,
     "models": {
       "mk": "tasks (M:N on 8 carriers)",
-      "go": "goroutines (M:N, GOMAXPROCS 8)"
+      "go": "goroutines (M:N, GOMAXPROCS 8)",
+      "cs": "tasks (ThreadPool), Task.Run"
     }
   },
   "no_counts": "B24 does not apply: the checksum, the sum of every task's index, shows that every task ran once",

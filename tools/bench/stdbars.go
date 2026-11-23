@@ -160,11 +160,11 @@ func renderStdBars(w *strings.Builder, res *results, tb string) {
 	p := func(format string, a ...any) { fmt.Fprintf(w, format, a...) }
 	p("### The std bars\n\n")
 	p("Each Mk cell against the other languages' standard libraries, by the ratio of medians. ")
-	p("The %.2f bar is against the best checked peer: the fastest cell among C, Rust, Zig and Go whose own build checks bounds and traps overflow (`rust-ovf`, `zig-safe`), whatever the row's overflow class, because Mk keeps its checks. Over %.2f there needs a written reason and a plan. ", stdBar, stdBar)
-	p("The %.1f rule is against the best of C, Rust, Zig and Go in any class (C and `zig-fast` are unchecked): over %.1f there is a std defect, unless the row is a stated exception (crypto-random for `crypto.Random`, sort-stable for `SortStable`), which its line names. ", stdDefect, stdDefect)
+	p("The %.2f bar is against the best checked peer: the fastest cell among C, Rust, Zig, Go and C# whose own build checks bounds and traps overflow (`rust-ovf`, `zig-safe`), whatever the row's overflow class, because Mk keeps its checks. Over %.2f there needs a written reason and a plan. ", stdBar, stdBar)
+	p("The %.1f rule is against the best of C, Rust, Zig, Go and C# in any class (C and `zig-fast` are unchecked): over %.1f there is a std defect, unless the row is a stated exception (crypto-random for `crypto.Random`, sort-stable for `SortStable`), which its line names. ", stdDefect, stdDefect)
 	p("Each ratio is also classified against the other threshold, which is reported and carries no bar. ")
 	p("A verdict cites the 95%% interval: within when the whole interval is below the threshold, over when it is above, otherwise inconclusive. It counts only for a run whose facts above show a quiet machine. A cell with no time to divide by (a kernel time at or below 0 in any run) gives no verdict: an Mk cell is not judged, and a reference with none is still the fastest cell and is named \"no kernel time\", so no slower cell stands in for it.\n\n")
-	p("| Row | Mk column | Best checked peer | Mk / peer [95%%] | %.2f (bar) | %.1f | Best of C, Rust, Zig and Go | Mk / best [95%%] | %.2f | %.1f |\n|---|---|---|---|---|---|---|---|---|---|\n", stdBar, stdDefect, stdBar, stdDefect)
+	p("| Row | Mk column | Best checked peer | Mk / peer [95%%] | %.2f (bar) | %.1f | Best of C, Rust, Zig, Go and C# | Mk / best [95%%] | %.2f | %.1f |\n|---|---|---|---|---|---|---|---|---|---|\n", stdBar, stdDefect, stdBar, stdDefect)
 	var order []string
 	tally := map[string]*stdTally{}
 	for _, r := range res.Rows {

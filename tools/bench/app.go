@@ -546,7 +546,7 @@ func checkApp1(b *built, args []string) checkResult {
 	if cr.Err = freshOutput(b); cr.Err != nil {
 		return cr
 	}
-	env := rowEnv(r)
+	env := cellEnv(r, b.Col)
 	var out []byte
 	out, cr.Time, cr.Peak, cr.Err = runProgram(b.Exe, cellArgs(b, args), env)
 	if cr.Err != nil {
@@ -637,7 +637,7 @@ func crossThen(res []checkResult, agreed string) bool {
 				continue
 			}
 			reader, file := res[rd].B, res[f].B
-			out, _, _, err := runProgram(reader.Exe, cellArgs(file, thenArgs(reader.Row)), rowEnv(reader.Row))
+			out, _, _, err := runProgram(reader.Exe, cellArgs(file, thenArgs(reader.Row)), cellEnv(reader.Row, reader.Col))
 			why := ""
 			if err != nil {
 				why = firstLines(err.Error(), 3)
@@ -777,7 +777,7 @@ func timedRun(b *built, args []string) (cellRun, error) {
 	if err != nil {
 		return cellRun{}, err
 	}
-	return cellRun{Args: cellArgs(b, args), Prepare: prep, Env: rowEnv(b.Row)}, nil
+	return cellRun{Args: cellArgs(b, args), Prepare: prep, Env: cellEnv(b.Row, b.Col)}, nil
 }
 
 // appCellFacts is what publish records of an app cell from its checked

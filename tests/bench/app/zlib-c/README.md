@@ -29,6 +29,7 @@ An `app` row (tests/bench/README.md "Applications"). Its decompressing pair is `
 | Rust | `eco` | `rs/` (a crate): `File::read` 64 KiB chunks, `flate2::write::ZlibEncoder` over a 64 KiB `BufWriter`, `finish` | flate2 1.1.1 with its default `rust_backend`: miniz_oxide 0.8.8 and adler2 2.0.0 (both `#![forbid(unsafe_code)]`), crc32fast 1.4.2 (linked; unsafe SIMD for gzip's CRC-32, which the zlib framing does not run). The crates come from a `cargo vendor` tree in Mk-evidence (`crates/flate2-1.1.1`) by directory source replacement |
 | Zig | `std` | `zlibc.zig`: a streaming `File.Reader` with a 64 KiB buffer streamed into `std.compress.flate.Compress` (`.zlib`, `.level_6`), writing through a streaming `File.Writer` with a 64 KiB buffer, `finish`, `flush` | std only |
 | Go | `std` | `testdata/zlibc.go`: `File.Read` 64 KiB chunks into `zlib.NewWriterLevel(w, 6)` over a 64 KiB `bufio.Writer`, `Close`, `Flush` | std only |
+| C# | `std` | `zlibc.cs`: `FileStream.Read` 64 KiB chunks into `ZLibStream` (`ZLibCompressionOptions.CompressionLevel = 6`) over a 64 KiB buffered output `FileStream`, dispose, `Flush` | std only |
 
 - **Environment:** `MK_CARRIERS=1` (the row is single-threaded); `publish`'s one-CPU affinity.
 - **Columns:** `mk`, `c`, `rust`, `rust-ovf`, `zig-fast`, `zig-safe`, `go`. The `eco` cells are printed "eco (not classed)": their libraries' code is not made checked by the column's flags.

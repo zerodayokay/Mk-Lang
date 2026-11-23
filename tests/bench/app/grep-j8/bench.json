@@ -11,7 +11,8 @@
   },
   "sources": {
     "rust": "rs",
-    "go": "testdata/grepj8.go"
+    "go": "testdata/grepj8.go",
+    "cs": "grepj8.cs"
   },
   "skip": {
     "c": "no regex in C's std (app/grep's C cell is lit only)",
@@ -20,7 +21,8 @@
   "kinds": {
     "mk": "std",
     "rust": "eco",
-    "go": "std"
+    "go": "std",
+    "cs": "std"
   },
   "libs": {
     "rust": [
@@ -45,7 +47,8 @@
     "models": {
       "mk": "tasks (M:N on 8 carriers): mgrep -j 8, a feeder task and 8 search tasks over a Chan, a Semaphore of 8 open files, reports printed in file order",
       "rust": "OS threads: 8 std::thread::scope workers taking file indexes from an AtomicUsize",
-      "go": "goroutines (GOMAXPROCS 8): 8 workers taking file indexes from a channel"
+      "go": "goroutines (GOMAXPROCS 8): 8 workers taking file indexes from a channel",
+      "cs": "OS threads: 8 System.Threading.Thread workers taking file indexes via Interlocked.Increment"
     }
   },
   "digest": true,

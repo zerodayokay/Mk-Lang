@@ -18,7 +18,8 @@
     "mk": "mk",
     "rust": "strops-replace.rs",
     "zig": "strops-replace.zig",
-    "go": "testdata/strops-replace.go"
+    "go": "testdata/strops-replace.go",
+    "cs": "strops-replace.cs"
   },
   "skip": {
     "c": "no std replace in C",
@@ -32,7 +33,7 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries; every replace works left to right without overlap, so every column writes the same bytes, and the hash over them checks every result",
   "notes": [
-    "Replaces named: mk str.Replace (a new copy in a scratch arena every call, the arena reset after each line, D-833); rust str::replace (a new String every call); zig std.mem.replaceOwned over std.heap.smp_allocator (an allocation every call); go strings.ReplaceAll (returns its input unallocated when nothing matches). About 55% of the calls find nothing on this text (README Match density, counted by lane L4b).",
+    "Replaces named: mk str.Replace (a new copy in a scratch arena every call, the arena reset after each line, D-833); rust str::replace (a new String every call); zig std.mem.replaceOwned over std.heap.smp_allocator (an allocation every call); go strings.ReplaceAll (returns its input unallocated when nothing matches); cs string.Replace(StringComparison.Ordinal) (returns its input unallocated when nothing matches). About 55% of the calls find nothing on this text (README Match density, counted by lane L4b).",
     "The input is wordfreq's file (the same data spec, so one generated file serves both rows).",
     "Written by lane L4b of M9 item 11.22 (programme section 16); the Mk cell by the M9 batch 4 integration writer, on std's str.Replace (lane T0, D-833). Publish size unsized until the coordinator's verify -publish-size."
   ]

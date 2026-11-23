@@ -16,7 +16,8 @@
     "c": "nbody.c",
     "rust": "nbody.rs",
     "zig": "nbody.zig",
-    "go": "testdata/nbody.go"
+    "go": "testdata/nbody.go",
+    "cs": "nbody.cs"
   },
   "skip": {
     "mk-wrap": "the hot loop has no integer arithmetic beyond loop counters, so a wrapping column would equal mk"

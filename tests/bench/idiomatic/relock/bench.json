@@ -16,7 +16,8 @@
     "mk-wrap": "no arithmetic to wrap",
     "c": "not written: C has no std file lock (flock and LockFileEx are system calls, which the Rust and Mk cells reach through their std)",
     "zig": "not written: Zig 0.17's std.fs.File.lock is a blocking call with no deadline and no second handle form tested here",
-    "go": "not written: Go's std has no public file lock (cmd/go/internal/lockedfile is internal)"
+    "go": "not written: Go's std has no public file lock (cmd/go/internal/lockedfile is internal)",
+    "cs": "not written: FileStream.Lock throws immediately on conflict and has no blocking lock"
   },
   "concurrency": {"mask": "0x3", "threads": 2, "models": {"mk": "tasks", "rust": "OS threads"}},
   "variants": [

@@ -1,0 +1,27 @@
+{
+  "name": "sha256",
+  "table": "idiomatic",
+  "std": ["std.hash.Sha256"],
+  "algorithm": "SHA-256 hashing over a generated multi-MiB SplitMix64 buffer: bulk_reps full-buffer passes plus short_reps passes over 64-byte slices, XOR-folding the first 8 little-endian bytes of every digest into a u64 checksum (README.md).",
+  "overflow": "wraps",
+  "args": ["16", "150", "15", "1"],
+  "quick": ["1", "4", "1", "1"],
+  "checksum": "2496816022547215231",
+  "quick_checksum": "4640190249815661836",
+  "sources": {
+    "mk": "mk",
+    "zig": "sha256.zig",
+    "go": "testdata/sha256.go",
+    "cs": "sha256.cs"
+  },
+  "skip": {
+    "c": "no std SHA-256 in C",
+    "rust": "no std SHA-256 in Rust",
+    "mk-wrap": "the checksum already uses bitwise XOR and wrapping SplitMix64; there is no checked arithmetic to remove"
+  },
+  "no_counts": "B24 does not apply: an idiomatic row compares standard library SHA-256 implementations (including hardware SHA-NI dispatch where the std provides it); XOR-folding every digest checks that every implementation produced identical SHA-256 outputs",
+  "notes": [
+    "Combines both bulk throughput (bulk_reps full-buffer passes over mib MiB) and short-message overhead (short_reps passes hashing every 64-byte slice), mutating one buffer byte after each pass so no hash can be hoisted.",
+    "Mk's std.hash.Sha256, Go's crypto/sha256, and .NET's System.Security.Cryptography.SHA256 (Windows CNG) may use CPU SHA extensions at run time; Zig's std.crypto.hash.sha2.Sha256 compiles for the row's x86-64-v2 target."
+  ]
+}

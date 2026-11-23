@@ -17,7 +17,8 @@
   "sources": {
     "mk": "mk",
     "zig": "json.zig",
-    "go": "testdata/json.go"
+    "go": "testdata/json.go",
+    "cs": "json.cs"
   },
   "skip": {
     "c": "no std JSON in C",

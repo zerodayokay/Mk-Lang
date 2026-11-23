@@ -1,0 +1,27 @@
+{
+  "name": "utf8scan",
+  "table": "idiomatic",
+  "std": ["std.core.str.From", "std.core.str.Scalars"],
+  "algorithm": "UTF-8 validation and full Unicode scalar decoding over a generated mixed-script buffer (ASCII, Latin-1, Greek, Cyrillic, CJK, and 4-byte emoji): validate the whole byte buffer with std, iterate every codepoint, fold the codepoint count and sum, and toggle one ASCII byte between rounds (README.md).",
+  "overflow": "wraps",
+  "args": ["30000", "400"],
+  "quick": ["3000", "15"],
+  "checksum": "15529034553600",
+  "quick_checksum": "58233873360",
+  "sources": {
+    "mk": "mk",
+    "rust": "utf8scan.rs",
+    "zig": "utf8scan.zig",
+    "go": "testdata/utf8scan.go",
+    "cs": "utf8scan.cs"
+  },
+  "skip": {
+    "c": "no std UTF-8 in C",
+    "mk-wrap": "the checksum already uses the wrapping operators; there is no checked arithmetic to remove"
+  },
+  "no_counts": "B24 does not apply: an idiomatic row compares standard library UTF-8 validators and codepoint decoders; folding the scalar count and codepoint sum checks that every decoder read the exact same codepoints",
+  "notes": [
+    "The input repeats a 4-line mixed-script corpus (1-byte ASCII, 2-byte Latin-1/Greek/Cyrillic, 3-byte CJK/Hangul/Kana/symbol, and 4-byte emoji) n times. Between rounds one leading ASCII byte ('T'/'t') is toggled by XOR 0x20 so validation and decoding cannot be hoisted.",
+    "Mk's standard library names its Unicode scalar iterator str.Scalars (yielding char), paired with str.From for validation."
+  ]
+}

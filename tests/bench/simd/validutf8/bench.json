@@ -10,7 +10,8 @@
     "c": "validutf8.c",
     "rust": "validutf8.rs",
     "zig": "validutf8.zig",
-    "go": "testdata/validutf8.go"
+    "go": "testdata/validutf8.go",
+    "cs": "validutf8.cs"
   },
   "skip": {
     "mk-wrap": "the checksum already uses the wrapping operators; validation has no arithmetic to wrap"

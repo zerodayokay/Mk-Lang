@@ -1,0 +1,27 @@
+{
+  "name": "strbuild",
+  "table": "idiomatic",
+  "std": ["std.core.Text", "std.core.Print"],
+  "algorithm": "Growable string building loop: build docs documents from an empty standard string builder by appending literals, slices, repeated chunks and formatted integers for lines records per document, then fold the FNV-1a 64 checksum and byte length of each built string (README.md).",
+  "overflow": "wraps",
+  "args": ["100000", "200"],
+  "quick": ["2000", "200"],
+  "checksum": "4970838943839601395",
+  "quick_checksum": "15236428992153487888",
+  "sources": {
+    "mk": "mk",
+    "rust": "strbuild.rs",
+    "zig": "strbuild.zig",
+    "go": "testdata/strbuild.go",
+    "cs": "strbuild.cs"
+  },
+  "skip": {
+    "c": "no std growable string builder in C",
+    "mk-wrap": "the checksum already uses the wrapping operators; there is no checked arithmetic to remove"
+  },
+  "no_counts": "B24 does not apply: an idiomatic row compares standard library string builders, each with its own growth policy; the FNV-1a 64 checksum plus byte length checks that every builder assembled the exact same bytes",
+  "notes": [
+    "Each document starts from an empty builder (never pre-sized) and grows geometrically across lines structured ASCII records combining literals, dictionary slices, source-text subslices, repeated 2-byte chunks and decimal integers.",
+    "C#'s StringBuilder stores UTF-16 chunks internally; because every appended character is ASCII, reading sb.GetChunks() hashes the exact same byte sequence without an extra UTF-8 re-encoding pass."
+  ]
+}

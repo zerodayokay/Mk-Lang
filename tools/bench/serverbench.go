@@ -525,7 +525,7 @@ func serverDefect(cs []serverCell) []string {
 			continue
 		}
 		if ref == nil {
-			out = append(out, fmt.Sprintf("Defect line: `%s` has no std cell of C, Rust, Zig or Go to be judged against.", c.Col))
+			out = append(out, fmt.Sprintf("Defect line: `%s` has no std cell of C, Rust, Zig, Go or C# to be judged against.", c.Col))
 			continue
 		}
 		lo, hi := math.Inf(1), 0.0

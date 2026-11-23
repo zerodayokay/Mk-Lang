@@ -30,14 +30,16 @@ import (
 // which the C and Rust sides write out as one statement per vector, and
 // validutf8's comptime table lookup).
 var simdLayer = map[string]bool{
-	"an intrinsics header":          true,
-	"std::arch intrinsics":          true,
-	"hand vectorisation (@Vector)":  true,
-	"std.simd (hand vectorisation)": true,
-	"unsafe":                        true,
-	"target_feature":                true,
-	"a __builtin_ hint":             true,
-	"forced inlining or unrolling":  true,
+	"an intrinsics header":                        true,
+	"std::arch intrinsics":                        true,
+	"hand vectorisation (@Vector)":                true,
+	"std.simd (hand vectorisation)":               true,
+	"System.Numerics.Vector (hand vectorisation)": true,
+	"System.Runtime.Intrinsics":                   true,
+	"unsafe":                                      true,
+	"target_feature":                              true,
+	"a __builtin_ hint":                           true,
+	"forced inlining or unrolling":                true,
 }
 
 var (
@@ -117,10 +119,26 @@ func otherTableViolations(table, lang, src string) []string {
 		lang = "mk"
 	}
 	if table != "simd" {
-		return contractViolations(lang, src)
+		var out []string
+		for _, v := range contractViolations(lang, src) {
+			// stackalloc is forbidden in the same table only.
+			if lang == "cs" && v == "stackalloc" {
+				continue
+			}
+			out = append(out, v)
+		}
+		return out
 	}
 	var out []string
 	for _, v := range contractViolations(lang, src) {
+		if lang == "cs" && v == "stackalloc" {
+			continue
+		}
+		// C# unsafe is forbidden in every table, SIMD included.
+		if lang == "cs" && v == "unsafe" {
+			out = append(out, v)
+			continue
+		}
 		if !simdLayer[v] {
 			out = append(out, v)
 		}
@@ -218,6 +236,16 @@ func TestOtherTablesNoTuning(t *testing.T) {
 		{"simd", "zig", "fn f() void { @call(.always_inline, g, .{}); }\n", "forced inlining"},
 		{"simd", "rust", "fn f(s: &[u8]) -> u8 { unsafe { *s.get_unchecked(3) } }\n", "get_unchecked"},
 		{"simd", "zig", "fn f() void { @setRuntimeSafety(false); }\n", "@setRuntimeSafety"},
+		{"idiomatic", "cs", "using System.Runtime.Intrinsics;\n", "System.Runtime.Intrinsics"},
+		{"idiomatic", "cs", "var v = Vector<byte>.Zero;\n", "System.Numerics.Vector"},
+		{"idiomatic", "cs", "[MethodImpl(MethodImplOptions.AggressiveInlining)]\nstatic void F() {}\n", "MethodImpl"},
+		{"idiomatic", "cs", "unsafe class C {}\n", "unsafe"},
+		{"idiomatic", "cs", "var x = Unsafe.As<int, uint>(ref a);\n", "Unsafe.*"},
+		{"idiomatic", "cs", "Span<byte> buf = stackalloc byte[64];\n", ""},
+		{"simd", "cs", "using System.Numerics;\nvar v = Vector<byte>.Zero;\n", ""},
+		{"simd", "cs", "unsafe void F() {}\n", "unsafe"},
+		{"simd", "cs", "var x = Unsafe.Add(ref a, 1);\n", "Unsafe.*"},
+		{"simd", "cs", "[MethodImpl(MethodImplOptions.AggressiveOptimization)]\nstatic void F() {}\n", "MethodImpl"},
 	} {
 		vs := otherTableViolations(f.table, f.lang, f.src)
 		switch {

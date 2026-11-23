@@ -21,13 +21,14 @@
     "c": "sortstr.c",
     "rust": "sortstr.rs",
     "zig": "sortstr.zig",
-    "go": "testdata/sortstr.go"
+    "go": "testdata/sortstr.go",
+    "cs": "sortstr.cs"
   },
   "skip": {
     "mk-wrap": "the checksum already uses the wrapping operators; sorting has no arithmetic to wrap"
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries, each with its own sort algorithm; the checksum (FNV-1a of each key in sorted order, weighted by position, 0xdead if out of order) checks every result",
   "notes": [
-    "Views into one buffer compared bytewise (B20): mk Slice[str].Sort with str's <; c qsort over {pointer, length} with memcmp then length, an indirect comparator; rust sort_unstable over &str; zig std.sort.pdq with std.mem.lessThan; go slices.Sort over substrings."
+    "Views into one buffer compared bytewise (B20): mk Slice[str].Sort with str's <; c qsort over {pointer, length} with memcmp then length, an indirect comparator; rust sort_unstable over &str; zig std.sort.pdq with std.mem.lessThan; go slices.Sort over substrings; cs MemoryExtensions.Sort over ReadOnlyMemory<byte> views with SequenceCompareTo."
   ]
 }

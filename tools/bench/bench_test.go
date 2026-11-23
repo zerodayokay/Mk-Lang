@@ -233,12 +233,12 @@ func TestStrayProfilesRefused(t *testing.T) {
 }
 
 func TestColumnsAndClasses(t *testing.T) {
-	never := &row{Overflow: "never", Sources: map[string]string{"mk": "mk", "mk-wrap": "w", "c": "a.c", "rust": "a.rs", "zig": "a.zig", "go": "a.go"}}
+	never := &row{Overflow: "never", Sources: map[string]string{"mk": "mk", "mk-wrap": "w", "c": "a.c", "rust": "a.rs", "zig": "a.zig", "go": "a.go", "cs": "a.cs"}}
 	var ids []string
 	for _, c := range rowColumns(never) {
 		ids = append(ids, c.ID+":"+c.class(never))
 	}
-	want := []string{"mk:checked", "mk-wrap:bounds", "c:unchecked", "rust:bounds", "rust-ovf:checked", "zig-fast:unchecked", "zig-safe:checked", "go:bounds"}
+	want := []string{"mk:checked", "mk-wrap:bounds", "c:unchecked", "rust:bounds", "rust-ovf:checked", "zig-fast:unchecked", "zig-safe:checked", "go:bounds", "cs:bounds", "cs-aot:bounds"}
 	if !slices.Equal(ids, want) {
 		t.Fatalf("columns %v\nwant %v", ids, want)
 	}
@@ -258,8 +258,8 @@ func TestColumnsAndClasses(t *testing.T) {
 // contract (tests/bench/README.md) fixes on every column's command, for the
 // Windows table on any host (TestLinuxCommands has the Linux one).
 func TestBuildCommandsFollowTheContract(t *testing.T) {
-	tc := &toolchain{Mk: "mk", Clang: "clang", Rustc: "rustc", Zig: "zig", Go: "go", Work: "W", CEnv: []string{"INCLUDE=i", "LIB=l"}, GOOS: "windows"}
-	r := &row{Name: "r", Dir: "D", Sources: map[string]string{"mk": "mk", "mk-wrap": "mkwrap", "c": "r.c", "rust": "r.rs", "zig": "r.zig", "go": "testdata/r.go"}}
+	tc := &toolchain{Mk: "mk", Clang: "clang", Rustc: "rustc", Zig: "zig", Go: "go", Dotnet: "dotnet", Work: "W", CEnv: []string{"INCLUDE=i", "LIB=l"}, GOOS: "windows"}
+	r := &row{Name: "r", Dir: "D", Sources: map[string]string{"mk": "mk", "mk-wrap": "mkwrap", "c": "r.c", "rust": "r.rs", "zig": "r.zig", "go": "testdata/r.go", "cs": "r.cs"}}
 	want := map[string][]string{
 		"mk":       {"--release", "--pgo=off", "x86-64-v2", "--no-cache"},
 		"mk-wrap":  {"--release", "--pgo=off", "mkwrap"},
@@ -269,6 +269,8 @@ func TestBuildCommandsFollowTheContract(t *testing.T) {
 		"zig-fast": {"ReleaseFast", "-mcpu=x86_64_v2", "-target", "x86_64-windows-gnu", "--cache-dir", "--global-cache-dir"},
 		"zig-safe": {"ReleaseSafe", "-mcpu=x86_64_v2"},
 		"go":       {"-pgo=off", "GOAMD64=v2", "GOTOOLCHAIN=local", "GOFLAGS="},
+		"cs":       {"publish", "-c Release", "--self-contained false", "ServerGarbageCollector=false", "InvariantGlobalization=true", "AllowUnsafeBlocks=false"},
+		"cs-aot":   {"publish", "-c Release", "PublishAot=true", "OptimizationPreference=Speed", "IlcInstructionSet=x86-64-v2", "ServerGarbageCollector=false", "InvariantGlobalization=true", "AllowUnsafeBlocks=false"},
 	}
 	for _, c := range rowColumns(r) {
 		cmd, err := tc.command(r, c, "out.exe")
@@ -436,7 +438,7 @@ func TestTreeRowsMeetTheContract(t *testing.T) {
 				t.Errorf("%s %s: %s does not open with the header comment \"// %s, ...\"", r.id(), lang, p, r.base())
 			}
 			if len(r.Counts) > 0 {
-				mark := map[string]string{"mk": countSwitch["mk"], "zig": countSwitch["zig"], "go": countSwitch["go"], "c": "BENCH_COUNT", "rust": "cfg!(bench_count)"}[lang]
+				mark := map[string]string{"mk": countSwitch["mk"], "zig": countSwitch["zig"], "go": countSwitch["go"], "cs": countSwitch["cs"], "c": "BENCH_COUNT", "rust": "cfg!(bench_count)"}[lang]
 				if mark != "" && !strings.Contains(string(b), mark) {
 					t.Errorf("%s %s: a row with counters has no counting switch %q in %s", r.id(), lang, mark, p)
 				}

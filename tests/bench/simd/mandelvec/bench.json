@@ -9,7 +9,8 @@
     "c": "mandelvec.c",
     "rust": "mandelvec.rs",
     "zig": "mandelvec.zig",
-    "go": "testdata/mandelvec.go"
+    "go": "testdata/mandelvec.go",
+    "cs": "mandelvec.cs"
   },
   "skip": {
     "mk-wrap": "a float kernel: its only integer arithmetic is the iteration counter"

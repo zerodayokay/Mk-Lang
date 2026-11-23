@@ -19,7 +19,8 @@
     "c": "strops-find.c",
     "rust": "strops-find.rs",
     "zig": "strops-find.zig",
-    "go": "testdata/strops-find.go"
+    "go": "testdata/strops-find.go",
+    "cs": "strops-find.cs"
   },
   "skip": {
     "mk-wrap": "the checksum already uses the wrapping operators; a search has no arithmetic to wrap"
@@ -32,7 +33,7 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries, each with its own search algorithm; every library returns the first match at or after p, so the sum of the offsets checks every result",
   "notes": [
-    "Searches named: mk str.Find; c strstr over NUL-terminated lines (labelled: each newline of the buffer is overwritten with NUL once, before the rounds, since strstr needs C strings); rust str::find (Two-Way); zig std.mem.findPos; go strings.Index. Lines: mk str.Lines, rust str::lines, zig std.mem.splitScalar, go strings.SplitSeq; c walks the NULs.",
+    "Searches named: mk str.Find; c strstr over NUL-terminated lines (labelled: each newline of the buffer is overwritten with NUL once, before the rounds, since strstr needs C strings); rust str::find (Two-Way); zig std.mem.findPos; go strings.Index; cs ReadOnlySpan<char>.IndexOf(StringComparison.Ordinal). Lines: mk str.Lines, rust str::lines, zig std.mem.splitScalar, go strings.SplitSeq, cs MemoryExtensions.Split; c walks the NULs.",
     "The input is wordfreq's file (the same data spec, so one generated file serves both rows).",
     "Written by lane L4b of M9 item 11.22, the Mk side from doc/reference.md and the twins by the same agent (programme section 16 asked for different agents; the coordinator's question). Publish size unsized until the coordinator's verify -publish-size."
   ]

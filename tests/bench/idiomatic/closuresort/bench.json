@@ -24,6 +24,7 @@
     "rust": "an internal comparison of two Mk forms (DD-1's cost), not a cross-language row",
     "zig": "an internal comparison of two Mk forms (DD-1's cost), not a cross-language row",
     "go": "an internal comparison of two Mk forms (DD-1's cost), not a cross-language row",
+    "cs": "an internal comparison of two Mk forms (DD-1's cost), not a cross-language row",
     "mk-wrap": "the distances are checked i64 arithmetic in both Mk forms alike, and the checksum already wraps; the row measures how the context arrives, not the checks",
     "mk-ctx": "held out (review finding BF-6): mkctx/'s sort is a copy of the pre-DD-2 SortWith whose swaps go through Slice.Swap, a bounds check that std's Sort does not make, and whose BitLen is a loop, so mk-ctx against mk is not DD-1's cost alone. The pair that is, mkcap/ (the capture, through the same copied sort with the context argument taken out) against mkctx/, replaces mk and mk-ctx once a run checks its checksums (status/bench.md)"
   },

@@ -58,6 +58,14 @@ var sameBans = []sameBan{
 	ban("zig", `\binline\s+(fn|for|while)\b|\.always_inline`, "forced inlining or unrolling"),
 	// Go.
 	ban("go", `"unsafe"`, `import "unsafe"`),
+	// C#: unsafe, stackalloc (same table), hints, intrinsics and hand vectorisation.
+	ban("cs", `\bunsafe\b`, "unsafe"),
+	ban("cs", `\bstackalloc\b`, "stackalloc"),
+	ban("cs", `MethodImpl|AggressiveInlining|AggressiveOptimization`, "a [MethodImpl] hint"),
+	ban("cs", `System\.Runtime\.Intrinsics`, "System.Runtime.Intrinsics"),
+	ban("cs", `\bUnsafe\s*\.|\bSystem\.Runtime\.CompilerServices\.Unsafe\b`, "Unsafe.*"),
+	ban("cs", `\bMemoryMarshal\s*\.\s*Get(?:ArrayData)?Reference\b`, "MemoryMarshal reference bypass"),
+	ban("cs", `System\.Numerics\.Vector\b|\bVector\s*<`, "System.Numerics.Vector (hand vectorisation)"),
 	// Mk.
 	ban("mk", `\bstd\.simd\b`, "std.simd (hand vectorisation)"),
 	ban("mk", `unsafe_modules:\s*\[\s*[^\]\s]`, "an unsafe module"),
@@ -129,6 +137,7 @@ func TestSameRowBans(t *testing.T) {
 		"c":    {"void f(int *restrict p) {}", "#pragma clang loop vectorize(enable)\n", "#pragma once\n", "#pragma unroll\n", "#pragma comment(linker, \"/STACK:0x10000000\")\n", "#pragma comment(linker, \"/OPT:ICF\")\n", "if (__builtin_expect(x, 0)) {}", "__builtin_unreachable();", "__attribute__((hot)) void f(void) {}", "static inline int f(void) { return 0; }", "#include <immintrin.h>\n"},
 		"rust": {"unsafe fn f() {}", "fn f() { unsafe { g() } }", "std::hint::assert_unchecked(x);", "core::hint::unreachable_unchecked()", "#[target_feature(enable = \"avx2\")]\nfn f() {}", "#[inline(always)]\nfn f() {}", "use std::arch::x86_64::*;"},
 		"go":   {"import \"unsafe\"\n", "//go:noinline\nfunc f() {}\n"},
+		"cs":   {"unsafe class C {}", "Span<byte> s = stackalloc byte[32];", "[MethodImpl(MethodImplOptions.AggressiveInlining)]\nstatic int F() => 1;", "[MethodImpl(MethodImplOptions.AggressiveOptimization)]\nstatic int F() => 1;", "using System.Runtime.Intrinsics.X86;", "var x = Unsafe.Add(ref a, 1);", "ref var r = ref MemoryMarshal.GetArrayDataReference(arr);", "var v = Vector<byte>.Zero;"},
 		"mk":   {"import std.simd\n", "unsafe_modules: [\"x\"],"},
 	}
 	for lang, srcs := range bad {
@@ -143,6 +152,7 @@ func TestSameRowBans(t *testing.T) {
 		"c":    "/* no restrict, no #pragma */\n// no __builtin_expect\n#pragma comment(lib, \"ws2_32\")\nint main(void) { return 0; }\n",
 		"rust": "// No unsafe, no std::arch.\nfn main() {}\n",
 		"go":   "// no \"unsafe\"\nimport \"fmt\"\n",
+		"cs":   "// no unsafe, no stackalloc, no MethodImpl, no Unsafe.*\nusing System;\nConsole.WriteLine(1);\n",
 		"mk":   "    unsafe_modules: [],\n		links: [],\n",
 	}
 	for lang, src := range good {
@@ -236,11 +246,11 @@ func TestCountsNeedAMajority(t *testing.T) {
 		t.Fatalf("no row-wide exclusion naming every line: %v", ex)
 	}
 
-	// A 3-2 split still has a majority: the two are excluded, the row is
+	// A 4-2 split still has a majority: the two are excluded, the row is
 	// not.
 	for i := range bs {
 		line := "42\ncounts n=1"
-		if i >= 3 {
+		if i >= len(bs)-2 {
 			line = "42\ncounts n=2"
 		}
 		bs[i].Exe = helperExe(t, line)
@@ -248,7 +258,7 @@ func TestCountsNeedAMajority(t *testing.T) {
 	res, agreed, ok = checkCounts(r, bs)
 	ex = countExclusions(res, agreed)
 	if ok || agreed != "counts n=1" || ex["*"] != "" || len(ex) != 2 {
-		t.Fatalf("3-2 split: agreed %q, ok %v, exclusions %v", agreed, ok, ex)
+		t.Fatalf("majority-2 split: agreed %q, ok %v, exclusions %v", agreed, ok, ex)
 	}
 
 	// verify's checksum vote before a checksum is recorded: 1-1 is no

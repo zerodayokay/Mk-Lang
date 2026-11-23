@@ -61,6 +61,8 @@ var columns = []column{
 	{ID: "zig-fast", Lang: "zig", Bounds: "none", Overflow: "UB (ReleaseFast)", Panic: "none", LTO: "none (one compilation unit)", Linker: "zig (lld)", CRT: "none (x86_64-windows-gnu, no -lc)", StdV2: "yes (std compiled with the program)"},
 	{ID: "zig-safe", Lang: "zig", Bounds: "checked", Overflow: "trap (ReleaseSafe)", Panic: "abort with trace", LTO: "none (one compilation unit)", Linker: "zig (lld)", CRT: "none (x86_64-windows-gnu, no -lc)", StdV2: "yes (std compiled with the program)"},
 	{ID: "go", Lang: "go", Bounds: "checked", Overflow: "wrap", Panic: "panic (exit 2)", LTO: "n/a (gc whole program)", Linker: "go", CRT: "none (Go runtime)", StdV2: "yes (GOAMD64=v2 rebuilds std)"},
+	{ID: "cs", Lang: "cs", Bounds: "checked", Overflow: "wrap", Panic: "exception (exit nonzero)", LTO: "n/a (RyuJIT, TieredCompilation + TieredPGO)", Linker: "dotnet", CRT: "none (.NET 11 runtime, ServerGC=false, InvariantGlobalization=true; JIT start-up included)", StdV2: "yes (RyuJIT pinned via DOTNET_EnableAVX=0/BMI1/BMI2/LZCNT/AVX512=0)"},
+	{ID: "cs-aot", Lang: "cs", Bounds: "checked", Overflow: "wrap", Panic: "exception (exit nonzero)", LTO: "whole-program ILC (OptimizationPreference=Speed)", Linker: "link.exe (NativeAOT)", CRT: "static NativeAOT runtime (ServerGC=false, InvariantGlobalization=true; no JIT start-up)", StdV2: "yes (IlcInstructionSet=x86-64-v2)"},
 	// The check-budget columns (bounds checks and overflow checks,
 	// budgets.go): the row's mk source built with mk build's hidden,
 	// benchmark-only flags. Each removes one kind of check from the whole
@@ -130,6 +132,7 @@ type toolchain struct {
 	Rustc     string
 	Zig       string
 	Go        string
+	Dotnet    string
 	Hyperfine string
 	Cargo     string   // the compile-speed table's Rust builds (compile.go)
 	Work      string   // the work directory: builds, caches, raw results
@@ -226,6 +229,7 @@ func findToolchain(work, mk string) (*toolchain, error) {
 	t.Rustc = look("rustc")
 	t.Zig = look("zig")
 	t.Go = look("go", filepath.Join(runtime.GOROOT(), "bin", "go"+exe))
+	t.Dotnet = look("dotnet", `C:\Program Files\dotnet\dotnet`+exe)
 	t.Hyperfine = look("hyperfine")
 	t.Cargo = look("cargo")
 	if runtime.GOOS == "windows" {
@@ -261,6 +265,12 @@ type buildCmd struct {
 	// Inputs are files outside the sources the build reads, hashed into
 	// its stamp: the PGO table's profile (pgo.go).
 	Inputs []string `json:"inputs,omitempty"`
+	// Sidecars are sibling files of Product copied beside the column's
+	// executable after a build succeeds (cs.dll, cs.runtimeconfig.json).
+	Sidecars []string `json:"-"`
+	// Prep runs right before invoking the compiler (e.g. writing the
+	// generated .csproj and offline NuGet.Config for C# builds).
+	Prep func() error `json:"-"`
 }
 
 func (b buildCmd) String() string {
@@ -380,6 +390,8 @@ func (t *toolchain) command(r *row, c column, out string) (buildCmd, error) {
 		}
 		return buildCmd{Dir: r.Dir, Env: []string{"GOFLAGS=", "GOTOOLCHAIN=local", "GOAMD64=" + cpu.GoAmd64, "CGO_ENABLED=0", "GOOS=windows", "GOARCH=amd64"},
 			Args: []string{t.Go, "build", "-pgo=off", "-trimpath", "-o", out, filepath.Join(r.Dir, src)}, Deps: t.version("go", t.Go)}, nil
+	case "cs":
+		return t.csCommand(r, c, out)
 	}
 	return buildCmd{}, fmt.Errorf("no build for language %q", c.Lang)
 }

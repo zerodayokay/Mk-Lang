@@ -21,14 +21,15 @@
     "c": "fmt.c",
     "rust": "fmt.rs",
     "zig": "fmt.zig",
-    "go": "testdata/fmt.go"
+    "go": "testdata/fmt.go",
+    "cs": "fmt.cs"
   },
   "skip": {
     "mk-wrap": "the checksum already uses the wrapping operators; formatting has no arithmetic to wrap"
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries; the checksum is taken over the parsed-back values (B18), never the output bytes, so it is the same whatever digits each std prints",
   "notes": [
-    "B18: C's std has no shortest round-trip float format, so the c cell prints %.17g (round-trips, but longer output than the other columns: not the same work); mk, rust, zig and go print the shortest round-trip digits.",
+    "B18: C's std has no shortest round-trip float format, so the c cell prints %.17g (round-trips, but longer output than the other columns: not the same work); mk, rust, zig, go and cs (double.TryFormat \"G\") print the shortest round-trip digits.",
     "Checksum: the wrapping sum of every parsed integer and of every parsed double truncated toward zero, plus the number of doubles that parsed back bit-exact (n per round when every format round-trips)."
   ]
 }

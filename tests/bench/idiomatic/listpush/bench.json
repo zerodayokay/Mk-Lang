@@ -20,7 +20,8 @@
     "mk": "mk",
     "rust": "listpush.rs",
     "zig": "listpush.zig",
-    "go": "testdata/listpush.go"
+    "go": "testdata/listpush.go",
+    "cs": "listpush.cs"
   },
   "skip": {
     "c": "no std growable array in C (a realloc loop written by hand would be a stand-in)",
@@ -28,7 +29,7 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries, each with its own growth policy; the checksum (every element and the final length) checks every result",
   "notes": [
-    "Allocators named (B20's rule, applied to allocators): mk HeapList over sys.heap.Alloc(), std's general heap; rust Vec over System (HeapAlloc); zig std.ArrayList over std.heap.smp_allocator; go append over the garbage-collected runtime allocator (GOGC=100, labelled).",
+    "Allocators named (B20's rule, applied to allocators): mk HeapList over sys.heap.Alloc(), std's general heap; rust Vec over System (HeapAlloc); zig std.ArrayList over std.heap.smp_allocator; go append over the garbage-collected runtime allocator (GOGC=100, labelled); cs List<ulong> (Add, AddRange) over the Workstation GC heap (labelled).",
     "Written by lane L4b of M9 item 11.22, the Mk side from doc/reference.md and the twins by the same agent (programme section 16 asked for different agents; the coordinator's question). Publish size unsized until the coordinator's verify -publish-size."
   ]
 }

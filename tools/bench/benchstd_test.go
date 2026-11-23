@@ -102,9 +102,9 @@ func TestVariantSkip(t *testing.T) {
 // language's spelling (-march, target-cpu, -mcpu with underscores,
 // GOAMD64, mk --cpu), and the default stays x86-64-v2.
 func TestCpuFlags(t *testing.T) {
-	tc := &toolchain{Mk: "mk", Clang: "clang", Rustc: "rustc", Zig: "zig", Go: "go", Work: "W"}
-	r := &row{Name: "r", Dir: "D", Cpu: "x86-64-v3", Sources: map[string]string{"mk": "mk", "c": "r.c", "rust": "r.rs", "zig": "r.zig", "go": "testdata/r.go"}}
-	want := map[string]string{"mk": "--cpu x86-64-v3", "c": "-march=x86-64-v3", "rust": "target-cpu=x86-64-v3", "zig-fast": "-mcpu=x86_64_v3", "go": "GOAMD64=v3"}
+	tc := &toolchain{Mk: "mk", Clang: "clang", Rustc: "rustc", Zig: "zig", Go: "go", Dotnet: "dotnet", Work: "W"}
+	r := &row{Name: "r", Dir: "D", Cpu: "x86-64-v3", Sources: map[string]string{"mk": "mk", "c": "r.c", "rust": "r.rs", "zig": "r.zig", "go": "testdata/r.go", "cs": "r.cs"}}
+	want := map[string]string{"mk": "--cpu x86-64-v3", "c": "-march=x86-64-v3", "rust": "target-cpu=x86-64-v3", "zig-fast": "-mcpu=x86_64_v3", "go": "GOAMD64=v3", "cs-aot": "IlcInstructionSet=x86-64-v3"}
 	for _, c := range rowColumns(r) {
 		cmd, err := tc.command(r, c, "out.exe")
 		if err != nil {
@@ -117,6 +117,15 @@ func TestCpuFlags(t *testing.T) {
 		if strings.Contains(s, "v2") {
 			t.Errorf("%s: a v3 row still names v2: %s", c.ID, s)
 		}
+	}
+	csCol, _ := columnByID("cs")
+	v2Env := cellEnv(&row{Name: "r", Cpu: "x86-64-v2"}, csCol)
+	if !slices.Contains(v2Env, "DOTNET_EnableAVX=0") || !slices.Contains(v2Env, "DOTNET_EnableAVX512=0") {
+		t.Errorf("cs v2 env lacks ISA pins: %v", v2Env)
+	}
+	v3Env := cellEnv(r, csCol)
+	if slices.Contains(v3Env, "DOTNET_EnableAVX=0") || !slices.Contains(v3Env, "DOTNET_EnableAVX512=0") {
+		t.Errorf("cs v3 env wrong ISA pins: %v", v3Env)
 	}
 }
 

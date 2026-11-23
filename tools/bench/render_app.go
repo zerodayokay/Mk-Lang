@@ -237,7 +237,7 @@ func renderAppRow(w *strings.Builder, res *results, r rowInfo) {
 			continue
 		}
 		if ref == nil {
-			p("\n- Defect line: `%s` has no std cell of C, Rust, Zig or Go to be judged against.", c.Col)
+			p("\n- Defect line: `%s` has no std cell of C, Rust, Zig, Go or C# to be judged against.", c.Col)
 			continue
 		}
 		e := ratioTo(c, ref)

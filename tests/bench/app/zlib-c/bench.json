@@ -17,7 +17,8 @@
     "c": "zlibc.c",
     "rust": "rs",
     "zig": "zlibc.zig",
-    "go": "testdata/zlibc.go"
+    "go": "testdata/zlibc.go",
+    "cs": "zlibc.cs"
   },
   "skip": {},
   "kinds": {
@@ -25,7 +26,8 @@
     "c": "eco",
     "rust": "eco",
     "zig": "std",
-    "go": "std"
+    "go": "std",
+    "cs": "std"
   },
   "libs": {
     "c": [

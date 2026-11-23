@@ -17,7 +17,8 @@
   "sources": {
     "mk": "mk",
     "zig": "json-small.zig",
-    "go": "testdata/json-small.go"
+    "go": "testdata/json-small.go",
+    "cs": "json-small.cs"
   },
   "skip": {
     "c": "no std JSON in C",
@@ -32,7 +33,7 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries; the checksum is taken over the reparsed values (B18), not the serialised bytes, which differ by library (key order, escapes, number spelling)",
   "notes": [
-    "Libraries named: mk json.Parse and Value.Format, a sub-arena per round reset after each document; zig std.json.parseFromSliceLeaky and Stringify.valueAlloc, an ArenaAllocator reset after each document; go json.Decoder (UseNumber) and json.Marshal, garbage collected.",
+    "Libraries named: mk json.Parse and Value.Format, a sub-arena per round reset after each document; zig std.json.parseFromSliceLeaky and Stringify.valueAlloc, an ArenaAllocator reset after each document; go json.Decoder (UseNumber) and json.Marshal, garbage collected; cs System.Text.Json.JsonDocument.Parse and Utf8JsonWriter, each JsonDocument disposed after each document.",
     "The go cell keeps the json row's json.Decoder with UseNumber (numbers stay text, as in Mk), which costs a Decoder and a bytes.Reader per decode; json.Unmarshal, Go's usual call for a []byte in memory, has no UseNumber and parses numbers to float64. Same checksum either way; the allocation counts are in the README; neither is timed. The coordinator ruled (M9 batch 3, 2026-11-15) to keep the Decoder, for parity with the json row.",
     "The input is the json row's file (the same data spec); each of its lines is one document, so no tools/bench gen option was added.",
     "Written by lane L4b of M9 item 11.22, the Mk side from doc/reference.md and the json row's Mk program, the twins by the same agent (programme section 16 asked for different agents; the coordinator's question). Publish size unsized until the coordinator's verify -publish-size."

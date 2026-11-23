@@ -16,7 +16,8 @@
     "c": "fannkuch.c",
     "rust": "fannkuch.rs",
     "zig": "fannkuch.zig",
-    "go": "testdata/fannkuch.go"
+    "go": "testdata/fannkuch.go",
+    "cs": "fannkuch.cs"
   },
   "skip": {
     "mk-wrap": "not needed for the budgets; written if the checked column shows an overflow-check cost"

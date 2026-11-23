@@ -1,0 +1,26 @@
+{
+  "name": "blake3",
+  "table": "idiomatic",
+  "std": ["std.hash.Blake3"],
+  "algorithm": "BLAKE3 hashing (32-byte digest) over a generated multi-MiB SplitMix64 buffer: bulk_reps full-buffer passes plus short_reps passes over 64-byte slices, XOR-folding the first 8 little-endian bytes of every digest into a u64 checksum (README.md).",
+  "overflow": "wraps",
+  "args": ["16", "144", "18", "1"],
+  "quick": ["1", "8", "2", "1"],
+  "checksum": "12663884270560400240",
+  "quick_checksum": "2377007786082826362",
+  "sources": {
+    "mk": "mk",
+    "zig": "blake3.zig"
+  },
+  "skip": {
+    "c": "no std BLAKE3 in C",
+    "rust": "no std BLAKE3 in Rust",
+    "go": "no std BLAKE3 in Go",
+    "cs": "no std BLAKE3 in C#",
+    "mk-wrap": "the checksum already uses bitwise XOR and wrapping SplitMix64; there is no checked arithmetic to remove"
+  },
+  "no_counts": "B24 does not apply: an idiomatic row compares standard library BLAKE3 implementations; XOR-folding every digest checks that both implementations produced identical BLAKE3 outputs",
+  "notes": [
+    "Combines both bulk throughput (bulk_reps full-buffer passes over mib MiB) and short-message overhead (short_reps passes hashing every 64-byte slice), mutating one buffer byte after each pass so no hash can be hoisted."
+  ]
+}

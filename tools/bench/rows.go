@@ -207,9 +207,9 @@ func dispatchingNote(lang, how string) string {
 }
 
 // cpus are the CPU targets a row may name, and each language's spelling.
-var cpus = map[string]struct{ C, Rust, Zig, GoAmd64, Mk string }{
-	"x86-64-v2": {"x86-64-v2", "x86-64-v2", "x86_64_v2", "v2", "x86-64-v2"},
-	"x86-64-v3": {"x86-64-v3", "x86-64-v3", "x86_64_v3", "v3", "x86-64-v3"},
+var cpus = map[string]struct{ C, Rust, Zig, GoAmd64, Mk, Cs string }{
+	"x86-64-v2": {"x86-64-v2", "x86-64-v2", "x86_64_v2", "v2", "x86-64-v2", "x86-64-v2"},
+	"x86-64-v3": {"x86-64-v3", "x86-64-v3", "x86_64_v3", "v3", "x86-64-v3", "x86-64-v3"},
 }
 
 // cpu is the row's CPU target.
@@ -494,7 +494,7 @@ func checkBaseline(base, args []string, bytes int64) error {
 }
 
 // languages in table order.
-var languages = []string{"mk", "mk-wrap", "mk-keyed", "mk-ctx", "c", "rust", "zig", "go"}
+var languages = []string{"mk", "mk-wrap", "mk-keyed", "mk-ctx", "c", "rust", "zig", "go", "cs"}
 
 // isMkLang reports whether a source language is built by mk (the mk column
 // and its wrapping, keyed and context-struct twins).

@@ -40,9 +40,8 @@ Check(xs: []str): u64 {
 }
 
 // Round copies the keys in their unsorted order into a list in a
-// sub-arena, sorts it and checks it. The clause is the one the checker asks for:
-// the checker cannot tell the copied str values from orig's own storage.
-Round(h: &Arena, orig: &List[str]): OutOfMemory!u64 *orig into orig {
+// sub-arena, sorts it and checks it.
+Round(h: &Arena, orig: &List[str]): OutOfMemory!u64 {
     var a := try h.Sub()
     defer a.Free()
     var w := List[str].New(&a)

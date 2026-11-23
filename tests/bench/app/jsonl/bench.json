@@ -16,13 +16,15 @@
     "mk": "mk",
     "rust": "rs",
     "zig": "jsonl.zig",
-    "go": "testdata/jsonl.go"
+    "go": "testdata/jsonl.go",
+    "cs": "jsonl.cs"
   },
   "kinds": {
     "mk": "std",
     "rust": "eco",
     "zig": "std",
-    "go": "std"
+    "go": "std",
+    "cs": "std"
   },
   "libs": {
     "rust": [

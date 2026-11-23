@@ -12,7 +12,8 @@
     "c": "hello.c",
     "rust": "hello.rs",
     "zig": "hello.zig",
-    "go": "testdata/hello.go"
+    "go": "testdata/hello.go",
+    "cs": "hello.cs"
   },
   "skip": {},
   "notes": [

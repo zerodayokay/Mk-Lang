@@ -59,6 +59,7 @@ func TestBinarytreesOnePoolShape(t *testing.T) {
 		"rust": {`struct Pool \{`, `nodes: Vec<Node>,`, `top: u32,`, `fn build\(p: &mut Pool, depth: i64\) -> u32`, `fn check\(nodes: &\[Node\], idx: u32\) -> i64`},
 		"zig":  {`const Pool = struct \{`, `nodes: \[\]Node,`, `top: u32,`, `fn build\(p: \*Pool, depth: i64\) u32`, `fn check\(nodes: \[\]const Node, idx: u32\) i64`},
 		"go":   {`type pool struct \{`, `nodes \[\]node`, `top\s+uint32`, `func build\(p \*pool, depth int\) uint32`, `func check\(nodes \[\]node, idx uint32\) int`},
+		"cs":   {`struct Pool`, `public Node\[\] Nodes;`, `public uint Top;`, `uint Build\(ref Pool p, long depth\)`, `long Check\(Node\[\] nodes, uint idx\)`},
 		"mk":   {`struct Pool \{`, `nodes: mut \[\]Node`, `top: u32`, `Build\(p: mut Pool, depth: int\): u32`, `Check\(nodes: \[\]Node, idx: u32\): int`},
 	}
 	global := map[string]*regexp.Regexp{
@@ -66,6 +67,7 @@ func TestBinarytreesOnePoolShape(t *testing.T) {
 		"rust": regexp.MustCompile(`(?m)^static\s`),
 		"zig":  regexp.MustCompile(`(?m)^var\s`),
 		"go":   regexp.MustCompile(`(?m)^var\s`),
+		"cs":   regexp.MustCompile(`(?m)^\s*(?:private\s+|internal\s+|public\s+)?static\s+(?:Node|Pool)\b`),
 		"mk":   regexp.MustCompile(`(?m)^var\s`),
 	}
 	var bt *row
@@ -114,6 +116,8 @@ func declType(lang, src, name string) string {
 		pats = []string{`(?m)^\s*` + q + `\s*:=\s*(0\.0|0)\s*$`, `\bvar\s+` + q + `\s+(\w+)`}
 	case "mk", "mk-wrap":
 		pats = []string{`\bvar\s+` + q + `\s*:\s*(\w+)\s*=`, `(?m)\bvar\s+` + q + `\s*:=\s*(0\.0|0)\s*$`}
+	case "cs":
+		pats = []string{`\b(long|ulong|int|uint|double)\s+` + q + `\s*=`}
 	}
 	for _, p := range pats {
 		if m := regexp.MustCompile(p).FindStringSubmatch(src); m != nil {
@@ -125,13 +129,13 @@ func declType(lang, src, name string) string {
 
 func canonType(lang, t string) string {
 	switch t {
-	case "int64_t", "i64", "int64":
+	case "int64_t", "i64", "int64", "long":
 		return "i64"
-	case "uint64_t", "u64", "uint64":
+	case "uint64_t", "u64", "uint64", "ulong":
 		return "u64"
 	case "int32_t", "i32", "int32":
 		return "i32"
-	case "uint32_t", "u32", "uint32":
+	case "uint32_t", "u32", "uint32", "uint":
 		return "u32"
 	case "double", "f64", "float64", "0.0":
 		return "f64"
@@ -140,7 +144,7 @@ func canonType(lang, t string) string {
 	case "0":
 		return "i64" // Go's and Mk's int, 64-bit on x86-64
 	case "int":
-		if lang == "c" {
+		if lang == "c" || lang == "cs" {
 			return "i32"
 		}
 		return "i64"

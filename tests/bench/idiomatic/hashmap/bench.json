@@ -13,7 +13,8 @@
     "mk-keyed": "mkkeyed",
     "rust": "hashmap.rs",
     "zig": "hashmap.zig",
-    "go": "testdata/hashmap.go"
+    "go": "testdata/hashmap.go",
+    "cs": "hashmap.cs"
   },
   "skip": {
     "c": "no std hash map in C",
@@ -21,7 +22,7 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries, each with its own map; the checksum (every value found, every miss, every key left) checks that every map held the same keys",
   "notes": [
-    "Hashes and DoS posture (B20): mk Map.New, DD-5's fast fixed hash, public key; mk-keyed Map.NewKeyed, SipHash-1-3 under a random per-process key; Rust HashMap, SipHash-1-3 under RandomState's random key; Zig AutoHashMap, wyhash-based autoHash with seed 0, fixed; Go map, AES-based runtime hash seeded per map.",
+    "Hashes and DoS posture (B20): mk Map.New, DD-5's fast fixed hash, public key; mk-keyed Map.NewKeyed, SipHash-1-3 under a random per-process key; Rust HashMap, SipHash-1-3 under RandomState's random key; Zig AutoHashMap, wyhash-based autoHash with seed 0, fixed; Go map, AES-based runtime hash seeded per map; C# Dictionary<ulong, ulong>, default ulong.GetHashCode() (XOR-folded 64-to-32-bit, fixed/unkeyed).",
     "The same task as tests/bench-lanes/std-hash/maphash, with the checksums that lane recorded; this row adds the mk-keyed column B20 asks for."
   ]
 }

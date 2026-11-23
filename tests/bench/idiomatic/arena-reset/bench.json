@@ -24,6 +24,7 @@
     "c": "no std arena in C",
     "rust": "no std arena in Rust (bumpalo is a crate; no crate stands in)",
     "go": "no std arena in Go (the arena experiment was removed)",
+    "cs": "no std arena allocator in C#",
     "mk-wrap": "the checksum already uses the wrapping operators; allocation has no arithmetic to wrap"
   },
   "no_counts": "B24 does not apply: an idiomatic row compares arenas; both columns put the same nodes in the same order, and the walk reads each once",

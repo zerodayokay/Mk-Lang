@@ -1108,7 +1108,7 @@ func TestRenderAppRow(t *testing.T) {
 	// An Mk-only row (Tier A) has no std peer: said so, no verdict.
 	res.Cells = cs[:1]
 	md = renderResults(res, "2026-11-15")
-	if !strings.Contains(md, "`mk` has no std cell of C, Rust, Zig or Go to be judged against") {
+	if !strings.Contains(md, "`mk` has no std cell of C, Rust, Zig, Go or C# to be judged against") {
 		t.Error("an Mk-only row has no defect-line note")
 	}
 }

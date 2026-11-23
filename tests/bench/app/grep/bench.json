@@ -13,7 +13,8 @@
     "c": "grep.c",
     "rust": "rs",
     "zig": "grep.zig",
-    "go": "testdata/grep.go"
+    "go": "testdata/grep.go",
+    "cs": "grep.cs"
   },
   "skip": {},
   "kinds": {
@@ -21,7 +22,8 @@
     "c": "hand",
     "rust": "eco",
     "zig": "std",
-    "go": "std"
+    "go": "std",
+    "cs": "std"
   },
   "hand": {
     "c": "the directory walk, on the platform API, not ISO C (Win32 FindFirstFileExW and FindNextFileW, or POSIX opendir and readdir), about 90 lines, with FIND_FIRST_EX_LARGE_FETCH, a performance flag Rust std's read_dir leaves out; a UTF-8 validator, 30 lines; a literal search (memchr and memcmp, 17 lines, as ISO C has no memmem); and a line splitter for files that are not valid UTF-8, 13 lines (line counts by the 11.34 review, awk over grep.c)"

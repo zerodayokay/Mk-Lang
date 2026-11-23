@@ -15,7 +15,8 @@
   "sources": {
     "mk": "mk",
     "rust": "chan.rs",
-    "go": "testdata/chan.go"
+    "go": "testdata/chan.go",
+    "cs": "chan.cs"
   },
   "skip": {
     "c": "no std channel in C (C11 threads.h has mutexes and condition variables, no channel)",
@@ -28,7 +29,8 @@
     "models": {
       "mk": "tasks (M:N on 2 carriers), Chan",
       "go": "goroutines (GOMAXPROCS 2), chan",
-      "rust": "OS threads, mpsc::sync_channel"
+      "rust": "OS threads, mpsc::sync_channel",
+      "cs": "tasks (ThreadPool), Channel<long>"
     }
   },
   "no_counts": "B24 does not apply: the checksum, the sum of the n values, shows that every value made the round trip",

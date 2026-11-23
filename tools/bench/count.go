@@ -38,12 +38,13 @@ var countSwitch = map[string]string{
 	"mk":  "const BenchCount: bool = false",
 	"zig": "const bench_count = false;",
 	"go":  "const benchCount = false",
+	"cs":  "const bool BenchCount = false;",
 }
 
 // countColumns is the column each language's counting build is made from:
 // one per language (the counts cannot depend on the flags of a language's
 // other columns). Zig counts in ReleaseSafe, so a counter overflow traps.
-var countColumns = []string{"mk", "c", "rust", "zig-safe", "go"}
+var countColumns = []string{"mk", "c", "rust", "zig-safe", "go", "cs"}
 
 // countCopy copies the source of language lang of row r into dir, keeping
 // its path relative to the row, with the switch line flipped, and returns a
@@ -178,7 +179,7 @@ func checkCounts(r *row, bs []*built) ([]countResult, string, bool) {
 		cr := countResult{B: b, Err: b.Err}
 		if cr.Err == nil {
 			var out string
-			out, _, cr.Err = runOnce(b.Exe, r.runQuick)
+			out, _, cr.Err = runOnceEnv(b.Exe, r.runQuick, cellEnv(r, b.Col))
 			if cr.Err == nil {
 				cr.Counts, cr.Err = parseCounts(out, r)
 			}

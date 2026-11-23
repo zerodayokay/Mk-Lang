@@ -21,13 +21,14 @@
     "c": "sort.c",
     "rust": "sort.rs",
     "zig": "sort.zig",
-    "go": "testdata/sort.go"
+    "go": "testdata/sort.go",
+    "cs": "sort.cs"
   },
   "skip": {
     "mk-wrap": "the checksum already uses the wrapping operators; sorting has no arithmetic to wrap"
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries, each with its own sort algorithm; the checksum (the weighted sum of each sorted pattern, 0xdead if out of order) checks every result",
   "notes": [
-    "Unstable sorts (B20): mk Slice.Sort (pdqsort, comparator a const fn argument); c qsort, an indirect comparator through a function pointer; rust sort_unstable (ipnsort); zig std.sort.pdq; go slices.Sort (pdqsort)."
+    "Unstable sorts (B20): mk Slice.Sort (pdqsort, comparator a const fn argument); c qsort, an indirect comparator through a function pointer; rust sort_unstable (ipnsort); zig std.sort.pdq; go slices.Sort (pdqsort); cs MemoryExtensions.Sort (IntroSort)."
   ]
 }

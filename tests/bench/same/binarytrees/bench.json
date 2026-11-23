@@ -16,7 +16,8 @@
     "c": "binarytrees.c",
     "rust": "binarytrees.rs",
     "zig": "binarytrees.zig",
-    "go": "testdata/binarytrees.go"
+    "go": "testdata/binarytrees.go",
+    "cs": "binarytrees.cs"
   },
   "skip": {
     "mk-wrap": "not needed for the budgets; written if the checked column shows an overflow-check cost"

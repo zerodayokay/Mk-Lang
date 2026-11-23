@@ -1,0 +1,85 @@
+{
+  "name": "comphash",
+  "table": "app",
+  "algorithm": "Stream a mixed binary/text file in 64 KiB chunks while computing SHA-256 and compressing to a zlib stream (RFC 1950, level 6), then read the compressed file back, decompress with header/Adler-32/EOF validation while hashing a second SHA-256, verify length and digest match, and print bytes and hex SHA-256 (README.md).",
+  "overflow": "never",
+  "args": [
+    "{data}",
+    "{out}"
+  ],
+  "quick": [
+    "{data}",
+    "{out}"
+  ],
+  "checksum": "sha256:23226ae8cad6b725f0d98e0c264cd4fca6bb1e28184d4ff433e5414c0ddffbe2 roundtrip sha256:3d8e1c933b93f274561c5cd06fcc31c81f4bf8e661a0f7f4033984f189fe74eb",
+  "quick_checksum": "sha256:23226ae8cad6b725f0d98e0c264cd4fca6bb1e28184d4ff433e5414c0ddffbe2 roundtrip sha256:3d8e1c933b93f274561c5cd06fcc31c81f4bf8e661a0f7f4033984f189fe74eb",
+  "sources": {
+    "mk": "mk",
+    "rust": "rs",
+    "zig": "comphash.zig",
+    "go": "testdata/comphash.go",
+    "cs": "comphash.cs"
+  },
+  "kinds": {
+    "mk": "std",
+    "rust": "eco",
+    "zig": "std",
+    "go": "std",
+    "cs": "std"
+  },
+  "libs": {
+    "rust": [
+      {
+        "name": "flate2",
+        "version": "1.1.1",
+        "lang": "Rust",
+        "inside": "its default rust_backend: miniz_oxide 0.8.8 and adler2 2.0.0 (pure Rust, forbid(unsafe_code)); crc32fast 1.4.2 (unsafe SIMD for gzip CRC-32, unused by zlib framing)"
+      },
+      {
+        "name": "sha2",
+        "version": "0.10.9",
+        "lang": "Rust",
+        "inside": "unsafe Rust and x86 SHA extensions (sha256rnds2) through core::arch, chosen at run time by cpufeatures 0.2.17, with a software fallback; digest 0.10.7, block-buffer 0.10.4, crypto-common 0.1.7, generic-array 0.14.7 and typenum 1.20.0"
+      },
+      {
+        "name": "ring",
+        "version": "0.17.14",
+        "lang": "Rust, C and assembly",
+        "inside": "unused by comphash; listed in Cargo.toml/Cargo.lock only because cratespin requires Cargo.lock to match the shared vendored crate tree (dead-code eliminated by LTO)"
+      },
+      {
+        "name": "walkdir",
+        "version": "2.5.0",
+        "lang": "Rust",
+        "inside": "unused by comphash; listed in Cargo.toml/Cargo.lock only because cratespin requires Cargo.lock to match the shared vendored crate tree (dead-code eliminated by LTO)"
+      }
+    ]
+  },
+  "labels": {
+    "zig": "software SHA-256: Zig 0.17 chooses SHA instructions at compile time, and the row's x86-64-v2 target has none (README.md, Hardware paths)"
+  },
+  "skip": {
+    "c": "no std zlib or SHA-256 in C (no C SHA-256 library is vendored)"
+  },
+  "crates": "crates/flate2-1.1.1-ring-0.17.14-sha2-0.10.9-walkdir-2.5.0",
+  "env": {
+    "MK_CARRIERS": "1"
+  },
+  "digest": true,
+  "output": {
+    "file": "out.zlib",
+    "check": "zlib"
+  },
+  "data": {
+    "kind": "mixed",
+    "file": "app-comphash-256mb.bin",
+    "bytes": 268435456,
+    "seed": 23
+  },
+  "notes": [
+    "Every cell compresses at RFC 1950 zlib level 6 and validates header FCHECK/FDICT, stream termination, and Adler-32 trailer on decompression (Zig checks FCHECK/FDICT and Adler-32 explicitly with std's own flate.Container.Hasher because Zig 0.17 Decompress skips both; C# wraps the input FileStream in StrictEofStream so truncated streams fail instead of returning silent EOF).",
+    "output.check is zlib: tools/bench verify independently decompresses each cell's out.zlib with Go's compress/zlib and checks that the decompressed stream's SHA-256 matches the input file.",
+    "Rust reuses the already-vendored crates/flate2-1.1.1-ring-0.17.14-sha2-0.10.9-walkdir-2.5.0 tree; ring and walkdir are declared only to keep Cargo.lock in sync with the shared vendor directory and are never imported or called.",
+    "The input size (256 MiB) puts the fastest cell (mk) above the 1 s floor."
+  ]
+}

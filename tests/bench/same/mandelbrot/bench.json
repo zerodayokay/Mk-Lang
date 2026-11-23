@@ -16,7 +16,8 @@
     "c": "mandelbrot.c",
     "rust": "mandelbrot.rs",
     "zig": "mandelbrot.zig",
-    "go": "testdata/mandelbrot.go"
+    "go": "testdata/mandelbrot.go",
+    "cs": "mandelbrot.cs"
   },
   "skip": {
     "mk-wrap": "the hot loop is float; its only integer arithmetic is the iteration counter"

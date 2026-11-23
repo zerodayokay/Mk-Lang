@@ -19,14 +19,15 @@
     "c": "alloc-small.c",
     "rust": "alloc-small.rs",
     "zig": "alloc-small.zig",
-    "go": "testdata/alloc-small.go"
+    "go": "testdata/alloc-small.go",
+    "cs": "alloc-small.cs"
   },
   "skip": {
     "mk-wrap": "the checksum already uses the wrapping operators; allocation has no arithmetic to wrap"
   },
   "no_counts": "B24 does not apply: an idiomatic row compares allocators; every column makes the same objects in the same order, and the checksum reads every object once",
   "notes": [
-    "Allocators named (B20's rule, applied to allocators): mk std's general heap (sys.heap.Alloc(), HeapList[u8] objects); c malloc and free of the static UCRT; rust System (HeapAlloc); zig std.heap.smp_allocator; go the garbage-collected runtime allocator (GOGC=100, labelled: it frees in batches).",
+    "Allocators named (B20's rule, applied to allocators): mk std's general heap (sys.heap.Alloc(), HeapList[u8] objects); c malloc and free of the static UCRT; rust System (HeapAlloc); zig std.heap.smp_allocator; go the garbage-collected runtime allocator (GOGC=100, labelled: it frees in batches); cs the Workstation GC heap (byte[] via Span.ToArray, labelled: frees in batches).",
     "Written by lane L4b of M9 item 11.22, the Mk side from doc/reference.md and the twins by the same agent (programme section 16 asked for different agents; the coordinator's question). Publish size unsized until the coordinator's verify -publish-size."
   ]
 }

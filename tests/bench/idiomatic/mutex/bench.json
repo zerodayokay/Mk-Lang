@@ -19,7 +19,8 @@
     "c": "mutex.c",
     "rust": "mutex.rs",
     "zig": "mutex.zig",
-    "go": "testdata/mutex.go"
+    "go": "testdata/mutex.go",
+    "cs": "mutex.cs"
   },
   "skip": {
     "mk-wrap": "the count stays below 2^31; the task has no arithmetic to wrap"
@@ -36,7 +37,8 @@
       "c": "OS threads, C11 <threads.h> mtx_t",
       "go": "goroutines (GOMAXPROCS 8), sync.Mutex",
       "rust": "OS threads, std::sync::Mutex",
-      "zig": "OS threads, std.Io.Mutex"
+      "zig": "OS threads, std.Io.Mutex",
+      "cs": "OS threads, System.Threading.Lock"
     }
   },
   "no_counts": "B24 does not apply: the count, t * n, shows every locked add happened",

@@ -20,7 +20,8 @@
     "c": "sortints.c",
     "rust": "sortints.rs",
     "zig": "sortints.zig",
-    "go": "testdata/sortints.go"
+    "go": "testdata/sortints.go",
+    "cs": "sortints.cs"
   },
   "skip": {
     "mk-wrap": "the sort does only index arithmetic; a wrapping column is not needed for the budgets"

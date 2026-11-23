@@ -20,7 +20,8 @@
     "c": "fmtints.c",
     "rust": "fmtints.rs",
     "zig": "fmtints.zig",
-    "go": "testdata/fmtints.go"
+    "go": "testdata/fmtints.go",
+    "cs": "fmtints.cs"
   },
   "skip": {
     "mk-wrap": "not needed for the budgets; written if the checked column shows an overflow-check cost"

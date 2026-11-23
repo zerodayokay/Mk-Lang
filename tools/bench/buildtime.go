@@ -52,6 +52,8 @@ var buildTimeStd = map[string]string{
 	"zig-fast": "std compiled with the program, and compiler_rt rebuilt (fresh local and global caches)",
 	"zig-safe": "as zig-fast",
 	"go":       "the std packages the program imports rebuilt (a fresh GOCACHE)",
+	"cs":       "none: .NET 11 BCL is prebuilt (framework-dependent apphost + managed IL)",
+	"cs-aot":   "whole-program NativeAOT compile and trim of the program and referenced BCL from offline NuGet packages",
 }
 
 // buildTimeCell is one row and column.
@@ -108,6 +110,11 @@ func timeBuild(b *built) (time.Duration, error) {
 	if err := os.MkdirAll(filepath.Dir(b.Exe), 0o755); err != nil {
 		return 0, err
 	}
+	if b.Cmd.Prep != nil {
+		if err := b.Cmd.Prep(); err != nil {
+			return 0, err
+		}
+	}
 	cmd := exec.Command(b.Cmd.Args[0], b.Cmd.Args[1:]...)
 	cmd.Dir = b.Cmd.Dir
 	cmd.Env = append(buildEnv(os.Environ(), b.Cmd.Unset), b.Cmd.Env...)
@@ -115,6 +122,9 @@ func timeBuild(b *built) (time.Duration, error) {
 	out, err := cmd.CombinedOutput()
 	if err == nil && b.Cmd.Product != "" {
 		err = copyVendorFile(b.Cmd.Product, b.Exe)
+		if err == nil && len(b.Cmd.Sidecars) > 0 {
+			err = copySidecars(b.Cmd.Product, b.Exe, b.Cmd.Sidecars)
+		}
 	}
 	d := time.Since(start)
 	if err != nil {

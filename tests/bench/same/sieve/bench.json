@@ -19,7 +19,8 @@
     "c": "sieve.c",
     "rust": "sieve.rs",
     "zig": "sieve.zig",
-    "go": "testdata/sieve.go"
+    "go": "testdata/sieve.go",
+    "cs": "sieve.cs"
   },
   "skip": {},
   "counts": ["marks"],

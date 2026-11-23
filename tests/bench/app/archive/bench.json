@@ -60,7 +60,8 @@
     "zig": "software AES, GHASH and SHA-256: Zig 0.17 chooses the crypto instructions at compile time, and the row's x86-64-v2 target has none (README.md, Hardware paths)"
   },
   "skip": {
-    "c": "no std hash, compression or cryptography in C, and no C crypto library is vendored (zlib alone would leave a partial task)"
+    "c": "no std hash, compression or cryptography in C, and no C crypto library is vendored (zlib alone would leave a partial task)",
+    "cs": "no std Ed25519 in .NET BCL"
   },
   "crates": "crates/flate2-1.1.1-ring-0.17.14-sha2-0.10.9-walkdir-2.5.0",
   "env": {

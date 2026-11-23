@@ -1,0 +1,29 @@
+{
+  "name": "knucleotide",
+  "table": "same",
+  "algorithm": "Benchmarks Game k-nucleotide over a generated DNA sequence with one open-addressed Fibonacci-hashed linear-probing table in every language (README.md).",
+  "overflow": "wraps",
+  "args": [
+    "5000000",
+    "15"
+  ],
+  "quick": [
+    "200000",
+    "1"
+  ],
+  "checksum": "3096664476688861912",
+  "quick_checksum": "11906790082256738691",
+  "sources": {
+    "mk": "mk",
+    "c": "knucleotide.c",
+    "rust": "knucleotide.rs",
+    "zig": "knucleotide.zig",
+    "go": "testdata/knucleotide.go",
+    "cs": "knucleotide.cs"
+  },
+  "skip": {
+    "mk-wrap": "the hashing and checksum already use wrapping operators (overflow class wraps)"
+  },
+  "counts": ["probes", "rehashes"],
+  "notes": []
+}

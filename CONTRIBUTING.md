@@ -70,6 +70,7 @@ Some tests check Mk against outside data that is too large for the repository or
 | `math/` | correctly rounded reference values for std.math | generated with mpmath by `gen_math.py` in that directory |
 | `abi-oracle/` | `probe.go`, which runs clang over `internal/abi/testdata/suite.txt` to regenerate the ABI oracle | written for Mk |
 | `crates/` | vendored Rust crates for the Rust rows of `tests/bench` | crates.io, through `cargo vendor` |
+| `nuget/` | offline .NET 11 NativeAOT and runtime `.nupkg` files for the C# (`cs`, `cs-aot`) columns of `tests/bench` | nuget.org, pinned by SHA-256 in `nuget/SOURCE.txt` |
 
 ### The gate
 

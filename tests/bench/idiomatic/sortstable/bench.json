@@ -21,7 +21,8 @@
     "mk": "mk",
     "rust": "sortstable.rs",
     "zig": "sortstable.zig",
-    "go": "testdata/sortstable.go"
+    "go": "testdata/sortstable.go",
+    "cs": "sortstable.cs"
   },
   "skip": {
     "c": "no std stable sort in C (qsort is the only std sort, and it is not stable)",
@@ -29,6 +30,6 @@
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries, each with its own sort algorithm; the checksum (the weighted sum of each sorted pattern, 0xdead if out of order) checks every result",
   "notes": [
-    "Stable sorts (B20): mk Slice.SortStable; rust sort (driftsort); zig std.sort.block (in place); go slices.SortStableFunc with cmp.Compare (Go has no stable sort without a comparator)."
+    "Stable sorts (B20): mk Slice.SortStable; rust sort (driftsort); zig std.sort.block (in place); go slices.SortStableFunc with cmp.Compare (Go has no stable sort without a comparator); cs Enumerable.Order (LINQ stable sort)."
   ]
 }

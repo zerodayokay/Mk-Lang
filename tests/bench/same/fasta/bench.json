@@ -1,0 +1,27 @@
+{
+  "name": "fasta",
+  "table": "same",
+  "algorithm": "Benchmarks Game fasta generator (repeat Alu + IUB and Homo sapiens LCG probability tables in 60-byte lines, folded into a line checksum) (README.md).",
+  "overflow": "never",
+  "args": [
+    "20000000"
+  ],
+  "quick": [
+    "200000"
+  ],
+  "checksum": "587366568063",
+  "quick_checksum": "5873707557",
+  "sources": {
+    "mk": "mk",
+    "c": "fasta.c",
+    "rust": "fasta.rs",
+    "zig": "fasta.zig",
+    "go": "testdata/fasta.go",
+    "cs": "fasta.cs"
+  },
+  "skip": {
+    "mk-wrap": "not needed for the budgets; written if the checked column shows an overflow-check cost"
+  },
+  "counts": ["probes"],
+  "notes": []
+}

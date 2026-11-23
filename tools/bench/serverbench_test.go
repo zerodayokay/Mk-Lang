@@ -577,7 +577,7 @@ func TestServerDefect(t *testing.T) {
 		{"hand is no reference", []serverCell{cell("mk", "std", 100), cell("rust", "hand", 900), cell("go", "std", 150)},
 			"against the best std cell, `go`: best std req/s over Mk req/s 1.50"},
 		{"no std cell", []serverCell{cell("mk", "std", 100), cell("rust", "hand", 900), {Col: "go", Kind: "std", RPS: 500, Sweeps: sw(500), Excluded: "failed"}},
-			"`mk` has no std cell of C, Rust, Zig or Go to be judged against."},
+			"`mk` has no std cell of C, Rust, Zig, Go or C# to be judged against."},
 	} {
 		got := strings.Join(serverDefect(tc.cells), "\n")
 		if !strings.Contains(got, tc.want) {

@@ -1,0 +1,43 @@
+{
+  "name": "httpparse",
+  "table": "app",
+  "algorithm": "Parse a deterministic splitmix64-generated batch of valid and malformed HTTP/1.1 requests (RFC 9112 request line, headers, framing/smuggling checks, fixed Content-Length and chunked body decoding) from contiguous memory buffers, aggregating counts and a wrapping FNV-1a 64 digest over parsed fields (README.md).",
+  "overflow": "wraps",
+  "args": [
+    "2000",
+    "2000",
+    "7"
+  ],
+  "quick": [
+    "500",
+    "20",
+    "7"
+  ],
+  "checksum": "ok=3796000 err=204000 hdrs=26448000 body=282380000 chunked=906000 keepalive=1794000 fnv=7d46617dbf6297f5",
+  "quick_checksum": "ok=9460 err=540 hdrs=65200 body=662180 chunked=2200 keepalive=4300 fnv=3ec1585cef55ac2d",
+  "sources": {
+    "mk": "mk",
+    "c": "httpparse.c",
+    "rust": "httpparse.rs",
+    "zig": "httpparse.zig",
+    "go": "testdata/httpparse.go",
+    "cs": "httpparse.cs"
+  },
+  "kinds": {
+    "mk": "std",
+    "c": "std",
+    "rust": "std",
+    "zig": "std",
+    "go": "std",
+    "cs": "std"
+  },
+  "env": {
+    "MK_CARRIERS": "1"
+  },
+  "notes": [
+    "The strict RFC 9112 HTTP/1.1 request parser is the task itself (README.md), so every cell is kind std with zero external dependencies.",
+    "Mk uses std.simd.IndexByte (an allowed std dispatching routine, appRowViolations), matching C memchr, Go bytes.IndexByte, Zig std.mem.indexOfScalar and C# ReadOnlySpan<byte>.IndexOf.",
+    "Overflow class wraps: the FNV-1a 64 digest wraps by definition; all counts stay well within i64 bounds.",
+    "The publish arguments are provisional until verify -publish-size confirms the 1 s floor on a quiet machine."
+  ]
+}

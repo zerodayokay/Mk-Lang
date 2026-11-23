@@ -18,7 +18,8 @@
     "c": "jsonscan.c",
     "rust": "jsonscan.rs",
     "zig": "jsonscan.zig",
-    "go": "testdata/jsonscan.go"
+    "go": "testdata/jsonscan.go",
+    "cs": "jsonscan.cs"
   },
   "skip": {
     "mk-wrap": "the hash already uses the wrapping operators in every column (overflow class wraps)"

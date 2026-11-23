@@ -20,7 +20,8 @@
   "quick_checksum": "49995000",
   "sources": {
     "mk": "mk",
-    "go": "testdata/timers.go"
+    "go": "testdata/timers.go",
+    "cs": "timers.cs"
   },
   "skip": {
     "c": "no std tasks in C (<threads.h> is OS threads; 10^5 cannot be created on Windows, B19, as spawn), and no cancellation scope with a deadline",
@@ -37,7 +38,8 @@
     "threads": 8,
     "models": {
       "mk": "tasks (M:N on 8 carriers), Io.Sleep and Scope.CancelAfter",
-      "go": "goroutines (M:N, GOMAXPROCS 8), time.Sleep and context.WithTimeout"
+      "go": "goroutines (M:N, GOMAXPROCS 8), time.Sleep and context.WithTimeout",
+      "cs": "tasks (ThreadPool), Task.Delay and CancellationTokenSource"
     }
   },
   "no_counts": "B24 does not apply: the sum of every task's index, each added only after its clock showed it slept, shows that every task slept and ran once, and the deadline checksum (disarmed plus 3 times expired) shows the 0 s deadlines fired and the 60 s ones did not; a 0 s deadline takes each std's at-once path, which arms no timer, so it does not show that a 60 s deadline was armed (README What the checksums show)",

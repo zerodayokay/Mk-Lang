@@ -26,19 +26,22 @@
     "c": "orderbook.c",
     "rust": "orderbook.rs",
     "zig": "orderbook.zig",
-    "go": "testdata/orderbook.go"
+    "go": "testdata/orderbook.go",
+    "cs": "orderbook.cs"
   },
   "kinds": {
     "mk": "std",
     "c": "hand",
     "rust": "hand",
     "zig": "hand",
-    "go": "std"
+    "go": "std",
+    "cs": "hand"
   },
   "hand": {
     "c": "every container and the feed reader: a hash table (open addressing, backward-shift deletion, 85 lines), growable ring buffers (51 lines), sorted arrays for the price levels and the volume by price, binary heaps for the stops (41 lines), and a CSV line splitter with its number parsers (125 lines); the slot pool and the live bitset are the task's own structure, as in every cell (README.md, Cells)",
     "rust": "a CSV splitter for the feed's unquoted fields: BufRead::read_until a line, from_utf8, split on commas, trim (about 50 lines); every other container is std's, the slot pool and the live bitset being the task's own structure, as in every cell (README.md, Cells)",
-    "zig": "a CSV splitter for the feed's unquoted fields: takeDelimiter a line, std.mem.splitScalar on commas, std.mem.trim, and a sign-and-digits integer parser (about 50 lines); every other container is std's but the price levels, a sorted std.ArrayList (std has a Treap, no B-tree), the slot pool and the live bitset being the task's own structure, as in every cell (README.md, Cells)"
+    "zig": "a CSV splitter for the feed's unquoted fields: takeDelimiter a line, std.mem.splitScalar on commas, std.mem.trim, and a sign-and-digits integer parser (about 50 lines); every other container is std's but the price levels, a sorted std.ArrayList (std has a Treap, no B-tree), the slot pool and the live bitset being the task's own structure, as in every cell (README.md, Cells)",
+    "cs": "a CSV splitter for the feed's unquoted fields: 64 KiB StreamReader, split on commas, trim ASCII whitespace, refuse quotes (about 50 lines); every other container is .NET BCL's (Dictionary, HashSet, SortedList, PriorityQueue, List), the slot pool and the live bitset being the task's own structure, as in every cell (README.md, Cells)"
   },
   "env": {
     "MK_CARRIERS": "1"
@@ -51,7 +54,7 @@
   },
   "notes": [
     "The Mk side is Dogfoods/orderbook unchanged (D-842). Its --quiet still runs the statistics (src/main/output.mk: Write runs stats.Summarize, the depth and the rejects before its quiet branch and builds the JSON report after it), so every twin does the same work after the replay; only the quiet line reaches the checksum. Each twin, run without --quiet, prints the dogfood's text report but its engine heap line, and matched orderbook.exe byte for byte on 114 feeds at the review fix of item 11.37 (README.md, Checking the twins).",
-    "Containers: Mk mem.Pool, coll.Bitset, Map and Set (fixed keys), coll.HeapBTree of coll.HeapDeque levels, coll.PriorityQueue, coll.Deque, coll.BTree; Rust std's HashMap and HashSet (RandomState, SipHash-1-3), BTreeMap levels of VecDeque, BinaryHeap, VecDeque; Go maps, a sorted slice of levels (labelled: Go's std has no ordered map), plain slices as queues, container/heap; Zig AutoHashMapUnmanaged (Wyhash), a sorted ArrayList of std.Deque levels (labelled), std.PriorityQueue, std.Deque; C hand throughout. The sorted level arrays of C, Zig and Go keep the best level last, so a new or emptied best level moves no other level. Every twin keeps orders in a slot pool with generations swept every 4,096 commands, as the dogfood's mem.Pool is, and a bitset of live arrival numbers: the task's own structure, counted as a facility in no cell (README.md, Cells).",
+    "Containers: Mk mem.Pool, coll.Bitset, Map and Set (fixed keys), coll.HeapBTree of coll.HeapDeque levels, coll.PriorityQueue, coll.Deque, coll.BTree; Rust std's HashMap and HashSet (RandomState, SipHash-1-3), BTreeMap levels of VecDeque, BinaryHeap, VecDeque; Go maps, a sorted slice of levels (labelled: Go's std has no ordered map), plain slices as queues, container/heap; Zig AutoArrayHashMapUnmanaged for the churning order index (swapRemove avoids AutoHashMapUnmanaged tombstone buildup) and AutoHashMapUnmanaged for done/volume (Wyhash), a sorted ArrayList of std.Deque levels (labelled), std.PriorityQueue, std.Deque; C hand throughout. The sorted level arrays of C, Zig and Go keep the best level last, so a new or emptied best level moves no other level. Every twin keeps orders in a slot pool with generations swept every 4,096 commands, as the dogfood's mem.Pool is, and a bitset of live arrival numbers: the task's own structure, counted as a facility in no cell (README.md, Cells).",
     "The feed is read a record at a time in every column: Mk csv.Records (RFC 4180) over a 64 KiB fs Reader, Go encoding/csv over a 64 KiB bufio.Reader, the others a hand splitter of unquoted fields over a 64 KiB buffer. The orderfeed kind writes no quote.",
     "Overflow: no feed of the row overflows the engine's arithmetic; the checksum's FNV-1a multiply wraps by definition and is written wrapping in every language (Mk *%, Rust wrapping_mul, Zig *%, C uint64_t, Go uint64).",
     "Single-threaded: MK_CARRIERS=1, so the dogfood's one task per bar of statistics runs on one carrier; the twins sum the bars inline.",

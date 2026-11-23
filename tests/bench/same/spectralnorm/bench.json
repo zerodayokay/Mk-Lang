@@ -16,7 +16,8 @@
     "c": "spectralnorm.c",
     "rust": "spectralnorm.rs",
     "zig": "spectralnorm.zig",
-    "go": "testdata/spectralnorm.go"
+    "go": "testdata/spectralnorm.go",
+    "cs": "spectralnorm.cs"
   },
   "skip": {
     "mk-wrap": "not needed for the budgets; A(i, j)'s integer arithmetic is checked in mk"

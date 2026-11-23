@@ -1,0 +1,51 @@
+{
+  "name": "wordfreq-app",
+  "table": "app",
+  "algorithm": "Stream a large text file through a 64 KiB buffer, tokenize ASCII words (lowercase-folded) across chunk boundaries, count frequencies in a hash map with owned keys, sort unique words by (count desc, word asc), and print total words, unique words and top-K word counts (README.md).",
+  "overflow": "never",
+  "args": [
+    "{data}",
+    "25"
+  ],
+  "quick": [
+    "{data}",
+    "25",
+    "100000"
+  ],
+  "checksum": "sha256:7fabde8b90228bd1d2c6309f8c7060abe58283232aeef8aa1f18e77cb6c47f3b",
+  "quick_checksum": "sha256:f92f30460be073963ac8db04583d0f52eca27231ff542f1dd0cb253a24a27114",
+  "sources": {
+    "mk": "mk",
+    "c": "wordfreq-app.c",
+    "rust": "wordfreq-app.rs",
+    "zig": "wordfreq-app.zig",
+    "go": "testdata/wordfreq-app.go",
+    "cs": "wordfreq-app.cs"
+  },
+  "kinds": {
+    "mk": "std",
+    "c": "hand",
+    "rust": "std",
+    "zig": "std",
+    "go": "std",
+    "cs": "std"
+  },
+  "hand": {
+    "c": "an open-addressed linear-probing hash table (FNV-1a 64 hash, 70% max load, power-of-two growth) with a bump string slab arena for keys, 105 lines, plus qsort"
+  },
+  "env": {
+    "MK_CARRIERS": "1"
+  },
+  "digest": true,
+  "data": {
+    "kind": "words",
+    "file": "app-wordfreq-450mb.txt",
+    "bytes": 450000000,
+    "seed": 42
+  },
+  "notes": [
+    "Named wordfreq-app so its row ID does not collide with idiomatic/wordfreq. Unlike idiomatic/wordfreq (which reads the whole file into memory and repeats lookups with borrowed slices), this row streams the file in 64 KiB chunks with owned map keys and sorts the unique entries.",
+    "Hash maps use each language's default map and hash: Mk Map.New and Zig StringHashMap are fixed (fast hash / Wyhash); Rust HashMap (SipHash-1-3), Go map (AES/seeded) and C# Dictionary (Marvin32) are seeded at run time; C uses a hand FNV-1a open-addressed table (labelled hand).",
+    "The publish file size (450,000,000 bytes) puts the fastest cell (zig-fast) above the 1 s floor."
+  ]
+}

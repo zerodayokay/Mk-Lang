@@ -10,9 +10,10 @@
 // in a slot pool (an ArrayList of slots, each with a generation, and an
 // ArrayList of vacant slot indices used last in first out), named by (slot,
 // generation) handles; a []u64 bitset of live arrival numbers sized from
-// the file (a third of its bytes, plus two); an AutoHashMapUnmanaged from
-// client id to handle and one as the set of the ids that are done (std's
-// default hash, Wyhash, fixed seed). Each side of the book is an ArrayList
+// the file (a third of its bytes, plus two); an AutoArrayHashMapUnmanaged from
+// client id to handle (swapRemove avoids AutoHashMapUnmanaged's tombstone
+// saturation under steady-state insert/remove churn) and an AutoHashMapUnmanaged
+// as the set of the ids that are done (std's default hash, Wyhash, fixed seed). Each side of the book is an ArrayList
 // of price levels sorted by key (price times -1 for bids, times 1 for
 // asks) in descending order, the best level last, so a new or emptied best
 // level moves no other level; it is searched by std.sort.lowerBound and
@@ -123,7 +124,7 @@ const Orders = struct {
     vacant: std.ArrayList(u32) = .empty,
     flags: []u64,
     nbits: usize,
-    index: std.AutoHashMapUnmanaged(ClientId, Handle) = .empty,
+    index: std.AutoArrayHashMapUnmanaged(ClientId, Handle) = .empty,
     done: std.AutoHashMapUnmanaged(ClientId, void) = .empty,
     seq: usize = 0,
 
@@ -195,7 +196,7 @@ const Orders = struct {
     fn retire(s: *Orders, h: Handle) !void {
         const o = s.get(h) orelse return;
         s.clearFlag(o.seq);
-        _ = s.index.remove(o.id);
+        _ = s.index.swapRemove(o.id);
         try s.done.put(gpa, o.id, {});
     }
 

@@ -17,14 +17,15 @@
     "c": "bufwrite.c",
     "rust": "bufwrite.rs",
     "zig": "bufwrite.zig",
-    "go": "testdata/bufwrite.go"
+    "go": "testdata/bufwrite.go",
+    "cs": "bufwrite.cs"
   },
   "skip": {
     "mk-wrap": "the hex value and the checksum already use the wrapping operators; i*7 cannot overflow at these sizes"
   },
   "no_counts": "B24 does not apply: an idiomatic row compares libraries; every column writes the same bytes, and the checksum over the bytes read back checks the formatter and the writer",
   "notes": [
-    "Formatters and writers named: mk Print through fs.File.Writer (64 KiB); c fprintf on a stream with setvbuf _IOFBF 65536; rust writeln! through BufWriter::with_capacity(65536); zig print through File.writer over 64 KiB; go fmt.Fprintf through bufio.NewWriterSize(65536). Every column goes through its general formatter (critic F26).",
+    "Formatters and writers named: mk Print through fs.File.Writer (64 KiB); c fprintf on a stream with setvbuf _IOFBF 65536; rust writeln! through BufWriter::with_capacity(65536); zig print through File.writer over 64 KiB; go fmt.Fprintf through bufio.NewWriterSize(65536); cs Utf8.TryWrite through FileStream (65536 buffer). Every column goes through its general formatter (critic F26).",
     "Each column writes its own file name in its temporary directory (TMP on Windows) and removes it; the file is at most 102 MB at the publish size (34 bytes a line at most).",
     "Written by lane L4b of M9 item 11.22, the Mk side from doc/reference.md and the twins by the same agent (programme section 16 asked for different agents; the coordinator's question). Publish size unsized until the coordinator's verify -publish-size."
   ]
