@@ -56,13 +56,14 @@ struct TaskState {
     armed_at: raw.Atomic[i64]
     // need_arm is 1 while a timer may be earlier than armed_at (OweArm).
     need_arm: raw.Atomic[u32]
-    // Slot waits (spawn.mk NewSlot), one pair per slot class: the
-    // generation a task end bumps, and how many spawns wait on it
-    // (a task end takes the bucket lock only when one waits).
+    // Slot waits (spawn.mk NewSlot), on their own cache line apart from
+    // WakeOne's nspinning/nidle and the global queue.
+    pad_slot: [8]u64
     slot_gen: raw.Atomic[u32]
     slot_gen_large: raw.Atomic[u32]
     slot_waiters: raw.Atomic[u32]
     slot_waiters_large: raw.Atomic[u32]
+    slot_cache: bool
     // Test counters (one atomic add each, on paths that just made a
     // system call or are about to wait): Idle returns from a PollWait
     // with no timeout, and NewSlot's slot waits.
@@ -75,10 +76,8 @@ struct TaskState {
     // path about to publish itself idle; "RT-Linger-Ends").
     linger_ends: raw.Atomic[u64]
     backend: u32
-    // Carriers (carrier.mk): want is CarrierCount, ncarriers the started
-    // ones (indices 0 to ncarriers - 1), nidle those inside Idle, nspinning
-    // those looking for work, waking 1 while a PollWake for an idle carrier
-    // is in flight.
+    // Carriers (carrier.mk), padded from slot waits and the global queue.
+    pad_wake: [8]u64
     carriers: *Carrier
     want: raw.Atomic[u32]
     ncarriers: raw.Atomic[u32]
@@ -87,7 +86,8 @@ struct TaskState {
     waking: raw.Atomic[u32]
     // npending counts poller operations submitted and not yet reaped.
     npending: raw.Atomic[u32]
-    // The global queue (runq.mk), under the leaf lock glock.
+    // The global queue (runq.mk), under the leaf lock glock, on its own line.
+    pad_g: [8]u64
     glock: raw.Atomic[u32]
     ghead: *Task
     gtail: *Task
@@ -288,6 +288,24 @@ ReadyPut(c: *Carrier, t: *Task): bool {
         }
     }
     return false
+}
+
+// ReadyPutNew is ReadyPut for a newly spawned task t that no other thread has
+// seen yet, avoiding an atomic Swap on t.state before runnext/GlobalPush publishes it.
+ReadyPutNew(c: *Carrier, t: *Task) {
+    unsafe "t is a fresh unshared task; c is this thread's carrier" {
+        // Edge: relaxed store published by runnext.Swap or GlobalPush below.
+        (*t).state.StoreOrd(TaskRunnable, 0)
+        if raw.IsNull(c) {
+            GlobalPush(t)
+            return
+        }
+        // Edge: the swap publishes t to thieves (StealNext) and takes the previous task.
+        old := (*c).runnext.Swap(AddrOf(t))
+        if old != 0 {
+            PushLocal(c, TaskAt(old))
+        }
+    }
 }
 
 // ReadyClaim is the ready's state change, Runnable from Parked or New.
@@ -537,8 +555,24 @@ RunAfter(c: *Carrier) {
                 (*h).committed_pages = Trunc[u16]((top - Trunc[uint]((*a.task).ctx[2])) / 4096)
             }
             class := (*h).class
-            rt.FreeSlot(h)
-            SlotFreed(c, class)
+            st := TS()
+            // Edge: none needed beyond the hint; when a waiter exists or the
+            // region cap is small (MK_TEST_SLOTS), slots go straight back.
+            if class == rt.ClassDefault && (*st).slot_cache && (*st).slot_waiters.Load() == 0 {
+                (*h).state = 1
+                (*h).next_free = (*c).slot_free
+                (*c).slot_free = h
+                (*c).slot_count += 1
+                if (*c).slot_count >= 128 {
+                    FlushSlots(c, 64)
+                }
+            } else {
+                if class == rt.ClassDefault && (*c).slot_count > 0 {
+                    FlushSlots(c, int((*c).slot_count))
+                }
+                rt.FreeSlot(h)
+                SlotFreed(c, class)
+            }
         }
     }
 }
@@ -1028,7 +1062,30 @@ Idle(c: *Carrier) {
 // argument in spawn.mk). A task it readies is on c's queues before the
 // AnyWork recheck below, so c does not go idle past it. With nothing over
 // the bounds it costs three atomic loads.
+// FlushSlots returns up to want cached ClassDefault slots from c's local
+// free list to the region in one batch lock and bumps SlotFreed once.
+FlushSlots(c: *Carrier, want: int) {
+    unsafe "c is the calling thread's carrier; its slot_free list is owner-only" {
+        head := (*c).slot_free
+        if raw.IsNull(head) || want <= 0 {
+            return
+        }
+        var tail := head
+        var n := 1
+        for n < want && !raw.IsNull((*tail).next_free) {
+            tail = (*tail).next_free
+            n += 1
+        }
+        (*c).slot_free = (*tail).next_free
+        (*tail).next_free = raw.Null[rt.SlotHeader]()
+        (*c).slot_count -= Trunc[u32](n)
+        rt.FreeSlotBatch(rt.ClassDefault, head, tail, n)
+        SlotFreed(c, rt.ClassDefault)
+    }
+}
+
 TrimSpare(c: *Carrier) {
+    FlushSlots(c, 128)
     n := rt.TrimSlots(rt.ClassDefault)
     for _ in 0..n {
         SlotFreed(c, rt.ClassDefault)

@@ -417,16 +417,58 @@ export TakeSlot(class: u8): *SlotHeader {
 /// O(1) under the region lock; allocates nothing, frees nothing.
 export FreeSlot(h: *SlotHeader) {
     unsafe "h is the header of a slot whose task has ended" {
-        r := RegionOf((*h).class)
         (*h).state = 1
+        (*h).next_free = raw.Null[SlotHeader]()
+        FreeSlotBatch((*h).class, h, h, 1)
+    }
+}
+
+/// TakeSlotBatch pops up to max already-prepared free slots of class in one
+/// lock acquisition, returning the linked list head (or null) and writing the
+/// count to got. Never prepares fresh slots or touches cold.
+export TakeSlotBatch(class: u8, max: int, got: mut int): *SlotHeader {
+    r := RegionOf(class)
+    unsafe "r is a region record; slots are inside its reservation" {
         Lock(&(*r).lock)
-        (*h).next_free = (*r).free
-        (*r).free = h
-        (*r).free_count += 1
-        if (*r).free_count == TrimKeep + 1 {
-            // Edge: none needed; a hint for TrimSlots, which rechecks under
-            // the lock (a stale 0 delays one trim to the next idle pass).
-            (*r).over.Store(1)
+        head := (*r).free
+        if raw.IsNull(head) {
+            Unlock(&(*r).lock)
+            *got = 0
+            return head
+        }
+        was_over := (*r).free_count > TrimKeep
+        var tail := head
+        var n := 1
+        for n < max && !raw.IsNull((*tail).next_free) {
+            tail = (*tail).next_free
+            n += 1
+        }
+        (*r).free = (*tail).next_free
+        (*tail).next_free = raw.Null[SlotHeader]()
+        (*r).free_count -= n
+        if was_over && (*r).free_count <= TrimKeep {
+            // Edge: none needed; a hint for TrimSlots, which rechecks under the lock.
+            (*r).over.StoreOrd(0, 0)
+        }
+        Unlock(&(*r).lock)
+        *got = n
+        return head
+    }
+}
+
+/// FreeSlotBatch pushes n dead slots linked head..tail back onto class's free
+/// stack in one lock acquisition.
+export FreeSlotBatch(class: u8, head: *SlotHeader, tail: *SlotHeader, n: int) {
+    r := RegionOf(class)
+    unsafe "r is a region record; head..tail are n dead slots of class" {
+        Lock(&(*r).lock)
+        was_under := (*r).free_count <= TrimKeep
+        (*tail).next_free = (*r).free
+        (*r).free = head
+        (*r).free_count += n
+        if was_under && (*r).free_count > TrimKeep {
+            // Edge: none needed; a hint for TrimSlots, which rechecks under the lock.
+            (*r).over.StoreOrd(1, 0)
         }
         Unlock(&(*r).lock)
     }

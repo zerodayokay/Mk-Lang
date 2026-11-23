@@ -115,6 +115,7 @@ TaskInit(boot: *Boot) {
         }
         (*st).spin = sys.CpuCount() > 1
         (*st).lib = (*boot).lib
+        (*st).slot_cache = rt.UsableSlots(rt.ClassDefault) > 4096
         var want := CarrierWant(EnvInt(sp, "MK_CARRIERS"))
         if (*boot).want > 0 {
             want = CarrierWant((*boot).want)

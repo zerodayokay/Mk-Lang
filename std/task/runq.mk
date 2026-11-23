@@ -65,9 +65,8 @@ RingSlot(c: *Carrier, i: i64): *raw.Atomic[u64] {
 // (Chase-Lev's owner), from a task on c or from c's scheduler loop.
 PushLocal(c: *Carrier, t: *Task) {
     unsafe "c is the calling thread's own carrier" {
-        // Edge: none needed; an owner-only word: this load reads c's own
-        // last store of bottom (program order).
-        b := (*c).bottom.Load()
+        // Edge: relaxed owner-only load of bottom.
+        b := (*c).bottom.LoadOrd(0)
         // Edge: this load of top reads the latest successful steal, so the
         // fullness test below never lets a push overwrite a slot a thief
         // may still read (a stale smaller top would only make it stricter).
@@ -76,47 +75,34 @@ PushLocal(c: *Carrier, t: *Task) {
             Overflow(c, t)
             return
         }
-        // Edge (the paper's release before publishing bottom): the slot
-        // store precedes the store of bottom in S, so a thief whose load of
-        // bottom sees b + 1 then reads this slot's new value.
-        (*RingSlot(c, b)).Store(AddrOf(t))
+        // Edge: relaxed slot write published by the seq_cst store of bottom
+        // below, so a thief whose load of bottom sees b + 1 reads this slot.
+        (*RingSlot(c, b)).StoreOrd(AddrOf(t), 0)
         Jitter(JitterPush)
         (*c).bottom.Store(b + 1)
     }
 }
 
-// Take removes the task at the bottom of c's deque, or returns null. Only c's
-// own thread calls it.
+// Take removes the oldest task at the top of c's deque (Go's runqget), or
+// returns null. Only c's own thread calls it; empty costs zero RMWs.
 Take(c: *Carrier): *Task {
     unsafe "c is the calling thread's own carrier" {
-        // Edge: none needed; owner-only, as in PushLocal.
-        b := (*c).bottom.Load() - 1
-        // Edge (the paper's seq_cst fence between these two accesses): the
-        // store of bottom precedes the load of top in S. A thief that read
-        // the old bottom has its load of top before this store; one that
-        // reads the new bottom sees the slot as gone. With one task left
-        // (t == b) both sides may reach for it, and the compare-and-swap of
-        // top below decides.
-        (*c).bottom.Store(b)
-        Jitter(JitterTake)
-        t0 := (*c).top.Load()
-        if t0 <= b {
-            x := (*RingSlot(c, b)).Load()
-            if t0 == b {
-                // The last task: the owner and any thief race on top.
-                // Edge: the last-task race: this compare-and-swap and a
-                // thief's are ordered in S on top, and exactly one succeeds.
-                got := if (*c).top.Cas(t0, t0 + 1) { x } else { 0 }
-                (*c).bottom.Store(b + 1)
-                return TaskAt(got)
+        // Edge: relaxed owner-only load of bottom, fixed by this thread.
+        b := (*c).bottom.LoadOrd(0)
+        for {
+            // Edge: reads top; if t0 == b the deque is empty without an RMW.
+            t0 := (*c).top.Load()
+            if t0 >= b {
+                return raw.Null[Task]()
             }
-            return TaskAt(x)
+            // Edge: owner's own slot in [t0, b), live while top == t0.
+            x := (*RingSlot(c, t0)).LoadOrd(0)
+            Jitter(JitterTake)
+            // Edge: Cas on top orders this take against thieves (StealOne, StealHalf).
+            if (*c).top.Cas(t0, t0 + 1) {
+                return TaskAt(x)
+            }
         }
-        // Empty: restore bottom to top (b + 1 == t0).
-        // Edge: restores the owner-only bottom; a thief that reads it reads
-        // top after it (StealOne's order) and sees the deque empty.
-        (*c).bottom.Store(b + 1)
-        return raw.Null[Task]()
     }
 }
 
@@ -155,56 +141,85 @@ Size(c: *Carrier): i64 {
     }
 }
 
-// StealHalf moves up to half (rounded up, at most 128) of v's deque to c's:
-// the first task is returned, the rest pushed on c's own deque. c is the
-// calling thread's carrier and its deque is empty (it is looking for work).
+// StealHalf moves up to half (rounded up, at most 128) of v's deque to c's in
+// one Cas on v.top (Go's runqgrab). c is the calling carrier with an empty
+// deque (StealRounds), so stolen entries stage directly in c's unpublished
+// ring slots above c.bottom without a stack buffer.
 StealHalf(c: *Carrier, v: *Carrier): *Task {
-    n := Size(v)
-    if n == 0 {
-        return raw.Null[Task]()
-    }
-    var want := n - n / 2
-    if want > 128 {
-        want = 128
-    }
-    var first := raw.Null[Task]()
-    for _ in 0..Trunc[int](want) {
-        x := StealOne(v)
-        if raw.IsNull(x) {
-            break
+    unsafe "c is the calling thread's carrier; v's deque is read through atomics" {
+        for {
+            // Edge: top loaded before bottom; bottom only increases, so slots
+            // in [t0, b) were written before bottom reached b and cannot be
+            // overwritten while top == t0.
+            t0 := (*v).top.Load()
+            b := (*v).bottom.Load()
+            n := b - t0
+            if n <= 0 {
+                return raw.Null[Task]()
+            }
+            // Edge: owner-only load of c's bottom and top; StealRounds calls
+            // StealHalf with c empty, falling back to StealOne otherwise.
+            cb := (*c).bottom.LoadOrd(0)
+            if cb != (*c).top.Load() {
+                return StealOne(v)
+            }
+            var want := n - n / 2
+            if want > 128 {
+                want = 128
+            }
+            // Edge: slot t0 published by v's bottom.Store.
+            first := (*RingSlot(v, t0)).LoadOrd(0)
+            for j in 1..Trunc[int](want) {
+                // Edge: c's deque is empty (bottom == cb), so thieves cannot read
+                // these slots until bottom.Store below; v's slots are live while top == t0.
+                (*RingSlot(c, cb + Trunc[i64](j - 1))).StoreOrd((*RingSlot(v, t0 + Trunc[i64](j))).LoadOrd(0), 0)
+            }
+            Jitter(JitterSteal)
+            // Edge: one Cas claims all want tasks against v's Take and other thieves.
+            if (*v).top.Cas(t0, t0 + want) {
+                if want > 1 {
+                    // Edge: publishes all stolen slots to thieves in one store.
+                    (*c).bottom.Store(cb + want - 1)
+                }
+                return TaskAt(first)
+            }
         }
-        if raw.IsNull(first) {
-            first = x
-        } else {
-            PushLocal(c, x)
-        }
     }
-    return first
 }
 
-// Overflow takes a push to c's full ring: half of it (taken from the top, the oldest,
-// with the thieves' own compare-and-swap, so a concurrent thief and this
-// owner never both get a task) and t go to the global queue in one locked
-// splice. Only the owner pushes, so bottom does not move during the
-// loop; the ring cannot be refilled under it. The order inside the batch
-// (t first, Go puts it last) does not survive GlobalPop, which pushes all
-// but the first task of a batch on the taker's LIFO deque; the fairness
-// tick bounds the wait of any of them (test "RT-MN-Fair").
+// Overflow takes a push to c's full ring: half of it (taken from the top in
+// one batch Cas, safe because only the owner writes the ring or moves bottom)
+// and t go to the global queue in one locked splice.
 Overflow(c: *Carrier, t: *Task) {
     unsafe "c is the calling thread's own carrier; the tasks are runnable" {
         (*t).link = raw.Null[Task]()
         var head := t
         var tail := t
         var n: u32 = 1
-        for _ in 0..Trunc[int](RingSize / 2) {
-            x := StealOne(c)
-            if raw.IsNull(x) {
+        // Edge: owner-only load of bottom, fixed throughout Overflow.
+        b := (*c).bottom.LoadOrd(0)
+        for {
+            // Edge: reads latest top; only c writes c's ring, so slots
+            // [t0, t0 + want) stay untouched even after top advances here.
+            t0 := (*c).top.Load()
+            avail := b - t0
+            if avail <= 0 {
                 break
             }
-            (*x).link = raw.Null[Task]()
-            (*tail).link = x
-            tail = x
-            n += 1
+            want := if avail > RingSize / 2 { RingSize / 2 } else { avail }
+            Jitter(JitterSteal)
+            // Edge: one Cas claims [t0, t0 + want) against concurrent thieves.
+            if (*c).top.Cas(t0, t0 + want) {
+                for j in 0..Trunc[int](want) {
+                    // Edge: c is the sole writer of c's ring, still here.
+                    x := TaskAt((*RingSlot(c, t0 + Trunc[i64](j))).LoadOrd(0))
+                    (*x).link = raw.Null[Task]()
+                    (*tail).link = x
+                    tail = x
+                    n += 1
+                }
+                break
+            }
         }
         // A pinned carrier's tasks are its own: they go to its inbox, which
         // only it takes from (PinSplice, carrier.mk), never to the global
@@ -309,11 +324,35 @@ GlobalPop(c: *Carrier, max: u32): *Task {
         rt.Unlock(&(*st).glock)
         var x := (*first).link
         (*first).link = raw.Null[Task]()
-        for !raw.IsNull(x) {
-            next := (*x).link
-            (*x).link = raw.Null[Task]()
-            PushLocal(c, x)
-            x = next
+        if !raw.IsNull(x) {
+            // Edge: owner-only load of bottom; acquire top for room check.
+            var b := (*c).bottom.LoadOrd(0)
+            var t0 := (*c).top.Load()
+            var b0 := b
+            for !raw.IsNull(x) {
+                next := (*x).link
+                (*x).link = raw.Null[Task]()
+                if b - t0 >= RingSize {
+                    if b != b0 {
+                        // Edge: publish batch before Overflow reads bottom.
+                        (*c).bottom.Store(b)
+                        b0 = b
+                    }
+                    Overflow(c, x)
+                    b = (*c).bottom.LoadOrd(0)
+                    t0 = (*c).top.Load()
+                    b0 = b
+                } else {
+                    // Edge: relaxed slot write published by the bottom store below.
+                    (*RingSlot(c, b)).StoreOrd(AddrOf(x), 0)
+                    b += 1
+                }
+                x = next
+            }
+            if b != b0 {
+                // Edge: publishes popped batch to thieves in one seq_cst store.
+                (*c).bottom.Store(b)
+            }
         }
         return first
     }

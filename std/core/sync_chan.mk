@@ -210,7 +210,10 @@ QRemove[T](q: mut WaitQ[T], w: *ChanWaiter[T]) {
 // gets a spurious return, which every wait loop allows.
 Hand[T](w: *ChanWaiter[T], state: u32): ChanWake {
     k := ChanWake(io: WIo(w).NoCancel(), addr: AtomicWord(WStateAt(w)))
-    WStateAt(w).Store(state)
+    // Release (2): publishes WFill/TakeElem to ParkCell's Acquire LoadOrd(1);
+    // ChanUnlock's Cas and WakeWord's bucket Lock Cas provide the full barrier
+    // before the bucket scan.
+    WStateAt(w).StoreOrd(state, 2)
     return k
 }
 
@@ -459,15 +462,19 @@ const ParkCanceled: u32 = 3
 // value in the cell or the end of the read of x.
 ParkCell[T](st: *ChanState[T], w: *ChanWaiter[T], io: Io, recv: bool): u32 {
     s := WStateAt(w)
+    st0 := s.LoadOrd(1)
+    if st0 != 0 {
+        return st0
+    }
     for {
         r := IoWait(io, AtomicWord(s), 0)
-        state := s.Load()
+        state := s.LoadOrd(1)
         if state != 0 {
             return state
         }
         if r.err == SysErr.Canceled {
             ChanLock(st, io)
-            state2 := s.Load()
+            state2 := s.LoadOrd(1)
             if state2 != 0 {
                 ChanUnlock(st, io)
                 return state2

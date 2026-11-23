@@ -76,11 +76,14 @@ export WaitWord(addr: *u32, expected: u32, cancellable: bool): core.SysErr {
 
 // WaitWordIn is WaitWord between the task's hooks (hooks.mk).
 WaitWordIn(t: *Task, addr: *u32, expected: u32, cancellable: bool): core.SysErr {
+    if cancellable && Cancelled(t) {
+        return core.SysErr.Canceled
+    }
+    if AtomicAt(addr) != expected {
+        return core.SysErr.None
+    }
     var sc := raw.Null[ScopeRec]()
     if cancellable {
-        if Cancelled(t) {
-            return core.SysErr.Canceled
-        }
         locked := LockScope(t)
         if locked.cancelled {
             return core.SysErr.Canceled

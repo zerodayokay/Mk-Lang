@@ -80,6 +80,38 @@ SlotWaiters(class: u8): *raw.Atomic[u32] {
 // their own words, so a freed Large slot never takes the wake of a Default
 // waiter. Tests: RT-Slot-WakeOne, RT-F20-SlotExhaustWaits.
 NewSlot(class: u8, need: int): *rt.SlotHeader {
+    if class == rt.ClassDefault {
+        cur := Current()
+        if !raw.IsNull(cur) {
+            unsafe "cur is the running task; its carrier's slot_free is owner-only" {
+                c := (*cur).carrier
+                if !raw.IsNull(c) {
+                    var h := (*c).slot_free
+                    if !raw.IsNull(h) {
+                        (*c).slot_free = (*h).next_free
+                        (*c).slot_count -= 1
+                        (*h).next_free = raw.Null[rt.SlotHeader]()
+                        if Target.os != Os.Windows || need <= int((*h).committed_pages) * 4096 || rt.GrowTop(h, need) {
+                            return h
+                        }
+                        rt.FreeSlot(h)
+                    } else if (*TS()).slot_cache {
+                        var got := 0
+                        h = rt.TakeSlotBatch(class, 64, mut got)
+                        if !raw.IsNull(h) {
+                            (*c).slot_free = (*h).next_free
+                            (*c).slot_count = Trunc[u32](got - 1)
+                            (*h).next_free = raw.Null[rt.SlotHeader]()
+                            if Target.os != Os.Windows || need <= int((*h).committed_pages) * 4096 || rt.GrowTop(h, need) {
+                                return h
+                            }
+                            rt.FreeSlot(h)
+                        }
+                    }
+                }
+            }
+        }
+    }
     word := SlotGen(class)
     waiters := SlotWaiters(class)
     unsafe "the TaskState page Start mapped, which lives until exit; the slot words are atomics" {
@@ -120,6 +152,38 @@ SlotFreed(c: *Carrier, class: u8) {
     }
 }
 
+// LayFast writes the header and only the live control fields of a spawned Task,
+// skipping ctx (written by Context1), home/inner/io/block/thunk (written by
+// SpawnAlloc/Spawn), wait/timer (written before parking) and note/note2 (gated
+// by flags == 0).
+LayFast(h: *rt.SlotHeader, id: u64): *Task {
+    t := TaskOf(h)
+    unsafe "h's slot is reserved for this task" {
+        (*h).state = 2
+        (*h).in_c = 0
+        (*h).id = id
+        (*h).trace_n = 0
+        (*h).trace_dropped = 0
+        (*h).carrier = rt.NoCarrier
+        // Edge: relaxed before Spawn readies it; ReadyPut's Swap publishes TaskNew.
+        (*t).state.StoreOrd(TaskNew, 0)
+        (*t).flags = 0
+        (*t).pin = raw.Null[Carrier]()
+        (*t).link = raw.Null[Task]()
+        (*t).err = raw.Null[u8]()
+        (*t).op = raw.Null[sys.Op]()
+        (*t).job = raw.Null[u8]()
+        (*t).wait_kind = WaitKindNone
+        // Edge: relaxed before any Await or cancel walk can see t.
+        (*t).op_live.StoreOrd(0, 0)
+        (*t).blocked_in = raw.Null[ScopeRec]()
+        // Edge: relaxed before any Await or cancel walk can see t.
+        (*t).cancel_pin.StoreOrd(0, 0)
+        (*t).hold = raw.Null[ScopeRec]()
+        return t
+    }
+}
+
 // Lay writes a fresh header and task record at the top of h's slot.
 Lay(h: *rt.SlotHeader, id: u64): *Task {
     t := TaskOf(h)
@@ -131,8 +195,8 @@ Lay(h: *rt.SlotHeader, id: u64): *Task {
         (*h).trace_dropped = 0
         (*h).carrier = rt.NoCarrier
         raw.Fill(raw.PtrCast[Task, u8](t), 0, SizeOf[Task]())
-        // Edge: before Spawn readies it; ReadyPut's Swap reads New.
-        (*t).state.Store(TaskNew)
+        // Edge: relaxed before Spawn readies it; ReadyPut's Swap publishes TaskNew.
+        (*t).state.StoreOrd(TaskNew, 0)
         return t
     }
 }
@@ -171,7 +235,7 @@ export SpawnAlloc(s: &Scope, size: int, align: int, site: &rt.Site): *u8 {
             _ = (*r).live.Add(1)
         }
         h := NewSlot((*r).class, need + FrameReserve)
-        t := Lay(h, rt.NextTaskId())
+        t := LayFast(h, rt.NextTaskId())
         (*t).home = r
         (*t).inner = r
         (*t).io = (*r).io
@@ -241,7 +305,7 @@ Start1(t: *Task, h: *rt.SlotHeader, top: uint, entry: fn(*u8)) {
             return
         }
     }
-    _ = ReadyPut(c, t)
+    ReadyPutNew(c, t)
     Jitter(JitterReady)
     WakeOne()
 }
@@ -255,7 +319,7 @@ Context1(t: *Task, h: *rt.SlotHeader, top: uint, entry: fn(*u8)) {
             stop := raw.Addr(h) + Trunc[uint](rt.HeaderBytes)
             (*t).ctx[1] = u64(stop)
             (*t).ctx[2] = u64(stop - Trunc[uint](int((*h).committed_pages) * 4096))
-            (*t).ctx[3] = u64(rt.SlotBase(stop))
+            (*t).ctx[3] = u64(stop - (Trunc[uint](1) << Trunc[uint](rt.ClassShift((*h).class))))
             (*t).ctx[4] = TaskGuarantee
         }
     }
