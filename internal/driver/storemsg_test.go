@@ -19,14 +19,11 @@ import (
 )
 
 // TestE0604NamesHolder: a str read from a shared parameter whose
-// contents hold a view (`prog: &Program`, a `List` field) and pushed twice
-// into a local list is E0604 at the second push (`p#2` takes only a
-// declared flow); the message names the local that makes `*prog` a target,
-// and the loan fact names `*prog`, not the shared parameter itself. The
-// same store also reaches `a`, the arena `rows` lives in: one E0604 (one is
-// kept per place) names the holder of `a`. A `str` is shallow, so the
-// writable walk does not go on through `rows` to `prog#2`: the E0604 names
-// `*prog into a` alone, the store the body makes, and that clause clears it.
+// contents hold a read-only view (`prog: &Program`, a `List` field) and pushed
+// into a local list is E0604 naming the local that makes `a` a target, and the
+// loan fact names `*prog`, not the shared parameter itself. Because `List` is
+// a read-only view through `&`, `*prog into a` alone clears it and `*prog into
+// prog` is rejected with E0507.
 func TestE0604NamesHolder(t *testing.T) {
 	t.Parallel()
 	const decls = "struct Fun {\n    name: str\n}\n\nstruct Program {\n    funs: List[Fun]\n}\n\n"
@@ -45,9 +42,8 @@ func TestE0604NamesHolder(t *testing.T) {
 	if one := checkText(t, decls+"Names(a: &Arena, prog: &Program): OutOfMemory!int *prog into a {\n"+body); len(one.Report.Diags) != 0 {
 		t.Errorf("`*prog into a` alone, the clause E0604 names, does not clear it:\n%s", diagLines(one))
 	}
-	if one := checkText(t, decls+"Names(a: &Arena, prog: &Program): OutOfMemory!int *prog into prog {\n"+body); len(one.Report.Diags) != 1 ||
-		!strings.Contains(one.Report.Diags[0].Diag.Message, "(`rows` holds a loan of `a`, so the store reaches it); write `*prog into a`") {
-		t.Errorf("with `*prog into prog` alone, want the E0604 for `a`:\n%s", diagLines(one))
+	if ro := checkText(t, decls+"Names(a: &Arena, prog: &Program): OutOfMemory!int *prog into prog {\n"+body); !slices.Contains(codes(ro), "E0507") {
+		t.Errorf("with `*prog into prog` on read-only `&Program`, want E0507:\n%s", diagLines(ro))
 	}
 	loan := ""
 	for _, f := range d.Facts {
@@ -58,8 +54,8 @@ func TestE0604NamesHolder(t *testing.T) {
 	if loan != "*prog" {
 		t.Errorf("loan fact names %q, want `*prog`", loan)
 	}
-	if ok := checkText(t, decls+"Names(a: &Arena, prog: &Program): OutOfMemory!int *prog into a, *prog into prog {\n"+body); len(ok.Report.Diags) != 0 {
-		t.Errorf("the clause E0604 names does not clear it:\n%s", diagLines(ok))
+	if both := checkText(t, decls+"Names(a: &Arena, prog: &Program): OutOfMemory!int *prog into a, *prog into prog {\n"+body); !slices.Equal(codes(both), []string{"E0507"}) {
+		t.Errorf("`*prog into prog` on read-only `&Program` should be E0507 alone:\n%s", diagLines(both))
 	}
 }
 
@@ -156,22 +152,26 @@ func TestE0604NamesArena(t *testing.T) {
 	}
 }
 
-// TestE0505NamesHolder: a local arena's loan that a call
-// stores beside `sys.args` strings is E0505, since the list holding the
-// strings reaches `sys`'s allocators; the message names the target and its
-// holder: the arena whose memory holds `names` (views of `*sys`). Without
-// `a into out` it checks clean. The same store from `sys.arena` on a helper
-// goes into `sys`'s own allocator, which holds `*sys` by being part of it,
-// so it checks clean with the clause or without it.
+// TestE0505NamesHolder: a local arena's loan stored beside a `sys.arena`
+// reference is E0505, since the local arena reaches `sys`'s allocators; the
+// message names the target and its holder (`arena`). Storing read-only
+// `sys.args` strings (which reach no allocator) into the local arena instead
+// checks clean. The same store from `sys.arena` on a helper goes into `sys`'s
+// own allocator, which holds `*sys` by being part of it, so it checks clean
+// with the clause or without it.
 func TestE0505NamesHolder(t *testing.T) {
 	t.Parallel()
 	const keep = "Keep(a: &Arena into out, names: []str, out: mut List[str]): OutOfMemory!void *names into out {\n    for n in names {\n        try out.Push(try a.Dup(n))\n    }\n}\n\n"
-	r := checkText(t, keep+"Grep(sys: &System): OutOfMemory!int {\n    var arena := try Arena.New(sys.heap)\n    defer arena.Free()\n    a := &arena\n    var names := List[str].New(a)\n    try names.Push(sys.args[0])\n    var files := List[str].New(a)\n    try Keep(a, names[..], mut files)\n    return files.Len()\n}\n")
+	r := checkText(t, keep+"Grep(sys: &System): OutOfMemory!int {\n    var arena := try Arena.New(sys.heap)\n    defer arena.Free()\n    a := &arena\n    var refs := List[&Arena].New(a)\n    try refs.Push(sys.arena)\n    var files := List[str].New(a)\n    try Keep(a, sys.args[..], mut files)\n    return files.Len() + refs.Len()\n}\n")
 	if len(r.Report.Diags) != 1 {
 		t.Fatalf("want one E0505:\n%s", diagLines(r))
 	}
 	if d := r.Report.Diags[0].Diag; d.Code.String() != "E0505" || !strings.Contains(d.Message, "into `*sys` (`arena` holds a loan of `*sys`, so the store reaches it)") {
 		t.Errorf("got %v %q", d.Code, d.Message)
+	}
+	clean := checkText(t, keep+"GrepArgs(sys: &System): OutOfMemory!int {\n    var arena := try Arena.New(sys.heap)\n    defer arena.Free()\n    a := &arena\n    var names := List[str].New(a)\n    try names.Push(sys.args[0])\n    var files := List[str].New(a)\n    try Keep(a, names[..], mut files)\n    return files.Len()\n}\n")
+	if len(clean.Report.Diags) != 0 {
+		t.Errorf("`sys.args` holds no allocator, want clean:\n%s", diagLines(clean))
 	}
 	e := checkText(t, keep+"Count(sys: &System): int {\n    var out := List[str].New(sys.arena)\n    Keep(sys.arena, sys.args[1..], mut out) else {\n        return 2\n    }\n    return out.Len()\n}\n")
 	if len(e.Report.Diags) != 0 {

@@ -145,7 +145,13 @@ func conformanceExample(t *testing.T, root, code string) (rej, acc ExplainExampl
 	if fi, err := os.Stat(filepath.Join(dir, "codes", code)); err == nil && fi.IsDir() {
 		var files []string
 		_ = filepath.WalkDir(filepath.Join(dir, "codes", code), func(p string, d fs.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasSuffix(p, ".mk") {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() && (d.Name() == "gen" || d.Name() == ".mk-cache") {
+				return filepath.SkipDir
+			}
+			if !d.IsDir() && strings.HasSuffix(p, ".mk") {
 				files = append(files, p)
 			}
 			return nil

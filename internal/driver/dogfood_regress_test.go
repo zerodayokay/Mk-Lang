@@ -49,7 +49,7 @@ func TestFixMovesClauseToCallers(t *testing.T) {
 	cases := map[string]string{
 		"pack-08": `error Cut
 
-view struct Whole {
+mut view struct Whole {
     data: []u8
     pos: int
 }

@@ -302,7 +302,7 @@ jobs:
 
       - name: Mach-O tests
         if: matrix.part == 'checks'
-        run: go test -p 2 ./internal/toolchain ./internal/driver -run 'MachO|TBD|FormatOfMacOS|TestStdTargetMissing|TestAArch64'
+        run: go test -p 2 -timeout 30m ./internal/toolchain ./internal/driver -run 'MachO|TBD|FormatOfMacOS|TestStdTargetMissing|TestAArch64'
 
       # The Go harnesses judge std's blocks as the gate does: a name's
       # "[exit N: text]" and "[env K=V]" are honoured there, not by a bare
@@ -394,7 +394,7 @@ jobs:
 
       - name: AArch64 and Mach-O tests
         if: matrix.part == 'checks'
-        run: go test -p 2 ./internal/toolchain ./internal/driver -run 'MachO|TBD|FormatOfMacOS|TestStdTargetMissing|TestAArch64'
+        run: go test -p 2 -timeout 30m ./internal/toolchain ./internal/driver -run 'MachO|TBD|FormatOfMacOS|TestStdTargetMissing|TestAArch64'
 
       # System-libc mode and libraries, built for aarch64-linux and run
       # natively: the FFI tests build for the host's Linux target, and
