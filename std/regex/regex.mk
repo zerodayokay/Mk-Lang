@@ -49,6 +49,7 @@ export view struct Regex {
     rdfa: Dfa
     prefix: str
     pair: PrePair
+    alt: []PreAlt
 }
 
 /// Compiles pattern into a Regex in a. The syntax is RE2's without
@@ -81,11 +82,16 @@ CompileIn(a: &Arena, pattern: str, max: int): Error!Regex from a {
     off.ok = false
     r := if d.ok { try RevDfa(&s, t, off, max) } else { off }
     pre := if anchor { "" } else { try a.Dup(try Prefix(&s, &t)) }
+    alt := if anchor || pre.Len() > 0 { EmptyPreAlt() } else { ExtractAlt(&t) }
+    alts := try a.Slice[PreAlt](if alt.mode != 0 { 1 } else { 0 })
+    if alt.mode != 0 {
+        alts[0] = alt
+    }
     insts := try a.Slice[Inst](p.insts.Len())
     insts.CopyFrom(p.insts)
     edges := try a.Slice[Edge](p.edges.Len())
     edges.CopyFrom(p.edges)
-    return Regex(insts: insts[..], edges: edges[..], names: try KeptNames(a, t.names), groups: t.groups, start: p.start, anchor: anchor, dfa: try KeptDfa(a, d), rdfa: try KeptDfa(a, r), prefix: pre, pair: PairOf(pre))
+    return Regex(insts: insts[..], edges: edges[..], names: try KeptNames(a, t.names), groups: t.groups, start: p.start, anchor: anchor, dfa: try KeptDfa(a, d), rdfa: try KeptDfa(a, r), prefix: pre, pair: PairOf(pre), alt: alts[..])
 }
 
 // KeptNames is a copy of names in a, each name's bytes included.
@@ -172,6 +178,252 @@ PrefixOf(t: &Tree, i: int, buf: mut List[u8]): OutOfMemory!bool {
     return false
 }
 
+// ExtractAlt builds a fixed-offset SIMD prefilter for an unanchored pattern
+// with no literal prefix (up to 4 branches, each with 1..4 required bytes).
+ExtractAlt(t: &Tree): PreAlt {
+    var nodes: [4]int = [0; 4]
+    var nb := 0
+    if !ExpandBranches(t, t.root, mut nodes, mut nb) || nb == 0 {
+        return EmptyPreAlt()
+    }
+    var alt := EmptyPreAlt()
+    var out := 0
+    for k in 0..nb {
+        if !ExtractBranch(t, nodes[k], mut alt.br, mut out) {
+            return EmptyPreAlt()
+        }
+    }
+    if out == 0 {
+        return EmptyPreAlt()
+    }
+    var max_off: u8 = 0
+    var all_one := true
+    var any_fold := false
+    for k in 0..out {
+        br := alt.br[k]
+        if br.len == 0 {
+            return EmptyPreAlt()
+        }
+        if br.len == 1 {
+            c0 := br.c[0]
+            if c0.fold == 0 && ByteRank(c0.want) > 160 {
+                return EmptyPreAlt()
+            }
+            if c0.fold != 0 && ByteRank(c0.want) > 225 {
+                return EmptyPreAlt()
+            }
+        }
+        if br.len != 1 || br.c[0].off != 0 || br.c[0].fold != 0 {
+            all_one = false
+        }
+        for j in 0..Cast[int](br.len) {
+            if br.c[j].off > max_off {
+                max_off = br.c[j].off
+            }
+            if br.c[j].fold != 0 {
+                any_fold = true
+            }
+        }
+        for j in Cast[int](br.len)..4 {
+            alt.br[k].c[j] = br.c[0]
+        }
+    }
+    for k in out..4 {
+        alt.br[k] = alt.br[0]
+    }
+    alt.n = Trunc[u8](out)
+    alt.max_off = max_off
+    alt.fold = any_fold
+    if all_one && out >= 2 {
+        alt.mode = 1
+    } else if !any_fold && out <= 2 {
+        alt.mode = 2
+    } else {
+        alt.mode = 3
+    }
+    return alt
+}
+
+ExpandBranches(t: &Tree, id: int, out: mut [4]int, n: mut int): bool {
+    nd := t.nodes[id]
+    if nd.kind == KCap {
+        return ExpandBranches(t, nd.a, out, n)
+    }
+    if nd.kind == KAlt {
+        for k in nd.a..nd.a + nd.b {
+            if !ExpandBranches(t, t.kids[k], out, n) {
+                return false
+            }
+        }
+        return true
+    }
+    if *n >= 4 {
+        return false
+    }
+    out[*n] = id
+    *n += 1
+    return true
+}
+
+UnwrapCap(t: &Tree, var id: int): int {
+    for t.nodes[id].kind == KCap {
+        id = t.nodes[id].a
+    }
+    return id
+}
+
+ExtractBranch(t: &Tree, raw_id: int, brs: mut [4]PreBranch, out: mut int): bool {
+    id := UnwrapCap(t, raw_id)
+    nd := t.nodes[id]
+    if nd.kind == KCat && nd.b >= 2 {
+        first := t.nodes[UnwrapCap(t, t.kids[nd.a])]
+        if first.kind == KRep && first.b == 0 && first.c == 1 {
+            if *out + 2 > 4 {
+                return false
+            }
+            var list0: [16]PreCheck = [PreCheck(off: 0, want: 0, fold: 0); 16]
+            var n0 := 0
+            var off0 := 0
+            for k in nd.a + 1..nd.a + nd.b {
+                if !CollectChecks(t, t.kids[k], mut off0, mut list0, mut n0) {
+                    break
+                }
+            }
+            var list1: [16]PreCheck = [PreCheck(off: 0, want: 0, fold: 0); 16]
+            var n1 := 0
+            var off1 := 0
+            if CollectChecks(t, first.a, mut off1, mut list1, mut n1) {
+                for k in nd.a + 1..nd.a + nd.b {
+                    if !CollectChecks(t, t.kids[k], mut off1, mut list1, mut n1) {
+                        break
+                    }
+                }
+            }
+            if n0 == 0 || n1 == 0 {
+                return false
+            }
+            brs[*out] = PickChecks(&list0, n0)
+            brs[*out + 1] = PickChecks(&list1, n1)
+            *out += 2
+            return true
+        }
+    }
+    if *out >= 4 {
+        return false
+    }
+    var list: [16]PreCheck = [PreCheck(off: 0, want: 0, fold: 0); 16]
+    var n := 0
+    var off := 0
+    _ = CollectChecks(t, id, mut off, mut list, mut n)
+    if n == 0 {
+        return false
+    }
+    brs[*out] = PickChecks(&list, n)
+    *out += 1
+    return true
+}
+
+CollectChecks(t: &Tree, id: int, off: mut int, list: mut [16]PreCheck, n: mut int): bool {
+    nd := t.nodes[id]
+    if nd.kind == KLit {
+        c := Cast[u32](nd.a)
+        if c >= 0xD800 && c <= 0xDFFF {
+            return false
+        }
+        e := Encode(c)
+        for k in 0..e.n {
+            if *off < 256 && *n < 16 {
+                list[*n] = PreCheck(off: Trunc[u8](*off), want: e.b[k], fold: 0)
+                *n += 1
+            }
+            *off += 1
+        }
+        return true
+    }
+    if nd.kind == KCap {
+        return CollectChecks(t, nd.a, off, list, n)
+    }
+    if nd.kind == KAssert {
+        return true
+    }
+    if nd.kind == KClass {
+        if nd.b <= 0 {
+            return false
+        }
+        r0 := t.ranges[nd.a]
+        if nd.b == 1 && r0.lo == r0.hi && r0.lo < 0x80 {
+            if *off < 256 && *n < 16 {
+                list[*n] = PreCheck(off: Trunc[u8](*off), want: Trunc[u8](r0.lo), fold: 0)
+                *n += 1
+            }
+            *off += 1
+            return true
+        }
+        if nd.b == 2 {
+            r1 := t.ranges[nd.a + 1]
+            if r0.lo == r0.hi && r1.lo == r1.hi && r0.lo >= 0x41 && r0.lo <= 0x5A && r1.lo == r0.lo + 32 {
+                if *off < 256 && *n < 16 {
+                    list[*n] = PreCheck(off: Trunc[u8](*off), want: Trunc[u8](r1.lo), fold: 0x20)
+                    *n += 1
+                }
+                *off += 1
+                return true
+            }
+        }
+        for k in nd.a..nd.a + nd.b {
+            if t.ranges[k].hi >= 0x80 {
+                return false
+            }
+        }
+        *off += 1
+        return true
+    }
+    if nd.kind == KCat {
+        for k in nd.a..nd.a + nd.b {
+            if !CollectChecks(t, t.kids[k], off, list, n) {
+                return false
+            }
+        }
+        return true
+    }
+    if nd.kind == KRep && nd.b > 0 {
+        fixed := CollectChecks(t, nd.a, off, list, n)
+        return fixed && nd.b == 1 && nd.c == 1
+    }
+    return false
+}
+
+// PickChecks chooses up to 4 rarest checks from list[0..n].
+PickChecks(list: &[16]PreCheck, n: int): PreBranch {
+    z := PreCheck(off: 0, want: 0, fold: 0)
+    var br := PreBranch(len: 0, c: [z; 4])
+    if n <= 4 {
+        for k in 0..n {
+            br.c[k] = list[k]
+        }
+        br.len = Trunc[u8](n)
+        return br
+    }
+    var used: [16]bool = [false; 16]
+    for j in 0..4 {
+        var best := -1
+        var brank := 999
+        for k in 0..n {
+            if !used[k] {
+                r := ByteRank(list[k].want)
+                if best < 0 || r < brank {
+                    best = k
+                    brank = r
+                }
+            }
+        }
+        used[best] = true
+        br.c[j] = list[best]
+    }
+    br.len = 4
+    return br
+}
+
 // Next is the leftmost-first match at or after pos. With both DFAs, the
 // forward scan finds its end and the reverse scan from there its start;
 // with the forward DFA alone, it says whether there is one and the Pike VM
@@ -180,13 +432,13 @@ Regex.Next(&self, s: str, pos: int): ?Hit {
     b := s.AsBytes()
     if self.dfa.ok {
         if self.rdfa.ok {
-            e := Scan(&self.dfa, s, pos, false, self.prefix, self.pair)
+            e := Scan(&self.dfa, s, pos, false, self.prefix, self.pair, self.alt)
             if e < 0 {
                 return none
             }
             return some(Hit(lo: ScanRev(&self.rdfa, b, pos, e), hi: e, g0: -1, g1: -1))
         }
-        if Scan(&self.dfa, s, pos, true, self.prefix, self.pair) < 0 {
+        if Scan(&self.dfa, s, pos, true, self.prefix, self.pair, self.alt) < 0 {
             return none
         }
     }
@@ -212,7 +464,7 @@ Anchored(t: &Tree, i: int): bool {
 /// program) with the Pike VM; allocates nothing.
 export Regex.IsMatch(&self, s: str): bool {
     if self.dfa.ok {
-        return Scan(&self.dfa, s, 0, true, self.prefix, self.pair) >= 0
+        return Scan(&self.dfa, s, 0, true, self.prefix, self.pair, self.alt) >= 0
     }
     return Pike(self, s.AsBytes(), 0, false, 0, true).IsSome()
 }
@@ -338,6 +590,30 @@ struct Piece {
 export Regex.Replace(&self, a: &Arena, s: str, with: str): OutOfMemory!str from a {
     b := s.AsBytes()
     n := b.Len()
+    if simd.IndexByte(with.AsBytes(), b'$').IsNone() {
+        var out := Text.New(a)
+        has_w := with.Len() > 0
+        var last := 0
+        var pos := 0
+        for pos <= n {
+            h := self.Next(s, pos) else {
+                break
+            }
+            if h.lo > last {
+                try out.Push(s[last..h.lo])
+            }
+            if has_w && (h.hi > last || h.lo == 0) {
+                try out.Push(with)
+            }
+            last = h.hi
+            w := if pos < n { Width(b[pos]) } else { 0 }
+            pos = if pos + w > h.hi { pos + w } else if pos + 1 > h.hi { pos + 1 } else { h.hi }
+        }
+        if last < n {
+            try out.Push(s[last..n])
+        }
+        return out.Done()
+    }
     var parts := List[Piece].New(a)
     // One pass with every slot per match, only when the template names a
     // group (capture.mk); the scratch is made once, here.
@@ -359,22 +635,12 @@ export Regex.Replace(&self, a: &Arena, s: str, with: str): OutOfMemory!str from 
         pos = if pos + w > h.hi { pos + w } else if pos + 1 > h.hi { pos + 1 } else { h.hi }
     }
     try parts.Push(Piece(src: 0, lo: last, hi: n))
-    wb := with.AsBytes()
-    var total := 0
+    var out := Text.New(a)
     for p in &parts {
-        total += p.hi - p.lo
+        piece := if p.src == 0 { s[p.lo..p.hi] } else { with[p.lo..p.hi] }
+        try out.Push(piece)
     }
-    buf := try a.Slice[u8](total)
-    var o := 0
-    for p in &parts {
-        k := p.hi - p.lo
-        src := if p.src == 0 { b } else { wb }
-        (mut buf[o..o + k]).CopyFrom(src[p.lo..p.hi])
-        o += k
-    }
-    // Every piece is a run of s or of with that starts and ends on a scalar
-    // boundary (a match does, and so does a group), so buf is UTF-8.
-    return str.From(buf[..]).Must()
+    return out.Done()
 }
 
 // HasRef: template w names a group, so Replace needs the slots.

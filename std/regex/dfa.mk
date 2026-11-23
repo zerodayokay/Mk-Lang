@@ -58,13 +58,13 @@ const MaxDfaWork: int = 4_000_000
 // and stride the row length (eot + 1); starts holds the row offset of the
 // start state for each context of Ctx.
 struct Dfa {
-    ok: bool
     cls: []u8
     trans: []u32
     starts: [4]u32
     eot: u32
     stride: u32
     top: u32
+    ok: bool
 }
 
 struct DState {
@@ -479,45 +479,97 @@ CtxOf(c: u8): int {
 // Scan runs the forward DFA d over s from pos: the end of the leftmost-first
 // match that starts at or after pos, or -1 when there is none. earliest: the
 // end of the first match the scan sees, which tells only whether one exists.
-// pre is the literal every match begins with ("" for none), pair its RarePair:
-// in a start state no thread is alive, so the scan skips to the next occurrence
-// of pre (FindPre: std.simd's memchr for one byte, a vector pair filter for
-// more, RE2's and Rust's literal prefilter) and restarts there in the start
-// state of that position's context. Needs d.ok.
-Scan(d: &Dfa, s: str, pos: int, earliest: bool, pre: str, pair: PrePair): int {
+// pre is the literal every match begins with ("" for none), pair its RarePair,
+// and alt an optional multi-branch fixed-offset SIMD prefilter. Needs d.ok.
+Scan(d: &Dfa, s: str, pos: int, earliest: bool, pre: str, pair: PrePair, alts: []PreAlt): int {
     b := s.AsBytes()
     cls := d.cls
     trans := d.trans
+    if cls.Len() != 256 {
+        return -1
+    }
     var st := d.starts[Ctx(b, pos)]
     if st == 0 {
         return -1
     }
-    skip := pre.Len() > 0
     n := b.Len()
+    same := d.starts[0] == d.starts[1] && d.starts[0] == d.starts[2] && d.starts[0] == d.starts[3]
     var end := -1
     var i := pos
-    for i < n {
-        if skip && st <= d.top {
-            j := FindPrePair(s, pre, pair, i) else {
+    if pre.Len() > 0 {
+        pb := pre.AsBytes()
+        one := pb.Len() == 1
+        p0 := pb[0]
+        for i < n {
+            if st <= d.top {
+                j := if one {
+                    if k := simd.IndexByte(b[i..n], p0) {
+                        i +% k
+                    } else {
+                        return end
+                    }
+                } else {
+                    FindPrePair(s, pre, pair, i) else {
+                        return end
+                    }
+                }
+                i = j
+                st = if same { d.starts[0] } else { d.starts[Ctx(b, i)] }
+            }
+            e := trans[Cast[int](st) +% Cast[int](cls[Cast[int](b[i])])]
+            if e & DfaMatch != 0 {
+                end = i
+                if earliest {
+                    return end
+                }
+            }
+            st = e & DfaNext
+            if st == 0 {
                 return end
             }
-            i = j
-            st = d.starts[Ctx(b, i)]
+            i = i +% 1
         }
-        e := trans[Cast[int](st) + Cast[int](cls[Cast[int](b[i])])]
-        if e & DfaMatch != 0 {
-            end = i
-            if earliest {
+    } else if alts.Len() > 0 {
+        alt := &alts[0]
+        lim := Cast[int](alt.max_off) +% 16
+        for i < n {
+            if st <= d.top && i +% lim <= n {
+                i = FindPreAlt(b, alt, i)
+                if i >= n {
+                    return end
+                }
+                st = if same { d.starts[0] } else { d.starts[Ctx(b, i)] }
+            }
+            e := trans[Cast[int](st) +% Cast[int](cls[Cast[int](b[i])])]
+            if e & DfaMatch != 0 {
+                end = i
+                if earliest {
+                    return end
+                }
+            }
+            st = e & DfaNext
+            if st == 0 {
                 return end
             }
+            i = i +% 1
         }
-        st = e & DfaNext
-        if st == 0 {
-            return end
+    } else {
+        for i < n {
+            e := trans[Cast[int](st) +% Cast[int](cls[Cast[int](b[i])])]
+            if e & DfaMatch != 0 {
+                end = i
+                if earliest {
+                    return end
+                }
+            }
+            st = e & DfaNext
+            if st == 0 {
+                return end
+            }
+            i = i +% 1
         }
-        i += 1
     }
-    if trans[Cast[int](st) + Cast[int](d.eot)] & DfaMatch != 0 {
+    if trans[Cast[int](st) +% Cast[int](d.eot)] & DfaMatch != 0 {
         return n
     }
     return end
@@ -643,35 +695,149 @@ FindPrePair(s: str, pre: str, pr: PrePair, from: int): ?int {
     if m == 0 || m > n - from {
         return core.FindFrom(s, pre, from)
     }
+    l := n - m + 1
+    if l - from >= 256 {
+        return core.FindFrom(s, pre, from)
+    }
+    if Target.os == Os.Freestanding || l - from < 16 {
+        return core.FindFrom(s, pre, from)
+    }
     lo := pr.lo
     hi := pr.hi
     first := simd.Vec[u8, 16].Splat(p[lo])
     second := simd.Vec[u8, 16].Splat(p[hi])
-    // The two loads run over views of one length, the starts' count
-    // l = n - m + 1, offset by lo and hi, so one loop test bounds both.
-    l := n - m + 1
     w1 := b[lo..lo + l]
     w2 := b[hi..hi + l]
     var i := from
     var work := 0
     for i + 16 <= l {
-        x := simd.Vec[u8, 16].FromSlice(w1, i) == first
-        y := simd.Vec[u8, 16].FromSlice(w2, i) == second
-        var mask := (x & y).Bits()
+        var mask := ((simd.Vec[u8, 16].FromSlice(w1, i) == first) & (simd.Vec[u8, 16].FromSlice(w2, i) == second)).Bits()
         for mask != 0 {
-            c := i + raw.Ctz64(mask)
-            if simd.Equal(b[c..c + m], p) {
+            c := i +% raw.Ctz64(mask)
+            if simd.Equal(b[c..c +% m], p) {
                 return some(c)
             }
             work += m
-            mask = mask & (mask - 1)
+            mask = mask & (mask -% 1)
         }
-        i += 16
+        i = i +% 16
         if work > i - from + 4096 {
-            break
+            return core.FindFrom(s, pre, i)
         }
     }
-    return core.FindFrom(s, pre, i)
+    if i < l {
+        t := l - 16
+        var mask := ((simd.Vec[u8, 16].FromSlice(w1, t) == first) & (simd.Vec[u8, 16].FromSlice(w2, t) == second)).Bits() >> (16 - (l - i))
+        for mask != 0 {
+            c := i +% raw.Ctz64(mask)
+            if simd.Equal(b[c..c +% m], p) {
+                return some(c)
+            }
+            mask = mask & (mask -% 1)
+        }
+    }
+    return none
+}
+
+// One fixed-offset byte check of a multi-branch prefilter:
+// (b[i + off] | fold) == want, where fold is 0 (exact) or 0x20 (ASCII letter).
+struct PreCheck {
+    off: u8
+    want: u8
+    fold: u8
+}
+
+struct PreBranch {
+    len: u8
+    c: [4]PreCheck
+}
+
+// PreAlt is a SIMD prefilter for an unanchored pattern whose every match
+// satisfies at least one of n (1..4) fixed-offset branches.
+// mode: 0 off, 1 = 1-byte start set (2..4 bytes, off 0, exact),
+// 2 = 2-branch exact (up to 4 checks/branch), 3 = up to 4-branch (exact or folded).
+struct PreAlt {
+    mode: u8
+    n: u8
+    max_off: u8
+    fold: bool
+    br: [4]PreBranch
+}
+
+EmptyPreAlt(): PreAlt {
+    z := PreCheck(off: 0, want: 0, fold: 0)
+    b := PreBranch(len: 0, c: [z; 4])
+    return PreAlt(mode: 0, n: 0, max_off: 0, fold: false, br: [b; 4])
+}
+
+// FindPreAlt returns the first position >= from where at least one branch of
+// alt matches its SIMD byte checks, or the first unchecked tail position (or
+// b.Len() when mode 1 finds no start byte in b[from..]).
+// Caller guarantees from + alt.max_off + 16 <= b.Len().
+FindPreAlt(b: []u8, alt: &PreAlt, from: int): int {
+    if alt.mode == 1 {
+        set: [4]u8 = [alt.br[0].c[0].want, alt.br[1].c[0].want, alt.br[2].c[0].want, alt.br[3].c[0].want]
+        if k := simd.IndexAny(b[from..], set[0..Cast[int](alt.n)]) {
+            return from +% k
+        }
+        return b.Len()
+    }
+    if Target.os == Os.Freestanding {
+        return from
+    }
+    l := b.Len() - Cast[int](alt.max_off)
+    var i := from
+    if alt.mode == 2 {
+        a := alt.br[0].c
+        d := alt.br[1].c
+        wa0 := b[Cast[int](a[0].off)..Cast[int](a[0].off) + l]
+        wa1 := b[Cast[int](a[1].off)..Cast[int](a[1].off) + l]
+        wa2 := b[Cast[int](a[2].off)..Cast[int](a[2].off) + l]
+        wa3 := b[Cast[int](a[3].off)..Cast[int](a[3].off) + l]
+        wb0 := b[Cast[int](d[0].off)..Cast[int](d[0].off) + l]
+        wb1 := b[Cast[int](d[1].off)..Cast[int](d[1].off) + l]
+        wb2 := b[Cast[int](d[2].off)..Cast[int](d[2].off) + l]
+        wb3 := b[Cast[int](d[3].off)..Cast[int](d[3].off) + l]
+        va0 := simd.Vec[u8, 16].Splat(a[0].want)
+        va1 := simd.Vec[u8, 16].Splat(a[1].want)
+        va2 := simd.Vec[u8, 16].Splat(a[2].want)
+        va3 := simd.Vec[u8, 16].Splat(a[3].want)
+        vb0 := simd.Vec[u8, 16].Splat(d[0].want)
+        vb1 := simd.Vec[u8, 16].Splat(d[1].want)
+        vb2 := simd.Vec[u8, 16].Splat(d[2].want)
+        vb3 := simd.Vec[u8, 16].Splat(d[3].want)
+        for i +% 16 <= l {
+            m0 := (simd.Vec[u8, 16].FromSlice(wa0, i) == va0) & (simd.Vec[u8, 16].FromSlice(wa1, i) == va1) &
+                (simd.Vec[u8, 16].FromSlice(wa2, i) == va2) & (simd.Vec[u8, 16].FromSlice(wa3, i) == va3)
+            m1 := (simd.Vec[u8, 16].FromSlice(wb0, i) == vb0) & (simd.Vec[u8, 16].FromSlice(wb1, i) == vb1) &
+                (simd.Vec[u8, 16].FromSlice(wb2, i) == vb2) & (simd.Vec[u8, 16].FromSlice(wb3, i) == vb3)
+            mask := (m0 | m1).Bits()
+            if mask != 0 {
+                return i +% raw.Ctz64(mask)
+            }
+            i = i +% 16
+        }
+        return i
+    }
+    nb := Cast[int](alt.n)
+    for i +% 16 <= l {
+        var any := simd.Mask[u8, 16].FromBits(0)
+        for k in 0..nb {
+            br := alt.br[k]
+            c := br.c
+            var m := (simd.Vec[u8, 16].FromSlice(b, i +% Cast[int](c[0].off)) | simd.Vec[u8, 16].Splat(c[0].fold)) == simd.Vec[u8, 16].Splat(c[0].want)
+            for j in 1..Cast[int](br.len) {
+                m = m & ((simd.Vec[u8, 16].FromSlice(b, i +% Cast[int](c[j].off)) | simd.Vec[u8, 16].Splat(c[j].fold)) == simd.Vec[u8, 16].Splat(c[j].want))
+            }
+            any = any | m
+        }
+        mask := any.Bits()
+        if mask != 0 {
+            return i +% raw.Ctz64(mask)
+        }
+        i = i +% 16
+    }
+    return i
 }
 
 // ScanRev runs the reverse DFA d over s backward from end down to pos:
@@ -682,13 +848,16 @@ FindPrePair(s: str, pre: str, pr: PrePair, from: int): ?int {
 ScanRev(d: &Dfa, s: []u8, pos: int, end: int): int {
     cls := d.cls
     trans := d.trans
+    if cls.Len() != 256 {
+        return -1
+    }
     n := s.Len()
     c := if end < n { CtxOf(s[end]) } else { 0 }
     var st := d.starts[c]
     var start := -1
     var i := end
     for i > pos {
-        e := trans[Cast[int](st) + Cast[int](cls[Cast[int](s[i - 1])])]
+        e := trans[Cast[int](st) +% Cast[int](cls[Cast[int](s[i -% 1])])]
         if e & DfaMatch != 0 {
             start = i
         }
@@ -696,12 +865,12 @@ ScanRev(d: &Dfa, s: []u8, pos: int, end: int): int {
         if st == 0 {
             return start
         }
-        i -= 1
+        i = i -% 1
     }
     e: u32 = if pos == 0 {
-        trans[Cast[int](st) + Cast[int](d.eot)]
+        trans[Cast[int](st) +% Cast[int](d.eot)]
     } else {
-        trans[Cast[int](st) + Cast[int](cls[Cast[int](s[pos - 1])])]
+        trans[Cast[int](st) +% Cast[int](cls[Cast[int](s[pos -% 1])])]
     }
     if e & DfaMatch != 0 {
         return pos
