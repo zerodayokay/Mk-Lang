@@ -50,6 +50,9 @@ import (
 //   - per member, whether its item ends a `become` or is the direct callee
 //     of one anywhere in the unit (tailbody.go tailItems), which splits a
 //     member with a byval parameter into a wrapper and a $tail body;
+//   - per member in optimized non-debug non-size builds on x86_64 and
+//     aarch64, whether it is split into a preserve_nonecc $pnone body and
+//     which locals are bound to companion $pnone dispatch tables (pnone.go);
 //   - per member and per direct call, in every profile, whether the
 //     function has the internal ABI (sig.go internalABI), which reads its
 //     tailItems bit and whether any pack takes its address (valueFns);
@@ -212,6 +215,8 @@ func PackFacts(u *Unit, p int, env Env, cfg Config, h *source.Hasher) bool {
 			h.Uvarint(0)
 		}
 	})
+	// The preserve_nonecc tail-dispatch split and table bindings (pnone.go).
+	pnonePackFacts(ag, p, h)
 	h.Uvarint(uint64(len(u.Globals)))
 	for _, gl := range u.Globals {
 		h.String(items.Get(gl.Item).Key.String())

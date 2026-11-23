@@ -50,11 +50,15 @@ type packGen struct {
 	siteRef types.TypeID
 	sigs    map[string]*lsig
 	// defs are the LLVM functions of this pack's members by Funcs index;
-	// for a split member (tailbody.go) its C ABI wrapper, and tailDefs its
-	// $tail body, tailsigs the body's lowered signature by Funcs index.
-	defs     map[int]*llvm.Function
-	tailDefs map[int]*llvm.Function
-	tailsigs map[int]*lsig
+	// for a split member (tailbody.go or pnone.go) its C ABI wrapper, with
+	// tailDefs its $tail body, tailsigs the $tail lowered signature,
+	// pnoneDefs its $pnone preserve_nonecc body, and pnoneTables this pack's
+	// companion $pnone dispatch tables by const item.
+	defs        map[int]*llvm.Function
+	tailDefs    map[int]*llvm.Function
+	tailsigs    map[int]*lsig
+	pnoneDefs   map[int]*llvm.Function
+	pnoneTables map[types.ItemID]llvm.Value
 	// soleFx memoizes soleEffectOf by Funcs index (solecall.go); a packGen
 	// is used by one goroutine, so it needs no lock.
 	soleFx map[int]soleEffect
@@ -267,8 +271,20 @@ func (g *packGen) defineHeaders() {
 				g.tailDefs = map[int]*llvm.Function{}
 			}
 			g.tailDefs[fi] = body
+		} else if g.pnoneBody(fi) {
+			// pnone.go: fn is the C ABI wrapper, the body is $pnone's.
+			plk, pvis, pdso := g.tailLinkage(f)
+			psig := g.funcSig(ls, plk, pvis, pdso, g.pgoAttrs(fi, attrs.Without("alwaysinline")))
+			psig.CC = llvm.PreserveNoneCC
+			body := g.m.AddFunction(f.Symbol+pnoneSuffix, psig)
+			if g.pnoneDefs == nil {
+				g.pnoneDefs = map[int]*llvm.Function{}
+			}
+			g.pnoneDefs[fi] = body
 		}
 		if body, ok := g.tailDefs[fi]; ok {
+			g.entryCount(fi, body)
+		} else if body, ok := g.pnoneDefs[fi]; ok {
 			g.entryCount(fi, body)
 		} else {
 			g.entryCount(fi, fn)
@@ -324,6 +340,10 @@ type fnGen struct {
 	alias []aliasParam
 	// probed: frameProbe gave the function the aligned stack probe.
 	probed bool
+	// pnone is set when emitting a preserve_nonecc body (pnone.go), with
+	// pnoneLocals mapping each pure-tail table local to its const item.
+	pnone       bool
+	pnoneLocals []types.ItemID
 }
 
 // addr is a memory address and the alignment known for it.
@@ -345,6 +365,11 @@ func (g *packGen) emitFunc(fi int) {
 	if body, ok := g.tailDefs[fi]; ok {
 		g.emitTailEntry(fi) // tailbody.go
 		fg.fn, fg.sig = body, g.tailSigOf(fi)
+	} else if body, ok := g.pnoneDefs[fi]; ok {
+		g.emitPnoneEntry(fi) // pnone.go
+		fg.fn = body
+		fg.pnone = true
+		fg.pnoneLocals = g.pnoneBodyLocals(fi)
 	}
 	if g.cfg.Debug {
 		fg.fullSubprogram() // debug_full.go
@@ -402,6 +427,10 @@ func (fg *fnGen) prologue() {
 		r := g.reprOf(t)
 		if r.kind == rZero {
 			fg.locals[li] = addr{v: m.ConstIntToPtr(uint64(r.align)), align: r.align}
+			continue
+		}
+		if ti := fg.pnoneTableLocal(li); ti != types.NoItem {
+			fg.locals[li] = addr{v: g.pnoneTableGlobal(ti), align: r.align} // pnone.go
 			continue
 		}
 		if fg.promoted != nil && fg.promoted[li] != 0 {

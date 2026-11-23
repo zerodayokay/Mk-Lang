@@ -149,6 +149,11 @@ func (g *packGen) funcRows() {
 			// both frames.
 			g.funcRow(body, site, rowMk)
 		}
+		if body, ok := g.pnoneDefs[fi]; ok {
+			// A preserve_nonecc tail-table body (pnone.go): a backtrace
+			// names both frames.
+			g.funcRow(body, site, rowMk)
+		}
 	}
 	for _, fn := range g.extraFns {
 		g.funcRow(fn, m.Null(), rowOther)

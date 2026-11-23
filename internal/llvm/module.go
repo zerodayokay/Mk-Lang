@@ -89,6 +89,23 @@ func (d DLLStorage) String() string {
 	return ""
 }
 
+// CallingConv is an LLVM calling convention. The zero value is the platform C
+// ABI (ccc, omitted in printed IR).
+type CallingConv uint8
+
+// CallingConv values.
+const (
+	CCC CallingConv = iota
+	PreserveNoneCC
+)
+
+func (cc CallingConv) String() string {
+	if cc == PreserveNoneCC {
+		return "preserve_nonecc"
+	}
+	return ""
+}
+
 // GlobalAttrs describes a global variable. A global with a zero Init is a
 // declaration and must have External linkage; Type is its value type.
 type GlobalAttrs struct {
@@ -141,6 +158,8 @@ type FuncSig struct {
 	// DLLStorage is the COFF DLL storage class, printed after the
 	// visibility: DLLExport for a dynamic library's export.
 	DLLStorage DLLStorage
+	// CC is the calling convention; zero is the platform C ABI (omitted).
+	CC         CallingConv
 	Ret        Type
 	RetAttrs   Attrs
 	Params     []Type
@@ -280,6 +299,9 @@ func (m *Module) newFunction(name string, sig FuncSig, decl bool) *Function {
 	for _, a := range sig.ParamAttrs {
 		m.checkAttrs(a, what)
 	}
+	if sig.CC > PreserveNoneCC {
+		panic("llvm: " + what + ": unknown calling convention")
+	}
 	if sig.Linkage.local() && sig.Visibility != Default {
 		panic("llvm: " + what + ": local linkage needs default visibility")
 	}
@@ -306,13 +328,16 @@ func (m *Module) AddFunction(name string, sig FuncSig) *Function {
 }
 
 // Declare declares an external function, deduplicated by name: a second
-// Declare of the same name returns the first, and panics if its type
-// differs. Declaring a name the module defines is an error.
+// Declare of the same name returns the first, and panics if its type or
+// calling convention differs. Declaring a name the module defines is an error.
 func (m *Module) Declare(name string, sig FuncSig) *Function {
 	if f, ok := m.decls[name]; ok {
 		if f.ty != m.FuncType(sig.Ret, sig.Params, sig.Variadic) {
 			panic("llvm: Declare @" + Quote(name) + " with a second type " +
 				m.FuncType(sig.Ret, sig.Params, sig.Variadic).String() + ", first " + f.ty.String())
+		}
+		if f.sig.CC != sig.CC {
+			panic("llvm: Declare @" + Quote(name) + " with a second calling convention")
 		}
 		return f
 	}
@@ -341,7 +366,7 @@ func (m *Module) DeclareAs(name string, sig FuncSig) *Function {
 	if !ok {
 		return m.Declare(name, sig)
 	}
-	if f.ty == m.FuncType(sig.Ret, sig.Params, sig.Variadic) {
+	if f.ty == m.FuncType(sig.Ret, sig.Params, sig.Variadic) && f.sig.CC == sig.CC {
 		return f
 	}
 	return m.newFunction(name, sig, true) // not in funcs: never printed

@@ -596,25 +596,42 @@ func callType(fnTy Type) string {
 	return fnTy.Ret().String()
 }
 
-// Call calls callee (a function address or any ptr value) of type fnTy.
-// argAttrs is empty or one Attrs per argument. The result is the zero Value
-// for a void callee.
+// Call calls callee (a function address or any ptr value) of type fnTy
+// under the platform C ABI. argAttrs is empty or one Attrs per argument.
+// The result is the zero Value for a void callee.
 func (b *Block) Call(fnTy Type, callee Value, args []Value, argAttrs []Attrs, retAttrs Attrs, fnAttrs Attrs, md ...Attach) Value {
-	return b.call("call", fnTy, callee, args, argAttrs, retAttrs, fnAttrs, md)
+	return b.call("call", CCC, fnTy, callee, args, argAttrs, retAttrs, fnAttrs, md)
 }
 
-// MustTailCall is Call marked musttail (become): LLVM guarantees the
-// tail call, and refuses a module where it cannot (the caller's and the
-// callee's prototypes differ, or no ret of its value follows). The caller
-// emits that ret next, with Ret.
+// CallCC is Call with an explicit calling convention cc.
+func (b *Block) CallCC(cc CallingConv, fnTy Type, callee Value, args []Value, argAttrs []Attrs, retAttrs Attrs, fnAttrs Attrs, md ...Attach) Value {
+	return b.call("call", cc, fnTy, callee, args, argAttrs, retAttrs, fnAttrs, md)
+}
+
+// MustTailCall is Call marked musttail (become) under the platform C ABI:
+// LLVM guarantees the tail call, and refuses a module where it cannot (the
+// caller's and the callee's prototypes or calling conventions differ, or no
+// ret of its value follows). The caller emits that ret next, with Ret.
 func (b *Block) MustTailCall(fnTy Type, callee Value, args []Value, argAttrs []Attrs, retAttrs Attrs, fnAttrs Attrs, md ...Attach) Value {
+	return b.MustTailCallCC(CCC, fnTy, callee, args, argAttrs, retAttrs, fnAttrs, md...)
+}
+
+// MustTailCallCC is MustTailCall with an explicit calling convention cc,
+// which must match the enclosing function's calling convention.
+func (b *Block) MustTailCallCC(cc CallingConv, fnTy Type, callee Value, args []Value, argAttrs []Attrs, retAttrs Attrs, fnAttrs Attrs, md ...Attach) Value {
 	if fnTy.Variadic() {
 		panic("llvm: musttail of a variadic callee in " + b.f.ref)
 	}
-	return b.call("musttail call", fnTy, callee, args, argAttrs, retAttrs, fnAttrs, md)
+	if cc != b.f.sig.CC {
+		panic("llvm: musttail calling convention differs from " + b.f.ref)
+	}
+	return b.call("musttail call", cc, fnTy, callee, args, argAttrs, retAttrs, fnAttrs, md)
 }
 
-func (b *Block) call(kw string, fnTy Type, callee Value, args []Value, argAttrs []Attrs, retAttrs Attrs, fnAttrs Attrs, md []Attach) Value {
+func (b *Block) call(kw string, cc CallingConv, fnTy Type, callee Value, args []Value, argAttrs []Attrs, retAttrs Attrs, fnAttrs Attrs, md []Attach) Value {
+	if cc > PreserveNoneCC {
+		panic("llvm: Call: unknown calling convention")
+	}
 	b.ptr(callee, "Call")
 	b.f.m.checkAttrs(retAttrs, "Call")
 	b.f.m.checkAttrs(fnAttrs, "Call")
@@ -626,6 +643,10 @@ func (b *Block) call(kw string, fnTy Type, callee Value, args []Value, argAttrs 
 		v = b.beginValue(fnTy.Ret(), md)
 	}
 	b.str(kw)
+	if s := cc.String(); s != "" {
+		b.str(" ")
+		b.str(s)
+	}
 	b.text = appendSpAttrs(b.text, retAttrs)
 	b.str(" ")
 	b.str(callType(fnTy))
@@ -637,9 +658,10 @@ func (b *Block) call(kw string, fnTy Type, callee Value, args []Value, argAttrs 
 	return v
 }
 
-// CallFunc calls f directly, repeating its parameter, return and function
-// attributes at the call site, as every call repeats the callee's attributes.
-// Variadic extra arguments get no attributes.
+// CallFunc calls f directly, repeating its calling convention and its
+// parameter, return and function attributes at the call site, as every call
+// repeats the callee's attributes. Variadic extra arguments get no
+// attributes.
 func (b *Block) CallFunc(f *Function, args []Value, md ...Attach) Value {
 	if f == nil || f.m != b.f.m {
 		panic("llvm: CallFunc of a function of another module")
@@ -652,7 +674,7 @@ func (b *Block) CallFunc(f *Function, args []Value, md ...Attach) Value {
 			copy(argAttrs, f.sig.ParamAttrs)
 		}
 	}
-	return b.Call(f.ty, f.Ref(), args, argAttrs, f.sig.RetAttrs, f.sig.FnAttrs, md...)
+	return b.CallCC(f.sig.CC, f.ty, f.Ref(), args, argAttrs, f.sig.RetAttrs, f.sig.FnAttrs, md...)
 }
 
 // Ordering is an atomic memory ordering.

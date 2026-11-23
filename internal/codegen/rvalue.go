@@ -25,6 +25,9 @@ import (
 
 func (fg *fnGen) assign(p mir.Place, rv *mir.Rvalue) {
 	g := fg.g
+	if fg.pnoneTableLocal(int(p.Local)) != types.NoItem {
+		return // the local is its preserve_nonecc table global (pnone.go)
+	}
 	if fg.promoted != nil && fg.promoted[p.Local] != 0 {
 		return // the local is its constant's global (promote.go)
 	}

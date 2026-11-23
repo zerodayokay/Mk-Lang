@@ -235,6 +235,10 @@ func (m *Module) printFunc(p *printer, f *Function) {
 		b = append(b, ' ')
 		b = append(b, d...)
 	}
+	if cc := s.CC.String(); cc != "" {
+		b = append(b, ' ')
+		b = append(b, cc...)
+	}
 	b = appendSpAttrs(b, s.RetAttrs)
 	b = append(b, ' ')
 	b = append(b, s.Ret.String()...)

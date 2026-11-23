@@ -58,7 +58,14 @@ func (fg *fnGen) tailCallTerm(t *mir.Terminator) {
 		}
 		fn := g.funcDecl(fi)
 		ls = g.callSig(fi, args)
-		if g.tailBody(fi) {
+		if fg.pnone {
+			// A preserve_nonecc body must tail-call another preserve_nonecc
+			// body (pnone.go); check before LLVM's verifier would reject it.
+			if !g.pnoneBody(fi) {
+				source.ICEf(fg.spanOf(t.Span), "codegen: preserve_nonecc tail call to non-preserve_nonecc %s", f.Symbol)
+			}
+			fn = g.pnoneDecl(fi)
+		} else if g.tailBody(fi) {
 			// A byval parameter: body to body (tailbody.go).
 			fn, ls = g.tailDecl(fi), g.tailSigOf(fi)
 		}
@@ -119,7 +126,11 @@ func (fg *fnGen) tailCallTerm(t *mir.Terminator) {
 			largs = append(largs, fg.loadParts(a, ls.params[i], sl, ls.array[i], false)...)
 		}
 	}
-	res := fg.cur.MustTailCall(fnTy, callee, largs, ls.lattrs, ls.rattrs, attrs)
+	cc := llvm.CCC
+	if fg.pnone {
+		cc = llvm.PreserveNoneCC
+	}
+	res := fg.cur.MustTailCallCC(cc, fnTy, callee, largs, ls.lattrs, ls.rattrs, attrs)
 	if ls.ret.IsVoid() {
 		fg.cur.Ret(nil)
 		return

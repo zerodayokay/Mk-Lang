@@ -11,6 +11,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Performance
 
+- In optimized builds outside `--debug` and `--profile size` on `x86_64` and `aarch64`, module-private `const` function dispatch tables used via `become` (`become handlers[op](...)`) automatically emit `preserve_nonecc` handler bodies (`<sym>$pnone`) and companion dispatch tables (`<table_sym>$pnone`) alongside C ABI entry wrappers, keeping 8 to 12 state arguments in registers across threaded tail-call dispatches with no stack spills.
 - `aarch64-linux` and `aarch64-macos`: non-`var` slice parameters (`mut []T`, `str`, and `[]T` of a `Freeze` element type) now emit scoped alias metadata (`!alias.scope`, `!noalias`, and entry-block `llvm.experimental.noalias.scope.decl`) whenever a function takes at least two qualifying slice parameters including a `mut []T` (alongside Win64 C ABI `Indirect` slices and System V `byval` stack-spilled slices). Because AAPCS64 passes 16-byte slices as `[2 x i64]` aggregates where parameter-level `noalias` cannot attach, this lets LLVM eliminate runtime alias checks and vectorize hot slice loops on AArch64.
 
 ### Fixed
