@@ -6,8 +6,11 @@
 // bytecode interpreter running 200,000+ become dispatches with constant
 // stack, outside direct and table entry, direct become to a helper handler,
 // cold C-ABI call, re-entrant table call, IR checks, dev/release/--debug
-// execution) and TestBecome_PreserveNoneCrossPackCache (cross-pack
-// invalidation verified under MK_CACHE_VERIFY).
+// execution), TestBecome_PreserveNoneCrossPackCache (cross-pack invalidation
+// verified under MK_CACHE_VERIFY) and TestBecome_PreserveNoneAdversarial
+// (panic backtrace resolution through $pnone frames with and without frame
+// pointers, 12-argument x86_64-linux fallback vs x86_64-windows native
+// execution, and sret/error-union/Indirect/slice-table/TrapForm/field-escape).
 //
 // How: builds real Mk programs via NewSession, inspects emitted release IR
 // via TestHooks.OnLL, runs the linked executables natively, and checks warm
@@ -278,4 +281,268 @@ func TestBecome_PreserveNoneCrossPackCache(t *testing.T) {
 	if o, errOut, code := runExe(t, pkTarget(), exe, ""); code != 0 {
 		t.Fatalf("exit %d, stdout %q, stderr %q; want 0", code, o, errOut)
 	}
+}
+
+// TestBecome_PreserveNoneAdversarial exercises tricky end-to-end interactions:
+// panic backtraces unwinding through $pnone frames (with and without frame
+// pointers), 12-GP-parameter handlers compiling cleanly for x86_64-linux
+// (falling back to C ABI to avoid LLVM 21 register exhaustion) while using
+// preserve_nonecc natively on x86_64-windows, and sret/error-union/Indirect
+// forwarding with a slice dispatch table, TrapForm and a field-escaped table.
+func TestBecome_PreserveNoneAdversarial(t *testing.T) {
+	tools := needTools(t)
+	safeManifest := `const Package = pkg.Package(
+    name: "pnoneadv",
+    bins: [pkg.Bin(name: "app", root: ".", link_script: "", cpu: "", subsystem: "console")],
+    deps: [],
+    c_sources: [],
+    c_imports: [],
+    asm_sources: [],
+    targets: [],
+    unsafe_modules: [],
+    links: [],
+)
+`
+	t.Run("panic-backtrace", func(t *testing.T) {
+		const src = `OpBoom(n: int, a: int, b: int, c: int, d: int, e: int, f: int, g: int): int {
+    if n <= 0 {
+        Panic("pnone-boom")
+    }
+    become Ops[(n - 1) & 1](n - 1, a + 1, b + c, c + d, d + e, e + f, f + g, g + 1)
+}
+
+OpStep(n: int, a: int, b: int, c: int, d: int, e: int, f: int, g: int): int {
+    if n <= 0 {
+        return a + b + c + d + e + f + g
+    }
+    become Ops[(n - 1) & 1](n - 1, a + 2, b + 1, c + 1, d + 1, e + 1, f + 1, g + 1)
+}
+
+const Ops: [2]fn(int, int, int, int, int, int, int, int): int = [OpBoom, OpStep]
+
+export Main(sys: &System): WriteError!void {
+    n := 50 + sys.args.Len()
+    r := Ops[n & 1](n, 0, 1, 2, 3, 4, 5, 6)
+    try sys.Print("{r}\n", (r: r))
+}
+`
+		dir := writeTree(t, map[string]string{"pkg.mk": safeManifest, "main.mk": src})
+		target := HostTarget()
+		for _, fp := range []bool{false, true} {
+			name := "fp-off"
+			if fp {
+				name = "fp-on"
+			}
+			t.Run(name, func(t *testing.T) {
+				var mu sync.Mutex
+				var ll strings.Builder
+				s, err := NewSession(Config{
+					Root: dir, Target: target, Profile: types.Release, FramePointers: fp,
+					Tools: tools, CacheDir: t.TempDir(),
+					TestHooks: TestHooks{OnLL: func(name, text string) {
+						mu.Lock()
+						ll.WriteString(text)
+						mu.Unlock()
+					}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				exe := filepath.Join(t.TempDir(), "boom"+exeSuffix(target))
+				r, paths, err := s.Build(exe)
+				if err != nil || len(r.Report.Diags) > 0 || len(paths) != 1 {
+					t.Fatalf("build: %v\n%s", err, r.Report.Text(r.Sources))
+				}
+				if !strings.Contains(ll.String(), `preserve_nonecc noundef i64 @mk.main.OpBoom$pnone(`) {
+					t.Error("expected OpBoom$pnone in release IR")
+				}
+				_, errOut, code := runExe(t, target, paths[0], "")
+				if code == 0 {
+					t.Fatal("expected non-zero exit code from panic")
+				}
+				for _, want := range []string{"pnone-boom", "backtrace:", "OpBoom"} {
+					if !strings.Contains(errOut, want) {
+						t.Errorf("stderr lacks %q:\n%s", want, errOut)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("twelve-params-linux-fallback-win64-pnone", func(t *testing.T) {
+		const src = `Op0(n: int, a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int, i: int, j: int, k: int): int {
+    if n == 0 {
+        return a + b + c + d + e + f + g + h + i + j + k
+    }
+    become Ops[n & 1](n - 1, b, c, d, e, f, g, h, i, j, k, a + 1)
+}
+
+Op1(n: int, a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int, i: int, j: int, k: int): int {
+    if n == 0 {
+        return a + b + c + d + e + f + g + h + i + j + k
+    }
+    become Ops[n & 1](n - 1, b, c, d, e, f, g, h, i, j, k, a + 2)
+}
+
+const Ops: [2]fn(int, int, int, int, int, int, int, int, int, int, int, int): int = [Op0, Op1]
+
+export Main(sys: &System): WriteError!void {
+    r := Op0(100, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+    try sys.Print("{r}\n", (r: r))
+}
+`
+		dir := writeTree(t, map[string]string{"pkg.mk": safeManifest, "main.mk": src})
+		// x86_64-linux release build must succeed without preserve_nonecc (avoids LLVM 21 register exhaustion).
+		{
+			var mu sync.Mutex
+			var ll strings.Builder
+			s, err := NewSession(Config{
+				Root: dir, Target: types.X86_64Linux, Profile: types.Release, Tools: tools, CacheDir: t.TempDir(),
+				TestHooks: TestHooks{OnLL: func(name, text string) {
+					mu.Lock()
+					ll.WriteString(text)
+					mu.Unlock()
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			exe := filepath.Join(t.TempDir(), "p12-linux")
+			r, paths, err := s.Build(exe)
+			if err != nil || len(r.Report.Diags) > 0 || len(paths) != 1 {
+				t.Fatalf("x86_64-linux build: %v\n%s", err, r.Report.Text(r.Sources))
+			}
+			if strings.Contains(ll.String(), "preserve_nonecc") {
+				t.Error("x86_64-linux 12-GP-arg handler should not emit preserve_nonecc")
+			}
+		}
+		// Host x86_64-windows build uses preserve_nonecc and runs natively.
+		if HostTarget() == types.X86_64Windows {
+			var mu sync.Mutex
+			var ll strings.Builder
+			s, err := NewSession(Config{
+				Root: dir, Target: types.X86_64Windows, Profile: types.Release, Tools: tools, CacheDir: t.TempDir(),
+				TestHooks: TestHooks{OnLL: func(name, text string) {
+					mu.Lock()
+					ll.WriteString(text)
+					mu.Unlock()
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			exe := filepath.Join(t.TempDir(), "p12.exe")
+			r, paths, err := s.Build(exe)
+			if err != nil || len(r.Report.Diags) > 0 || len(paths) != 1 {
+				t.Fatalf("x86_64-windows build: %v\n%s", err, r.Report.Text(r.Sources))
+			}
+			if !strings.Contains(ll.String(), `preserve_nonecc noundef i64 @mk.main.Op0$pnone(`) {
+				t.Error("x86_64-windows 12-GP-arg handler expected preserve_nonecc")
+			}
+			out, errOut, code := runExe(t, types.X86_64Windows, paths[0], "")
+			// Initial sum 1..11 = 66; Op0 runs 51 times (+1 each), Op1 runs 49 times (+2 each) => 66 + 149 = 215.
+			if code != 0 || out != "215\n" {
+				t.Fatalf("exit %d, stdout %q, stderr %q; want 215", code, out, errOut)
+			}
+		}
+	})
+
+	t.Run("sret-error-indirect-trapform-and-field-escape", func(t *testing.T) {
+		const src = `error Bad
+
+struct Pair {
+    x: int
+    y: int
+}
+
+struct Big {
+    a: int
+    b: int
+    c: int
+}
+
+Abort(): never {
+    Panic("abort")
+}
+
+OpDone(p: Pair, n: int, a: int, b: int, c: int, d: int): Bad!Big {
+    if n < 0 {
+        Abort()
+    }
+    if a == 9999 {
+        fail Bad
+    }
+    return Big(a: p.x + a, b: p.y + b, c: c + d)
+}
+
+OpLoop(p: Pair, n: int, a: int, b: int, c: int, d: int): Bad!Big {
+    if n == 0 {
+        become Handlers[0](p, 0, a, b, c, d)
+    }
+    become Handlers[1](p, n - 1, a + 1, b + 2, c + 3, d + 4)
+}
+
+const Handlers: []fn(Pair, int, int, int, int, int): Bad!Big = [OpDone, OpLoop]
+
+EscOp(n: int, a: int): int {
+    if n == 0 {
+        return a
+    }
+    become EscTab[0](n - 1, a + 1)
+}
+
+const EscTab: [1]fn(int, int): int = [EscOp]
+
+struct Box {
+    tab: [1]fn(int, int): int
+}
+
+RunEsc(n: int): int {
+    var box := Box(tab: [EscOp])
+    box.tab = EscTab
+    f := box.tab[0]
+    return f(n, 0)
+}
+
+export Main(sys: &System): WriteError!void {
+    res := OpLoop(Pair(x: 10, y: 20), 100, 0, 0, 0, 0) else {
+        try sys.Print("err\n")
+        return
+    }
+    e := RunEsc(5)
+    try sys.Print("{a} {b} {c} {e}\n", (a: res.a, b: res.b, c: res.c, e: e))
+}
+`
+		dir := writeTree(t, map[string]string{"pkg.mk": safeManifest, "main.mk": src})
+		target := HostTarget()
+		var mu sync.Mutex
+		var ll strings.Builder
+		s, err := NewSession(Config{
+			Root: dir, Target: target, Profile: types.Release, Tools: tools, CacheDir: t.TempDir(),
+			TestHooks: TestHooks{OnLL: func(name, text string) {
+				mu.Lock()
+				ll.WriteString(text)
+				mu.Unlock()
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		exe := filepath.Join(t.TempDir(), "sret"+exeSuffix(target))
+		r, paths, err := s.Build(exe)
+		if err != nil || len(r.Report.Diags) > 0 || len(paths) != 1 {
+			t.Fatalf("build: %v\n%s", err, r.Report.Text(r.Sources))
+		}
+		ir := ll.String()
+		if !strings.Contains(ir, `@mk.main.Handlers$pnone`) || !strings.Contains(ir, `@mk.main.OpLoop$pnone`) {
+			t.Error("expected Handlers$pnone and OpLoop$pnone in release IR")
+		}
+		if strings.Contains(ir, `EscTab$pnone`) || strings.Contains(ir, `EscOp$pnone`) {
+			t.Error("field-escaped EscTab should not emit preserve_nonecc")
+		}
+		out, errOut, code := runExe(t, target, paths[0], "")
+		if code != 0 || out != "110 220 700 5\n" {
+			t.Fatalf("exit %d, stdout %q, stderr %q; want %q", code, out, errOut, "110 220 700 5\n")
+		}
+	})
 }

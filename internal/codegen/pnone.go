@@ -57,6 +57,8 @@ func pnoneEnabled(cfg *Config) bool {
 type pnoneKey struct {
 	n      int
 	target string
+	arch   types.Arch
+	os     types.OS
 	root   string
 	main   types.Key
 }
@@ -83,7 +85,7 @@ func (g *packGen) pnoneSetOf() *pnoneSet {
 		return nil
 	}
 	u := g.u
-	key := pnoneKey{n: len(u.Funcs) + 1, target: g.cfg.Target.Name, root: g.cfg.RootModule, main: g.cfg.Main}
+	key := pnoneKey{n: len(u.Funcs) + 1, target: g.cfg.Target.Name, arch: g.cfg.Target.Arch, os: g.cfg.Target.OS, root: g.cfg.RootModule, main: g.cfg.Main}
 	u.idxMu.Lock()
 	if u.pnoneKey == key && u.pnone != nil {
 		s := u.pnone
@@ -235,6 +237,13 @@ func pnonePackFacts(ag *packGen, p int, h *source.Hasher) {
 		}
 		bt := s.bodyTables[fi]
 		h.Uvarint(uint64(len(bt)))
+		cnt := 0
+		for _, ti := range bt {
+			if ti != types.NoItem {
+				cnt++
+			}
+		}
+		h.Uvarint(uint64(cnt))
 		for li, ti := range bt {
 			if ti != types.NoItem {
 				h.Uvarint(uint64(li))
@@ -247,7 +256,9 @@ func pnonePackFacts(ag *packGen, p int, h *source.Hasher) {
 // pnoneFuncEligible reports whether Funcs[fi] may be given a preserve_nonecc
 // body: a concrete, non-extern, non-naked, non-variadic, non-section,
 // non-runtime-hook, non-constant-time Mk function whose lowered signature on
-// this target has no byval parameter (byval functions belong to tailbody.go).
+// this target has no byval parameter (byval functions belong to tailbody.go)
+// and, on non-Windows x86_64, uses at most 10 general-purpose argument
+// register slots.
 func (g *packGen) pnoneFuncEligible(fi int) bool {
 	if fi < 0 || fi >= len(g.u.Funcs) {
 		return false
@@ -262,7 +273,8 @@ func (g *packGen) pnoneFuncEligible(fi int) bool {
 		return false
 	}
 	if mod := g.items.Module(it.Module); mod != nil &&
-		(mod.Path == "std.crypto" || strings.HasPrefix(mod.Path, "std.crypto.") || mod.Path == "std.simd.kernel") {
+		(mod.Path == "std.crypto" || strings.HasPrefix(mod.Path, "std.crypto.") ||
+			mod.Path == "std.simd.kernel" || strings.HasPrefix(mod.Path, "std.simd.kernel.")) {
 		return false
 	}
 	if fd, ok := it.Decl.(*types.FuncDecl); ok && fd.Sig.Variadic {
@@ -280,7 +292,41 @@ func (g *packGen) pnoneFuncEligible(fi int) bool {
 			return false
 		}
 	}
+	// On non-Windows x86_64, preserve_nonecc assigns up to 12 GP argument
+	// registers (r12..r15, rdi, rsi, rdx, rcx, r8, r9, r11, rax). Leaving r11
+	// and rax free (at most 10 GP slots) avoids two LLVM 21 x86_64 System V
+	// defects: inline-asm stack probing hardcodes r11 as its scratch limit
+	// register without saving it (silently corrupting an 11th GP parameter on
+	// >16 KiB frames or >4 KiB stack realignments), and occupying all 8
+	// registers of GR64_TC (at >=12 GP slots) exhausts registers and crashes
+	// the register allocator on musttail dispatches.
+	if g.cfg.Target.Arch == types.ArchX64 && g.cfg.Target.OS != types.OSWindows && pnoneX64SysVGPRegs(as) > 10 {
+		return false
+	}
 	return true
+}
+
+// pnoneX64SysVGPRegs counts the 64-bit general-purpose argument register slots
+// occupied by lowered signature as on non-Windows x86_64 (including a hidden
+// sret pointer and two slots per 128-bit integer).
+func pnoneX64SysVGPRegs(as abi.Sig) int {
+	n := 0
+	if as.Ret.Kind == abi.Indirect {
+		n++
+	}
+	for _, sl := range as.Params {
+		switch sl.Kind {
+		case abi.Indirect:
+			n++
+		case abi.Direct:
+			for _, p := range sl.Parts {
+				if p.Class == types.RegInt {
+					n += int((p.Bytes + 7) / 8)
+				}
+			}
+		}
+	}
+	return n
 }
 
 // candidateTable checks whether item is a module-private, non-section const
@@ -546,7 +592,8 @@ func (g *packGen) analyzeBodyPnone(fi int, cands map[types.ItemID]*pnoneTable, e
 					fnBad[op.Out.Local] = true
 				}
 			}
-			if op.In.Kind == mir.OpCopy || op.In.Kind == mir.OpMove {
+			if (op.Kind == mir.AsmIn || op.Kind == mir.AsmInOut || op.Kind == mir.AsmInLateOut) &&
+				(op.In.Kind == mir.OpCopy || op.In.Kind == mir.OpMove) {
 				tabBad[op.In.Place.Local] = true
 				fnBad[op.In.Place.Local] = true
 			}
@@ -571,14 +618,19 @@ func (g *packGen) analyzeBodyPnone(fi int, cands map[types.ItemID]*pnoneTable, e
 					fnBad[rv.Place.Local] = true
 				}
 				dst := s.Place
-				if dst.Proj.Len == 0 && rv.Kind == mir.RvConstRef && cands[rv.Item] != nil {
-					switch {
-					case tabLoc[dst.Local] == types.NoItem:
-						tabLoc[dst.Local] = rv.Item
-					case tabLoc[dst.Local] != rv.Item:
-						escaped[tabLoc[dst.Local]] = true
+				if rv.Kind == mir.RvConstRef && cands[rv.Item] != nil {
+					if dst.Proj.Len != 0 {
 						escaped[rv.Item] = true
 						tabBad[dst.Local] = true
+					} else {
+						switch {
+						case tabLoc[dst.Local] == types.NoItem:
+							tabLoc[dst.Local] = rv.Item
+						case tabLoc[dst.Local] != rv.Item:
+							escaped[tabLoc[dst.Local]] = true
+							escaped[rv.Item] = true
+							tabBad[dst.Local] = true
+						}
 					}
 				} else {
 					tabBad[dst.Local] = true

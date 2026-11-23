@@ -4,8 +4,8 @@
 // lowering and PackFacts cache invalidation must all be tested directly.
 //
 // What: TestPnoneTailTableIR, TestPnoneTailTableSliceAndSret,
-// TestPnoneTailTableRejections, TestPnoneCrossTargetAsm and
-// TestPnonePackFactsCrossPack.
+// TestPnoneTailTableRejections, TestPnoneCrossTargetAsm,
+// TestPnonePackFactsCrossPack and TestPnoneAdversarialEdgeCases.
 //
 // How: hand-built MIR units exercise 8-parameter dispatch tables, direct
 // become closure, re-entrant and outside C ABI calls, slices, sret, shared
@@ -511,6 +511,95 @@ func TestPnoneTailTableRejections(t *testing.T) {
 				return u
 			},
 		},
+		{
+			name:   "table-field-store-escape",
+			target: types.X86_64Windows,
+			build: func(e *testEnv) *Unit {
+				u := pnone8Unit(e)
+				opsID, _ := e.items.ByKey(types.ItemKey("main", "Ops"))
+				opsT := e.items.Get(opsID).Decl.(*types.ConstDecl).Type
+				holder := e.structT("Holder", opsT)
+				esc := e.body(e.fn("EscapeField", nil, holder, 0))
+				sp := esc.at(72, 3)
+				h := esc.local(holder)
+				fp := esc.b.Place(h, mir.Projection{Kind: mir.ProjField, A: 0, Type: opsT})
+				esc.assign(fp, mir.Rvalue{Kind: mir.RvConstRef, Item: opsID, Type: opsT}, sp)
+				esc.assign(place(0), use(mir.Copy(place(h))), sp)
+				esc.ret(sp)
+				u.Packs[0] = append(u.Packs[0], len(u.Funcs))
+				u.Funcs = append(u.Funcs, Func{Symbol: "mk.main.EscapeField", Key: "main.EscapeField", Item: esc.item, Body: esc.b})
+				return u
+			},
+		},
+		{
+			name:   "direct-become-to-ineligible-section-fn",
+			target: types.X86_64Windows,
+			build: func(e *testEnv) *Unit {
+				u := pnone8Unit(e)
+				helpID, _ := e.items.ByKey(types.ItemKey("main", "Helper"))
+				e.items.Get(helpID).Decl.(*types.FuncDecl).Section = ".text.hot"
+				return u
+			},
+		},
+		{
+			name:   "second-table-escaped-poisons-shared-handler",
+			target: types.X86_64Windows,
+			build: func(e *testEnv) *Unit {
+				fnT := e.tt.Fn(types.FnType{Params: []types.FnParam{{Type: types.Int}}, Result: types.Int})
+				op0Item := e.fn("Op0", []types.TypeID{types.Int}, types.Int, 0)
+				op1Item := e.fn("Op1", []types.TypeID{types.Int}, types.Int, 0)
+				t1, arrT := makeFnTableConst(e, "T1", false, fnT, op0Item, op1Item)
+				t2, _ := makeFnTableConst(e, "T2", false, fnT, op0Item, op1Item)
+				op0 := e.body(op0Item)
+				sp := op0.at(1, 1)
+				c := op0.local(types.Bool)
+				op0.assign(place(c), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.Eq, A: mir.Copy(place(1)), B: mir.Imm(types.Int, 0), Type: types.Bool}, sp)
+				b1, b2 := op0.newBlock(), op0.newBlock()
+				op0.term(mir.Terminator{Kind: mir.TermSwitch, On: mir.Copy(place(c)),
+					Cases: op0.b.AddCases(mir.SwitchCase{Value: 1, Target: b1}), Default: b2, Span: sp})
+				op0.cur = b1
+				tl1 := op0.local(arrT)
+				op0.assign(place(tl1), mir.Rvalue{Kind: mir.RvConstRef, Item: t1, Type: arrT}, sp)
+				ip1 := op0.b.Place(tl1, mir.Projection{Kind: mir.ProjIndex, A: 1, Type: fnT})
+				op0.term(mir.Terminator{Kind: mir.TermTailCall, Callee: mir.Callee{Kind: mir.CallValue, Value: mir.Copy(ip1)},
+					Args: op0.b.AddArgs(mir.Arg{Operand: mir.Copy(place(1))}), Dest: place(0), Spawn: mir.NoLocal, Span: sp})
+				op0.cur = b2
+				tl2 := op0.local(arrT)
+				op0.assign(place(tl2), mir.Rvalue{Kind: mir.RvConstRef, Item: t2, Type: arrT}, sp)
+				ip2 := op0.b.Place(tl2, mir.Projection{Kind: mir.ProjIndex, A: 1, Type: fnT})
+				op0.term(mir.Terminator{Kind: mir.TermTailCall, Callee: mir.Callee{Kind: mir.CallValue, Value: mir.Copy(ip2)},
+					Args: op0.b.AddArgs(mir.Arg{Operand: mir.Copy(place(1))}), Dest: place(0), Spawn: mir.NoLocal, Span: sp})
+				op1 := e.body(op1Item)
+				sp1 := op1.at(2, 1)
+				op1.assign(place(0), use(mir.Copy(place(1))), sp1)
+				op1.ret(sp1)
+				esc := e.body(e.fn("EscapeT2", nil, e.tt.Ref(arrT), 0))
+				spE := esc.at(3, 1)
+				esc.assign(place(0), mir.Rvalue{Kind: mir.RvGlobalRef, Item: t2, Type: e.tt.Ref(arrT)}, spE)
+				esc.ret(spE)
+				u := unitOf(e, []*mir.Body{op0.b, op1.b, esc.b})
+				u.Funcs[0].AddrTaken, u.Funcs[1].AddrTaken = true, true
+				return u
+			},
+		},
+		{
+			name:   "sysv-x64-11-gp-args",
+			target: types.X86_64Linux,
+			build:  func(e *testEnv) *Unit { return pnoneNIntUnit(e, 11, types.Int) },
+		},
+		{
+			name:   "sysv-x64-12-gp-args",
+			target: types.X86_64Linux,
+			build:  func(e *testEnv) *Unit { return pnoneNIntUnit(e, 12, types.Int) },
+		},
+		{
+			name:   "sysv-x64-sret-10-gp-args",
+			target: types.X86_64Linux,
+			build: func(e *testEnv) *Unit {
+				big := e.structT("Big", types.Int, types.Int, types.Int)
+				return pnoneNIntUnit(e, 10, big)
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -522,15 +611,158 @@ func TestPnoneTailTableRejections(t *testing.T) {
 				t.Errorf("%s: got %d tables and %d funcs, want none", tc.name, len(s.tables), len(s.funcs))
 			}
 			// For cases whose MIR is valid to emit (not synthetic byval-through-fn-value which tailcall rejects),
-			// also confirm the emitted IR contains no preserve_nonecc.
+			// also confirm the emitted IR contains no preserve_nonecc and compiles cleanly.
 			if tc.name != "byval-linux-stays-non-pnone" && tc.name != "arbitrary-fn-param-become" {
 				ll := emit(t, e, u, tc.target, types.Release)
 				if strings.Contains(ll, "preserve_nonecc") || strings.Contains(ll, "$pnone") {
 					t.Errorf("%s: emitted preserve_nonecc:\n%s", tc.name, ll)
 				}
+				if strings.HasPrefix(tc.name, "sysv-x64-") || tc.name == "second-table-escaped-poisons-shared-handler" ||
+					tc.name == "direct-become-to-ineligible-section-fn" || tc.name == "table-field-store-escape" {
+					clangC(t, tc.target, t.TempDir(), "rej", ll, "-O3")
+				}
 			}
 		})
 	}
+}
+
+// pnoneNIntUnit builds a 2-handler dispatch table taking n int parameters and
+// returning retT (either types.Int, types.Never, or a 3-int struct for sret).
+func pnoneNIntUnit(e *testEnv, n int, retT types.TypeID) *Unit {
+	params := make([]types.TypeID, n)
+	fnParams := make([]types.FnParam, n)
+	for i := range params {
+		params[i] = types.Int
+		fnParams[i] = types.FnParam{Type: types.Int}
+	}
+	fnT := e.tt.Fn(types.FnType{Params: fnParams, Result: retT})
+	op0Item := e.fn("Op0", params, retT, 0)
+	op1Item := e.fn("Op1", params, retT, 0)
+	tab, arrT := makeFnTableConst(e, "Ops", false, fnT, op0Item, op1Item)
+	buildOp := func(item types.ItemID, haltOnZero bool) *fnb {
+		f := e.body(item)
+		sp := f.at(10, 3)
+		if haltOnZero && retT != types.Never {
+			c := f.local(types.Bool)
+			f.assign(place(c), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.Eq, A: mir.Copy(place(1)), B: mir.Imm(types.Int, 0), Type: types.Bool}, sp)
+			doneB, nextB := f.newBlock(), f.newBlock()
+			f.term(mir.Terminator{Kind: mir.TermSwitch, On: mir.Copy(place(c)),
+				Cases: f.b.AddCases(mir.SwitchCase{Value: 1, Target: doneB}), Default: nextB, Span: sp})
+			f.cur = doneB
+			if retT == types.Int {
+				f.assign(place(0), use(mir.Copy(place(mir.LocalID(n)))), sp)
+			} else {
+				f.assign(place(0), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: e.tt.Get(retT).Item,
+					Ops: f.b.AddOperands(mir.Copy(place(1)), mir.Copy(place(2)), mir.Copy(place(mir.LocalID(n)))), Type: retT}, sp)
+			}
+			f.ret(sp)
+			f.cur = nextB
+		}
+		idx := f.local(types.Int)
+		f.assign(place(idx), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.BitAnd, A: mir.Copy(place(1)), B: mir.Imm(types.Int, 1), Type: types.Int}, sp)
+		n0 := f.local(types.Int)
+		f.assign(place(n0), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.SubWrap, A: mir.Copy(place(1)), B: mir.Imm(types.Int, 1), Type: types.Int}, sp)
+		tl := f.local(arrT)
+		f.assign(place(tl), mir.Rvalue{Kind: mir.RvConstRef, Item: tab, Type: arrT}, sp)
+		ip := f.b.Place(tl, mir.Projection{Kind: mir.ProjIndex, A: uint32(idx), Type: fnT})
+		args := make([]mir.Arg, n)
+		args[0] = mir.Arg{Operand: mir.Copy(place(n0))}
+		for i := 1; i < n; i++ {
+			src := i + 2
+			if src > n {
+				src = 2
+			}
+			args[i] = mir.Arg{Operand: mir.Copy(place(mir.LocalID(src)))}
+		}
+		f.term(mir.Terminator{Kind: mir.TermTailCall, Callee: mir.Callee{Kind: mir.CallValue, Value: mir.Copy(ip)},
+			Args: f.b.AddArgs(args...), Dest: place(0), Spawn: mir.NoLocal, Span: sp})
+		return f
+	}
+	op0 := buildOp(op0Item, true)
+	op1 := buildOp(op1Item, false)
+	u := unitOf(e, []*mir.Body{op0.b, op1.b})
+	u.Funcs[0].AddrTaken, u.Funcs[1].AddrTaken = true, true
+	return u
+}
+
+// TestPnoneAdversarialEdgeCases verifies boundary parameter counts (10 GP args
+// on System V x86_64, 12 GP args on Win64 and AArch64), --frame-pointers=on,
+// general-regs-only freestanding builds, and noreturn (never) handler tables.
+func TestPnoneAdversarialEdgeCases(t *testing.T) {
+	t.Run("boundary-gp-counts", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			target types.Target
+			n      int
+		}{
+			{"linux-10", types.X86_64Linux, 10},
+			{"win64-12", types.X86_64Windows, 12},
+			{"arm64-linux-12", types.Aarch64Linux, 12},
+			{"arm64-macos-12", types.Aarch64Macos, 12},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				e := newTestEnv()
+				u := pnoneNIntUnit(e, tc.n, types.Int)
+				ll := emit(t, e, u, tc.target, types.Release)
+				if !strings.Contains(ll, "preserve_nonecc") || !strings.Contains(ll, "@mk.main.Ops$pnone") {
+					t.Fatalf("%s: expected preserve_nonecc IR:\n%s", tc.name, ll)
+				}
+				clangC(t, tc.target, t.TempDir(), tc.name, ll, "-O3")
+			})
+		}
+	})
+	t.Run("frame-pointers-on", func(t *testing.T) {
+		for _, target := range []types.Target{types.X86_64Windows, types.X86_64Linux, types.Aarch64Linux, types.Aarch64Macos} {
+			t.Run(target.Name, func(t *testing.T) {
+				e := newTestEnv()
+				u := pnone8Unit(e)
+				var buf bytes.Buffer
+				cfg := Config{Target: target, Profile: types.Release, FramePointers: true}
+				if _, err := EmitPack(u, 0, e, cfg, &buf); err != nil {
+					t.Fatal(err)
+				}
+				ll := buf.String()
+				if !strings.Contains(ll, "preserve_nonecc") || !strings.Contains(ll, `"frame-pointer"="non-leaf"`) {
+					t.Fatalf("%s: missing preserve_nonecc or frame-pointer:\n%s", target.Name, ll)
+				}
+				clangC(t, target, t.TempDir(), "fp", ll, "-O3")
+			})
+		}
+	})
+	t.Run("freestanding-general-regs-only", func(t *testing.T) {
+		e := newTestEnv()
+		u := pnoneNIntUnit(e, 10, types.Int)
+		var buf bytes.Buffer
+		cfg := Config{Target: types.X86_64Freestanding, Profile: types.Release, GeneralRegsOnly: true}
+		if _, err := EmitPack(u, 0, e, cfg, &buf); err != nil {
+			t.Fatal(err)
+		}
+		ll := buf.String()
+		if !strings.Contains(ll, "preserve_nonecc") || !strings.Contains(ll, groFeatures) {
+			t.Fatalf("freestanding GRO: missing preserve_nonecc or groFeatures:\n%s", ll)
+		}
+		clangC(t, types.X86_64Freestanding, t.TempDir(), "gro", ll, "-O3")
+	})
+	t.Run("never-handlers", func(t *testing.T) {
+		for _, target := range []types.Target{types.X86_64Windows, types.X86_64Linux, types.Aarch64Linux, types.Aarch64Macos} {
+			t.Run(target.Name, func(t *testing.T) {
+				e := newTestEnv()
+				u := pnoneNIntUnit(e, 8, types.Never)
+				ll := emit(t, e, u, target, types.Release)
+				for _, want := range []string{
+					`preserve_nonecc void @mk.main.Op0$pnone(`,
+					`musttail call preserve_nonecc void %`,
+					`call preserve_nonecc void @mk.main.Op0$pnone(`,
+					`unreachable`,
+				} {
+					if !strings.Contains(ll, want) {
+						t.Errorf("%s: never handler IR lacks %q:\n%s", target.Name, want, ll)
+					}
+				}
+				clangC(t, target, t.TempDir(), "never", ll, "-O3")
+			})
+		}
+	})
 }
 
 // TestPnoneCrossTargetAsm compiles the 8-register-parameter dispatch loop to
