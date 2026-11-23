@@ -19,14 +19,14 @@ import std.http
 /// returns true to go on to the next middleware and then the route, or
 /// false when it has answered the request itself (its status and body are
 /// in `res`). Its failure ends the request as a handler's does.
-export type Middleware[C] = fn(c: &C, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool *res into res
+export type Middleware[C] = fn(c: &C, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool
 
 /// Runs each of `mws` in order and, when every one returns true, the route
 /// of `routes` that `http.Dispatch` picks (404 and 405 as Dispatch fails
 /// them). A middleware that returns false or fails ends the request there:
 /// the ones after it and the route do not run. O(middleware) calls plus
 /// Dispatch's scan.
-export Run[C](a: &Arena, io: Io, mws: []Middleware[C], routes: []http.Route[C], c: &C, req: &http.Request, res: mut http.Response): http.Error!void *res into res, *routes into a {
+export Run[C](a: &Arena, io: Io, mws: []Middleware[C], routes: []http.Route[C], c: &C, req: &http.Request, res: mut http.Response): http.Error!void *routes into a {
     for m in mws {
         go_on := try m(c, a, io, req, res)
         if !go_on {

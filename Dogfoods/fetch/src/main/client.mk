@@ -36,7 +36,7 @@ struct Common {
 
 // Client runs the transfers the command line asks for and returns the
 // exit status.
-Client(sys: &System, o: &Options): int {
+Client(sys: &System, o: &Options): int *o into sys {
     if seed := o.seed {
         return Simulated(sys, o, seed)
     }
@@ -45,7 +45,7 @@ Client(sys: &System, o: &Options): int {
 
 // Simulated runs the session under std.sim with seed, after arming each
 // --fault for the next operation of its kind.
-Simulated(sys: &System, o: &Options, seed: u64): int {
+Simulated(sys: &System, o: &Options, seed: u64): int *o into sys {
     var sm := sim.Sim.New(sys.arena, seed) else {
         return Fatal(sys, 1, "out of memory")
     }

@@ -49,7 +49,7 @@ struct NewNote {
 
 gen json.Codec(NewNote)
 
-GetNote(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+GetNote(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := req.ParamInt("id") else {
         fail http.Status(code: 400)
     }
@@ -71,7 +71,7 @@ GetNote(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response):
     fail http.Status(code: 404)
 }
 
-PostNote(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+PostNote(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     text := str.From(req.body) else {
         fail http.Status(code: 400)
     }
@@ -136,7 +136,7 @@ DeleteNote(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Respons
     fail http.Status(code: 404)
 }
 
-Hello(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Hello(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"hello, world\n")
 }
 
@@ -147,7 +147,7 @@ const Routes: []http.Route[Ctx] = [
     http.Route[Ctx](method: "GET", pattern: "/hello", handler: Hello),
 ]
 
-Handle(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &Ctx, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

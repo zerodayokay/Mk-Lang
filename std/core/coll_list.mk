@@ -19,7 +19,7 @@ export view struct List[T] {
     ptr: *T
     n: int
     cap: int
-    arena: &Arena
+    alloc: &Alloc
 }
 
 impl[T] Slice[T] for List[T] {
@@ -44,7 +44,7 @@ impl[T: Format] Format for List[T] {
 /// the capacity is 0, its slices (from Items or Done) still have a non-null
 /// data pointer.
 export List[T].New(a: &Arena): List[T] {
-    return List[T](ptr: Dangling[T](), n: 0, cap: 0, arena: a)
+    return List[T](ptr: Dangling[T](), n: 0, cap: 0, alloc: a.Alloc())
 }
 
 /// Appends x. OutOfMemory when the arena cannot grow the buffer, and then the
@@ -136,7 +136,7 @@ export List[T].Done(self): mut []T {
 // last block is this buffer, else a new buffer, the old one abandoned.
 List[T].Grow(mut self, need: int): OutOfMemory!void {
     c := NextCap(self.cap, need)
-    p := GrowSlots(self.arena.Alloc(), self.ptr, self.n, self.cap, c, false)
+    p := GrowSlots(self.alloc, self.ptr, self.n, self.cap, c, false)
     if raw.IsNull(p) {
         fail OutOfMemory
     }

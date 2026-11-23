@@ -110,7 +110,7 @@ func (p *parser) itemHabit(s0 int) ast.Item {
 	case p.fnWordAhead():
 		p.fnWordHabit()
 		return p.parseFunc(p.curStart(), sigFunc)
-	case p.atWord("pub") && (p.peekKind(1) == ast.TokLParen || p.peekKind(1) == ast.TokIdent || itemStarter(p.peekKind(1)) || p.peekKind(1) == ast.TokFn):
+	case p.atWord("pub") && (p.peekKind(1) == ast.TokLParen || p.peekKind(1) == ast.TokIdent || itemStarter(p.peekKind(1)) || p.peekKind(1) == ast.TokFn || p.peekKind(1) == ast.TokMut && p.peekKind(2) == ast.TokView):
 		exported := p.pubHabit(true)
 		it := p.parseItemInner()
 		if exported {

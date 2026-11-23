@@ -88,6 +88,14 @@ type Shape struct {
 	// a type parameter.
 	Carrier bool
 	View    bool
+	// MutView is true on a `mut view struct` itself (not on wrappers or
+	// arrays/optionals of it). MutView implies View and LoanInterior.
+	MutView bool
+	// LoanInterior is true when a shared reference `&T` can store a loan into
+	// interior storage: a `mut view struct`, `Arena`, `Scope`, a `Cell[U]` /
+	// `Mutex[U]` / `Chan[U]` whose payload `U` is a carrier, or a composite
+	// holding one inline (not behind a reference).
+	LoanInterior bool
 	// Opaque marks a C layout Mk cannot express (C import; always false in
 	// the one-shot).
 	Opaque bool
@@ -106,12 +114,22 @@ type Facts struct {
 	Kind    Kind
 	Carrier bool
 	View    bool
+	// MutView is true on a `mut view struct` itself; cleared by wrappers like
+	// `[N]T`, `?T` and `E!T`.
+	MutView bool
 	// Allocator is true for Arena, Alloc and Heap.
 	Allocator bool
 	// Interior is true for a type that is, or holds inline (not behind a
-	// reference), a Cell, Mutex, Chan, Arena, raw.Atomic or Scope, by
-	// identity.
+	// reference), a Cell, Mutex, Chan, Arena, raw.Atomic, Scope or `mut view
+	// struct`. Codegen reads this (with Freeze) for LLVM immutability
+	// attributes; loan writability uses LoanInterior.
 	Interior bool
+	// LoanInterior is true for a type that can accept a loan store through a
+	// shared reference: a `mut view struct`, Arena, Scope, a Cell[T] /
+	// Mutex[T] / Chan[T] whose payload T is a carrier, or a composite holding
+	// one inline. Non-carrier Cell/Mutex/Chan and raw.Atomic have
+	// LoanInterior == false while keeping Interior == true and Freeze == false.
+	LoanInterior bool
 	// SliceImpl is true for a type with an impl Slice[T].
 	SliceImpl bool
 	Send      bool
@@ -240,6 +258,7 @@ type ShapeTerm struct {
 	Fields   []ShapeTerm
 	Packed   uint32
 	View     bool
+	MutView  bool
 	Linear   bool
 	Marks    TermMarks
 	Variants [][]ShapeTerm

@@ -231,7 +231,9 @@ func (qx *queryIndex) declHead(e qEntry, withOpen bool) string {
 	switch d := it.Decl.(type) {
 	case *types.StructDecl:
 		head = "struct " + e.name + qx.genericsString(d.Generics, d.Generics)
-		if d.View {
+		if d.MutView {
+			head = "mut view " + head
+		} else if d.View {
 			head = "view " + head
 		}
 		if d.Linear {

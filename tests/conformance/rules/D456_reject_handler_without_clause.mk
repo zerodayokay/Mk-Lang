@@ -1,15 +1,22 @@
 // verdict: reject E0604
 // rule: D-456
-// note: Response.Header and Body store a loan of self into self, so a handler that calls them states *res into res; without it each call is E0604 (the accept twin: D456_accept_handler_clause)
-import std.http
-
-struct App {
-    name: str
+// note: calling a method that declares `*self into self` on a mut view parameter requires `*res into res` on the caller; without it each call is E0604 (for read-only view `http.Response`, see D456_accept_handler_without_clause)
+mut view struct Sink {
+    n: int
 }
 
-Reply(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
-    try res.Header("content-type", "text/plain") // <- E0604
-    try res.Body(b"ok\n")                        // <- E0604
+Sink.Header(mut self, name: str, value: str): void *self into self {
+    _ = name
+    _ = value
+}
+
+Sink.Body(mut self, data: []u8): void *self into self {
+    _ = data
+}
+
+Reply(res: mut Sink) {
+    res.Header("content-type", "text/plain") // <- E0604
+    res.Body(b"ok\n")                        // <- E0604
 }
 
 export Main(sys: &System): void {

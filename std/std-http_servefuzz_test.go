@@ -31,7 +31,7 @@ struct App {
     n: int
 }
 
-Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void *res into res {
+Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void {
     try res.Header("X-Method", req.method)
     try res.Body(req.body)
 }

@@ -54,9 +54,10 @@ func TestShallowBundle(t *testing.T) {
 		{"&Arena", k.tab.Ref(k.Arena), false, "an allocator referent, writable by type"},
 		{"&str", k.tab.Ref(types.Str), false, "a carrier referent"},
 		{"mut i32", k.tab.Mut(types.I32), false, "an exclusive step"},
-		{"&Cell[i32]", k.tab.Ref(k.named("Cell", types.I32)), false, "a referent writable by type"},
+		{"&Cell[i32]", k.tab.Ref(k.named("Cell", types.I32)), true, "non-carrier Cell holds no loans"},
+		{"&Cell[&i32]", k.tab.Ref(k.named("Cell", refI32(k))), false, "a referent writable by type"},
 		{"&List[i32]", k.tab.Ref(k.named("List", types.I32)), false, "a carrier referent (a view)"},
-		{"List[str]", k.named("List", types.Str), false, "a view by value: ANY"},
+		{"List[str]", k.named("List", types.Str), false, "a view by value"},
 	})
 }
 
@@ -151,12 +152,14 @@ func TestShallowExclusions(t *testing.T) {
 		{"&List[str]", k.tab.Ref(k.named("List", types.Str)), false, "a view referent (probe a03's *q)"},
 		{"&HeapList[str]", k.tab.Ref(k.named("HeapList", types.Str)), false, "a view referent"},
 		{"Ev{str | &Cell[str]}", k.named("Ev"), false, "one variant reaches a Cell"},
-		// A referent writable by type.
+		// A referent writable by type (carrier Cell/Mutex/Chan, mut view) vs
+		// non-carrier Cell/Mutex (which hold no loans and stay shallow).
 		{"&Cell[str]", k.tab.Ref(cellStr), false, "writable by type and a carrier (probe a02)"},
-		{"&Cell[i32]", k.tab.Ref(k.named("Cell", types.I32)), false, "writable by type"},
-		{"&Mutex[i32]", k.tab.Ref(k.named("Mutex", types.I32)), false, "writable by type"},
-		{"&WC{i32, Cell[i32]}", k.tab.Ref(k.named("WC")), false, "a Cell inside the referent"},
-		{"&WM{Mutex[i32]}", k.tab.Ref(k.named("WM")), false, "a Mutex inside the referent"},
+		{"&Cell[i32]", k.tab.Ref(k.named("Cell", types.I32)), true, "non-carrier Cell holds no loans"},
+		{"&Mutex[i32]", k.tab.Ref(k.named("Mutex", types.I32)), true, "non-carrier Mutex holds no loans"},
+		{"&Mutex[&i32]", k.tab.Ref(k.named("Mutex", ri)), false, "carrier Mutex is writable by type"},
+		{"&WC{i32, Cell[i32]}", k.tab.Ref(k.named("WC")), true, "non-carrier Cell inside the referent"},
+		{"&WM{Mutex[i32]}", k.tab.Ref(k.named("WM")), true, "non-carrier Mutex inside the referent"},
 		{"Cell[&Cell[str]]", k.named("Cell", k.tab.Ref(cellStr)), false, "the referent is a Cell"},
 		// An allocator.
 		{"&Arena", k.tab.Ref(k.Arena), false, "an allocator"},

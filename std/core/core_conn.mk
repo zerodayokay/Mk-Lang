@@ -22,7 +22,7 @@ import std.dyn.erased
 /// connection. It keeps the Box's allocator and loans. The value comes back
 /// only to a caller that names the type it was made from: as &T through Ref,
 /// or as the Box itself through Take, to free it. Linear: Take ends it.
-export linear view struct ErasedBox {
+export linear mut view struct ErasedBox {
     ptr: *u8
     owner: *Alloc
     key: u64
@@ -91,6 +91,58 @@ export ErasedBox.Take[T: Send + Share](self): Box[T] from self {
 /// Whether the box was made from a T. O(1).
 export ErasedBox.Is[T](&self): bool {
     return self.key == erased.Key[T]()
+}
+
+/// A boxed Send + Share value whose type is erased and whose `&self` access is
+/// mediated solely by zero-flow callbacks (`With`), so no caller can store a
+/// loan into it or borrow its contents out through `&self`. Linear: Take ends
+/// it.
+export linear view struct SealedBox {
+    ptr: *u8
+    owner: *Alloc
+    key: u64
+}
+
+unsafe impl Send for SealedBox {}
+unsafe impl Share for SealedBox {}
+
+/// Moves x into b, which must hold none, and erases the box's type as
+/// ErasedBox.Fill does. Linear: Take ends it. O(1); allocates nothing.
+export SealedBox.Fill[T: Send + Share](b: Box[?T], x: T): SealedBox from b, x {
+    Box(ptr, owner, marker) := b
+    unsafe "ptr is the address of b's live ?T, moved in once it holds none; only the result reaches that memory and it holds b's and x's loans" {
+        if (&*ptr).IsSome() {
+            raw.Fail(8, "SealedBox.Fill: the box is not empty")
+        }
+        raw.Write(ptr, some(x))
+        raw.Forget(marker)
+        return SealedBox(ptr: raw.PtrCast[?T, u8](ptr), owner: owner, key: erased.Key[?T]())
+    }
+}
+
+/// Calls f with a shared reference to the boxed value and argument a.
+/// Because f's type declares no `into` flow and returns void, f can neither
+/// store any non-static loan into the boxed value nor carry a loan out of it.
+/// Panics (code 8) when T is not the type the box was made from. O(1).
+export SealedBox.With[T: Send + Share, A](&self, a: A, f: fn(&T, A): void) {
+    if self.key != erased.Key[T]() {
+        ErasedMismatch()
+    }
+    unsafe "Fill stored the address of a live T that this SealedBox owns, and the key says the type is T; only & is given, and T is Share" {
+        f(&*raw.PtrCast[u8, T](self.ptr), a)
+    }
+}
+
+/// Returns the Box the value was erased from. Panics (code 8) when T is not
+/// the type the box was made from. O(1); allocates nothing.
+export SealedBox.Take[T: Send + Share](self): Box[T] from self {
+    SealedBox(ptr, owner, key) := self
+    if key != erased.Key[T]() {
+        ErasedMismatch()
+    }
+    unsafe "Fill took ptr and owner apart from a Box[T], and the key says the type is T: this puts the same Box back together" {
+        return Box[T](ptr: raw.PtrCast[u8, T](ptr), owner: owner, marker: [])
+    }
 }
 
 /// A function and the shared state it is called with, with the state's type

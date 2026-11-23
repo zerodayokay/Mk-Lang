@@ -344,90 +344,19 @@ func TestReadMembersRefImpl(t *testing.T) {
 	}
 }
 
-// TestReadModuleFuncs: the function list of a module (ModuleFuncsKey), which
-// borrow's module scan reads (typewalk.go holdStores), changes when an impl is
-// added to the module, whatever its For (an impl for a primitive, an optional
-// or a slice has no type of the module to list it), and when a function, const
-// or global the reader counts is added; a foreign reader counts only the
-// exported ones and the impls with their methods, the module's API part. An
-// impl or function of another module changes nothing.
-func TestReadModuleFuncs(t *testing.T) {
-	key := ModuleFuncsKey("geo")
-	if strings.HasSuffix(key.String(), ":") {
-		t.Fatalf("ModuleFuncsKey %q reads as a type namespace key", key)
-	}
-	valid := func(f *worldFixture, reader string, r types.Read) bool {
-		ok, _ := Valid(f.world(reader, types.X86_64Windows), []types.Read{r})
-		return ok
-	}
-	record := func(f *worldFixture, reader string) types.Read {
-		r := types.Read{Kind: types.ReadExports, Key: key}
-		h, ok := f.world(reader, types.X86_64Windows).Part(r)
-		if !ok {
-			t.Fatalf("no part for %s read by %s", key, reader)
-		}
-		r.Hash = h
-		return r
-	}
-	for _, reader := range []string{"app", "geo"} {
-		f := newWorldFixture()
-		r := record(f, reader)
-		if !valid(f, reader, r) {
-			t.Errorf("%s: unchanged: invalid", reader)
-		}
-		f.addImpl(f.other, "geo.Wrap", "geo.Point")
-		if !valid(f, reader, r) {
-			t.Errorf("%s: an impl added in another module: invalid", reader)
-		}
-		id := f.addImpl(f.mod, "geo.Wrap", "geo.Point")
-		f.items.Get(id).Decl.(*types.ImplDecl).For = types.I32
-		if valid(f, reader, r) {
-			t.Errorf("%s: an impl for i32 added in the module: still valid", reader)
-		}
-		r = record(f, reader)
-		f.item(f.other, types.KeyFromString("other.Keep"), "Keep", types.KindFunc, true)
-		if !valid(f, reader, r) {
-			t.Errorf("%s: a function added in another module: invalid", reader)
-		}
-		f.item(f.mod, types.KeyFromString("geo.Hidden"), "Hidden", types.KindFunc, false)
-		if got, want := valid(f, reader, r), reader == "app"; got != want {
-			t.Errorf("%s: a private function added in the module: valid %v, want %v", reader, got, want)
-		}
-		r = record(f, reader)
-		f.item(f.mod, types.KeyFromString("geo.KeepC"), "KeepC", types.KindConst, true)
-		if valid(f, reader, r) {
-			t.Errorf("%s: an exported const added in the module: still valid", reader)
-		}
-	}
-}
-
-// TestReadModuleKeeps: the part of ModuleKeepsKey(M) changes when a method
-// of a view of M that declares a store into self, a hand-out from self or,
-// without a receiver, a source is added, private or not, and stays when a
-// method that declares none of them is added, or a keeping method of a type
-// that is no view.
-func TestReadModuleKeeps(t *testing.T) {
-	key := ModuleKeepsKey("geo")
-	if p, ok := ModuleKeepsPath(key); !ok || p != "geo" {
-		t.Fatalf("ModuleKeepsPath(%q) = %q, %v", key, p, ok)
-	}
-	for _, k := range []types.Key{ModuleFuncsKey("geo"), types.ModuleKey("geo"), TypeNamespaceKey(types.KeyFromString("geo.Point"))} {
-		if _, ok := ModuleKeepsPath(k); ok {
-			t.Errorf("ModuleKeepsPath(%q) reads it as a keeps key", k)
-		}
-	}
+// TestReadShapeMutView: toggling MutView or LoanInterior on a struct's shape
+// invalidates a recorded ReadShape, and toggling MutView on a StructDecl
+// invalidates a recorded ReadSignature (Decl hash).
+func TestReadShapeMutView(t *testing.T) {
 	f := newWorldFixture()
 	point := f.id("geo.Point")
-	wrap := f.id("geo.Wrap")
-	f.items.Get(point).Decl.(*types.StructDecl).View = true
-	pointT := f.tab.Named(point, nil)
-	self := types.Param{Type: f.tab.Ref(pointT), Into: types.NoParam}
-	arg := types.Param{Type: f.tab.Ref(types.I32), Into: types.NoParam}
-	record := func() types.Read {
-		r := types.Read{Kind: types.ReadExports, Key: key}
+	d := f.items.Get(point).Decl.(*types.StructDecl)
+	d.View = true
+	rec := func(kind types.ReadKind) types.Read {
+		r := types.Read{Kind: kind, Key: types.KeyFromString("geo.Point")}
 		h, ok := f.world("app", types.X86_64Windows).Part(r)
 		if !ok {
-			t.Fatalf("no part for %s", key)
+			t.Fatalf("no part for %v", r)
 		}
 		r.Hash = h
 		return r
@@ -436,34 +365,16 @@ func TestReadModuleKeeps(t *testing.T) {
 		ok, _ := Valid(f.world("app", types.X86_64Windows), []types.Read{r})
 		return ok
 	}
-	method := func(owner types.ItemID, name string, exported bool, sig types.Signature) {
-		id := f.item(f.mod, types.KeyFromString(f.items.Get(owner).Key.String()+":"+name), name, types.KindFunc, exported)
-		f.items.Get(id).Owner = owner
-		f.items.Get(id).Decl = &types.FuncDecl{Sig: sig}
+	f.layouts["geo.Point"] = &types.Layout{Shape: types.Shape{Size: 16, Align: 8, View: true}}
+	rDecl := rec(types.ReadSignature)
+	rShape := rec(types.ReadShape)
+	d.MutView = true
+	if valid(rDecl) {
+		t.Error("toggling StructDecl.MutView left ReadSignature valid")
 	}
-	into := arg
-	into.Into = 1
-	for _, c := range []struct {
-		what  string
-		owner types.ItemID
-		sig   types.Signature
-		want  bool
-	}{
-		{"a private method that declares nothing", point, types.Signature{Receiver: types.ByShared, Params: []types.Param{self, arg}, Result: types.Void}, true},
-		{"a keeping method of a type that is no view", wrap, types.Signature{Receiver: types.ByShared, Params: []types.Param{self, into}, Result: types.Void}, true},
-		{"a private store into self", point, types.Signature{Receiver: types.ByMut, Params: []types.Param{self, into}, Result: types.Void}, false},
-		{"a private hand-out from self", point, types.Signature{Receiver: types.ByShared, Params: []types.Param{self}, Result: f.tab.Ref(types.I32),
-			Flows: types.Flows{Sources: []types.Source{{Param: 1}}}}, false},
-		{"a private keep without a receiver", point, types.Signature{Params: []types.Param{arg}, Result: pointT,
-			Flows: types.Flows{Sources: []types.Source{{Param: 1}}}}, false},
-		{"a private store into self by a store clause", point, types.Signature{Receiver: types.ByMut, Params: []types.Param{self, arg}, Result: types.Void,
-			Flows: types.Flows{Stores: []types.Store{{From: 2, Into: 1}}}}, false},
-	} {
-		r := record()
-		method(c.owner, "M"+strings.Repeat("x", f.items.NumItems()), false, c.sig)
-		if got := valid(r); got != c.want {
-			t.Errorf("%s added: valid %v, want %v", c.what, got, c.want)
-		}
+	f.layouts["geo.Point"] = &types.Layout{Shape: types.Shape{Size: 16, Align: 8, View: true, MutView: true, LoanInterior: true}}
+	if valid(rShape) {
+		t.Error("toggling Shape.MutView/LoanInterior left ReadShape valid")
 	}
 }
 

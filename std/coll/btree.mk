@@ -82,7 +82,7 @@ struct BtPos[K, V] {
 /// so a tree that keeps changing does not grow the arena without bound.
 export view struct BTree[K: Ord, V] {
     t: Tree[K, V]
-    arena: &Arena
+    alloc: &Alloc
 }
 
 /// An ordered map on an allocator, with the operations of BTree. It is
@@ -575,7 +575,7 @@ BtFreeList[K, V](a: &Alloc, n0: *BtNode[K, V]) {
 
 /// An empty BTree in a. O(1); allocates nothing until the first Set.
 export BTree[K, V].New(a: &Arena): BTree[K, V] {
-    return BTree[K, V](t: EmptyTree[K, V](), arena: a)
+    return BTree[K, V](t: EmptyTree[K, V](), alloc: a.Alloc())
 }
 
 /// Stores v under k. A present key keeps the stored key and gets v; the
@@ -596,7 +596,7 @@ export BTree[K, V].Set(mut self, k: K into self, v: V into self): OutOfMemory!vo
     }
     need := TreeNeed(at.node)
     if TreeShort(&self.t, need) {
-        if !TreeReserve(mut self.t, self.arena.Alloc(), need, false) {
+        if !TreeReserve(mut self.t, self.alloc, need, false) {
             fail OutOfMemory
         }
     }
@@ -617,7 +617,7 @@ export BTree[K, V].Replace(mut self, k: K into self, v: V into self): OutOfMemor
     }
     need := TreeNeed(at.node)
     if TreeShort(&self.t, need) {
-        if !TreeReserve(mut self.t, self.arena.Alloc(), need, false) {
+        if !TreeReserve(mut self.t, self.alloc, need, false) {
             fail OutOfMemory
         }
     }

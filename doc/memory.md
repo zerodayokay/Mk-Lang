@@ -113,7 +113,7 @@ Fix it in one of four ways:
 | E0403 | A local read before it is assigned | R3 |
 | E0404, E0508 | An assignment to, or a `mut` borrow of, a local not declared `var` | Add `var` |
 | E0408, E0409 | A copy of a value that is not plain, or a move out of a field or reference | R1, R4 |
-| E0410 | An exported struct whose private fields make it a carrier, unique or linear, without `view` or `linear` | R9, R18 |
+| E0410 | An exported struct whose private fields make it a carrier, unique, linear or interior-writable for loans, without `view`, `mut view` or `linear` | R9, R18 |
 | E0501 to E0504 | An access conflicts with a live loan | R5 |
 | E0505 | A loan outlives the local it borrows | R6, R11 |
 | E0506 | A loan on a temporary kept past its statement | R14 |
@@ -651,7 +651,7 @@ More details of the split:
 - A write to one field leaves the rest alone. Only a write of the whole view replaces it.
 - A use of the whole view, every method call included, needs everything the view was given. A read of one carrier field needs only that field's set.
 - A use of a field that holds no loans as typed, such as a raw pointer, is a use of the whole view.
-- A view may write past a shared reference, so a shared reference never keeps a view split: `&v`, a `&self` call included, makes it whole.
+- A `mut view` (or any type that takes loan stores through `&`, such as a plain `view` with a loan-interior-writable type argument like `Box[Mutex[?&i32]]`) may write past a shared reference, so a shared reference never keeps one split: `&v`, a `&self` call included, makes it whole. A plain read-only `view` keeps its split across `&v`.
 
 A view whose fields are read one at a time splits like a struct: declared as `view struct Views`, the `Split` above still compiles.
 
@@ -796,7 +796,7 @@ What "refers to" and "found inside" mean:
 - A type parameter contains itself and what its bounds mention, and `Self` mentions every type parameter.
 - `&Alloc` and `&Heap` supply only `view` results, and `Io` never supplies one.
 
-An exported type whose private fields make it a carrier or unique must be declared `view`, and one they make linear must be declared `linear` (E0410). So a change to private fields cannot change what a caller is allowed to do.
+An exported type whose private fields make it a carrier or unique must be declared `view`, one whose private fields take loan stores through `&` must be declared `mut view`, and one they make linear must be declared `linear` (E0410). So a change to private fields cannot change what a caller is allowed to do.
 
 **`fn` types and interfaces.** A `fn` type or an interface method states its flows the same way, with parameter names where a clause needs them: `fn(x: &i32): T from x`. A `fn` value or an `impl` method fits only if each of its flows is covered by a declared flow (E0608). So `Id(x: &i32): &i32` does not fit `fn(&i32): T`, which declares no flow.
 
@@ -1083,7 +1083,7 @@ Fix: declare the store, `word: str into self`, as the accepted `Index.Add` does.
 | `&self into p`, `mut self into p`, `self into p` | The same, with `x` the receiver |
 | `*q into p`, written after the parameter list | What `q` points at is written into `p`: the same, with `B(q)`. `q` may be `p` |
 
-`*q into p` needs `p` to be `mut`, or to have interior mutability, and `q` must be a reference or a slice. One word, `into`, covers every store; `from` only ever says where a result comes from.
+`*q into p` needs `p` to be `mut`, or to reach loan-interior mutability (a `mut view`, `Arena`, `Scope`, or a `Cell`, `Mutex`, `Chan` or `atomic.Spin` whose payload holds loans), and `q` must be a reference or a slice. One word, `into`, covers every store; `from` only ever says where a result comes from.
 
 A parameter that holds no loans (`H(x)` is empty, as for a by-value non-carrier) needs no clause. Passing a parameter to a function that stores it is a store too, so the clause is repeated up the call chain:
 
@@ -1617,12 +1617,12 @@ Stash(io: Io): Canceled!void {
 }
 ```
 
-A `Cell`, `Mutex`, `Chan`, `Arena` or `view`, or a type holding one inline, **takes stores**: it can be written through a shared reference. A result type matters here when a reference in it, at any depth, reaches such memory. Every level counts: a global `sync.Once[&Mutex[?&i32]]` has its payload written at run time.
+A `mut view` (including `Arena` and `Scope`), a `Cell`, `Mutex`, `Chan` or `atomic.Spin` whose payload holds loans, or a type holding one inline (including a plain `view` with such a type argument), **takes stores**: it can accept a loan stored through a shared reference. A `Cell[T]`, `Mutex[T]`, `Chan[T]` or `atomic.Spin[T]` whose payload `T` holds no loans (such as `Cell[int]` or `Mutex[fs.File]`), and `std.raw.Atomic[T]`, still mutate data through `&` (they are not `Freeze`), but cannot store loans and do not take loan stores here. A result type matters here when a reference in it, at any depth, reaches such memory. Every level counts: a global `sync.Once[&Mutex[?&i32]]` has its payload written at run time.
 
 The rules:
 
 - A carrier result holds the static pseudo-loan when its type can reach memory that takes stores and either its signature names no source (by R9 only statics qualify then), or it comes from a `fn` value or an interface method, which may stand for such a function.
-- The same holds for a result that holds inline a `view` whose type arguments hold loans, whose own methods hand out such a reference `from self`, or which both keeps such a reference and takes a store. A constructor in the view's namespace or a non-generic free function in its defining module can declare the keep by returning the view from a parameter, including in an optional or error result. A method may also declare the keep with `into self`. A store can be into `self` or, through another item of the view's module, into a parameter that holds it.
+- The same holds for a result that holds inline a `mut view` (other than `Scope`, whose storage lives inline on its owner's stack frame), or a plain `view` whose type arguments hold loans (at the first level) or take stores (behind a shared reference).
 - A raw-pointer parameter (`Io` does not count) exempts a direct callee only.
 - A result whose signature names a source, or that has a raw-pointer parameter, may not hold the static pseudo-loan of such memory (E0602).
 - Storing such a static into a parameter whose type may point into such memory is E0604, since no clause can name a static.
@@ -1658,22 +1658,11 @@ Which globals take stores:
 
 These rules refuse some sound programs:
 
-- A copy of a same-module `const` returned under a source is E0602 when the `const`'s type could take stores, even where its value points nowhere, as in `const D: L = L(d: [], p: none)` with a field `p: ?&url.Url`. Move the `const` to another module, or return a fresh value.
-- A `const` of another module whose value holds a reference to a `view`, even one with no methods, counts by the `view`'s type.
+- A copy of a same-module `const` returned under a source is E0602 when the `const`'s type could take stores, even where its value points nowhere, as in `const D: L = L(d: [], p: none)` with a field `p: ?&MutView`. Move the `const` to another module, or return a fresh value.
+- A `const` of another module whose value holds a reference to a `mut view` counts by the `mut view`'s type even when none of its methods writes.
 - A generic body that returns or stores a `fn` value's `T` under a source is E0602 or E0604: `OrElse[T](x: ?T, f: fn(): T): T`, a `Map` adapter, `Apply[T, U](f: fn(x: &T): U, x: &T): U`, or an out-parameter `Fill[T](out: mut ?&T, ...)`.
-- A `view` that keeps such a reference and takes no store into itself counts as soon as any function of its module stores into a holder of it.
-- A non-generic free constructor that returns one instantiation of a view counts for the named view, including its other instantiations.
 
-Known gaps: the compiler does not count the following stores into a `view`, and each can leave a reference to a dead frame. Avoid them in code that keeps references in global memory:
-
-- a store through a free function of another module reached by the view's raw accessor;
-- a store through a `fn` value whose impl the reading module does not see;
-- a store through a storing `fn` literal bound to a local;
-- a keep by a generic free constructor, one outside the view's defining module, or one in another type's namespace or impl (`Factory.Make(m): V from m`), or a hand-out by a function without a receiver;
-- a keep through a result that holds the view inside another type (`Of(m): W from m` with `struct W { v: V }`);
-- a store through an exported function whose `into` parameter is a bare type parameter.
-
-A `view`'s raw pointer must reach only memory its signatures name. An `unsafe` module whose safe code points it elsewhere, such as a `V.Global(): V` that sets it to a global, breaks its `unsafe` blocks' obligation, and no rule checks that.
+A `view`'s raw pointer must reach only memory its signatures name, and a `view` whose `unsafe` code writes loans or hands out loan-interior-writable storage through `&self` must be declared `mut view struct` (R18, R19). An `unsafe` module that breaks either obligation breaks its `unsafe` blocks' duty, and no rule checks that.
 
 ### R17. Tasks
 
@@ -1836,7 +1825,9 @@ Late(io: Io, h: &Heap, p: mut &i32, v: &i32 into p): OutOfMemory!void {
 
 ### R18. `view` and `ends`
 
-A `view` type is a declared carrier, and it is unique. You need the word in two cases. A struct built on raw pointers has no reference field to show that it borrows. An exported struct whose private fields make it a carrier or unique must say so in its declaration (one they make linear says `linear` instead; E0410). Why: callers must see from the declaration alone that a value borrows.
+A `view` type is a declared carrier, and it is unique. A plain `view struct` is read-only for loans through `&`: it borrows (such as `List`, `Map`, `Text`, `Box` or `Iter`), and takes loan stores through `&` only if one of its type arguments does (such as `Box[Mutex[?&i32]]`). A `mut view struct` additionally declares that it takes loan stores through `&` (such as `Arena`, `Scope`, `ErasedBox`, `dyn.Ref`, or a custom allocator), and is not `Freeze`.
+
+You need `view` or `mut view` in two cases. A struct built on raw pointers has no reference field to show that it borrows (or writes loans through `&`). An exported struct whose private fields make it a carrier or unique must say `view`, one whose private fields take loan stores through `&` must say `mut view`, and one they make linear must say `linear` (E0410). Why: callers must see from the declaration alone whether a value borrows or takes loan stores through `&`.
 
 ```mk
 // verdict: parse
@@ -1940,8 +1931,9 @@ Peek(p: *i32): i32 {
 - A body that writes through raw pointers, and a bodiless `extern`, may do only what a checked body with the same signature may do. Its clauses are its contract, and a store they do not declare breaks it.
 - `unsafe` needs a reason string, and its module needs permission in the manifest.
 
-Two duties are worth naming:
+Three duties are worth naming:
 
+- **Interior-writable views.** A `view` whose `unsafe` code writes loans through `&self` behind raw pointers, or hands out loan-interior-writable storage (such as `&Mutex[?&i32]` or `&Alloc`) from raw pointers through `&self`, must be declared `mut view struct` (R18). A plain `view struct` promises that `&self` cannot accept loan stores except through its type arguments.
 - **Fresh memory.** An allocator method that returns `mut T from self` with a shared `self`, such as `Arena.Put` and `Arena.Slice`, hands out an exclusive reference backed by a shared loan, so two results are usable at once. The loan rules do not check that they point at disjoint storage; the `unsafe` body does, by returning fresh memory every time. A method on `&Arena` that returned a `mut` reference to existing contents would be unsound, and the rules would not catch it.
 - **Stores into owned memory.** Memory that a by-value parameter owns, as a `Box` owns its value, may take a store with no `into` clause when two things hold. The body moves that parameter into the result and nowhere else, and the result is a carrier `from` both that parameter and the stored value. `ErasedBox.Fill(b: Box[?T], x: T): ErasedBox from b, x` writes `x` into the memory `b` owns. `b` is consumed, so only the result reaches that memory afterwards, and the result holds `x`'s loans beside `b`'s. Both sources are needed: with the result `from b` alone, `x`'s loans could end while the box still holds `x`. A checked body cannot make this store (E0604), so only `unsafe` code uses it. `Box[T].New(a: &Alloc, x: T): OutOfMemory!Box[T] from a, x` works the same way.
 
@@ -2100,7 +2092,7 @@ A **shallow** access, a write or a scope end, conflicts with loans on the place 
 
 1. A shared step on the path is E0507.
 2. The compiler follows the path through what each reference holds, to the memory the write lands in.
-3. A write that lands in a `view`, or in a value through which more memory can be written (a `mut` reference at any depth, a type parameter, or a shared reference to a `Cell`, `Mutex`, `Chan` or view), also reaches what that value holds. The walk stops at an allocator: the store goes into the allocator's memory, as a `Push` does (R11).
+3. A write that lands in a `view`, or in a value through which more memory can be written (a `mut` reference at any depth, a type parameter, or a shared reference to a type that takes loan stores: a `mut view`, `Arena`, `Scope`, or a `Cell`, `Mutex`, `Chan` or `atomic.Spin` whose payload holds loans), also reaches what that value holds. The walk stops at an allocator: the store goes into the allocator's memory, as a `Push` does (R11).
 4. Where the write lands:
 
 | Lands in | Result |
@@ -2191,7 +2183,8 @@ A signature is the whole contract between a function and its callers. These are 
 | `&self into p` | The method may store `self` somewhere inside `p` | R11 |
 | `*q into p`, after the parameters | The function may store what `q` points at somewhere inside `p` | R11 |
 | `ends self` | The call ends every loan on `self` | R18 |
-| `view struct` | The type borrows, though no field shows it | R18 |
+| `view struct` | The type borrows, though no field shows it; read-only for loans through `&` | R18 |
+| `mut view struct` | A `view struct` that also accepts loan stores through `&` | R16, R18 |
 | `linear struct` | Values of the type must be consumed | R1, R2 |
 
 The same clauses appear in `fn` types and interface methods (R9). The compiler checks one function at a time and reads only signatures at calls. There are no lifetime variables, no variance and no inference across functions.
@@ -2328,4 +2321,4 @@ The rules above remove most memory errors at compile time. These checks cover th
 
 A program without `unsafe` that compiles is meant to be free of three things: reads or writes of memory whose lifetime has ended, two conflicting accesses while a reference is usable, and data races. `unsafe` code keeps these guarantees only if its author meets the duties of R19.
 
-The rules are tested, not proven. A program the compiler accepts that breaks these guarantees is a bug in the rules. [R16](#r16-globals) lists the known gaps.
+The rules are tested, not proven. A program the compiler accepts that breaks these guarantees is a bug in the rules.

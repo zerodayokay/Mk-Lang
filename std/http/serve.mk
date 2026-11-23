@@ -65,7 +65,7 @@ const DrainMax = 262144
 /// connection being accepted) waits 5 ms and tries again, doubling the wait
 /// up to 1 s. Serve has no time limits: a client that sends nothing keeps
 /// its connection.
-export Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res)): Error!void {
+export Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void): Error!void {
     l := try net.Listen(sys.io, addr)
     defer l.Close()
     io := sys.io
@@ -120,7 +120,7 @@ Backoff(delay: int): int {
 
 // Conn serves one connection until the peer closes it, a request asks to
 // close it, an error ends it, or the scope is cancelled.
-Conn[C: Share](conn: net.Stream, heap: &Heap, io: Io, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res)) {
+Conn[C: Share](conn: net.Stream, heap: &Heap, io: Io, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void) {
     defer conn.Close()
     var arena := Arena.New(heap) else {
         return
@@ -426,8 +426,8 @@ Conn[C: Share](conn: net.Stream, heap: &Heap, io: Io, limit: int, c: &C, handle:
                     // The fields stay (405's Allow, say); the body goes, and
                     // Send writes the framing of the empty body.
                     res.code = code
-                    res.data = "".AsBytes()
-                    res.text = Text.New(&arena)
+                    res.data.Clear()
+                    res.text.Clear()
                 }
                 _ {
                     res = Response.New(&arena)

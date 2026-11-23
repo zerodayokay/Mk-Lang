@@ -309,6 +309,11 @@ func (m *Module) declLiteral(it *types.Item, x *tctx, n *ast.FnLit) {
 		if p.Name != nil {
 			pr.Name = p.Name.Name
 		}
+		if p.Into != nil {
+			if r := x.ref(p.Into); r.Kind == resolve.RefParam {
+				pr.Into = types.ParamIndex(r.A)
+			}
+		}
 		fd.Sig.Params = append(fd.Sig.Params, pr)
 	}
 	var resOK bool

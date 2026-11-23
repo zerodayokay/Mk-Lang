@@ -75,7 +75,7 @@ export Compiler.Finish(self): (prog: Program, errors: List[CompileError]) {
 /// Compiles the top-level statements `top` into a new script function, then every function
 /// declared in it, and returns the script's index in the program. Scoping errors are in
 /// `Finish`'s result; only memory can fail. O(n) in the tree.
-export Compiler.Script(mut self, top: syntax.Span): OutOfMemory!int *self into self {
+export Compiler.Script(mut self, top: syntax.Span): OutOfMemory!int {
     script := try self.Reserve("script", 0)
     try self.Begin(script, true, syntax.Span(start: 0, len: 0))
     for i in 0..top.len {
@@ -240,7 +240,7 @@ Compiler.Resolve(mut self, line: int, name: str): OutOfMemory!?int {
 
 /// Queues function declaration `decl` and returns its index. The names of every local
 /// visible here, and of those around this function, are kept for its capture check.
-Compiler.Declared(mut self, decl: int): OutOfMemory!int *self into self {
+Compiler.Declared(mut self, decl: int): OutOfMemory!int {
     d := self.ast.funs[decl]
     index := try self.Reserve(d.name, d.params.len)
     start := self.outer.Len()
@@ -258,7 +258,7 @@ Compiler.Declared(mut self, decl: int): OutOfMemory!int *self into self {
 }
 
 /// Compiles a queued function.
-Compiler.Function(mut self, p: Pending): OutOfMemory!void *self into self {
+Compiler.Function(mut self, p: Pending): OutOfMemory!void {
     d := self.ast.funs[p.decl]
     try self.Begin(p.index, false, p.outer)
     self.depth = 1
@@ -274,7 +274,7 @@ Compiler.Function(mut self, p: Pending): OutOfMemory!void *self into self {
     self.End()
 }
 
-Compiler.Statement(mut self, at: int): OutOfMemory!void *self into self {
+Compiler.Statement(mut self, at: int): OutOfMemory!void {
     node := self.ast.stmts[at]
     line := node.line
     match node.stmt {
@@ -360,7 +360,7 @@ Compiler.Variable(mut self, line: int, name: str into self, set: bool): OutOfMem
     _ = try self.Emit(line, if set { Op.SetGlobal(name: k) } else { Op.GetGlobal(name: k) })
 }
 
-Compiler.Expression(mut self, at: int): OutOfMemory!void *self into self {
+Compiler.Expression(mut self, at: int): OutOfMemory!void {
     node := self.ast.exprs[at]
     line := node.line
     match node.expr {

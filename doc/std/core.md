@@ -1264,7 +1264,7 @@ Variants:
 ### `Arena`
 
 ```
-export linear view struct Arena
+export linear mut view struct Arena
 ```
 
 A bump allocator: it takes memory in chunks from a source allocator (a
@@ -3441,7 +3441,7 @@ The next scalar, or none at the end of the text. O(1); allocates nothing.
 ### `Scope`
 
 ```
-export view struct Scope
+export mut view struct Scope
 ```
 
 A task scope, opened with Io.Scope, Io.ScopeOf or Io.ScopeWith: the

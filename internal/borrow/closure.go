@@ -117,25 +117,23 @@ func typeClosure(tab *types.Table, items *types.Items, t types.TypeID, onDecl fu
 // closureTakes is firstTakes's answer where recur stops it at t (without it, a
 // static of a polymorphically recursive type always took stores). Every rule
 // by which firstTakes counts a type needs, somewhere below t, a node whose
-// head is a type parameter or Self (in gen modes other than genNone), a view,
-// or a type whose facts are Interior (Cell, Mutex, Chan, Arena, Atomic or
-// Scope, or one holding such inline): writableByType, mayWritable, the view
-// rules and viewKeeps. So when no node of t's closure (TypeClosure) has such a
-// head, no instance below t takes a store, and the answer is false; otherwise
-// it is true, as an ANY step. A declaration's own parameters stand for nodes
-// visited elsewhere, so they do not count; a parameter of the walk's own
-// counts in genNone only when writableByType holds for it (a parameter
-// narrowed to such a type); anything closureTakes does not know counts. The
-// six items are those whose facts check makes Interior by identity
-// (internal/check/kinds.go, factsWalk's named: `f.Interior = true`, and
-// shapeterm.go's marks); every other Interior or View comes from a field,
-// which the closure visits.
+// head is a type parameter or Self (in gen modes other than genNone), a mut
+// view, a generic plain view, or one of the five loan-interior items (Cell,
+// Mutex, Chan with a carrier or parametric payload, Arena or Scope):
+// writableByType, mayWritable and the view rules. So when no node of t's
+// closure (TypeClosure) has such a head, no instance below t takes a store,
+// and the answer is false; otherwise it is true, as an ANY step. A
+// declaration's own parameters stand for nodes visited elsewhere, so they do
+// not count; a parameter of the walk's own counts in genNone only when
+// writableByType holds for it (a parameter narrowed to such a type); anything
+// closureTakes does not know counts. The five items mirror internal/check's
+// LoanInterior heads (kinds.go); raw.Atomic never holds a carrier.
 func (w *walker) closureTakes(t types.TypeID, gen genMode) bool {
 	if w.items == nil || w.known == nil {
 		return true
 	}
 	k := w.known
-	interior := []types.ItemID{k.Cell, k.Mutex, k.Chan, k.Arena, k.Atomic, k.Scope}
+	interior := []types.ItemID{k.Cell, k.Mutex, k.Chan, k.SpinCore, k.Arena, k.Scope}
 	onDecl := func(it types.ItemID) {
 		if w.reads == nil {
 			return
@@ -163,6 +161,9 @@ func (w *walker) closureTakes(t types.TypeID, gen genMode) bool {
 		case types.KNamed:
 			for _, it := range interior {
 				if it != types.NoItem && ty.Item == it {
+					if (it == k.Cell || it == k.Mutex || it == k.Chan || it == k.SpinCore) && !w.paramFrom(x, 0) {
+						return w.factsOf(x).LoanInterior
+					}
 					return true
 				}
 			}
@@ -171,7 +172,7 @@ func (w *walker) closureTakes(t types.TypeID, gen genMode) bool {
 			}
 			switch d := w.items.Get(ty.Item).Decl.(type) {
 			case *types.StructDecl:
-				return d.View
+				return d.MutView || (d.View && len(d.Generics) > 0)
 			case *types.EnumDecl:
 				return false
 			}

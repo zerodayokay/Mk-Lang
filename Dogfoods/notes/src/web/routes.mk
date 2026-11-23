@@ -33,7 +33,7 @@ export const Routes: []http.Route[App] = [
 
 /// The server's handler: the route table, and a log line for a request whose
 /// handler failed before it replied.
-export Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+export Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     http.Dispatch(a, io, Routes, c, req, res) else e {
         // Dispatch reports its own 404 and 405 as Status, which Serve sends.
         match e {
@@ -50,7 +50,7 @@ export Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Resp
     }
 }
 
-Health(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Health(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("Content-Type", "application/json")
     var w := res.Writer()
     try w.Str("{\"status\":\"ok\"}")
@@ -58,7 +58,7 @@ Health(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): 
 }
 
 // The first page of notes with one tag: GET /notes?tag= under a path of its own.
-TagNotes(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+TagNotes(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     tag := req.Param("tag") else {
         fail http.Status(code: 404)
     }
@@ -70,13 +70,13 @@ TagNotes(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response)
     try Reply(c, a, io, req, res, 200, try Encode(a, &page))
 }
 
-Version(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Version(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     name := cext.Register() else { "" }
     body := try a.Fmt("{{\"sqlite\":\"{v}\",\"normalizer\":\"{name}\"}}", (v: cext.SqliteVersion(), name))
     try Reply(c, a, io, req, res, 200, body)
 }
 
-StatsOf(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+StatsOf(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     s := c.store.Stats(a, io) else e {
         try StoreFailed(c, a, io, req, res, e)
         return
@@ -84,7 +84,7 @@ StatsOf(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response):
     try Reply(c, a, io, req, res, 200, try Encode(a, &s))
 }
 
-ListNotes(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+ListNotes(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     q := ReadQuery(a, req.query) else e {
         match e {
             BadQuery(index) {
@@ -107,7 +107,7 @@ ListNotes(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response
     try Reply(c, a, io, req, res, 200, try Encode(a, &page))
 }
 
-CreateNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+CreateNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     var scratch := try a.Sub()
     defer scratch.Free()
     v := try ParseBody(c, a, &scratch, io, req, res) else { return }
@@ -127,7 +127,7 @@ CreateNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Respons
     try Reply(c, a, io, req, res, 201, try Encode(a, &note))
 }
 
-GetNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+GetNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try IdOf(c, a, io, req, res) else { return }
     found := c.store.Get(a, io, id) else e {
         try StoreFailed(c, a, io, req, res, e)
@@ -140,7 +140,7 @@ GetNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response):
     try Reply(c, a, io, req, res, 200, try Encode(a, &note))
 }
 
-PutNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+PutNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try IdOf(c, a, io, req, res) else { return }
     var scratch := try a.Sub()
     defer scratch.Free()
@@ -152,7 +152,7 @@ PutNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response):
     try Save(c, a, io, req, res, id, &n)
 }
 
-PatchNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+PatchNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try IdOf(c, a, io, req, res) else { return }
     var scratch := try a.Sub()
     defer scratch.Free()
@@ -185,7 +185,7 @@ PatchNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response
     try Save(c, a, io, req, res, id, &n)
 }
 
-DeleteNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+DeleteNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try IdOf(c, a, io, req, res) else { return }
     gone := c.store.Delete(a, io, id) else e {
         try StoreFailed(c, a, io, req, res, e)
@@ -199,7 +199,7 @@ DeleteNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Respons
 }
 
 // Validates n and stores it over the note with id, replying with the result.
-Save(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, id: i64, n: &notes.NoteIn): http.Error!void *res into res {
+Save(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, id: i64, n: &notes.NoteIn): http.Error!void {
     if !try Valid(c, a, io, req, res, n) {
         return
     }
@@ -215,7 +215,7 @@ Save(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, id:
 }
 
 // Whether n passes notes.Validate; a 422 problem has been sent when it does not.
-Valid(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, n: &notes.NoteIn): http.Error!bool *res into res {
+Valid(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, n: &notes.NoteIn): http.Error!bool {
     notes.Validate(n) else e {
         try Problem(c, a, io, req, res, 422, notes.Explain(e), notes.Where(e))
         return false
@@ -224,7 +224,7 @@ Valid(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, n:
 }
 
 // The route's id, or none after a 400 problem.
-IdOf(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!?i64 *res into res {
+IdOf(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!?i64 {
     id := req.ParamInt("id") else {
         try Problem(c, a, io, req, res, 400, "a note id is a number", none)
         return none

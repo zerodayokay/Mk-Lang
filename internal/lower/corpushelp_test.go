@@ -109,13 +109,13 @@ export view struct Response {
 export struct Route[C] {
 	export method: str
 	export pattern: str
-	export handler: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res)
+	export handler: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void
 }
 export Request.Param(&self, name: str): ?str from self
-export Response.Body(mut self, data: []u8): OutOfMemory!void *self into self
+export Response.Body(mut self, data: []u8): OutOfMemory!void
 export Response.Writer(mut self): Writer from self
-export Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, res: mut Response): Error!void *res into res
-export Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res)): Error!void
+export Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, res: mut Response): Error!void
+export Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void): Error!void
 `,
 	// std's proc, as far as the cookbook's blocks use it.
 	"std.proc": `import std.net

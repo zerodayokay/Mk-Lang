@@ -29,7 +29,7 @@ struct App {
     n: int
 }
 
-Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void *res into res {
+Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void {
     if req.path == "/big" {
         body := try a.Slice[u8](33554432)
         try res.Body(body[..])

@@ -123,7 +123,7 @@ gen dyn.Of(Device)
 
 // kernelGolden is what gen dyn.Of(Device) emits (the view struct, with the
 // fn fields held in the record table).
-const kernelGolden = `view struct DeviceDyn {
+const kernelGolden = `mut view struct DeviceDyn {
     obj: dyn.Ref
     table: (write: fn(mut dyn.Ref, []u8): int)
 }
@@ -167,7 +167,7 @@ export interface Store {
 gen dyn.Of(Store)
 `
 
-const storeGolden = `export view struct StoreDyn {
+const storeGolden = `export mut view struct StoreDyn {
     obj: dyn.Ref
     table: (
         get: fn(&dyn.Ref, str): ?int,

@@ -467,7 +467,9 @@ func (u *unit) expectedFlows(s *types.Signature, want types.TypeID) {
 		return
 	}
 	for i := range s.Params {
-		s.Params[i].Into = ft.Params[i].Into
+		if s.Params[i].Into == types.NoParam {
+			s.Params[i].Into = ft.Params[i].Into
+		}
 	}
 	s.Flows.Stores = append([]types.Store(nil), ft.Stores...)
 	s.Flows.Ends = append([]types.ParamIndex(nil), ft.Ends...)

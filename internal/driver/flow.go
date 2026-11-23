@@ -54,8 +54,6 @@ func (w *world) borrowEnv(in lower.Input, it *types.Item) *borrow.Env {
 			return f
 		},
 		File: func(id source.FileID) *source.File { return w.sm.File(id) },
-		// The view scans' impl indexes, shared by the session's bodies.
-		Impls: &s.borrowImpls,
 		// E0501's `from p.f` fix: the clause check recorded at stage 5 for a
 		// callee whose body shows it.
 		FieldClause: func(id types.ItemID) (borrow.FieldClause, bool) {

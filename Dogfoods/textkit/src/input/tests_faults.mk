@@ -12,7 +12,7 @@ struct Gather {
 }
 
 /// Takes every line of `r` into `g`.
-Take(g: mut Gather, r: mut Reader): Error!void *g into g {
+Take(g: mut Gather, r: mut Reader): Error!void {
     var src := try LineSource.New(g.arena, r, 4)
     for {
         line := try src.Next(g.arena) else { break }
@@ -22,7 +22,7 @@ Take(g: mut Gather, r: mut Reader): Error!void *g into g {
 
 /// Runs `ForEach` over `paths` on the simulated disk of `s`, with standard
 /// output and error kept in `out` and `err`. Returns the exit status.
-RunOn(sys: &System, s: &sim.Sim, paths: []str, out: mut Text, err: mut Text, g: mut Gather): int *g into g {
+RunOn(sys: &System, s: &sim.Sim, paths: []str, out: mut Text, err: mut Text, g: mut Gather): int {
     c := Ctx(arena: sys.arena, heap: sys.heap, io: s.Io())
     var streams := Streams(out: out.Writer(), err: err.Writer())
     var stdin := sys.Stdin()

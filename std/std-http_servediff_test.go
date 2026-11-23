@@ -46,7 +46,7 @@ Hex(w: mut Writer, b: []u8): WriteError!void {
 
 // Handle writes the request as ParseDiff's driver prints it, hex-encoded
 // in X-Echo, so a reply to HEAD carries it too.
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     var t := Text.New(a)
     var w := t.Writer()
     try Print(mut w, "req {m} {p} q={q}\n", (m: req.method, p: req.path, q: req.query))

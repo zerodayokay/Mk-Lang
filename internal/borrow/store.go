@@ -22,9 +22,10 @@ import (
 )
 
 type hop struct {
-	l     loanID
-	excl  bool
-	first bool
+	l      loanID
+	excl   bool
+	first  bool
+	fromP1 bool
 	// fromAlloc: the allocator root that holds the loan (a sub-arena holds
 	// its parent's loan, an arena its heap's), noRoot when none does.
 	fromAlloc rootID
@@ -195,11 +196,12 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 				fld[i] = -1
 			}
 		}
-		// A first hop onto p#2 also reaches p#A: a loan of p.inner that
-		// was not read from an allocator field (a local copy of a struct
-		// holding one, a result from *p) may still refer to an allocator,
-		// as one merged node would.
-		if a := c.allocOf(t); h.first && a != noRoot {
+		// A first hop onto p#2 (or a direct step from p#1 through p.inner to
+		// p#2) also reaches p#A: a loan of p.inner that was not read from an
+		// allocator field (a local copy of a struct holding one, a result from
+		// *p, or a shared reference to a struct holding &Arena) may still
+		// refer to an allocator, as one merged node would.
+		if a := c.allocOf(t); (h.first || h.fromP1) && a != noRoot {
 			if ai := &c.roots[a]; ai.carrier && (e || ai.writable) {
 				c.setCapField(a, cf)
 				if !seenRoot[a] {
@@ -227,8 +229,9 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 			if ti.allocator {
 				fa = t
 			}
+			fp1 := ti.kind == rkAbstract && ti.depth == 1 && m == uint32(c.params[ti.param].inner)
 			reach(t, loanID(m))
-			work = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: fa, capFld: cf})
+			work = append(work, hop{l: loanID(m), excl: e || ti.writable, fromP1: fp1, fromAlloc: fa, capFld: cf})
 		}
 	}
 	return out, fld

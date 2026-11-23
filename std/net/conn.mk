@@ -63,7 +63,7 @@ export interface Transport {
 /// Free.
 export linear view struct Conn {
     // the boxed transport, none for one OS handle (sock)
-    box: ?core.ErasedBox
+    box: ?core.SealedBox
     sock: uint
     // the handle's peer, read when its stream was made; a boxed
     // transport is asked through do_peer
@@ -78,7 +78,7 @@ export linear view struct Conn {
     do_shutdown: fn(&Conn, Io, Shutdown): Error!void
     do_peer: fn(&Conn): ?Addr
     do_close: fn(&Conn, Io): Error!void
-    do_abandon: fn(core.ErasedBox, &Heap)
+    do_abandon: fn(core.SealedBox, &Heap)
 }
 
 /// Boxes the transport t on h as a Conn, which keeps h and t's loans and
@@ -120,7 +120,7 @@ export ReserveConn[T: Transport + Send + Share](h: &Heap): OutOfMemory!ConnSlot[
 /// transport that borrows a local. Cannot fail; O(1); allocates nothing.
 export ConnSlot[T].Fill(self, t: T): Conn from self, t {
     ConnSlot(box, heap) := self
-    return Conn(box: some(core.ErasedBox.Fill[T](box, t)), sock: 0, peer: none, heap: heap, reads: Mutex[u8].New(0),
+    return Conn(box: some(core.SealedBox.Fill[T](box, t)), sock: 0, peer: none, heap: heap, reads: Mutex[u8].New(0),
         writes: Mutex[u8].New(0), do_read: BoxRead[T], do_write: BoxWrite[T], do_shutdown: BoxShutdown[T],
         do_peer: BoxPeer[T], do_close: BoxClose[T], do_abandon: BoxAbandon[T])
 }
@@ -269,41 +269,126 @@ export Conn.Writer(&self, io: Io, buf: mut []u8): Writer from self, buf {
     return (&ConnWrites).Writer(io, self, buf)
 }
 
-// The operations of a boxed transport: each borrows the box back as &T.
-// The box is some(t) for every Conn these are stored in (Fill); anything
-// else here is a bug of this file. Each is one branch on top of the call.
-BoxOf[T: Transport + Send + Share](c: &Conn): &T from c {
-    if b := &c.box {
-        if t := &*b.Ref[?T]() {
-            return t
+// The operations of a boxed transport: each runs through SealedBox.With so no
+// reference escapes the box and Conn stays read-only for loans. The box is
+// some(t) for every Conn these are stored in (Fill); anything else here is a
+// bug of this file.
+DoBoxRead[T: Transport + Send + Share](x: &?T, a: (io: Io, buf: mut []u8, out: mut (n: int, err: ?Error))) {
+    (io, buf, out) := a
+    if t := &*x {
+        match t.Read(io, buf) {
+            ok(n) { *out = (n: n, err: none) }
+            err(e) { *out = (n: 0, err: some(e)) }
         }
+        return
     }
-    Panic("net.Conn: a boxed operation on a handle or an empty box")
+    Panic("net.Conn: a boxed operation on an empty box")
+}
+
+DoBoxWrite[T: Transport + Send + Share](x: &?T, a: (io: Io, data: []u8, err: mut ?Error)) {
+    (io, data, err) := a
+    if t := &*x {
+        match t.WriteAll(io, data) {
+            ok(_) { *err = none }
+            err(e) { *err = some(e) }
+        }
+        return
+    }
+    Panic("net.Conn: a boxed operation on an empty box")
+}
+
+DoBoxShutdown[T: Transport + Send + Share](x: &?T, a: (io: Io, how: Shutdown, err: mut ?Error)) {
+    (io, how, err) := a
+    if t := &*x {
+        match t.Shutdown(io, how) {
+            ok(_) { *err = none }
+            err(e) { *err = some(e) }
+        }
+        return
+    }
+    Panic("net.Conn: a boxed operation on an empty box")
+}
+
+DoBoxPeer[T: Transport + Send + Share](x: &?T, out: mut ?Addr) {
+    if t := &*x {
+        *out = t.PeerAddr()
+        return
+    }
+    Panic("net.Conn: a boxed operation on an empty box")
+}
+
+DoBoxClose[T: Transport + Send + Share](x: &?T, a: (io: Io, err: mut ?Error)) {
+    (io, err) := a
+    if t := &*x {
+        match t.Close(io) {
+            ok(_) { *err = none }
+            err(e) { *err = some(e) }
+        }
+        return
+    }
+    Panic("net.Conn: a boxed operation on an empty box")
 }
 
 BoxRead[T: Transport + Send + Share](c: &Conn, io: Io, buf: mut []u8): Error!int {
-    return try BoxOf[T](c).Read(io, buf)
+    if b := &c.box {
+        var out: (n: int, err: ?Error) = (n: 0, err: none)
+        b.With[?T, (io: Io, buf: mut []u8, out: mut (n: int, err: ?Error))]((io: io, buf: buf, out: mut out), DoBoxRead[T])
+        if e := out.err {
+            fail e
+        }
+        return out.n
+    }
+    Panic("net.Conn: a boxed operation on a handle")
 }
 
 BoxWrite[T: Transport + Send + Share](c: &Conn, io: Io, data: []u8): Error!void {
-    try BoxOf[T](c).WriteAll(io, data)
+    if b := &c.box {
+        var err: ?Error = none
+        b.With[?T, (io: Io, data: []u8, err: mut ?Error)]((io: io, data: data, err: mut err), DoBoxWrite[T])
+        if e := err {
+            fail e
+        }
+        return
+    }
+    Panic("net.Conn: a boxed operation on a handle")
 }
 
 BoxShutdown[T: Transport + Send + Share](c: &Conn, io: Io, how: Shutdown): Error!void {
-    try BoxOf[T](c).Shutdown(io, how)
+    if b := &c.box {
+        var err: ?Error = none
+        b.With[?T, (io: Io, how: Shutdown, err: mut ?Error)]((io: io, how: how, err: mut err), DoBoxShutdown[T])
+        if e := err {
+            fail e
+        }
+        return
+    }
+    Panic("net.Conn: a boxed operation on a handle")
 }
 
 BoxPeer[T: Transport + Send + Share](c: &Conn): ?Addr {
-    return BoxOf[T](c).PeerAddr()
+    if b := &c.box {
+        var out: ?Addr = none
+        b.With[?T, mut ?Addr](mut out, DoBoxPeer[T])
+        return out
+    }
+    Panic("net.Conn: a boxed operation on a handle")
 }
 
 // Close speaks to the peer through &T, so a failure changes nothing the
 // Conn owns.
 BoxClose[T: Transport + Send + Share](c: &Conn, io: Io): Error!void {
-    try BoxOf[T](c).Close(io)
+    if b := &c.box {
+        var err: ?Error = none
+        b.With[?T, (io: Io, err: mut ?Error)]((io: io, err: mut err), DoBoxClose[T])
+        if e := err {
+            fail e
+        }
+        return
+    }
+    Panic("net.Conn: a boxed operation on a handle")
 }
 
-BoxAbandon[T: Transport + Send + Share](b: core.ErasedBox, h: &Heap) {
+BoxAbandon[T: Transport + Send + Share](b: core.SealedBox, h: &Heap) {
     box := b.Take[?T]()
     match box.Take(h.Alloc()) {
         some(t) { t.Abandon() }
@@ -338,6 +423,6 @@ SockConnClose(c: &Conn, io: Io): Error!void {
 }
 
 // A handle Conn has no box: Abandon closes the handle instead.
-NoBox(b: core.ErasedBox, h: &Heap) {
+NoBox(b: core.SealedBox, h: &Heap) {
     Panic("net.Conn: a handle with a box")
 }

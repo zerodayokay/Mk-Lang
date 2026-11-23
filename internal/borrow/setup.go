@@ -363,15 +363,16 @@ func (c *checker) staticOf(item types.ItemID, refType types.TypeID, isRef bool) 
 	c.typeFlags(&ri)
 	// A named global takes stores when its first level does (writable by type)
 	// or when a reference in its bytes reaches, at any level, memory that does
-	// (storesFirst): for example a const GB of type
-	// `Box { m: &Mutex[?&i32] }`, whose Mutex its initializer allocated in EvalArena. Such a node
-	// counts as writable, so the call rule's writable walk lands on it and a
-	// store of a frame's loan through `(&GB).m`'s guard is E0605 there, as
-	// through a call's result, rather than resting on EvalArena's read-only
-	// emission. takes is read by staticTakesStores and by the boundary
-	// (boundaryStatic), so an impl that returns &GB under a sourced interface
-	// method is refused at the impl.
-	ri.takes = ri.carrier && (ri.writable || c.w.storesFirst(nodeType))
+	// (storesFirst behind a shared reference, since a global or const is only
+	// ever accessed through `&` or copied when plain): for example a const GB
+	// of type `Box { m: &Mutex[?&i32] }`, whose Mutex its initializer allocated
+	// in EvalArena. Such a node counts as writable, so the call rule's writable
+	// walk lands on it and a store of a frame's loan through `(&GB).m`'s guard
+	// is E0605 there, as through a call's result, rather than resting on
+	// EvalArena's read-only emission. takes is read by staticTakesStores and by
+	// the boundary (boundaryStatic), so an impl that returns &GB under a
+	// sourced interface method is refused at the impl.
+	ri.takes = ri.carrier && (ri.writable || c.w.storesFirst(c.tab.Ref(nodeType)))
 	// A const whose value is settled is judged on that value, not by its type
 	// alone (constvalue.go): DefaultClientLimits' `proxy: ?&url.Url` is none,
 	// so a copy of it returned under a source is no static that takes stores,

@@ -163,7 +163,7 @@ State.Drop(self, h: &Heap) {
 /// frames with keys from io.Random. It keeps its heap and its net.Conn,
 /// never the request, URL or Options it was made from. Close or Abandon
 /// releases it; it has no Free.
-export linear view struct Conn {
+export linear mut view struct Conn {
     conn: net.Conn
     heap: &Heap
     box: Box[State]

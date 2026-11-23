@@ -18,15 +18,14 @@
 /// buffers. The Reader it returns fails with ReadError where the stream is
 /// bad or src fails, as Inflater.Reader does; for zstd also where a cannot
 /// give a frame's window, which the decoder takes at the frame's header
-/// (ZstdDecoder.NewLazy). wrap's `a: &Arena into a` lets it store into a
-/// what a holds, as ZstdContent's does.
+/// (ZstdDecoder.NewLazy).
 export struct Content {
     /// The coding's token in Accept-Encoding and Content-Encoding, such as
     /// "gzip".
     export name: str
     /// Makes a Reader of the decoded body over src, with buf as its inline
     /// buffer and the decoder's state in a.
-    export wrap: (fn(a: &Arena into a, src: mut Reader, buf: mut []u8): OutOfMemory!Reader from a, src, buf)
+    export wrap: (fn(a: &Arena, src: mut Reader, buf: mut []u8): OutOfMemory!Reader from a, src, buf)
 }
 
 /// The gzip content coding (RFC 9110): gzip members back to back, read by

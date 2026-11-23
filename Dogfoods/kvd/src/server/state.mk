@@ -86,7 +86,7 @@ export struct Compaction {
 }
 
 /// The shared state of one server.
-export linear view struct State {
+export linear mut view struct State {
     store: sync.RwLock[store.Store]
     wal: Mutex[wal.Wal]
     sessions: Mutex[HeapMap[u64, Session]]

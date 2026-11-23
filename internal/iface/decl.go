@@ -72,6 +72,7 @@ func (w *walker) writeDecl(dcl types.Decl) {
 		w.writeGenerics(d.Generics)
 		w.writeFields(d.Fields)
 		e.Bool(d.View)
+		e.Bool(d.MutView)
 		e.Bool(d.Linear)
 		e.Uvarint(uint64(d.Packed))
 		e.Uvarint(uint64(d.Align))
@@ -195,6 +196,7 @@ func (r *reader) readDecl(d *Decoder) types.Decl {
 	case declStruct:
 		s := &types.StructDecl{Generics: r.readGenerics(d), Fields: r.readFields(d)}
 		s.View = d.Bool()
+		s.MutView = d.Bool()
 		s.Linear = d.Bool()
 		s.Packed = d.U32()
 		s.Align = d.U32()
@@ -272,6 +274,7 @@ func (h *Hasher) Decl(it *types.Item) source.Hash {
 		e.Uvarint(declStruct)
 		w.writeGenerics(d.Generics)
 		e.Bool(d.View)
+		e.Bool(d.MutView)
 		e.Bool(d.Linear)
 		e.Uvarint(uint64(d.Packed))
 		e.Uvarint(uint64(d.Align)) // align(n) is a public layout fact

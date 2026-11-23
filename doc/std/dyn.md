@@ -36,7 +36,7 @@ import std.dyn
 
 For an interface `Shape`, `gen dyn.Of(Shape)` declares, in the module that holds the `gen` line:
 
-- `view struct ShapeDyn`, with two fields: `obj`, a `dyn.Ref` holding the object's address and its type's key, and `table`, a record with one `fn` field per method of `Shape`.
+- `mut view struct ShapeDyn`, with two fields: `obj`, a `dyn.Ref` holding the object's address and its type's key, and `table`, a record with one `fn` field per method of `Shape`.
 - `ShapeDyn.Of[T: Shape](x: mut T): ShapeDyn from x`, which wraps `x`.
 - `impl Shape for ShapeDyn`, one method per method of `Shape`. Each loads its `fn` from the table and calls it. So a `ShapeDyn` passes wherever a `Shape` does, generic code included.
 - `ShapeDyn.AdaptArea[T]` and one such function per method: the functions the table points at. Each gets the `T` back from the `dyn.Ref` and calls `T`'s method.
@@ -103,7 +103,7 @@ The code `gen dyn.Of` writes uses layer 0 only ([layers](README.md#1-layers)), s
 
 ## dyn.Ref by hand
 
-`dyn.Ref` is the erased object itself: a `view struct` holding an address and a type key. `Ref.Of(x)` makes one from a `mut T`, holding `x`'s exclusive loan. `Get[T]` and `Mut[T]` give the object back only as the type it was made from, and panic with code 8 for any other type; `Is[T]` tests first.
+`dyn.Ref` is the erased object itself: a `mut view struct` holding an address and a type key. `Ref.Of(x)` makes one from a `mut T`, holding `x`'s exclusive loan. `Get[T]` and `Mut[T]` give the object back only as the type it was made from, and panic with code 8 for any other type; `Is[T]` tests first.
 
 Use a `Ref` directly to keep a function and its state of any type together, without an interface. The cookbook's [Queue jobs whose states have different types](../cookbook.md#queue-jobs-whose-states-have-different-types) does that.
 
@@ -298,7 +298,7 @@ for every type that implements the interface I, which calls the right
 type's methods at run time. For an interface Shape it emits, in the gen
 line's module:
 
-- `view struct ShapeDyn`, with `obj: dyn.Ref`, the object, and `table`,
+- `mut view struct ShapeDyn`, with `obj: dyn.Ref`, the object, and `table`,
   a record with one fn field per method;
 - `ShapeDyn.Of[T: Shape](x: mut T): ShapeDyn from x`, which holds x's
   exclusive loan;
@@ -323,7 +323,7 @@ one key comparison and one indirect call.
 ### `Ref`
 
 ```
-export view struct Ref
+export mut view struct Ref
 ```
 
 Ref is an object whose type is erased: the object's address and its

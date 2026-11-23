@@ -105,7 +105,7 @@ Demo(sys: &System, cfg: &Config): WriteError!int {
 
 // Reads and parses the Procfile, reporting a failure the way a compiler
 // does: file, line and column, the line, and a caret under the column.
-LoadProcfile(sys: &System, cfg: &Config, logs: mut Logs): WriteError!?List[procfile.Entry] from sys, cfg {
+LoadProcfile(sys: &System, cfg: &Config, logs: mut Logs): WriteError!?List[procfile.Entry] from sys {
     text := ReadProcfile(sys, cfg) else {
         return none
     }

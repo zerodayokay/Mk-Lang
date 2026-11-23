@@ -502,7 +502,7 @@ func strLit(raw string) string {
 
 // declStruct is the struct row.
 func (m *Module) declStruct(it *types.Item, x *tctx, n *ast.StructDecl) {
-	d := &types.StructDecl{View: n.View, Linear: n.Linear}
+	d := &types.StructDecl{View: n.View || n.MutView, MutView: n.MutView, Linear: n.Linear}
 	d.Align = m.structAlign(x, n)
 	if n.Packed != nil {
 		d.Packed = 1

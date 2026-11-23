@@ -6,7 +6,14 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Language
 
+- `view struct` and `mut view struct` are now distinct: a plain `view struct` is read-only through `&self` for loans (propagating loan-store writability only from its type arguments), while `mut view struct` declares an interior-writable view whose `&self` methods store loans behind raw pointers or interior state (such as `Arena`, `Scope`, `dyn.Ref`, and allocator wrappers). E0410 requires an exported struct with private interior-writable fields to declare `mut view` (or `linear mut view`).
 - Non-escaping `fn` literals passed directly to a `const` `fn` parameter (outside `s.go`) may now mutably capture enclosing `var` locals and reborrow `mut T` / `mut []T` bindings with no new syntax: assignments, `mut` borrows, and `mut self` calls on a capture form an exclusive borrow at the call site alongside its other operands (R13) that ends with the statement (R14), so R5 catches conflicting borrows (`E0501`/`E0502`/`E0504`). Mutating a non-`var` capture is `E0508`; writing through a captured `&T`/`[]T` stays `E0507`; escaping, moving out of a capture, mutating in a contract or invariant, returning or storing a capture loan, and storing a non-static loan into a captured carrier remain `E0609` (and storing a literal-local loan is `E0505`). Passing the same `const` `fn` parameter to two `const` parameters of the same call is `E0705`, preventing aliased mutable capture environments.
+
+### Loan checker
+
+- `Cell[T]`, `Mutex[T]`, `Chan[T]`, `atomic.Spin[T]` and `raw.Atomic[T]` whose payload `T` holds no loans (a non-carrier) no longer restore loan-store writability through `&` or mark global memory as taking loan stores, while remaining not `Freeze` for codegen.
+- Closed all six R16 global-store soundness gaps for views by deriving loan-store writability directly from the explicit `mut view` / carrier-interior type invariant instead of scanning imported module closures: cross-module free constructors, unseen-module impl methods, local `fn` literals, factory/wrapper constructors, and generic `into` parameters are now judged soundly, while read-only views (containers, iterators, `Response`, `Inflater`, `ZstdDecoder`, `net.Conn`, `tls.Conn`) no longer produce false `*x into x` clauses or false global-store rejections.
+- Fixed `fn` literal checking so explicit parameter `into` clauses on local `fn` literals without an expected type are preserved.
 
 ### Changed
 
@@ -15,6 +22,8 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Standard library
 
+- `std.http` (`Serve`, `ServeWith`, `ServeOn`, `ServeChan`, `Dispatch`, `Route.handler`, `Response.Header`, `Response.Body`) and `std.compress` (`Inflater.Read`, `ZstdDecoder.Read`, `ZstdDecoder.ReaderLazy`, `Content.wrap`) no longer require `*res into res`, `*self into self`, or `a: &Arena into a` clauses.
+- Arena containers (`List`, `Map`, `Set`, `Text`, `Bitset`, `BTree`, `Deque`, `PriorityQueue`, `Pool`) and `net.Conn`/`tls.Conn` remain read-only `view struct`s; interior-writable views (`Arena`, `Scope`, `dyn.Ref`, `dyn.Of` wrappers, `mem.Counting`/`Limit`/`Failing`/`Fixed`/`FixedHeap`/`Fallback`/`Sim`, `http.Client`, `websocket.Conn`) are `mut view struct`.
 - `std.vm.CodeRegion` now opens writes through an exclusive linear scoped guard: `CodeRegion.Edit(mut self): Error!CodeWriter from self` returns a `CodeWriter` with `Bytes(mut self): mut []u8 from self`, `Flush(&self, offset: int, len: int)`, and infallible `Done(self)` (replacing `Writable`, `Flush`, `Seal`, and `Unseal`), and `CodeRegion.Commit` takes `mut self`. Regions start sealed and stay sealed outside an active `CodeWriter`, enforcing W^X at compile time.
 
 ### Platforms
@@ -29,7 +38,6 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 ### Fixed
 
 - The borrow checker now keeps the loans of moved call arguments live in argument slots across the remaining arguments (including reborrows) of the same call, catching aliasing exclusive borrows such as `F(p, mut *p)`, `xs.Sort(fn(a, b) { xs[0] = 1; ... })`, and `LineConnRead(l, io, mut l.rb[..])` (`E0501`), and scopes `allocSelf` on hidden capture environments per capture field so storing a shorter-lived capture loan into a captured `Arena` is rejected (`E0609`).
-- The borrow checker now counts a non-generic free constructor in a view's defining module when its result borrows from memory that can take stores, as it counted a constructor in the view's namespace. It applies the same rule to private constructors and to optional or error results. This rejects, with E0605 or E0602, programs 0.5.0 accepted: a local stored through such a view into global memory, which then read a dead frame.
 
 ## 0.5.0 (2026-11-23)
 

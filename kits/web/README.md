@@ -28,7 +28,7 @@ const Routes: []http.Route[App] = [
 
 const Middleware: []web.Middleware[App] = [ServedBy]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try web.Run(a, io, Middleware, Routes, c, req, res)
 }
 ```
@@ -58,7 +58,7 @@ gen json.Codec(NewItem)
 gen web.Body(NewItem)
 gen web.Validate(NewItem, "name: nonempty, max 64; qty: min 0, max 1000")
 
-PostItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+PostItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     n := try NewItem.FromRequest(a, req) // the body, read as JSON
     try n.Validate()                     // 422 with the first broken rule
     try web.Reply(res, 201, &n)          // the value, written as JSON

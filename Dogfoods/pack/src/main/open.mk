@@ -321,7 +321,7 @@ Stream(c: &Ctx, f: mut fs.File, path: str, signer: ?[32]u8, action: Action, dest
 
 /// Runs `action` over each entry of `m`, reading the files' bytes from
 /// `src`, then checks that the data holds nothing more.
-Each[S: archive.Source](c: &Ctx, a: &Arena, path: str, m: &archive.Manifest, src: mut S, action: Action, dest: str): Error!void *src into src {
+Each[S: archive.Source](c: &Ctx, a: &Arena, path: str, m: &archive.Manifest, src: mut S, action: Action, dest: str): Error!void {
     buf := try a.Slice[u8](65536)
     for i, e in &m.entries {
         match action {
@@ -339,7 +339,7 @@ Each[S: archive.Source](c: &Ctx, a: &Arena, path: str, m: &archive.Manifest, src
 }
 
 /// Reads the next piece of entry `e` into `buf`, reporting what stops it.
-Piece[S: archive.Source](c: &Ctx, path: str, src: mut S, h: mut hash.Blake3State, buf: mut []u8, left: i64): Failed!int *src into src {
+Piece[S: archive.Source](c: &Ctx, path: str, src: mut S, h: mut hash.Blake3State, buf: mut []u8, left: i64): Failed!int {
     return archive.ReadPiece(src, h, buf, left) else e {
         fail c.Fail(path, e)
     }
@@ -347,7 +347,7 @@ Piece[S: archive.Source](c: &Ctx, path: str, src: mut S, h: mut hash.Blake3State
 
 /// Writes entry `e` under `dest`, and removes it again when its digest does
 /// not match.
-ExtractEntry[S: archive.Source](c: &Ctx, a: &Arena, path: str, e: &archive.Entry, index: int, src: mut S, buf: mut []u8, dest: str): Error!void *src into src {
+ExtractEntry[S: archive.Source](c: &Ctx, a: &Arena, path: str, e: &archive.Entry, index: int, src: mut S, buf: mut []u8, dest: str): Error!void {
     full := try a.Fmt("{dest}/{p}", (dest, p: e.path))
     if e.is_dir {
         tree.MakeDir(c.io, full) else err {
@@ -378,7 +378,7 @@ ExtractEntry[S: archive.Source](c: &Ctx, a: &Arena, path: str, e: &archive.Entry
 }
 
 /// Prints the SHA-256 or SHA-512 of entry `e`, after checking its BLAKE3.
-SumEntry[S: archive.Source](c: &Ctx, path: str, e: &archive.Entry, index: int, src: mut S, buf: mut []u8, wide: bool): Error!void *src into src {
+SumEntry[S: archive.Source](c: &Ctx, path: str, e: &archive.Entry, index: int, src: mut S, buf: mut []u8, wide: bool): Error!void {
     if e.is_dir {
         return
     }

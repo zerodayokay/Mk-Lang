@@ -39,7 +39,7 @@ export interface Transport {
     Abandon(self)
 }
 
-export linear view struct Conn {
+export linear mut view struct Conn {
     box: core.ErasedBox
     h: &Heap
     reads: Mutex[int]

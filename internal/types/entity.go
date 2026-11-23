@@ -296,7 +296,10 @@ type StructDecl struct {
 	Generics []GenericParam
 	Fields   []FieldDecl
 	View     bool
-	Linear   bool
+	// MutView is true for `mut view struct`: a view that writes or stores into
+	// hidden storage through `&self`. MutView implies View.
+	MutView bool
+	Linear  bool
 	// Packed is 0 for a padded struct, else the alignment cap: 1 for bare
 	// packed, n for packed(n).
 	Packed uint32
@@ -478,7 +481,7 @@ func (*GenDecl) isDecl()       {}
 type KnownItems struct {
 	Arena, Alloc, Heap, Cell, Scope, Io, System            ItemID
 	Slice, Format, Eq, Ord, Hash, Writer                   ItemID
-	Mutex, Chan, Atomic, Box                               ItemID
+	Mutex, Chan, SpinCore, Atomic, Box                     ItemID
 	OutOfMemory, Canceled, Closed                          ItemID
 	Gen, TypeInfo, TargetInfo, Arch, Os, Limits, StackSize ItemID
 	// The rest of the generator API, compile-time only.

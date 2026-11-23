@@ -1,4 +1,4 @@
-export view struct W[T] {
+export mut view struct W[T] {
     q: ?&T
 }
 

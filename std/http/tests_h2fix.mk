@@ -173,7 +173,7 @@ test "the lingering close after a 431 ends at LingerTime though the client sends
 
 // HxFlushTwice: the first Flush runs in a scope already cancelled and
 // fails; a second Flush in a live scope must fail too and send nothing.
-HxFlushTwice(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res {
+HxFlushTwice(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void {
     try res.Body("abc".AsBytes())
     scope s := io.Scope() {
         s.Cancel()

@@ -238,7 +238,7 @@ Parser.Bad(&self): Error {
 
 // Parser.Run is step 9: the state machine, from self.state, until the
 // pointer is past the input or a state stops it.
-Parser.Run(mut self): Error|OutOfMemory!void *self into self {
+Parser.Run(mut self): Error|OutOfMemory!void {
     for {
         c := if self.p >= 0 && self.p < self.text.Len() { int(self.text[self.p]) } else { Eof }
         if self.has_base && !self.built && self.ReadsBase(c) {
@@ -371,7 +371,7 @@ Parser.SetScheme(mut self, scheme: []u8 into self) {
 }
 
 // Parser.CloneBasePath sets the URL's path to a copy of the base's.
-Parser.CloneBasePath(mut self): OutOfMemory!void *self into self {
+Parser.CloneBasePath(mut self): OutOfMemory!void {
     self.url.path.Clear()
     for seg in self.base.path {
         try self.url.path.Push(seg)
@@ -411,7 +411,7 @@ IsSchemeByte(c: u8): bool {
 }
 
 // SchemeState is the scheme state.
-Parser.SchemeState(mut self, c: int): Error|OutOfMemory!Go *self into self {
+Parser.SchemeState(mut self, c: int): Error|OutOfMemory!Go {
     // Step 1: the scheme goes on; take every scheme byte that follows.
     if c >= 0 && IsSchemeByte(Trunc[u8](c)) {
         for self.p + 1 < self.text.Len() && IsSchemeByte(self.text[self.p + 1]) {
@@ -476,7 +476,7 @@ Parser.SchemeState(mut self, c: int): Error|OutOfMemory!Go *self into self {
 }
 
 // NoSchemeState is the no scheme state.
-Parser.NoSchemeState(mut self, c: int): Error!Go *self into self {
+Parser.NoSchemeState(mut self, c: int): Error!Go {
     // Step 1.
     if !self.has_base || self.base.opaque && c != CHash {
         fail self.Bad()
@@ -523,7 +523,7 @@ Parser.PathOrAuthorityState(mut self, c: int): Go {
 
 // Parser.CopyBaseAuthority sets the URL's username, password, host and
 // port to the base's.
-Parser.CopyBaseAuthority(mut self) *self into self {
+Parser.CopyBaseAuthority(mut self) {
     self.url.username = self.base.username
     self.url.password = self.base.password
     self.url.host = self.base.host
@@ -531,7 +531,7 @@ Parser.CopyBaseAuthority(mut self) *self into self {
 }
 
 // RelativeState is the relative state.
-Parser.RelativeState(mut self, c: int): OutOfMemory!Go *self into self {
+Parser.RelativeState(mut self, c: int): OutOfMemory!Go {
     // Steps 1 and 2: the base's scheme is not "file".
     self.SetScheme(self.base.scheme)
     // Steps 3 and 4.
@@ -562,7 +562,7 @@ Parser.RelativeState(mut self, c: int): OutOfMemory!Go *self into self {
 }
 
 // RelativeSlashState is the relative slash state.
-Parser.RelativeSlashState(mut self, c: int): Go *self into self {
+Parser.RelativeSlashState(mut self, c: int): Go {
     // Step 1.
     if self.url.special && (c == CSlash || c == CBackslash) {
         return self.Enter(State.SpecialAuthorityIgnoreSlashes)
@@ -611,7 +611,7 @@ Parser.EndsAuthority(&self, c: int): bool {
 // span: every '@' but the last is encoded as "%40" by the userinfo set, so
 // the username and password are the input from the authority's start to
 // its last '@', split at its first ':'.
-Parser.AuthorityState(mut self, c: int): Error|OutOfMemory!Go *self into self {
+Parser.AuthorityState(mut self, c: int): Error|OutOfMemory!Go {
     // Step 1: an '@' ends the credentials so far.
     if c == CAt {
         self.at_seen = true
@@ -650,7 +650,7 @@ Parser.AuthorityState(mut self, c: int): Error|OutOfMemory!Go *self into self {
 }
 
 // HostState is the host state and the hostname state.
-Parser.HostState(mut self, c: int): Error|OutOfMemory!Go *self into self {
+Parser.HostState(mut self, c: int): Error|OutOfMemory!Go {
     // Step 1: a file URL's host setter goes to the file host state.
     if self.Overridden() && self.IsFile() {
         return self.Back(State.FileHost)
@@ -774,7 +774,7 @@ NormalizedDriveLetter(s: []u8): []u8 {
 }
 
 // FileState is the file state.
-Parser.FileState(mut self, c: int): OutOfMemory!Go *self into self {
+Parser.FileState(mut self, c: int): OutOfMemory!Go {
     // Steps 1 and 2.
     self.SetScheme("file".AsBytes())
     self.url.host = some(HostValue.Empty)
@@ -815,7 +815,7 @@ Parser.FileState(mut self, c: int): OutOfMemory!Go *self into self {
 }
 
 // FileSlashState is the file slash state.
-Parser.FileSlashState(mut self, c: int): OutOfMemory!Go *self into self {
+Parser.FileSlashState(mut self, c: int): OutOfMemory!Go {
     // Step 1.
     if c == CSlash || c == CBackslash {
         return self.Enter(State.FileHost)
@@ -832,7 +832,7 @@ Parser.FileSlashState(mut self, c: int): OutOfMemory!Go *self into self {
 }
 
 // FileHostState is the file host state.
-Parser.FileHostState(mut self, c: int): Error|OutOfMemory!Go *self into self {
+Parser.FileHostState(mut self, c: int): Error|OutOfMemory!Go {
     // Step 1: the host ends.
     if c == Eof || c == CSlash || c == CBackslash || c == CQuestion || c == CHash {
         buffer := self.Buffer()
@@ -876,7 +876,7 @@ IsLocalhost(h: &HostValue): bool {
 }
 
 // PathStartState is the path start state.
-Parser.PathStartState(mut self, c: int): OutOfMemory!Go *self into self {
+Parser.PathStartState(mut self, c: int): OutOfMemory!Go {
     // Step 1.
     if self.url.special {
         if c != CSlash && c != CBackslash {
@@ -979,7 +979,7 @@ IsDotEscape(s: []u8, i: int): bool {
 }
 
 // PathState is the path state.
-Parser.PathState(mut self, c: int): OutOfMemory!Go *self into self {
+Parser.PathState(mut self, c: int): OutOfMemory!Go {
     // Steps 1 and 2 over a run of segments that need nothing done, in one
     // step (PathRun), at a segment's start.
     if self.buf == self.p && self.p > self.no_run && !self.Overridden() && !self.url.file && self.url.host.IsSome() && self.PathRun() {
@@ -1083,7 +1083,7 @@ IsDotSegment(s: []u8): bool {
 // byte that refused it. A file URL (step 1.4's drive letter) and a URL with no
 // host (the serializer's "/." step reads the segments) do not come here.
 // O(n); allocates nothing.
-Parser.PathRun(mut self): bool *self into self {
+Parser.PathRun(mut self): bool {
     end := PathRunEnd(self.text, self.p)
     if end < 0 {
         self.no_run = -1 - end
@@ -1097,7 +1097,7 @@ Parser.PathRun(mut self): bool *self into self {
 // OpaquePathState is the opaque path state. The path is the input from
 // the state's start, encoded with the C0 control set, except that a space
 // right before a '?' or '#' is "%20" (step 3.2).
-Parser.OpaquePathState(mut self, c: int): OutOfMemory!Go *self into self {
+Parser.OpaquePathState(mut self, c: int): OutOfMemory!Go {
     // Steps 1 and 2, and EOF: the path ends.
     if c == CQuestion || c == CHash || c == Eof {
         buffer := self.Buffer()
@@ -1136,7 +1136,7 @@ EncodeTrailingSpace(a: &Arena, s: []u8): OutOfMemory![]u8 from a {
 }
 
 // QueryState is the query state.
-Parser.QueryState(mut self, c: int): OutOfMemory!Go *self into self {
+Parser.QueryState(mut self, c: int): OutOfMemory!Go {
     // Step 2: the query ends.
     if !self.Overridden() && c == CHash || c == Eof {
         bit := if self.url.special { InSpecialQuery } else { InQuery }
@@ -1155,7 +1155,7 @@ Parser.QueryState(mut self, c: int): OutOfMemory!Go *self into self {
 
 // FragmentState is the fragment state: the rest of the input, encoded
 // with the fragment set.
-Parser.FragmentState(mut self): OutOfMemory!Go *self into self {
+Parser.FragmentState(mut self): OutOfMemory!Go {
     self.p = self.text.Len()
     self.url.fragment = some(try Encode(self.a, self.text[self.buf..], InFragment))
     return Go.Next

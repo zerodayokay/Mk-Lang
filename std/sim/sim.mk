@@ -65,7 +65,7 @@ export enum Fault {
 /// from one seed, so one seed gives one run. A Sim is linear: end it with
 /// Free. It is a view that borrows the arena it was made from, and it also
 /// uses the process heap.
-export linear view struct Sim {
+export linear mut view struct Sim {
     slot: int
     w: *World
 }

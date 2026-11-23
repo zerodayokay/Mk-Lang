@@ -649,7 +649,7 @@ first, and a call that is not the record's diverges.
 ### `Sim`
 
 ```
-export linear view struct Sim
+export linear mut view struct Sim
 ```
 
 A simulated world behind an Io: a seeded scheduler, a simulated clock,

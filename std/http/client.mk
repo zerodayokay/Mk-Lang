@@ -45,7 +45,7 @@ struct Origin {
 /// tls.Config behind secure, so it cannot outlive them. Its connections,
 /// secure ones included, live on the process heap, so a pooled connection
 /// outlives every request's arena.
-export linear view struct Client {
+export linear mut view struct Client {
     heap: &Heap
     limits: ClientLimits
     slots: Pair[Pair[Pair[Pair[Slot]]]]

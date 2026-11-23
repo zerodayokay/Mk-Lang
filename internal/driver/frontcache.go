@@ -993,8 +993,7 @@ func (b *build) shapes(items []types.ItemID) []iface.ShapeRec {
 // every read of stage 5, of each unit (resolve's, its body's with the
 // evaluations it ran, borrow's; funccache.go) and of each evaluation the
 // module ran, minus same-module reads, minus the name, impl and member
-// reads (the closure's API parts are in the prefix) except another
-// module's keeping view methods (iface.ModuleKeepsKey), minus the
+// reads (the closure's API parts are in the prefix), minus the
 // signature, shape, value and exported-fields reads of exported items
 // (their API and shape parts; a ReadFields "all", which reads private
 // fields too, is kept), minus Target reads (the target is in the
@@ -1022,16 +1021,7 @@ func (b *build) externalReads(m *modNode, world iface.World) ([]types.Read, stri
 	var index map[string]types.TypeID
 	for _, r := range rs.Sorted() {
 		switch r.Kind {
-		case types.ReadExports:
-			// Borrow's own-method view scan reads another module's
-			// keeping view methods, private ones included, which no API
-			// part in the prefix covers (iface.ModuleKeepsKey). The
-			// reader's own module is its tokens.
-			if p, ok := iface.ModuleKeepsPath(r.Key); ok && p != m.path {
-				out = append(out, r)
-			}
-			continue
-		case types.ReadImpl, types.ReadNoImpl, types.ReadNoItem, types.ReadTarget:
+		case types.ReadExports, types.ReadImpl, types.ReadNoImpl, types.ReadNoItem, types.ReadTarget:
 			continue
 		case types.ReadPkg, types.ReadFile, types.ReadData:
 			out = append(out, r)

@@ -105,7 +105,7 @@ An `https` URL with `secure` set to `none` fails with `NoSecureTransport`. A sec
 
 A handler fills in the `Response` it is given; the server sends it when the handler returns.
 
-- `Response.Header` and `Response.Body` copy what they are given into the response's arena, so a handler stores no loan of its own into the response. They do store a loan of the response into a deeper part of it, its header list and its body view, so they state `*self into self`. The handler type, `Dispatch`, and a handler that calls them state `*res into res`.
+- `Response.Header` and `Response.Body` copy what they are given into the response's arena, so a handler stores no loan of its own into the response.
 - `Response.Writer` appends UTF-8 text to the body. `Response.Body` sets bytes of any kind.
 - A handler that fails with `Status(code)` sends that status, the fields it set and an empty body. Any other error, or a code outside 200 to 999, sends 500 and ends the connection.
 - The server writes the framing itself: a `Content-Length` that matches the body, or chunks when the handler set `Transfer-Encoding: chunked`. A handler's `Connection: close` ends the connection after the reply.
@@ -244,7 +244,7 @@ Item(c: &Shop, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): h
     try Print(mut w, "{shop}: item {id}\n", (shop: c.name, id))
 }
 
-Files(c: &Shop, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Files(c: &Shop, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     path := req.Param("path") else {
         fail http.Status(code: 404)
     }
@@ -307,7 +307,6 @@ Content-Length: 0
 
 - `{path...}` matches the rest of the path, slashes included.
 - The `POST` matches a route's pattern but not its method, so `Dispatch` answers 405 with an `Allow` field. The `..` segment is refused before any route is tried.
-- A handler that calls `Header` or `Body` states `*res into res`; one that only writes with `Writer` need not.
 
 ### Serve and fetch
 
@@ -486,7 +485,7 @@ Reader, which cannot be read twice.
 ### `Client`
 
 ```
-export linear view struct Client
+export linear mut view struct Client
 ```
 
 An HTTP/1.1 client with a pool of kept-alive connections. One client
@@ -702,10 +701,10 @@ plain TCP.
 ### `Dispatch`
 
 ```
-export Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, res: mut Response): Error!void *res into res, *routes into a
+export Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, res: mut Response): Error!void *routes into a
 ```
 
-- Flows: What res points at may be written back into res. Stores the loans routes holds in a.
+- Flows: Stores the loans routes holds in a.
 - Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Calls the handler of the most specific route whose method and pattern
@@ -1015,17 +1014,14 @@ in the request's arena. The server hands one to each handler and sends
 it when the handler returns.
 
 Header and Body copy what they are given into the arena, so a handler
-stores no loan of its own into the response. They do store a loan of
-the response into a deeper part of it, which their signatures state as
-`*self into self`; a handler that calls them states `*res into res`.
+stores no loan of its own into the response.
 
 ### `Response.Body`
 
 ```
-export Response.Body(mut self, data: []u8): OutOfMemory!void *self into self
+export Response.Body(mut self, data: []u8): OutOfMemory!void
 ```
 
-- Flows: What self points at may be written back into self.
 - Errors: OutOfMemory
 
 Sets the body to a copy of data, in the response's arena; what Writer
@@ -1066,10 +1062,9 @@ does not fail.
 ### `Response.Header`
 
 ```
-export Response.Header(mut self, name: str, value: str): OutOfMemory!void *self into self
+export Response.Header(mut self, name: str, value: str): OutOfMemory!void
 ```
 
-- Flows: What self points at may be written back into self.
 - Errors: OutOfMemory
 
 Adds a header field, copied into the response's arena. Fails with
@@ -1154,13 +1149,13 @@ Fields:
 - `method: str`: The method the row answers, such as "GET".
 - `pattern: str`: The path pattern: literal segments, `{name}` segments and a last
   `{name...}` segment.
-- `handler: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res)`: The function that answers a request that matches, given the context
+- `handler: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void`: The function that answers a request that matches, given the context
   Dispatch is given.
 
 ### `Serve`
 
 ```
-export Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res)): Error!void
+export Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void): Error!void
 ```
 
 - Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
@@ -1194,7 +1189,7 @@ its connection.
 ### `ServeChan`
 
 ```
-export ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res)): Error!void
+export ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
 - Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
@@ -1226,7 +1221,7 @@ InvalidAddress; other Accept errors wait and try again as Serve's do.
 ### `ServeOn`
 
 ```
-export ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res)): Error!void
+export ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
 - Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
@@ -1252,7 +1247,7 @@ InvalidAddress; other Accept errors wait and try again as Serve's do.
 ### `ServeWith`
 
 ```
-export ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res)): Error!void
+export ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
 - Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)

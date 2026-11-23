@@ -25,7 +25,7 @@ struct App {
     gate: str
 }
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void {
     if req.path == "/flush" {
         try res.Body("first;".AsBytes())
         try res.Flush(io, link)

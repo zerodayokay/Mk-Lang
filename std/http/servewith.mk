@@ -31,11 +31,11 @@ import std.time
 const MaxHeadRoom = 1073741824
 
 // DirectFn is the handler of ServeWith and ServeOn.
-type DirectFn[C] = fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res
+type DirectFn[C] = fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void
 
 // RelayFn is ServeChan's handler, which also takes the server's heap and
 // the channel, and may store the heap into it.
-type RelayFn[C, T] = fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res
+type RelayFn[C, T] = fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void
 
 /// Listens on addr and serves every connection in a task of its own until
 /// the caller's scope is cancelled, as Serve does, with o's settings and a
@@ -57,7 +57,7 @@ type RelayFn[C, T] = fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io
 /// Fails with Listen's error, or with Accept's Closed or InvalidAddress;
 /// other Accept errors wait and try again as Serve's do. ServeWith is
 /// net.Listen, then ServeOn over the listener, then its Close.
-export ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res)): Error!void {
+export ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void {
     l := try net.Listen(sys.io, addr)
     defer l.Close()
     try ServeOn(sys.heap, sys.io, &l, o, c, handle)
@@ -80,7 +80,7 @@ export ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, ha
 /// Closed, and a Sim's listener served with the machine's Io waits and
 /// tries again until the cancel. Fails with Accept's Closed or
 /// InvalidAddress; other Accept errors wait and try again as Serve's do.
-export ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res)): Error!void {
+export ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void {
     try AcceptLoop[C, u8](io, h, h, l, o, c, none, some(handle), none)
 }
 
@@ -107,7 +107,7 @@ export ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, 
 /// caller empties and frees ch before h goes. ch is reached from every
 /// connection's task, so T is Send. Fails with Accept's Closed or
 /// InvalidAddress; other Accept errors wait and try again as Serve's do.
-export ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res)): Error!void {
+export ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void {
     try AcceptLoop[C, T](io, h, h, l, o, c, some(ch), none, some(handle))
 }
 
@@ -154,7 +154,7 @@ AcceptLoop[C: Share, T: Send](io: Io, h: &Heap, rh: &Heap into ch, l: &net.Liste
 
 // ServeConn serves one accepted connection, through the acceptor when o
 // has one, then releases it and its permit.
-ServeConn[C: Share](conn: net.Conn, heap: &Heap into conn, io: Io, o: &ServerOptions, sem: &sync.Semaphore, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res)) {
+ServeConn[C: Share](conn: net.Conn, heap: &Heap into conn, io: Io, o: &ServerOptions, sem: &sync.Semaphore, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void) {
     ServeRelayConn[C, u8](conn, heap, io, o, sem, c, heap, none, some(handle), none)
 }
 
@@ -175,7 +175,7 @@ ServeRelayConn[C: Share, T: Send](conn: net.Conn, heap: &Heap into conn, io: Io,
 
 // ServeOwned serves conn through a cell (link.mk) and closes it, unless a
 // handler took it.
-ServeOwned[C: Share](conn: net.Conn, heap: &Heap, io: Io, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res)) {
+ServeOwned[C: Share](conn: net.Conn, heap: &Heap, io: Io, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void) {
     ServeRelayOwned[C, u8](conn, heap, io, o, c, heap, none, some(handle), none)
 }
 
@@ -189,7 +189,7 @@ ServeRelayOwned[C: Share, T: Send](conn: net.Conn, heap: &Heap, io: Io, o: &Serv
 // CallHandler calls the loop's handler for one request: plain with c, or
 // relay with c, rh and the channel. With neither it fails with 500, which
 // no entry point lets happen.
-CallHandler[C: Share, T: Send](c: &C, rh: &Heap into ch, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res {
+CallHandler[C: Share, T: Send](c: &C, rh: &Heap into ch, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void {
     if f := plain {
         try f(c, a, io, req, res, link)
         return
@@ -205,11 +205,11 @@ CallHandler[C: Share, T: Send](c: &C, rh: &Heap into ch, ch: ?&Chan[T], plain: ?
 
 // Clear makes the response an empty one of code that ends the connection
 // (a handler's error, or its status that is not final).
-Response.Clear(mut self, code: int) *self into self {
+Response.Clear(mut self, code: int) {
     self.code = code
-    self.headers = List[Header].New(self.arena)
-    self.data = "".AsBytes()
-    self.text = Text.New(self.arena)
+    self.headers.Clear()
+    self.data.Clear()
+    self.text.Clear()
     self.close = true
 }
 
@@ -641,8 +641,8 @@ ServeConnLoop[C: Share, T: Send](conn: &Mutex[?net.Conn], heap: &Heap, io: Io, o
                         // The fields stay (405's Allow, say); the body goes,
                         // and Send writes the framing of the empty body.
                         res.code = code
-                        res.data = "".AsBytes()
-                        res.text = Text.New(&arena)
+                        res.data.Clear()
+                        res.text.Clear()
                     }
                 }
                 _ {

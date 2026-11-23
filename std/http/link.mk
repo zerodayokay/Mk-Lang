@@ -18,8 +18,8 @@
 // cancellation check goes on in a dead Sim run, under a freed Recorder or
 // Replayer, and under a Replayer that cannot replay it: a lock that cannot
 // wait cannot fail. The handler gets the Link beside its response, never
-// inside it: a store into the response (`*res into res`) would reach a cell
-// the response held, even behind a shared reference.
+// inside it, so a store into the response never reaches a cell the
+// response held, even behind a shared reference.
 
 import std.core
 import std.net

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"mk/internal/abi"
-	"mk/internal/borrow"
 	checker "mk/internal/check"
 	"mk/internal/diag"
 	"mk/internal/eval"
@@ -95,10 +94,6 @@ type semantics struct {
 	// menv is mono's Env (mono_env.go), made once.
 	monoOnce sync.Once
 	menv     *monoEnv
-
-	// borrowImpls is borrow's impl-index cache for the session's bodies
-	// (Env.Impls, flow.go).
-	borrowImpls borrow.ImplCache
 }
 
 // startSemantics makes the Checker, the lower configuration and the

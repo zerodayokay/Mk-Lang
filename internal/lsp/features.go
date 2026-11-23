@@ -212,7 +212,7 @@ func hoverOf(c cursor, lines []string, u8 bool) hover {
 func isTypeHead(l string) bool {
 	for _, w := range strings.Fields(l) {
 		switch w {
-		case "export", "view", "linear":
+		case "export", "mut", "view", "linear":
 			continue
 		case "struct", "enum", "interface", "error", "type":
 			return true

@@ -11,12 +11,12 @@
 // a forged table can only panic.
 //
 // For an interface I, gen dyn.Of(I) emits, in the gen line's module:
-// - view struct IDyn { obj: dyn.Ref, table: (one fn field per method of
+// - mut view struct IDyn { obj: dyn.Ref, table: (one fn field per method of
 //   I, each the snake_case of its method's name, with `_` after a keyword
 //   or contextual word: Error is error_) };
 //   the record is the vtable held inline, so a call loads its fn from the
 //   object itself and needs no second load through a table pointer; the
-//   boxed type is a view;
+//   boxed type is a mut view;
 // - IDyn.Of[T: I](x: mut T): IDyn from x, which erases x and fills the
 //   fields with IDyn.Adapt<M>[T], generic adapters named as fn values;
 // - per method M, the adapter IDyn.Adapt<M>[T: I], which recovers the T
@@ -47,7 +47,7 @@
 /// type's methods at run time. For an interface Shape it emits, in the gen
 /// line's module:
 ///
-/// - `view struct ShapeDyn`, with `obj: dyn.Ref`, the object, and `table`,
+/// - `mut view struct ShapeDyn`, with `obj: dyn.Ref`, the object, and `table`,
 ///   a record with one fn field per method;
 /// - `ShapeDyn.Of[T: Shape](x: mut T): ShapeDyn from x`, which holds x's
 ///   exclusive loan;
@@ -176,7 +176,7 @@ export Of(g: mut Gen, i: Type) {
     }
     if i.Exported() {
         g.Emit(quote {
-            export view struct $name {
+            export mut view struct $name {
                 obj: dyn.Ref
                 table: ($table)
             }
@@ -194,7 +194,7 @@ export Of(g: mut Gen, i: Type) {
         return
     }
     g.Emit(quote {
-        view struct $name {
+        mut view struct $name {
             obj: dyn.Ref
             table: ($table)
         }

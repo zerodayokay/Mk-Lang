@@ -47,7 +47,7 @@ struct Shared {
 
 // Handle answers /hello with the query, /echo with the body, /redirect with a 302 to /hello,
 // /big with c.big bytes, and anything else with 404.
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void {
     _ = link
     match req.path {
         "/hello" {

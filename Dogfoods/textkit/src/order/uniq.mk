@@ -127,7 +127,7 @@ EmitDistinct(w: mut Writer, seen: &List[Seen], f: &Filter): WriteError!void {
 }
 
 /// Takes one line: extends the current run, or ends it and starts another.
-UniqState.Take(mut self, scratch: &Arena, s: mut input.Streams, line: str): input.Error!void *self into self {
+UniqState.Take(mut self, scratch: &Arena, s: mut input.Streams, line: str): input.Error!void {
     if self.global {
         try self.TakeGlobal(line)
         return
@@ -145,7 +145,7 @@ UniqState.Take(mut self, scratch: &Arena, s: mut input.Streams, line: str): inpu
 
 /// Takes one line in global mode. The distinct keys are kept sorted, so a
 /// line is found by binary search: O(log n) compares and O(n) to insert.
-UniqState.TakeGlobal(mut self, line: str): input.Error!void *self into self {
+UniqState.TakeGlobal(mut self, line: str): input.Error!void {
     held := try self.arena.Dup(line)
     key := try KeyOf(self.arena, held, &self.keying)
     seen := &self.seen
@@ -158,7 +158,7 @@ UniqState.TakeGlobal(mut self, line: str): input.Error!void *self into self {
     try self.seen.Push(Seen(line: held, key: key, count: 1))
 }
 
-UniqInput(c: &input.Ctx, st: mut UniqState, s: mut input.Streams, r: mut Reader): input.Error!void *st into st {
+UniqInput(c: &input.Ctx, st: mut UniqState, s: mut input.Streams, r: mut Reader): input.Error!void {
     var scratch := try Arena.New(c.heap)
     defer scratch.Free()
     if st.filter.zero {

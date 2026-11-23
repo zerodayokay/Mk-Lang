@@ -132,7 +132,7 @@ AnyOrigin(origin: str): bool {
 
 // Echo is the HTTP handler: it takes the connection over as a WebSocket
 // and sends back each message it receives until the client closes.
-Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void *res into res {
+Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void {
     t := link.Takeover() else {
         return
     }
@@ -215,7 +215,7 @@ AnyOrigin(origin: str): bool {
 
 // Bye is the HTTP handler: it takes the connection over as a WebSocket,
 // sends one message and closes with status 1001, "going away".
-Bye(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void *res into res {
+Bye(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void {
     t := link.Takeover() else {
         return
     }
@@ -342,7 +342,7 @@ KiB) and the chosen name on h.
 ### `Conn`
 
 ```
-export linear view struct Conn
+export linear mut view struct Conn
 ```
 
 A WebSocket connection (RFC 6455, no extensions) made by Dial or

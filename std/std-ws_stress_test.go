@@ -66,7 +66,7 @@ AllowAll(origin: str): bool {
 // Handle takes the connection, accepts the WebSocket handshake on it, runs
 // the session, closes with 1000 and "recv N" (1011 and the failure when
 // one happened), and ends the process: 0 when the session was clean.
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void {
     t := link.Takeover() else {
         fail http.Status(code: 500)
     }

@@ -44,12 +44,12 @@ gen json.Codec(Greeting)
 gen web.Body(NewItem)
 gen web.Validate(NewItem, "name: nonempty, max 64; qty: min 0, max 1000")
 
-Root(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Root(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     var w := res.Writer()
     try w.Str("hello from web")
 }
 
-Greet(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Greet(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     name := try web.Query(a, req, "name") else {
         "world"
     }
@@ -57,13 +57,13 @@ Greet(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): h
     try web.Reply(res, 200, &g)
 }
 
-GetItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+GetItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try web.ParamInt(req, "id")
     item := Item(id: id, name: try a.Fmt("item {id}", (id,)), qty: 1)
     try web.Reply(res, 200, &item)
 }
 
-PostItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+PostItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     n := try NewItem.FromRequest(a, req)
     try n.Validate()
     item := Item(id: 1, name: n.name, qty: n.qty)
@@ -71,7 +71,7 @@ PostItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response)
 }
 
 /// Marks every reply with the server's name.
-ServedBy(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool *res into res {
+ServedBy(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool {
     try res.Header("X-Served-By", c.served_by)
     return true
 }
@@ -85,7 +85,7 @@ const Routes: []http.Route[App] = [
 
 const Middleware: []web.Middleware[App] = [ServedBy]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try web.Run(a, io, Middleware, Routes, c, req, res)
 }
 

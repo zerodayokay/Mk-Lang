@@ -16,7 +16,7 @@ struct SwApp {
 }
 
 // SwEcho answers 200 with the request's body.
-SwEcho(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res {
+SwEcho(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void {
     try res.Body(req.body)
 }
 
@@ -217,7 +217,7 @@ SwCountFree(ctx: *u8, p: *u8, size: int, align: int) {
 }
 
 // SwPlain answers 200 with no body.
-SwPlain(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+SwPlain(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"ok")
 }
 

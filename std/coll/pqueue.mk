@@ -24,12 +24,12 @@ export view struct PriorityQueue[T: Ord] {
     ptr: *T
     n: int
     cap: int
-    arena: &Arena
+    alloc: &Alloc
 }
 
 /// An empty queue in a. O(1); allocates nothing until the first Push.
 export PriorityQueue[T].New(a: &Arena): PriorityQueue[T] {
-    return PriorityQueue[T](ptr: Dangling[T](), n: 0, cap: 0, arena: a)
+    return PriorityQueue[T](ptr: Dangling[T](), n: 0, cap: 0, alloc: a.Alloc())
 }
 
 /// Adds x. Fails with OutOfMemory when the queue is full and the arena
@@ -39,7 +39,7 @@ export PriorityQueue[T].New(a: &Arena): PriorityQueue[T] {
 export PriorityQueue[T].Push(mut self, x: T into self): OutOfMemory!void {
     if self.n == self.cap {
         c := NextCap(self.cap, self.n + 1)
-        q := GrowSlots(self.arena.Alloc(), self.ptr, self.n, self.cap, c, false)
+        q := GrowSlots(self.alloc, self.ptr, self.n, self.cap, c, false)
         if raw.IsNull(q) {
             fail OutOfMemory
         }

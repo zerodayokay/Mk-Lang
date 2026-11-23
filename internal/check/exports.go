@@ -176,16 +176,18 @@ func (m *Module) privateNames(it *types.Item, fx *fileIndex, n ast.Node) {
 	}
 }
 
-// kindWord is a struct's (kind, carrier) under one choice of fields.
+// kindWord is a struct's (kind, carrier, loanInterior) under one choice of fields.
 type kindWord struct {
-	kind    types.Kind
-	carrier bool
+	kind         types.Kind
+	carrier      bool
+	loanInterior bool
 }
 
-// exportedKind is E0410: the kind and carrier of an exported
-// struct from its exported fields and from all of them, each with its
-// keywords; a field that mentions a type parameter counts as Plain and no
-// carrier. `view` and `linear` are each required on their own.
+// exportedKind is E0410: the kind, carrier and loan-interior-writability of an
+// exported struct from its exported fields and from all of them, each with its
+// keywords; a field that mentions a type parameter counts as Plain, no carrier
+// and no loan interior. `view`, `mut view` and `linear` are each required on
+// their own.
 func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, d *types.StructDecl) {
 	c := m.c
 	// A compiler-known item takes its kind and carrier bit from its identity,
@@ -194,7 +196,7 @@ func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, 
 	// raw.Atomic or Scope.
 	if k := c.known; it.Module != types.NoModule && c.cfg.Items.Module(it.Module).Std {
 		switch it.ID {
-		case k.Io, k.Alloc, k.Heap, k.Cell, k.Mutex, k.Chan, k.Atomic, k.Scope:
+		case k.Io, k.Alloc, k.Heap, k.Cell, k.Mutex, k.Chan, k.SpinCore, k.Atomic, k.Scope:
 			return
 		}
 	}
@@ -205,6 +207,7 @@ func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, 
 		floor.kind = types.Unique
 	}
 	floor.carrier = d.View
+	floor.loanInterior = d.MutView
 	all, exp := floor, floor
 	// unique: some field is Unique (not Linear): `view` is asked of
 	// "carrier or unique" and `linear` of "linear", so a linear field
@@ -215,26 +218,34 @@ func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, 
 		w := kindWord{}
 		if f.Type != types.Poison && c.closed(f.Type) {
 			x := c.Facts(f.Type)
-			w = kindWord{x.Kind, x.Carrier}
+			w = kindWord{x.Kind, x.Carrier, x.LoanInterior}
 		}
 		// A private field of the std-internal `std.raw.Atomic` counts
 		// as exported, so `Mutex`, `AtomicInt` and `AtomicBool` are unique
 		// and not views.
 		shown := f.Exported || c.isAtomic(f.Type)
 		unique = unique || !shown && w.kind == types.Unique
-		all.kind, all.carrier = max(all.kind, w.kind), all.carrier || w.carrier
+		all.kind = max(all.kind, w.kind)
+		all.carrier = all.carrier || w.carrier
+		all.loanInterior = all.loanInterior || w.loanInterior
 		if shown {
-			exp.kind, exp.carrier = max(exp.kind, w.kind), exp.carrier || w.carrier
-		} else if w.kind != types.Plain || w.carrier {
+			exp.kind = max(exp.kind, w.kind)
+			exp.carrier = exp.carrier || w.carrier
+			exp.loanInterior = exp.loanInterior || w.loanInterior
+		} else if w.kind != types.Plain || w.carrier || w.loanInterior {
 			changing = append(changing, c.cfg.Interner.Str(f.Name))
 		}
 	}
+	needMutView := !d.MutView && all.loanInterior && !exp.loanInterior
+	needLinear := !d.Linear && all.kind == types.Linear && exp.kind != types.Linear
 	var needs []string
-	if !d.View && (all.carrier && !exp.carrier || unique && exp.kind == types.Plain) {
-		needs = append(needs, "view")
-	}
-	if !d.Linear && all.kind == types.Linear && exp.kind != types.Linear {
+	if needLinear {
 		needs = append(needs, "linear")
+	}
+	if needMutView {
+		needs = append(needs, "mut view")
+	} else if !d.View && (all.carrier && !exp.carrier || unique && exp.kind == types.Plain) {
+		needs = append(needs, "view")
 	}
 	if len(needs) == 0 {
 		return
@@ -245,17 +256,27 @@ func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, 
 	}
 	dg := diag.New(diag.E0410, it.Span, "the exported struct `"+c.cfg.Interner.Str(it.Name)+"` must say `"+words[:len(words)-1]+"`: its private fields make it so").
 		Fact("needs", diag.TextList(needs...)).Fact("fields", diag.TextList(changing...))
-	if at, ok := structKeyword(fx, n); ok {
+	if needMutView && d.View {
+		// `view` is already present: add `mut ` before it (and `linear `
+		// before `view` too when both are needed).
+		if at, ok := structToken(fx, n, ast.TokView); ok {
+			ins := "mut "
+			if needLinear {
+				ins = "linear mut "
+			}
+			dg.Fix(diag.Fix{Class: diag.Proven, Edits: []diag.Edit{{Span: at, Text: ins}}, Why: "the private fields decide the struct's kind"})
+		}
+	} else if at, ok := structToken(fx, n, ast.TokStruct); ok {
 		dg.Fix(diag.Fix{Class: diag.Proven, Edits: []diag.Edit{{Span: at, Text: words}}, Why: "the private fields decide the struct's kind"})
 	}
 	m.Diags = append(m.Diags, dg)
 }
 
-// structKeyword is the empty span before a struct declaration's `struct`.
-func structKeyword(fx *fileIndex, n *ast.StructDecl) (source.Span, bool) {
+// structToken is the empty span before the first token of kind k in n.
+func structToken(fx *fileIndex, n *ast.StructDecl, k ast.TokenKind) (source.Span, bool) {
 	toks := fx.file.Tokens
 	for i := n.Toks.First; i < n.Toks.End && int(i) < len(toks); i++ {
-		if toks[i].Kind == ast.TokStruct {
+		if toks[i].Kind == k {
 			return source.Span{File: fx.info.FileID, Start: toks[i].Start, End: toks[i].Start}, true
 		}
 	}

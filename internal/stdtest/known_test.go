@@ -45,6 +45,7 @@ var knownWant = []struct {
 	{"Writer", func(k *types.KnownItems) types.ItemID { return k.Writer }, "std.core.Writer"},
 	{"Mutex", func(k *types.KnownItems) types.ItemID { return k.Mutex }, "std.core.Mutex"},
 	{"Chan", func(k *types.KnownItems) types.ItemID { return k.Chan }, "std.core.Chan"},
+	{"SpinCore", func(k *types.KnownItems) types.ItemID { return k.SpinCore }, "std.core.SpinCore"},
 	{"Atomic", func(k *types.KnownItems) types.ItemID { return k.Atomic }, "std.raw.Atomic"},
 	{"Box", func(k *types.KnownItems) types.ItemID { return k.Box }, "std.core.Box"},
 	{"OutOfMemory", func(k *types.KnownItems) types.ItemID { return k.OutOfMemory }, "std.core.OutOfMemory"},

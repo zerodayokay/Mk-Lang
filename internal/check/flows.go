@@ -877,10 +877,11 @@ func (c *Checker) storeClauseCheck(fn flowFn, st storeClause) *diag.Diagnostic {
 		Text("expected", "reference or slice").Text("found", tab.TypeString(from, sig.Generics))
 }
 
-// writableTarget: p is mut, or reaches interior mutability (a Cell, a
-// Mutex, a view, or a type holding one such as a Chan's) through any steps,
-// shared reference fields included: the restoring step may come after
-// shared ones, not only after mut steps and inline fields.
+// writableTarget: p is mut, or reaches loan-interior mutability (a Cell,
+// Mutex or Chan holding a carrier, an Arena or Scope, a `mut view struct`, or
+// a type reaching one) through any steps, shared reference fields included:
+// the restoring step may come after shared ones, not only after mut steps and
+// inline fields.
 func (c *Checker) writableTarget(t types.TypeID) bool {
 	tab := c.cfg.Types
 	switch tab.Kind(t) {
@@ -900,7 +901,7 @@ func (c *Checker) reachesInterior(t types.TypeID, seen map[types.TypeID]bool, r 
 	switch ty.Kind {
 	case types.KMut, types.KMutSlice:
 		return true
-	case types.KOptional, types.KArray:
+	case types.KOptional, types.KArray, types.KErrorUnion:
 		return c.reachesInterior(ty.Elem, seen, r)
 	case types.KRef, types.KSlice:
 		// Interior mutability reached through a shared reference is still
@@ -920,14 +921,17 @@ func (c *Checker) reachesInterior(t types.TypeID, seen map[types.TypeID]bool, r 
 		}
 	case types.KNamed:
 		k := &c.known
-		if ty.Item != types.NoItem && (ty.Item == k.Cell || ty.Item == k.Mutex) {
+		if ty.Item != types.NoItem && (ty.Item == k.Cell || ty.Item == k.Mutex || ty.Item == k.Chan || ty.Item == k.SpinCore) {
+			return len(ty.Args) > 0 && !ty.Args[0].IsConst && c.isCarrier(ty.Args[0].Type)
+		}
+		if ty.Item != types.NoItem && (ty.Item == k.Arena || ty.Item == k.Scope) {
 			return true
 		}
 		d, ok := c.cfg.Items.Get(ty.Item).Decl.(*types.StructDecl)
 		if !ok || seen[t] {
 			return false
 		}
-		if d.View {
+		if d.MutView {
 			return true
 		}
 		seen[t] = true
@@ -935,6 +939,13 @@ func (c *Checker) reachesInterior(t types.TypeID, seen map[types.TypeID]bool, r 
 			return false
 		} else if leave != nil {
 			defer leave()
+		}
+		if d.View {
+			for _, a := range ty.Args {
+				if !a.IsConst && c.reachesInterior(a.Type, seen, r) {
+					return true
+				}
+			}
 		}
 		for _, f := range d.Fields {
 			if c.reachesInterior(c.subst(f.Type, ty.Args, types.NoType), seen, r) {

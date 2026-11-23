@@ -16,12 +16,12 @@ export view struct Text {
     ptr: *u8
     used: int
     cap: int
-    arena: &Arena
+    alloc: &Alloc
 }
 
 /// An empty text in a. O(1); allocates nothing until the first Push.
 export Text.New(a: &Arena): Text {
-    return Text(ptr: DanglingBytes(), used: 0, cap: 0, arena: a)
+    return Text(ptr: DanglingBytes(), used: 0, cap: 0, alloc: a.Alloc())
 }
 
 /// Appends s. OutOfMemory when the arena cannot grow the buffer, and then the
@@ -110,7 +110,7 @@ export str.Replace(self, a: &Arena, old: str, new: str): OutOfMemory!str from a 
 Text.Room(mut self, n: int): OutOfMemory!void {
     if n > self.cap - self.used {
         c := NextCap(self.cap, self.used + n)
-        p := GrowBytes(self.arena.Alloc(), self.ptr, self.used, self.cap, c, false)
+        p := GrowBytes(self.alloc, self.ptr, self.used, self.cap, c, false)
         if raw.IsNull(p) {
             fail OutOfMemory
         }
@@ -128,7 +128,7 @@ Text.PushBytes(mut self, b: []u8): OutOfMemory!void {
     }
     if n > self.cap - self.used {
         c := NextCap(self.cap, self.used + n)
-        p := GrowBytes(self.arena.Alloc(), self.ptr, self.used, self.cap, c, false)
+        p := GrowBytes(self.alloc, self.ptr, self.used, self.cap, c, false)
         if raw.IsNull(p) {
             fail OutOfMemory
         }
@@ -144,7 +144,7 @@ Text.PushBytes(mut self, b: []u8): OutOfMemory!void {
 Text.Reserve(mut self, n: int): OutOfMemory!void {
     if n > self.cap - self.used {
         c := self.used + n
-        p := GrowBytes(self.arena.Alloc(), self.ptr, self.used, self.cap, c, false)
+        p := GrowBytes(self.alloc, self.ptr, self.used, self.cap, c, false)
         if raw.IsNull(p) {
             fail OutOfMemory
         }

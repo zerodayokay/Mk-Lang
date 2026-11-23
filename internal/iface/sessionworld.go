@@ -54,13 +54,10 @@ type SessionWorld struct {
 	once     sync.Once
 	modules  map[string]types.ModuleID
 	mu       sync.Mutex
-	implsFor map[types.ItemID][]types.ItemID   // impls by the item of their For type
-	refImpls map[types.ItemID][]types.ItemID   // impls for &T or mut T, by T's item (memberNS)
-	modImpls map[types.ModuleID][]types.ItemID // every impl item, by its module (funcsNS)
+	implsFor map[types.ItemID][]types.ItemID // impls by the item of their For type
+	refImpls map[types.ItemID][]types.ItemID // impls for &T or mut T, by T's item (memberNS)
 	parts    map[partKey]partVal
 	modNS    map[types.ModuleID]*namespace
-	funcs    map[types.ModuleID]*namespace
-	keeps    map[types.ModuleID]*namespace // keepsNS
 	members  map[types.ItemID]*namespace
 }
 
@@ -330,24 +327,19 @@ func (w *SessionWorld) refImplsOf(t types.ItemID) []types.ItemID {
 	return w.refImpls[t]
 }
 
-// indexImpls builds implsFor, refImpls and modImpls once per world, from
-// the impls of the modules the world sees only (as impls above; borrow's
-// view scans read only the view's module, the body's and their transitive
-// imports, typewalk.go implsFor, all in the reader's closure). Called with
-// w.mu held.
+// indexImpls builds implsFor and refImpls once per world, from the impls of
+// the modules the world sees only. Called with w.mu held.
 func (w *SessionWorld) indexImpls() {
 	if w.implsFor != nil {
 		return
 	}
 	w.implsFor = make(map[types.ItemID][]types.ItemID)
 	w.refImpls = make(map[types.ItemID][]types.ItemID)
-	w.modImpls = make(map[types.ModuleID][]types.ItemID)
 	for _, id := range w.H.implItems() {
 		it := w.Env.Items.Get(id)
 		if !w.Sees(it.Module) {
 			continue
 		}
-		w.modImpls[it.Module] = append(w.modImpls[it.Module], id)
 		im, ok := it.Decl.(*types.ImplDecl)
 		if !ok || im == nil || im.For == types.NoType {
 			continue
@@ -474,81 +466,9 @@ func (w *SessionWorld) memberNS(t *types.Item) *namespace {
 	return n
 }
 
-// ModuleFuncsKey is the Key of a ReadExports read of the functions, consts,
-// globals and impls of module path that borrow's module scan judges
-// (typewalk.go holdStores): path followed by "#fns". No
-// module path contains '#' (ImplKey's and LiteralKey's keys do, never at
-// the end), so it is taken for no module or type namespace read.
-func ModuleFuncsKey(path string) types.Key { return types.KeyFromString(path + funcsSuffix) }
-
-const funcsSuffix = "#fns"
-
-// funcsNS is module m's function list as the reader sees it, memoized per
-// world: by key, every function item of m (Type.Name and primitive methods,
-// impl methods and literals included), const, global and impl; for a reader
-// of another module only the exported ones, the impls and their methods,
-// the part of m's API that holdStores counts for a foreign body. An impl's
-// key spells its For, so adding, removing or retargeting an impl, which no
-// module or type namespace shows (a `for i32`, `for ?V` or `for []V` impl
-// has no type of m to list it), changes the hash; the signatures of the
-// items judged are reads of their own.
-func (w *SessionWorld) funcsNS(m types.ModuleID) *namespace {
-	w.mu.Lock()
-	n, ok := w.funcs[m]
-	w.indexImpls()
-	impls := w.modImpls[m]
-	w.mu.Unlock()
-	if ok {
-		return n
-	}
-	items := w.Env.Items
-	foreign := items.Module(m).Path != w.Reader
-	var ns []nameEntry
-	add := func(it *types.Item) {
-		ns = append(ns, nameEntry{name: it.Key.String(), kind: uint8(it.Kind), exported: it.Exported})
-	}
-	for _, id := range w.H.moduleItems(m) {
-		it := items.Get(id)
-		switch it.Kind {
-		case types.KindFunc, types.KindConst, types.KindGlobal:
-		default:
-			continue
-		}
-		if foreign && !it.Exported && (it.Kind != types.KindFunc || it.Owner == types.NoItem || items.Get(it.Owner).Kind != types.KindImpl) {
-			continue
-		}
-		add(it)
-	}
-	for _, id := range impls {
-		add(items.Get(id))
-	}
-	n = newNamespace(ns)
-	w.mu.Lock()
-	if w.funcs == nil {
-		w.funcs = make(map[types.ModuleID]*namespace)
-	}
-	w.funcs[m] = n
-	w.mu.Unlock()
-	return n
-}
-
 // namespace resolves a ReadNoItem or ReadExports key: a TypeNamespaceKey
-// names a type's member namespace, a ModuleFuncsKey a module's function
-// list, a ModuleKeepsKey its keeping view methods (keepsNS), any other key a
-// module's namespace.
+// names a type's member namespace, any other key a module's namespace.
 func (w *SessionWorld) namespace(k types.Key) (*namespace, bool) {
-	if mk, isKeeps := strings.CutSuffix(k.String(), keepsSuffix); isKeeps {
-		if m, ok := w.module(mk); ok {
-			return w.keepsNS(m), true
-		}
-		return nil, false
-	}
-	if mk, isFuncs := strings.CutSuffix(k.String(), funcsSuffix); isFuncs {
-		if m, ok := w.module(mk); ok {
-			return w.funcsNS(m), true
-		}
-		return nil, false
-	}
 	if tk, isType := strings.CutSuffix(k.String(), ":"); isType {
 		it, ok := w.item(types.KeyFromString(tk))
 		if !ok {

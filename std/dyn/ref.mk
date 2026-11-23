@@ -18,7 +18,7 @@ import std.dyn.erased
 /// Ref is an object whose type is erased: the object's address and its
 /// type's key. It holds the exclusive loan of the object it was made from,
 /// and as a view it is unique: it cannot be copied.
-export view struct Ref {
+export mut view struct Ref {
     p: *u8
     key: u64
 }

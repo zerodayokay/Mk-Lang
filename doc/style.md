@@ -133,8 +133,7 @@ struct Buffers {
     back: HeapText
 }
 
-// `*self into self` says the method stores between two parts of self
-Buffers.Flip(mut self) *self into self {
+Buffers.Flip(mut self) {
     Swap(mut self.front, mut self.back)
     self.back.Clear()
 }
@@ -147,8 +146,6 @@ impl Free for Buffers {
     }
 }
 ```
-
-`*self into self` is rule R11 of the [memory model](memory.md#3-rules).
 
 ```mk
 // verdict: ok

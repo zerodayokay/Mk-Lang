@@ -41,7 +41,7 @@ export App.Note(&self, a: &Arena, io: Io, level: log.Level, line: str) {
 /// Sends `body`, a JSON text, with `status`: gzip-compressed when the request
 /// accepts gzip and the body is at least `GzipMin` bytes. Logs the request
 /// with its status, at `Warn` for a 4xx and `Error` for a 5xx.
-export Reply(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, status: int, body: str): http.Error!void *res into res {
+export Reply(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, status: int, body: str): http.Error!void {
     res.Status(status)
     try res.Header("Content-Type", "application/json")
     var sent := body.Len()
@@ -60,7 +60,7 @@ export Reply(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Respo
 }
 
 /// Sends a problem body: `{"message": ..., "offset": ...}`.
-export Problem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, status: int, message: str, offset: ?int): http.Error!void *res into res {
+export Problem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, status: int, message: str, offset: ?int): http.Error!void {
     p := notes.Problem(message: message, offset: offset)
     try Reply(c, a, io, req, res, status, try Encode(a, &p))
 }
@@ -80,7 +80,7 @@ export Failure(e: store.Error): (status: int, message: str) {
 
 /// Reports a store failure with `Failure`'s status, and a `Retry-After`
 /// header on 503.
-export StoreFailed(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, e: store.Error): http.Error!void *res into res {
+export StoreFailed(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, e: store.Error): http.Error!void {
     f := Failure(e)
     if f.status == 503 {
         try res.Header("Retry-After", "1")
@@ -115,7 +115,7 @@ export AcceptsGzip(req: &http.Request): bool {
 /// byte offset for text that is not UTF-8 or not JSON, and none returned
 /// after it is sent. The value holds views of the body, so it lives in an
 /// arena of the handler's own, and the handler copies what it keeps into `a`.
-export ParseBody(c: &App, a: &Arena, scratch: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!?json.Value from scratch, req *res into res, *req into scratch {
+export ParseBody(c: &App, a: &Arena, scratch: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!?json.Value from scratch, req *req into scratch {
     text := str.From(req.body) else {
         try Problem(c, a, io, req, res, 400, "the body is not UTF-8", none)
         return none

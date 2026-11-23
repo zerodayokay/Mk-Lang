@@ -18,7 +18,7 @@ import std.raw
 // reaches a Counting: plain loads and stores suffice, whatever inner is.
 /// An allocator that passes every request to another and counts the bytes
 /// and allocations live through it, and the peak.
-export view struct Counting {
+export mut view struct Counting {
     own: Own
     inner: &Alloc
     nbytes: Cell[int]

@@ -31,8 +31,8 @@
 // largest window it takes, and at most three times window_limit + 256
 // KiB. Growth to each frame's exact size would not: frames whose windows
 // grow a little each would add up quadratically. Its Reader is
-// ReaderLazy, over core.FilterPortGrow, whose `*self into self` declares
-// the window a read may store into the decoder.
+// ReaderLazy, over core.FilterPort, which takes each frame's window
+// from the decoder's arena.
 
 import std.core
 
@@ -137,7 +137,7 @@ struct ZPos {
 // the frame's window plus a block, and an offset ZSequences admits (at
 // most the window plus this block's output so far) never reaches a byte
 // this block has overwritten.
-ZTake(s: mut ZState) *s into s {
+ZTake(s: mut ZState) {
     s.oom = true
     a := s.a
     w := a.Slice[u8](s.z.wl + 2 * ZBlockMax) else {
@@ -157,7 +157,7 @@ ZTake(s: mut ZState) *s into s {
 
 // ZTakeBufs is ZTake for a lazy state: the input buffer and the literal
 // buffer, both or none, and no window (ZWindow takes each frame's).
-ZTakeBufs(s: mut ZState) *s into s {
+ZTakeBufs(s: mut ZState) {
     s.oom = true
     a := s.a
     ib := a.Slice[u8](ZInCap) else {
@@ -192,7 +192,7 @@ ZNeedWin(fr: &ZFrame): int {
 // largest; exact-size growth could add up quadratically over many
 // slightly growing frames. False, with oom set and the stream left before
 // the frame's first block, when the arena cannot give it.
-ZWindow(s: mut ZState): bool *s into s {
+ZWindow(s: mut ZState): bool {
     need := ZNeedWin(&s.z.fr)
     var size := need
     if w := &s.win {
@@ -293,7 +293,7 @@ ZNewState(a: &Arena, window_limit: int, lazy: bool): ZState from a {
 /// decoding included; allocates nothing, except the buffers when the
 /// constructor could not take them, and for a NewLazy decoder a frame's
 /// window at its header when the one held does not fit it.
-export ZstdDecoder.Read(mut self, r: mut Reader, buf: mut []u8): Error|ReadError!int *self into self {
+export ZstdDecoder.Read(mut self, r: mut Reader, buf: mut []u8): Error|ReadError!int {
     s := self.f.Mut()
     if s.lazy {
         return try ZStateReadGrow(s, r, buf)
@@ -321,15 +321,14 @@ export ZstdDecoder.Reader(mut self, r: mut Reader, buf: mut []u8): Reader from s
 }
 
 /// A Reader of the decoded stream, as Reader, for a decoder from New or
-/// NewLazy. Its reads may store into self what self holds, which the
-/// signature declares as `*self into self`: a NewLazy decoder's window,
-/// taken at each frame's header as Read takes it. Its Io is r's.
+/// NewLazy. Its reads take a NewLazy decoder's window from the decoder's
+/// arena at each frame's header as Read takes it. Its Io is r's.
 ///
 /// It fails with ReadError where Read fails, a window the arena cannot
 /// give included, and from then on on every read. Cause says which
 /// compress.Error ended it. O(1) per call plus the decoding; allocates
 /// what Read allocates.
-export ZstdDecoder.ReaderLazy(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf *self into self {
+export ZstdDecoder.ReaderLazy(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf {
     return (&ZstdPortGrow).Reader(mut self.f, r, buf)
 }
 
@@ -351,10 +350,8 @@ export const ZstdContent = Content(name: "zstd", wrap: ZstdReader)
 // ZstdReader is ZstdContent's wrap: a ZstdDecoder.NewLazy in a, and its
 // ReaderLazy over src. OutOfMemory when a cannot give the decoder's buffers, as
 // GzipReader. A frame's window is taken at its header, so a window a cannot
-// give is the Reader's ReadError. Its `a: &Arena into a` is needed:
-// ReaderLazy's `*self into self` on the decoder in a stores a's contents into
-// a, and the clause is also Content.wrap's, which must cover it.
-ZstdReader(a: &Arena into a, src: mut Reader, buf: mut []u8): OutOfMemory!Reader from a, src, buf {
+// give is the Reader's ReadError.
+ZstdReader(a: &Arena, src: mut Reader, buf: mut []u8): OutOfMemory!Reader from a, src, buf {
     z := ZstdDecoder.NewLazy(a, ZWinDefault)
     // Before any read, Cause is OutOfMemory or none.
     if z.Cause().IsSome() {
@@ -403,13 +400,12 @@ ZstdFill(s: mut ZState, src: mut Reader, dst: mut []u8): ReadError!int {
 
 // ZstdPortGrow is the table of every Reader that ZstdDecoder.ReaderLazy
 // makes.
-const ZstdPortGrow = core.FilterPortGrow[ZState].New(ZstdFillGrow)
+const ZstdPortGrow = core.FilterPort[ZState].New(ZstdFillGrow)
 
 // ZstdFillGrow is ReaderLazy's read: ZStateReadGrow, with every failure
 // made sticky by ended. It may take buffers and windows from s's arena
-// into s (FilterPortGrow's `*d into d`, which ReaderLazy declares as
-// `*self into self`).
-ZstdFillGrow(s: mut ZState, src: mut Reader, dst: mut []u8): ReadError!int *s into s {
+// into s.
+ZstdFillGrow(s: mut ZState, src: mut Reader, dst: mut []u8): ReadError!int {
     if s.ended {
         fail ReadError
     }
@@ -447,7 +443,7 @@ ZStateRead(s: mut ZState, r: mut Reader, buf: mut []u8): Error|ReadError!int {
 // and for ReaderLazy on either: it takes the buffers when the constructor
 // could not, and a frame's window when ZPump stops at a header whose
 // window is not held (-1). A New decoder's window holds every frame's.
-ZStateReadGrow(s: mut ZState, r: mut Reader, buf: mut []u8): Error|ReadError!int *s into s {
+ZStateReadGrow(s: mut ZState, r: mut Reader, buf: mut []u8): Error|ReadError!int {
     if buf.Len() == 0 {
         return 0
     }

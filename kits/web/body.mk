@@ -48,7 +48,7 @@ export Body(g: mut Gen, t: Type) {
 
 /// Answers with status code, `Content-Type: application/json` and v
 /// written by its codec's FormatJson. O(the JSON's length).
-export Reply[T: json.Json](res: mut http.Response, code: int, v: &T): http.Error!void *res into res {
+export Reply[T: json.Json](res: mut http.Response, code: int, v: &T): http.Error!void {
     res.Status(code)
     try res.Header("Content-Type", "application/json")
     var w := res.Writer()

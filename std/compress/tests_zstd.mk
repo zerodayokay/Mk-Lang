@@ -49,7 +49,7 @@ ZtFrame(s: mut []u8, at: int, n: int, x: u8) {
 // ZtDecode reads the stream data to its end through z's Read, or through
 // its ReaderLazy when lazy, and returns the bytes decoded, or -1 on a
 // failure.
-ZtDecode(io: Io, z: mut ZstdDecoder, data: []u8, out: mut []u8, reader: bool): int *z into z {
+ZtDecode(io: Io, z: mut ZstdDecoder, data: []u8, out: mut []u8, reader: bool): int {
     var b := ZtBytes(data: data, pos: 0)
     var sb: [0]u8 = []
     var src := (&ZtBytesPort).Reader(io, mut b, mut sb[..])

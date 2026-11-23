@@ -175,7 +175,7 @@ export End(w: mut Writer, zero: bool): WriteError!void {
 }
 
 /// Reads every line of `r` into `st.entries`.
-SortInput(c: &input.Ctx, st: mut SortState, r: mut Reader): input.Error!void *st into st {
+SortInput(c: &input.Ctx, st: mut SortState, r: mut Reader): input.Error!void {
     var scratch := try Arena.New(c.heap)
     defer scratch.Free()
     if st.zero {
@@ -196,7 +196,7 @@ SortInput(c: &input.Ctx, st: mut SortState, r: mut Reader): input.Error!void *st
 }
 
 /// Copies `line` and its key into `st`'s allocator.
-SortState.Add(mut self, scratch: &Arena, line: str): OutOfMemory!void *self into self {
+SortState.Add(mut self, scratch: &Arena, line: str): OutOfMemory!void {
     key := try KeyOf(scratch, line, &self.keying)
     number := if self.numeric { NumberOf(key) } else { Number.None }
     var e := Entry(line: HeapText.New(self.alloc), key: HeapText.New(self.alloc), number: number)

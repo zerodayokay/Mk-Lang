@@ -136,7 +136,7 @@ Arg(args: []str, i: int): str {
 /// input that fails is reported on `s.err` and the run goes on with the next.
 /// Returns the worst exit status: `Ok`, `Failed` or `NoMemory`.
 /// `step` may keep what it reads in `state`'s own memory.
-export ForEach[S](c: &Ctx, s: mut Streams, stdin: mut Reader, paths: []str, size: int, state: mut S, const step: (fn(c: &Ctx, state: mut S, s: mut Streams, r: mut Reader, name: str): Error!void *state into state)): int *state into state {
+export ForEach[S](c: &Ctx, s: mut Streams, stdin: mut Reader, paths: []str, size: int, state: mut S, const step: fn(c: &Ctx, state: mut S, s: mut Streams, r: mut Reader, name: str): Error!void): int {
     var status := Ok
     buf := c.arena.Slice[u8](if size < 1 { 1 } else { size }) else {
         Report(s, "buffer", &OutOfMemory)

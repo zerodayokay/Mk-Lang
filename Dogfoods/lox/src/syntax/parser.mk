@@ -81,7 +81,7 @@ Parser.Check(&self, kind: Kind): bool {
     return self.current.kind == kind
 }
 
-Parser.Advance(mut self): OutOfMemory!void *self into self {
+Parser.Advance(mut self): OutOfMemory!void {
     self.previous = self.current
     for {
         self.current = self.lexer.Next()
@@ -92,7 +92,7 @@ Parser.Advance(mut self): OutOfMemory!void *self into self {
     }
 }
 
-Parser.Match(mut self, kind: Kind): OutOfMemory!bool *self into self {
+Parser.Match(mut self, kind: Kind): OutOfMemory!bool {
     if !self.Check(kind) {
         return false
     }
@@ -100,7 +100,7 @@ Parser.Match(mut self, kind: Kind): OutOfMemory!bool *self into self {
     return true
 }
 
-Parser.Consume(mut self, kind: Kind, message: str into self): OutOfMemory!void *self into self {
+Parser.Consume(mut self, kind: Kind, message: str into self): OutOfMemory!void {
     if self.Check(kind) {
         try self.Advance()
         return
@@ -143,7 +143,7 @@ Parser.Stmt(mut self, line: int, s: Stmt into self): OutOfMemory!int {
     return self.ast.stmts.Len() - 1
 }
 
-Parser.Enter(mut self): OutOfMemory!bool *self into self {
+Parser.Enter(mut self): OutOfMemory!bool {
     self.depth += 1
     if self.depth > MaxDepth {
         try self.ErrorAt(self.current, "Too much nesting.")
@@ -152,7 +152,7 @@ Parser.Enter(mut self): OutOfMemory!bool *self into self {
     return true
 }
 
-Parser.Synchronize(mut self): OutOfMemory!void *self into self {
+Parser.Synchronize(mut self): OutOfMemory!void {
     self.panicking = false
     for !self.Check(Kind.Eof) {
         if self.previous.kind == Kind.Semicolon {
@@ -166,7 +166,7 @@ Parser.Synchronize(mut self): OutOfMemory!void *self into self {
     }
 }
 
-Parser.Declaration(mut self): OutOfMemory!int *self into self {
+Parser.Declaration(mut self): OutOfMemory!int {
     var s := 0
     if try self.Match(Kind.Fun) {
         s = try self.FunDeclaration()
@@ -181,7 +181,7 @@ Parser.Declaration(mut self): OutOfMemory!int *self into self {
     return s
 }
 
-Parser.FunDeclaration(mut self): OutOfMemory!int *self into self {
+Parser.FunDeclaration(mut self): OutOfMemory!int {
     line := self.previous.line
     try self.Consume(Kind.Identifier, "Expect function name.")
     name := self.previous.text
@@ -207,7 +207,7 @@ Parser.FunDeclaration(mut self): OutOfMemory!int *self into self {
     return try self.Stmt(line, Stmt.Function(decl: self.ast.funs.Len() - 1))
 }
 
-Parser.VarDeclaration(mut self): OutOfMemory!int *self into self {
+Parser.VarDeclaration(mut self): OutOfMemory!int {
     line := self.previous.line
     try self.Consume(Kind.Identifier, "Expect variable name.")
     name := self.previous.text
@@ -219,7 +219,7 @@ Parser.VarDeclaration(mut self): OutOfMemory!int *self into self {
     return try self.Stmt(line, Stmt.Var(name: name, init: init))
 }
 
-Parser.Statement(mut self): OutOfMemory!int *self into self {
+Parser.Statement(mut self): OutOfMemory!int {
     line := self.current.line
     if try self.Match(Kind.Print) {
         e := try self.Expression()
@@ -256,7 +256,7 @@ Parser.Statement(mut self): OutOfMemory!int *self into self {
     return try self.Stmt(line, Stmt.Expression(expr: e))
 }
 
-Parser.IfStatement(mut self, line: int): OutOfMemory!int *self into self {
+Parser.IfStatement(mut self, line: int): OutOfMemory!int {
     try self.Consume(Kind.LeftParen, "Expect '(' after 'if'.")
     cond := try self.Expression()
     try self.Consume(Kind.RightParen, "Expect ')' after condition.")
@@ -269,7 +269,7 @@ Parser.IfStatement(mut self, line: int): OutOfMemory!int *self into self {
 }
 
 /// `for (init; cond; step) body` becomes `{ init; while (cond) { body; step; } }`.
-Parser.ForStatement(mut self, line: int): OutOfMemory!int *self into self {
+Parser.ForStatement(mut self, line: int): OutOfMemory!int {
     try self.Consume(Kind.LeftParen, "Expect '(' after 'for'.")
     var init: ?int = none
     if try self.Match(Kind.Semicolon) {
@@ -311,7 +311,7 @@ Parser.ForStatement(mut self, line: int): OutOfMemory!int *self into self {
     return try self.Stmt(line, Stmt.Block(body: span))
 }
 
-Parser.BlockBody(mut self): OutOfMemory!Span *self into self {
+Parser.BlockBody(mut self): OutOfMemory!Span {
     mark := self.scratch.Len()
     if !try self.Enter() {
         return try self.Collect(mark)
@@ -325,7 +325,7 @@ Parser.BlockBody(mut self): OutOfMemory!Span *self into self {
     return try self.Collect(mark)
 }
 
-Parser.Expression(mut self): OutOfMemory!int *self into self {
+Parser.Expression(mut self): OutOfMemory!int {
     if !try self.Enter() {
         return try self.Expr(self.current.line, Expr.Nil)
     }
@@ -334,7 +334,7 @@ Parser.Expression(mut self): OutOfMemory!int *self into self {
     return e
 }
 
-Parser.Assignment(mut self): OutOfMemory!int *self into self {
+Parser.Assignment(mut self): OutOfMemory!int {
     line := self.current.line
     target := try self.Or()
     if !try self.Match(Kind.Equal) {
@@ -355,7 +355,7 @@ Parser.Assignment(mut self): OutOfMemory!int *self into self {
     return target
 }
 
-Parser.Or(mut self): OutOfMemory!int *self into self {
+Parser.Or(mut self): OutOfMemory!int {
     var left := try self.And()
     for self.Check(Kind.Or) {
         line := self.current.line
@@ -366,7 +366,7 @@ Parser.Or(mut self): OutOfMemory!int *self into self {
     return left
 }
 
-Parser.And(mut self): OutOfMemory!int *self into self {
+Parser.And(mut self): OutOfMemory!int {
     var left := try self.Binary(0)
     for self.Check(Kind.And) {
         line := self.current.line
@@ -390,7 +390,7 @@ OpLevel(kind: Kind): int {
 }
 
 /// The binary operators of `level` and above, all left-associative.
-Parser.Binary(mut self, level: int): OutOfMemory!int *self into self {
+Parser.Binary(mut self, level: int): OutOfMemory!int {
     if level > 3 {
         return try self.Unary()
     }
@@ -405,7 +405,7 @@ Parser.Binary(mut self, level: int): OutOfMemory!int *self into self {
     return left
 }
 
-Parser.Unary(mut self): OutOfMemory!int *self into self {
+Parser.Unary(mut self): OutOfMemory!int {
     if !self.Check(Kind.Bang) && !self.Check(Kind.Minus) {
         return try self.Call()
     }
@@ -420,7 +420,7 @@ Parser.Unary(mut self): OutOfMemory!int *self into self {
     return try self.Expr(line, Expr.Unary(op: op, right: right))
 }
 
-Parser.Call(mut self): OutOfMemory!int *self into self {
+Parser.Call(mut self): OutOfMemory!int {
     var e := try self.Primary()
     for {
         line := self.current.line
@@ -437,7 +437,7 @@ Parser.Call(mut self): OutOfMemory!int *self into self {
     }
 }
 
-Parser.Arguments(mut self, close: Kind, message: str into self): OutOfMemory!Span *self into self {
+Parser.Arguments(mut self, close: Kind, message: str into self): OutOfMemory!Span {
     mark := self.scratch.Len()
     if !self.Check(close) {
         for {
@@ -455,7 +455,7 @@ Parser.Arguments(mut self, close: Kind, message: str into self): OutOfMemory!Spa
     return try self.Collect(mark)
 }
 
-Parser.Primary(mut self): OutOfMemory!int *self into self {
+Parser.Primary(mut self): OutOfMemory!int {
     t := self.current
     line := t.line
     match t.kind {

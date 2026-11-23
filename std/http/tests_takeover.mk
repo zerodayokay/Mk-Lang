@@ -7,7 +7,7 @@ import std.net
 
 // TkTake takes the connection, writes "taken:" and rest on it, and
 // abandons it; a second Takeover must be none.
-TkTake(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res {
+TkTake(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void {
     t := link.Takeover() else {
         fail Status(code: 500)
     }

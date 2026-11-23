@@ -141,31 +141,31 @@ struct App {
     n: int
 }
 
-Hello(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Hello(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"hi\n")
 }
 
-Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(req.body)
 }
 
-LenLie(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+LenLie(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("Content-Length", "5")
     try res.Body(b"12345")
     fail http.Status(code: 404)
 }
 
-Short(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Short(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("Content-Length", "3")
     try res.Body(b"0123456789")
 }
 
-Gzip(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Gzip(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("Transfer-Encoding", "gzip")
     try res.Body(b"abc")
 }
 
-NoContent(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+NoContent(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("Transfer-Encoding", "chunked")
     try res.Body(b"abc")
     res.Status(204)
@@ -185,20 +185,20 @@ SetCode(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response):
     res.Status(int(n))
 }
 
-CloseMe(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+CloseMe(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("Connection", "close")
     try res.Body(b"bye\n")
 }
 
-A(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+A(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"A")
 }
 
-B(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+B(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"B")
 }
 
-AB(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+AB(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"ab")
 }
 
@@ -218,7 +218,7 @@ const Routes: []http.Route[App] = [
     http.Route[App](method: "GET", pattern: "/ab", handler: AB),
 ]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

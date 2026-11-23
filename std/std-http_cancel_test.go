@@ -44,11 +44,11 @@ Bump(c: &App, io: Io, held: int, waiting: int, big: int): Canceled!void {
     g.Unlock()
 }
 
-Hello(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Hello(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"hi\n")
 }
 
-Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(req.body)
 }
 
@@ -65,7 +65,7 @@ Wait(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): ht
 
 // Big answers 16 MiB, more than the loopback buffers hold, to a client
 // that never reads, so Send blocks.
-Big(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Big(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     b := try a.Slice[u8](16777216)
     try res.Body(b[..])
     try Bump(c, io, 0, 0, 1)
@@ -79,7 +79,7 @@ StateOf(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response):
     try Print(mut w, "held {h} waiting {wt} big {b}\n", (h: st.held, wt: st.waiting, b: st.big))
 }
 
-CancelNow(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+CancelNow(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     var g := try c.state.Lock(io)
     var st := *g.Ref()
     st.cancel = true
@@ -97,7 +97,7 @@ const Routes: []http.Route[App] = [
     http.Route[App](method: "GET", pattern: "/cancel", handler: CancelNow),
 ]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

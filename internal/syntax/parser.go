@@ -435,7 +435,7 @@ func (p *parser) skip(mode skipStop) {
 				if k == ast.TokTerm {
 					return
 				}
-				if !first && p.lineEnd() && itemStarter(k) {
+				if !first && p.lineEnd() && (itemStarter(k) || k == ast.TokMut && p.peekKind(1) == ast.TokView) {
 					return
 				}
 			case stopStmt:

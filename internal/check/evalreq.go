@@ -289,7 +289,7 @@ func (c *Checker) constPointee(v types.ConstID, site source.Span, rec recorder) 
 		return nil
 	}
 	k := &c.known
-	interior := []types.ItemID{k.Cell, k.Mutex, k.Chan, k.Arena, k.Atomic, k.Scope}
+	interior := []types.ItemID{k.Cell, k.Mutex, k.Chan, k.SpinCore, k.Arena, k.Atomic, k.Scope}
 	bad := func(t types.TypeID) bool {
 		ty := c.cfg.Types.Get(t)
 		switch ty.Kind {

@@ -25,7 +25,7 @@ import std.raw
 /// everything back at once with Reset or Free. Nothing is freed one by one.
 /// Values in the arena borrow it, so the compiler rejects a use after Reset
 /// or Free. Linear: it ends in Free.
-export linear view struct Arena {
+export linear mut view struct Arena {
     hdr: *ArenaHdr
 }
 
@@ -832,7 +832,7 @@ export ArenaHeld(a: &Arena): int {
 /// (proc.Run's readers). Internal to std. Arena is not Send because its
 /// source may be confined to one task; a HeapArena's source is always a
 /// Heap, which is Share, so whichever task holds it may use it.
-export linear view struct HeapArena {
+export linear mut view struct HeapArena {
     x: Arena
 }
 

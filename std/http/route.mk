@@ -48,7 +48,7 @@
 /// cleaned. When routes match the path with other methods only, it is
 /// Status(405) with res's Allow field naming them; when none matches, it
 /// is Status(404).
-export Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, res: mut Response): Error!void *res into res, *routes into a {
+export Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, res: mut Response): Error!void *routes into a {
     if HasDotSegment(req.path) {
         fail Status(code: 400)
     }

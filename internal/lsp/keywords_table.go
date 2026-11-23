@@ -157,7 +157,7 @@ var keywordDocs = map[string][]keywordDoc{
 		{Section: "reference: Errors", Text: "`e else { ... }` handles a failure where it happens. When `e` succeeds, the result is its value. When it fails, the block runs. `else` works on `E!T` and on an optional `?T`, where `none` is the failure."},
 	},
 	"ends": {
-		{Section: "reference: Ownership and borrowing", Text: "`from`, `into`, `ends`, `view struct`, `linear struct`: What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | Signatures at a glance"},
+		{Section: "reference: Ownership and borrowing", Text: "`from`, `into`, `ends`, `view struct`, `mut view struct`, `linear struct`: What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | Signatures at a glance"},
 		{Section: "memory model: Signatures at a glance", Text: "`ends self`: The call ends every loan on `self` | R18"},
 	},
 	"ensures": {
@@ -194,7 +194,7 @@ var keywordDocs = map[string][]keywordDoc{
 		{Section: "reference: Statements", Text: "`for` is Mk's only loop. Its header says what it repeats over."},
 	},
 	"from": {
-		{Section: "reference: Ownership and borrowing", Text: "`from`, `into`, `ends`, `view struct`, `linear struct`: What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | Signatures at a glance"},
+		{Section: "reference: Ownership and borrowing", Text: "`from`, `into`, `ends`, `view struct`, `mut view struct`, `linear struct`: What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | Signatures at a glance"},
 		{Section: "memory model: Rules", Text: "`from p`: Borrows `p`: the result holds `H(p)`, and `p` stays borrowed, whatever the table above says | Several parameters could supply the result"},
 	},
 	"gen": {
@@ -256,7 +256,7 @@ var keywordDocs = map[string][]keywordDoc{
 		{Section: "reference: Unsafe and C", Text: "`lateout(class) p`: An output assigned after all inputs are read, so it may share an input's register"},
 	},
 	"linear": {
-		{Section: "reference: Declarations", Text: "`linear struct`, `view struct`: A struct with a stated kind"},
+		{Section: "reference: Declarations", Text: "`linear struct`, `view struct`, `mut view struct`: A struct with a stated kind"},
 		{Section: "memory model: Signatures at a glance", Text: "`linear struct`: Values of the type must be consumed | R1, R2"},
 	},
 	"match": {
@@ -264,7 +264,7 @@ var keywordDocs = map[string][]keywordDoc{
 	},
 	"mut": {
 		{Section: "reference: Types and kinds", Text: "`&T`, `mut T`: Shared and exclusive references. Never null | Plain, Unique"},
-		{Section: "memory model: What each operation does to loans", Text: "`mut p`, no dereference in `p`: A new exclusive loan on `p` | `mut` of `p`, deep"},
+		{Section: "memory model: Signatures at a glance", Text: "`mut view struct`: A `view struct` that also accepts loan stores through `&` | R16, R18"},
 	},
 	"naked": {
 		{Section: "reference: Unsafe and C", Text: "`naked F() { ... }`: A function with no prologue or epilogue"},
@@ -372,8 +372,8 @@ var keywordDocs = map[string][]keywordDoc{
 		{Section: "reference: Declarations", Text: "`var Name: T = e`: A global variable"},
 	},
 	"view": {
-		{Section: "reference: Declarations", Text: "`linear struct`, `view struct`: A struct with a stated kind"},
-		{Section: "memory model: Signatures at a glance", Text: "`view struct`: The type borrows, though no field shows it | R18"},
+		{Section: "reference: Declarations", Text: "`linear struct`, `view struct`, `mut view struct`: A struct with a stated kind"},
+		{Section: "memory model: Signatures at a glance", Text: "`view struct`: The type borrows, though no field shows it; read-only for loans through `&` | R18"},
 	},
 	"void": {
 		{Section: "reference: Types and kinds", Text: "`void` is the result of a function that returns no value; leaving out the result type means `void`. `never` is the result of a function that does not return at all, such as `Panic`."},

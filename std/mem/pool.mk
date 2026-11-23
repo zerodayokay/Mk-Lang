@@ -116,7 +116,7 @@ export view struct Pool[T] {
     vacant: List[u32]
     live: int
     base: u32
-    arena: &Arena
+    alloc: &Alloc
 }
 
 // PoolSlot is slot i of p as a mutable reference; the callers keep i < n.
@@ -162,7 +162,7 @@ PoolGrow[T](p: mut Pool[T]): bool {
     if c <= p.cap || c > 0x7FFFFFFFFFFFFFFF / size {
         return false
     }
-    al := p.arena.Alloc()
+    al := p.alloc
     var d := p.slots
     unsafe "the buffer is p's own block of cap slots, all written, or a fresh block of c; the cap slots move bitwise and the old copies are never read again" {
         if p.cap == 0 || !core.ResizeBytes(al, raw.PtrCast[Slot[T], u8](p.slots), p.cap * size, c * size, align) {
@@ -193,7 +193,7 @@ PoolBase(id: u64): u32 {
 
 /// An empty pool in a. O(1); allocates nothing until the first Add.
 export Pool[T].New(a: &Arena): Pool[T] {
-    return Pool[T](slots: raw.Null[Slot[T]](), n: 0, cap: 0, vacant: List[u32].New(a), live: 0, base: PoolBase(PoolIds.next.Add(1)), arena: a)
+    return Pool[T](slots: raw.Null[Slot[T]](), n: 0, cap: 0, vacant: List[u32].New(a), live: 0, base: PoolBase(PoolIds.next.Add(1)), alloc: a.Alloc())
 }
 
 /// Stores x and returns its handle: in the slot freed last when there is

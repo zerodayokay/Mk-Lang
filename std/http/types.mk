@@ -62,7 +62,7 @@ export struct Route[C] {
     export pattern: str
     /// The function that answers a request that matches, given the context
     /// Dispatch is given.
-    export handler: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res)
+    export handler: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void
 }
 
 /// The value of the first header field named name, or none when there is

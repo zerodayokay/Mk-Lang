@@ -282,7 +282,7 @@ struct CnApp {
 }
 
 // CnLate sleeps 20 ms (cut short by a cancel) and answers "late".
-CnLate(c: &CnApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res {
+CnLate(c: &CnApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void {
     io.Sleep(time.Millis(20)) else {}
     try res.Body(b"late")
 }

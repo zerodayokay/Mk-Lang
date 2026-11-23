@@ -56,6 +56,7 @@ var knownTable = []knownField{
 	{func(k *types.KnownItems) *types.ItemID { return &k.Writer }, "", "", "Writer"},
 	{func(k *types.KnownItems) *types.ItemID { return &k.Mutex }, "", "", "Mutex"},
 	{func(k *types.KnownItems) *types.ItemID { return &k.Chan }, "", "", "Chan"},
+	{func(k *types.KnownItems) *types.ItemID { return &k.SpinCore }, "", "", "SpinCore"},
 	{func(k *types.KnownItems) *types.ItemID { return &k.Atomic }, knownRaw, "", "Atomic"},
 	{func(k *types.KnownItems) *types.ItemID { return &k.Vec }, knownSimd, "", "Vec"},
 	{func(k *types.KnownItems) *types.ItemID { return &k.Mask }, knownSimd, "", "Mask"},

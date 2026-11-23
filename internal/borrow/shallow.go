@@ -37,9 +37,10 @@ import "mk/internal/types"
 // inlineFields and factsOf memoize and record the reads a walk makes; this
 // adds no state of its own.
 func (w *walker) shallow(t types.TypeID) bool {
-	// Nothing writable by type inline (a Cell, Mutex or atomic by
-	// value): a shared path to the holder could store a new reference.
-	if w.writableByType(t) || w.opaqueInline(t, map[types.TypeID]bool{}) {
+	// Nothing writable by type or a view inline: a shared path to a writable
+	// holder could store a new reference, and a view's hidden backing storage
+	// (such as HeapList's *Alloc) carries provenance loans that stay deep.
+	if w.writableByType(t) || w.holdsView(t) || w.opaqueInline(t, map[types.TypeID]bool{}) {
 		return false
 	}
 	for _, s := range w.refSteps(t).steps {

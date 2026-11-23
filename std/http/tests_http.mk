@@ -265,7 +265,7 @@ struct ThApp {
     n: int
 }
 
-ThHello(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThHello(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"hi\n")
 }
 
@@ -361,43 +361,43 @@ test "A cancel ends Conn waiting in the middle of a head" (sys: &System) {
 }
 
 // A route table where each handler answers its name as the body.
-ThId(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThId(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"id")
 }
 
-ThNew(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThNew(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"new")
 }
 
-ThRest(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThRest(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"rest")
 }
 
-ThTwo(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThTwo(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"two")
 }
 
-ThLit(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThLit(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"lit")
 }
 
-ThPost(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThPost(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"post")
 }
 
-ThGet(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThGet(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"get")
 }
 
-ThHeadOnly(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThHeadOnly(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"head")
 }
 
-ThT1(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThT1(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"t1")
 }
 
-ThT2(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void *res into res {
+ThT2(c: &ThApp, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void {
     try res.Body(b"t2")
 }
 

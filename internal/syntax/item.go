@@ -144,7 +144,7 @@ func (p *parser) parseItemInner() ast.Item {
 		it = p.parseGen(start)
 	case k == ast.TokTest:
 		it = p.parseTest(start)
-	case k == ast.TokLinear || k == ast.TokView || k == ast.TokStruct || (k == ast.TokIdent && (p.packedModifier() || p.alignModifier())):
+	case k == ast.TokLinear || k == ast.TokView || k == ast.TokMut || k == ast.TokStruct || (k == ast.TokIdent && (p.packedModifier() || p.alignModifier())):
 		it = p.parseStruct(start)
 	case k == ast.TokEnum:
 		it = p.parseEnum(start)
@@ -214,13 +214,15 @@ func (p *parser) parseItemInner() ast.Item {
 }
 
 // packedModifier decides whether an Ident packed at item position is the
-// modifier when struct, linear, view or packed follows, or "(" Int.
+// modifier when struct, linear, view, mut view or packed follows, or "(" Int.
 func (p *parser) packedModifier() bool {
 	if !p.atWord("packed") {
 		return false
 	}
 	switch k := p.peekKind(1); {
 	case k == ast.TokStruct || k == ast.TokLinear || k == ast.TokView:
+		return true
+	case k == ast.TokMut && (p.peekKind(2) == ast.TokView || p.peekKind(2) == ast.TokStruct):
 		return true
 	case p.peekWord(1, "packed"):
 		return true
@@ -304,8 +306,8 @@ func (p *parser) parseTest(start uint32) ast.Item {
 	return n
 }
 
-// parseStruct reads { "linear" | "view" | Packed } "struct" Name [ TypeParams ]
-// "{" { Member Term } "}".
+// parseStruct reads { "linear" | [ "mut" ] "view" | Packed | Aligned }
+// "struct" Name [ TypeParams ] "{" { Member Term } "}".
 func (p *parser) parseStruct(start uint32) ast.Item {
 	n := &ast.StructDecl{}
 	p.itemStart(&n.Base, start)
@@ -316,6 +318,20 @@ func (p *parser) parseStruct(start uint32) ast.Item {
 				p.errHere("`linear` written twice")
 			}
 			n.Linear = true
+			p.next()
+			continue
+		case p.at(ast.TokMut):
+			mutSpan := p.curSpan()
+			p.next()
+			if !p.at(ast.TokView) {
+				p.syntaxErr(mutSpan, "`mut` on a struct applies only to `view`: write `mut view struct`")
+				continue
+			}
+			if n.View {
+				p.errHere("`view` written twice")
+			}
+			n.View = true
+			n.MutView = true
 			p.next()
 			continue
 		case p.at(ast.TokView):
@@ -372,7 +388,7 @@ func (p *parser) parsePacked() *ast.Packed {
 		}
 		p.expect(ast.TokRParen)
 		switch {
-		case p.at(ast.TokStruct), p.at(ast.TokLinear), p.at(ast.TokView), p.atWord("packed"), p.atWord("align"):
+		case p.at(ast.TokStruct), p.at(ast.TokLinear), p.at(ast.TokView), p.at(ast.TokMut), p.atWord("packed"), p.atWord("align"):
 		default:
 			p.expected("`struct`")
 		}

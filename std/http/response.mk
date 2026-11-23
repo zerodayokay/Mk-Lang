@@ -8,19 +8,35 @@
 // the fields, a Content-Length the handler did not set, the blank line and
 // the body in one Writer pass (RFC 9112 sections 4, 6 and 7.1).
 
+// BodyBytes holds the response body bytes copied into the response's arena.
+// Holding only the arena reference and a byte slice (no carriers), replacing
+// its slice keeps Response.Body free of `*self into self`.
+struct BodyBytes {
+    arena: &Arena
+    buf: []u8
+}
+
+BodyBytes.Set(mut self, data: []u8): OutOfMemory!void {
+    b := try self.arena.Slice[u8](data.Len())
+    (mut b[..]).CopyFrom(data)
+    self.buf = b[..]
+}
+
+BodyBytes.Clear(mut self) {
+    self.buf = "".AsBytes()
+}
+
 /// A response under construction: a status, header fields and a body, all
 /// in the request's arena. The server hands one to each handler and sends
 /// it when the handler returns.
 ///
 /// Header and Body copy what they are given into the arena, so a handler
-/// stores no loan of its own into the response. They do store a loan of
-/// the response into a deeper part of it, which their signatures state as
-/// `*self into self`; a handler that calls them states `*res into res`.
+/// stores no loan of its own into the response.
 export view struct Response {
     arena: &Arena
     code: int
     headers: List[Header]
-    data: []u8
+    data: BodyBytes
     text: Text
     head: bool
     close: bool
@@ -37,7 +53,7 @@ const MaxChunk = 16384
 /// A 200 response with no fields and an empty body, in a. O(1); allocates
 /// nothing until a field or body bytes are added.
 export Response.New(a: &Arena): Response {
-    return Response(arena: a, code: 200, headers: List[Header].New(a), data: "".AsBytes(), text: Text.New(a), head: false, close: false, old: false, fl: NotFlushed())
+    return Response(arena: a, code: 200, headers: List[Header].New(a), data: BodyBytes(arena: a, buf: "".AsBytes()), text: Text.New(a), head: false, close: false, old: false, fl: NotFlushed())
 }
 
 /// Sets the status code. O(1); allocates nothing.
@@ -55,7 +71,7 @@ export Response.Status(mut self, code: int) {
 ///
 /// CR, LF and NUL in value become spaces, so a value cannot split the
 /// response. A field whose name is not a token is not sent.
-export Response.Header(mut self, name: str, value: str): OutOfMemory!void *self into self {
+export Response.Header(mut self, name: str, value: str): OutOfMemory!void {
     n := try self.arena.Dup(name)
     v := try CleanValue(self.arena, value)
     try self.headers.Push(Header(name: n, value: v))
@@ -64,10 +80,8 @@ export Response.Header(mut self, name: str, value: str): OutOfMemory!void *self 
 /// Sets the body to a copy of data, in the response's arena; what Writer
 /// writes follows it. Fails with OutOfMemory when the arena is full. O(n);
 /// allocates data's length in the arena.
-export Response.Body(mut self, data: []u8): OutOfMemory!void *self into self {
-    b := try self.arena.Slice[u8](data.Len())
-    (mut b[..]).CopyFrom(data)
-    self.data = b[..]
+export Response.Body(mut self, data: []u8): OutOfMemory!void {
+    try self.data.Set(data)
     // New bytes: after a Flush the next one sends them whole.
     self.fl.dsent = 0
 }
@@ -147,7 +161,7 @@ export Response.Send(&self, io: Io, w: mut Writer): Error!void {
     }
     tb := self.text.Str().AsBytes()
     if !bodyless && !chunked && !user_len {
-        n := self.data.Len() + tb.Len()
+        n := self.data.buf.Len() + tb.Len()
         try Print(w, "Content-Length: {n}\r\n", (n))
     }
     if self.close {
@@ -156,11 +170,11 @@ export Response.Send(&self, io: Io, w: mut Writer): Error!void {
     try w.Str("\r\n")
     if !bodyless && !self.head {
         if chunked {
-            try WriteChunks(w, self.data)
+            try WriteChunks(w, self.data.buf)
             try WriteChunks(w, tb)
             try w.Str("0\r\n\r\n")
         } else {
-            try w.Bytes(self.data)
+            try w.Bytes(self.data.buf)
             try w.Bytes(tb)
         }
     }

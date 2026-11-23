@@ -22,7 +22,7 @@ import std.raw
 /// An allocator that passes requests to another while the bytes live
 /// through it stay within a limit, and refuses the request that would
 /// pass it.
-export view struct Limit {
+export mut view struct Limit {
     own: Own
     inner: &Alloc
     max: int

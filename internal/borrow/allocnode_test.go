@@ -66,8 +66,8 @@ func TestAllocatorNodeOfItsOwn(t *testing.T) {
 	if pi.nA == noRoot {
 		t.Fatalf("Deep with a List field: no p#A")
 	}
-	if c.roots[pi.n2].allocator || !c.roots[pi.n2].carrier || !c.roots[pi.n2].writable {
-		t.Fatalf("p#2: allocator %v carrier %v writable %v; want false, true, true",
+	if c.roots[pi.n2].allocator || !c.roots[pi.n2].carrier || c.roots[pi.n2].writable {
+		t.Fatalf("p#2: allocator %v carrier %v writable %v; want false, true, false (plain List[i32] is read-only)",
 			c.roots[pi.n2].allocator, c.roots[pi.n2].carrier, c.roots[pi.n2].writable)
 	}
 	if a := &c.roots[pi.nA]; !a.allocator || a.kind != rkAbstract || a.depth != 2 || a.param != 1 {

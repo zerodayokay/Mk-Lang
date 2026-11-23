@@ -1,13 +1,13 @@
 // verdict: ok
 // rule: D-456
-// note: std.http's handler type states *res into res; a handler that sets a header or a body writes the clause, one that only fails needs none, and both fit a Route
+// note: http.Response is a read-only view, so handlers calling Header and Body need no `*res into res` and fit http.Route and http.Serve directly
 import std.http
 
 struct App {
     greeting: str
 }
 
-Greet(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Greet(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("content-type", "text/plain")
     try res.Body(b"hello\n")
 }
@@ -21,7 +21,7 @@ const Routes: []http.Route[App] = [
     http.Route[App](method: "GET", pattern: "/old", handler: Gone),
 ]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

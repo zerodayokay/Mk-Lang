@@ -88,7 +88,7 @@ Retryable(code: int): bool {
 }
 
 // Attempt makes one request for job and writes its result into res.
-Attempt(a: &Arena into a, c: &http.Client, io: Io, job: &Job, al: &Alloc, res: mut Outcome): Failure!void *job into a {
+Attempt(a: &Arena, c: &http.Client, io: Io, job: &Job, al: &Alloc, res: mut Outcome): Failure!void *job into a {
     var u := try url.Parse(a, job.link, none)
     if job.query.Len() > 0 {
         q := u.Query()

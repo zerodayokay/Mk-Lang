@@ -40,16 +40,16 @@ func (c *checker) constValue(item types.ItemID) (types.ConstID, bool) {
 // constTakes reports whether const value v may point into memory that takes a
 // store of a loan, judged on the value as storesFirst judges a type: a
 // relocated pointer word whose pointee is a carrier writable by type (a
-// Mutex[?&i32] the initializer allocated in EvalArena), or a pointee that
-// holds such a pointer, at any depth; or a view held inline, in the value or
-// in a pointee, that storesFirst counts (its type arguments hold loans, or its
-// signatures keep or hand out such a value: viewKeeps). Whether the const's
-// own bytes are writable by type is staticOf's, as for any static. A pointer
-// word that is none, or a slice of no element, points nowhere, so
-// DefaultClientLimits (`proxy: none`, `decoders: []`) takes no store, though
-// its `?&url.Url` field's type would. A function word holds no memory. The
-// values are walked on an explicit stack, depth first in relocation order, so
-// a deep value (a 2,000,000-node list) costs heap, not Go stack.
+// Mutex[?&i32] or mut view the initializer allocated in EvalArena), or a
+// pointee that holds such a pointer, at any depth; or a mut view held inline,
+// or a plain view whose type arguments are writable, in the value or in a
+// pointee. Whether the const's own bytes are writable by type is staticOf's,
+// as for any static. A pointer word that is none, or a slice of no element,
+// points nowhere, so DefaultClientLimits (`proxy: none`, `decoders: []`) takes
+// no store, though its `?&url.Url` field's type would. A function word holds
+// no memory. The values are walked on an explicit stack, depth first in
+// relocation order, so a deep value (a 2,000,000-node list) costs heap, not
+// Go stack.
 func (w *walker) constTakes(v types.ConstID) bool {
 	consts := w.tab.Consts()
 	seen := map[types.ConstID]bool{v: true}
@@ -78,11 +78,11 @@ func (w *walker) constTakes(v types.ConstID) bool {
 	return false
 }
 
-// inlineTakes is firstTakes's view rule over t's inline bytes only: a view
-// held inline whose type arguments hold loans or whose signatures keep or
-// hand out memory that takes stores (viewKeeps). The reference levels are
-// left to the value's relocations (constTakes). A type parameter or Self
-// counts; a const's type has none.
+// inlineTakes is firstTakes's view rule over t's inline bytes only, behind a
+// shared access (a const value of a view is never mutated by value): a mut
+// view held inline, or a plain view whose type arguments are writable or take
+// stores inline. The reference levels are left to the value's relocations
+// (constTakes). A type parameter or Self counts; a const's type has none.
 func (w *walker) inlineTakes(t types.TypeID, seen map[types.TypeID]bool) bool {
 	if seen[t] {
 		return false
@@ -95,14 +95,17 @@ func (w *walker) inlineTakes(t types.TypeID, seen map[types.TypeID]bool) bool {
 	case types.KParam, types.KSelf:
 		return true
 	}
-	if ty.Kind == types.KNamed && w.factsOf(t).View {
-		for _, a := range ty.Args {
-			if !a.IsConst && w.carrier(a.Type) {
-				return true
-			}
-		}
-		if w.viewKeeps(t, ty, genNone) {
+	if ty.Kind == types.KNamed {
+		f := w.factsOf(t)
+		if f.MutView {
 			return true
+		}
+		if f.View {
+			for _, a := range ty.Args {
+				if !a.IsConst && w.carrier(a.Type) && (w.writableByType(a.Type) || w.inlineTakes(a.Type, seen)) {
+					return true
+				}
+			}
 		}
 	}
 	for _, f := range w.inlineFields(t) {

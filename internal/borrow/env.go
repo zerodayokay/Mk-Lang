@@ -64,10 +64,6 @@ type Env struct {
 	// function (fix.go): check's (*Checker).FieldClause. Nil
 	// means the fix is omitted.
 	FieldClause func(callee types.ItemID) (FieldClause, bool)
-	// Impls is the session's cache of the view scans' impl indexes
-	// (typewalk_view.go), shared by the bodies of one session and safe for
-	// concurrent use. Nil gives each body its own; the answers are the same.
-	Impls *ImplCache
 }
 
 // FieldClause is a callee's `from p.f` clause that its body shows: the text,

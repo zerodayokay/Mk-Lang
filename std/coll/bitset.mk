@@ -18,7 +18,7 @@ import std.raw
 export view struct Bitset {
     ptr: *u64
     bits: int
-    arena: &Arena
+    alloc: &Alloc
 }
 
 // BitWords is the number of words that hold bits bits: ceil(bits / 64).
@@ -41,7 +41,7 @@ export Bitset.New(a: &Arena, bits: int): OutOfMemory!Bitset {
     unsafe "the slice's data pointer; the arena keeps the words alive while the Bitset holds its loan" {
         p = raw.DataMut(s)
     }
-    return Bitset(ptr: p, bits: bits, arena: a)
+    return Bitset(ptr: p, bits: bits, alloc: a.Alloc())
 }
 
 // BitWord is the index of the word holding bit i, after the bounds check

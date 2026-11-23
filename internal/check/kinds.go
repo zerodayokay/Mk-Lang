@@ -255,7 +255,7 @@ func (w *factsWalk) compute(t types.TypeID) (types.Facts, int) {
 		return f, low
 	case types.KArray, types.KOptional, types.KErrorUnion:
 		e, low := w.facts(ty.Elem)
-		e.Allocator, e.SliceImpl, e.IsFn, e.View = false, false, false, false
+		e.Allocator, e.SliceImpl, e.IsFn, e.View, e.MutView = false, false, false, false, false
 		return e, low
 	case types.KRecord:
 		f, low := plain, noLow
@@ -282,6 +282,7 @@ func combine(f, x types.Facts) types.Facts {
 	f.Kind = max(f.Kind, x.Kind)
 	f.Carrier = f.Carrier || x.Carrier
 	f.Interior = f.Interior || x.Interior
+	f.LoanInterior = f.LoanInterior || x.LoanInterior
 	f.Send = f.Send && x.Send
 	f.Share = f.Share && x.Share
 	f.Freeze = f.Freeze && x.Freeze
@@ -344,7 +345,27 @@ func (w *factsWalk) named(t types.TypeID, ty *types.Type) (types.Facts, int) {
 			f.Kind = max(f.Kind, types.Unique)
 		}
 		f.View = d.View
+		f.MutView = d.MutView
 		f.Carrier = f.Carrier || d.View
+		if d.MutView {
+			f.Interior = true
+			f.LoanInterior = true
+			f.Freeze = false
+		} else if d.View {
+			// A plain view struct cannot accept loan stores into its own
+			// storage through `&self`, but its elements (type arguments) may
+			// be loan-interior-writable (e.g. `Box[Mutex[?&i32]]`,
+			// `List[Cell[&i32]]`).
+			fr := &w.stack[len(w.stack)-1]
+			for _, af := range fr.args {
+				if af.LoanInterior {
+					f.LoanInterior = true
+				}
+			}
+			if f.LoanInterior {
+				low = min(low, fr.low)
+			}
+		}
 	case *types.EnumDecl:
 		for _, v := range d.Variants {
 			for _, fd := range v.Fields {
@@ -360,11 +381,22 @@ func (w *factsWalk) named(t types.TypeID, ty *types.Type) (types.Facts, int) {
 	default:
 		source.ICEf(it.Span, "check: facts of %s, a %s", it.Key, it.Kind)
 	}
-	// Identity: Cell, Mutex, Chan are Unique at least and
-	// not Freeze; a Cell is never Share; the interior holders by identity.
-	if is(k.Cell) || is(k.Mutex) || is(k.Chan) {
+	// Identity: Cell, Mutex, Chan, SpinCore are Unique at least and not Freeze;
+	// a Cell is never Share. LoanInterior tracks whether a shared reference can
+	// store a loan: for Cell[T], Mutex[T], Chan[T] and SpinCore[T] that holds
+	// iff T is a carrier; raw.Atomic never holds a carrier; Arena and Scope
+	// always take loan stores. Interior and Freeze still track data mutability
+	// for codegen.
+	if is(k.Cell) || is(k.Mutex) || is(k.Chan) || is(k.SpinCore) {
 		f.Kind = max(f.Kind, types.Unique)
 		f.Freeze = false
+		if len(ty.Args) > 0 && !ty.Args[0].IsConst {
+			fr := &w.stack[len(w.stack)-1]
+			if len(fr.args) > 0 && fr.args[0].Carrier {
+				f.LoanInterior = true
+			}
+			low = min(low, fr.low)
+		}
 	}
 	// std.raw.Atomic is unique by identity like Cell: an atomic has an
 	// address and is never copied.
@@ -382,9 +414,14 @@ func (w *factsWalk) named(t types.TypeID, ty *types.Type) (types.Facts, int) {
 	if is(k.Atomic) || is(k.Scope) {
 		f.Freeze = false // a Scope is not Freeze
 	}
-	// internal/borrow/closure.go's closureTakes lists these six items as
-	// the heads that are Interior by identity: a seventh goes there too.
-	if is(k.Cell) || is(k.Mutex) || is(k.Chan) || is(k.Arena) || is(k.Atomic) || is(k.Scope) {
+	if is(k.Arena) || is(k.Scope) {
+		f.MutView = true
+		f.LoanInterior = true
+		f.Freeze = false
+	}
+	// internal/borrow/closure.go's closureTakes mirrors the loan-interior
+	// heads here (Cell, Mutex, Chan, SpinCore, Arena, Scope, plus any mut view struct).
+	if is(k.Cell) || is(k.Mutex) || is(k.Chan) || is(k.SpinCore) || is(k.Arena) || is(k.Atomic) || is(k.Scope) {
 		f.Interior = true
 	}
 	f.Allocator = is(k.Arena) || is(k.Alloc) || is(k.Heap)

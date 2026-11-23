@@ -28,7 +28,7 @@ func (e *Evaluator) isInteriorItem(it types.ItemID) bool {
 	}
 	k := &e.cfg.Known
 	switch it {
-	case k.Cell, k.Mutex, k.Atomic, k.Chan, k.Arena, k.Scope:
+	case k.Cell, k.Mutex, k.Atomic, k.Chan, k.SpinCore, k.Arena, k.Scope:
 		return true
 	}
 	return false

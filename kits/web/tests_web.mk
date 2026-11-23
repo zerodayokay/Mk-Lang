@@ -16,14 +16,14 @@ struct TwApp {
 const TwNoHeaders: []http.Header = []
 
 // TwItem is a handler: "<greeting> <id>" for /items/{id}.
-TwItem(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+TwItem(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try ParamInt(req, "id")
     var w := res.Writer()
     try Print(mut w, "{g} {id}", (g: c.greeting, id))
 }
 
 // TwHello answers "hello" at /.
-TwHello(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+TwHello(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     var w := res.Writer()
     try w.Str("hello")
 }
@@ -35,17 +35,17 @@ const TwRoutes: []http.Route[TwApp] = [
 
 // TwFirst and TwSecond each add an X-Order field; TwGuard answers 401 and
 // stops when the request has an X-Stop field.
-TwFirst(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool *res into res {
+TwFirst(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool {
     try res.Header("X-Order", "first")
     return true
 }
 
-TwSecond(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool *res into res {
+TwSecond(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool {
     try res.Header("X-Order", "second")
     return true
 }
 
-TwGuard(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool *res into res {
+TwGuard(c: &TwApp, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!bool {
     if req.Header("X-Stop").IsSome() {
         res.Status(401)
         return false

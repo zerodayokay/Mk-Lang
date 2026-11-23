@@ -117,7 +117,7 @@ CannotHaveCredentials(url: &Record): bool {
 // and leaves the URL as the run left it: a failure of the parser keeps what
 // it had set, as the setters ignore it. Fails only with IdnaUnsupported and
 // OutOfMemory.
-Parser.Override(mut self, state: State): Error|OutOfMemory!void *self into self {
+Parser.Override(mut self, state: State): Error|OutOfMemory!void {
     self.raw = self.text
     self.p = 0
     self.buf = 0

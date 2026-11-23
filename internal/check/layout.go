@@ -83,6 +83,7 @@ func (w *layoutWalk) layout(t types.TypeID) (types.Layout, bool) {
 	}
 	f := w.c.Facts(t)
 	l.Shape.Kind, l.Shape.Carrier, l.Shape.View = f.Kind, f.Carrier, f.View
+	l.Shape.MutView, l.Shape.LoanInterior = f.MutView, f.LoanInterior
 	l.Shape.Send, l.Shape.Share, l.Shape.Freeze = f.Send, f.Share, f.Freeze
 	return w.c.memo.putLayout(t, layoutEntry{shape: l.Shape, layout: l}).layout, false
 }

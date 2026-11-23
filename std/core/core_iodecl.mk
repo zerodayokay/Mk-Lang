@@ -448,7 +448,7 @@ export enum StackSize {
 /// every operation under it. Its 128-byte record lives in the scope's local
 /// on the caller's frame, so opening one allocates nothing. Scope[E] also
 /// holds the scope's error.
-export view struct Scope {
+export mut view struct Scope {
     words: [16]u64
 }
 

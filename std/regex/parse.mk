@@ -142,7 +142,7 @@ Parser.Seal(mut self, kind: u8, base: int): OutOfMemory!int {
     return try self.Node(kind, 0, first, n, 0)
 }
 
-Parser.Alt(mut self): Error!int *self into self {
+Parser.Alt(mut self): Error!int {
     base := self.stack.Len()
     first := try self.Concat()
     try self.stack.Push(first)
@@ -154,7 +154,7 @@ Parser.Alt(mut self): Error!int *self into self {
     return try self.Seal(KAlt, base)
 }
 
-Parser.Concat(mut self): Error!int *self into self {
+Parser.Concat(mut self): Error!int {
     base := self.stack.Len()
     var repeated := false
     for self.pos < self.b.Len() {
@@ -321,7 +321,7 @@ RepeatValid(nodes: []Node, kids: []int, i: int, n: int): bool {
 }
 
 // Atom parses one item at pos and pushes it; a flag group pushes nothing.
-Parser.Atom(mut self): Error!void *self into self {
+Parser.Atom(mut self): Error!void {
     c := self.b[self.pos]
     if c == b'(' {
         try self.Group()
@@ -598,7 +598,7 @@ Decode(b: []u8, i: int): (c: u32, n: int) {
 
 // Group parses ( ... ) at pos: a capture, a named capture, a flag group
 // (?flags) that pushes nothing, or (?flags:re), as Go's parsePerlFlags.
-Parser.Group(mut self): Error!void *self into self {
+Parser.Group(mut self): Error!void {
     start := self.pos
     b := self.b
     n := b.Len()
@@ -682,7 +682,7 @@ Parser.Group(mut self): Error!void *self into self {
 }
 
 // Capture parses the body of a capturing group, numbered at its (.
-Parser.Capture(mut self, start: int, name: str into self): Error!void *self into self {
+Parser.Capture(mut self, start: int, name: str into self): Error!void {
     self.groups += 1
     k := self.groups
     try self.names.Push(name)
@@ -694,7 +694,7 @@ Parser.Capture(mut self, start: int, name: str into self): Error!void *self into
 }
 
 // Body parses a group's alternation and its ), the group opened at start.
-Parser.Body(mut self, start: int): Error!int *self into self {
+Parser.Body(mut self, start: int): Error!int {
     self.depth += 1
     if self.depth > MaxDepth {
         fail TooLarge

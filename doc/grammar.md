@@ -23,7 +23,7 @@ Gen         = "gen" Path "(" [ TypeOrExpr { "," TypeOrExpr } [ "," ] ] ")" [ "fu
 Test        = "test" String [ "(" Param ")" ] Block .
 
 Decl        = Struct | Enum | ErrorDecl | Interface | Impl | Alias | Const | Global | Func | Extern .
-Struct      = { "linear" | "view" | Packed | Aligned } "struct" Name [ TypeParams ] "{" { Member Term } "}" .
+Struct      = { "linear" | [ "mut" ] "view" | Packed | Aligned } "struct" Name [ TypeParams ] "{" { Member Term } "}" .
 Packed      = "packed" [ "(" Int ")" ] .
 Aligned     = "align" "(" Int ")" .
 Member      = [ "export" ] Name ":" Type | "invariant" Expr .
@@ -197,7 +197,7 @@ Some words are keywords only where the grammar expects them, and plain names els
 |---|---|
 | `cpu`, `section` | After a signature (or, for `section`, a `const` or `var` initializer) and before a string literal. `cpu := simd.Cpu()` is still a binding. An expression cannot continue with a name, so `section` after an initializer ends it |
 | `naked` | At an item start followed by a `FuncName`, or after `extern` |
-| `align` | `align ( Int )` followed by `struct`, `linear`, `view` or `packed`. Any other `align (` is a call |
+| `align` | `align ( Int )` followed by `struct`, `linear`, `mut view`, `view` or `packed`. Any other `align (` is a call |
 | `open` | At an item start, after `export` if present, followed by `enum` or `type` |
 | `out`, `lateout`, `inout`, `inlateout`, `sym`, `clobber_abi`, `options` | Inside `asm(...)`, as an operand's first word |
 

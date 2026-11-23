@@ -90,7 +90,7 @@ export Decompress(a: &Arena, m: &Manifest, data: []u8): compress.Error|DataSize!
 
 /// The decompressed bytes of an archive's data, read in pieces.
 export interface Source {
-    Fill(mut self, buf: mut []u8): compress.Error|ReadError!int *self into self
+    Fill(mut self, buf: mut []u8): compress.Error|ReadError!int
 }
 
 /// Data already decompressed in memory.
@@ -105,7 +105,7 @@ export Whole.New(data: []u8): Whole {
 }
 
 impl Source for Whole {
-    Fill(mut self, buf: mut []u8): compress.Error|ReadError!int *self into self {
+    Fill(mut self, buf: mut []u8): compress.Error|ReadError!int {
         n := if buf.Len() < self.data.Len() - self.pos { buf.Len() } else { self.data.Len() - self.pos }
         (mut buf[..n]).CopyFrom(self.data[self.pos..self.pos + n])
         self.pos += n
@@ -130,7 +130,7 @@ export Streamed.New(a: &Arena, codec: Codec, reader: Reader): Streamed from a, r
 }
 
 impl Source for Streamed {
-    Fill(mut self, buf: mut []u8): compress.Error|ReadError!int *self into self {
+    Fill(mut self, buf: mut []u8): compress.Error|ReadError!int {
         return try self.inflater.Read(mut self.reader, buf)
     }
 }
@@ -138,7 +138,7 @@ impl Source for Streamed {
 /// Reads the next piece of an entry, at most `left` bytes, into `buf`, and
 /// feeds it to `h`. Fails with `Cut` in the data when the source ends first,
 /// and with the source's errors. O(n) in the piece; allocates nothing.
-export ReadPiece[S: Source](src: mut S, h: mut hash.Blake3State, buf: mut []u8, left: i64): Cut|compress.Error|ReadError!int *src into src {
+export ReadPiece[S: Source](src: mut S, h: mut hash.Blake3State, buf: mut []u8, left: i64): Cut|compress.Error|ReadError!int {
     want := if left < i64(buf.Len()) { Trunc[int](left) } else { buf.Len() }
     n := try src.Fill(mut buf[..want])
     if n == 0 {

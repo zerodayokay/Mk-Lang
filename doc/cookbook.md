@@ -1315,7 +1315,7 @@ Hello(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): h
     try Print(mut w, "{greeting}, {name}\n", (greeting: c.greeting, name))
 }
 
-Health(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Health(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"ok\n")
 }
 
@@ -1324,7 +1324,7 @@ const Routes: []http.Route[App] = [
     http.Route[App](method: "GET", pattern: "/health", handler: Health),
 ]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

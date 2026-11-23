@@ -214,9 +214,19 @@ mutant M-R11-reach
 rule R11
 class R
 file internal/borrow/store.go
-anchor \t\t\twork = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: fa})
-replace \t\t\tif false {\n\t\t\t\twork = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: fa})\n\t\t\t}
+anchor \t\t\twork = append(work, hop{l: loanID(m), excl: e || ti.writable, fromP1: fp1, fromAlloc: fa})
+replace \t\t\tif false {\n\t\t\t\twork = append(work, hop{l: loanID(m), excl: e || ti.writable, fromP1: fp1, fromAlloc: fa})\n\t\t\t}
 note writable(L0) stops at the first level (H37, H66); expected VDeadScope
+end
+
+mutant M-R11-fromp1
+rule R11
+class R
+file internal/borrow/store.go
+anchor \t\tif a := c.allocOf(t); (h.first || h.fromP1) && a != noRoot && !seenRoot[a] {
+replace \t\tif a := c.allocOf(t); h.first && a != noRoot && !seenRoot[a] {
+note a direct step from p#1 through p.inner to p#2 skips p#A: a shared reference to a struct holding &Arena drops stores into its allocator; expected VDeadScope
+witness MV-holder-arena-fromp1-reject.mk
 end
 
 mutant M-D115-view
@@ -530,8 +540,8 @@ mutant M-D756-view
 rule R16 R9
 class R
 file internal/borrow/typewalk.go
-anchor \tif ty.Kind == types.KNamed && w.factsOf(t).View {\n\t\tfor _, a := range ty.Args {
-replace \tif false && ty.Kind == types.KNamed && w.factsOf(t).View {\n\t\tfor _, a := range ty.Args {
+anchor \t\tif f.View {\n\t\t\tif behindShared {
+replace \t\tif false && f.View {\n\t\t\tif behindShared {
 note a view's hidden storage not counted: a SpinGuard of a global Spin, handed back by a source-less function, holds nothing, and Store's `x: T into self` lands nowhere; G756-view-guard, G756-view-opt and G756-io-store (a Guard under ?T) are accepted, and the first two read a dead frame when run; expected VDeadScope
 witness G756-view-guard.mk G756-view-opt.mk G756-io-store.mk
 end
@@ -680,118 +690,32 @@ note an impl method that names no source passes its boundary under an interface 
 witness G756-impl-ref.mk G756-impl-slice.mk G756-impl-userslice.mk
 end
 
-mutant M-D756-viewkeeps
+mutant M-D756-mutview
 rule R16 R9
 class R
 file internal/borrow/typewalk.go
-anchor \t\tif w.viewKeeps(t, ty, gen) {\n
-replace \t\tif false && w.viewKeeps(t, ty, gen) {\n
-note a view counted only through its type arguments: a view with no type argument keeps &GM by `into self` or by its constructor and hands it out from self, or stores into what it keeps, and a source-less function or an out-parameter hands it back holding nothing; each witness is accepted and reads a dead frame when run; expected VDeadScope
-witness G756-viewkeeps-out G756-viewkeeps-result G756-viewkeeps-ctor G756-viewkeeps-store G756-viewkeeps-impl-both G756-viewkeeps-impl-both-fwd G756-viewkeeps-impl-store G756-viewkeeps-impl-store-fwd G756-viewkeeps-impl-view G756-viewkeeps-impl-view-direct G756-viewkeeps-implref-store G756-viewkeeps-implmut-store G756-viewkeeps-implref-get G756-viewkeeps-hold-fn G756-viewkeeps-hold-nsfn G756-viewkeeps-hold-struct G756-viewkeeps-hold-starq G756-viewkeeps-hold-impl G756-viewkeeps-hold-ref G756-viewkeeps-hold-own-other G756-viewkeeps-hold-own-holder G756-viewkeeps-hold-fnlit G756-viewkeeps-hold-const G756-viewkeeps-hold-global G756-viewkeeps-hold-callback G756-viewkeeps-hold-callback2
+anchor \t\tif f.MutView && !w.isKnown(t, func(k *types.KnownItems) types.ItemID { return k.Scope }) {\n\t\t\treturn true\n\t\t}
+replace \t\tif false && f.MutView && !w.isKnown(t, func(k *types.KnownItems) types.ItemID { return k.Scope }) {\n\t\t\treturn true\n\t\t}
+note a mut view struct not counted by firstTakes: a mut view with no type argument keeps &GM in raw storage and a source-less function or out-parameter hands it back holding nothing; each witness is accepted and reads a dead frame when run; expected VDeadScope
+witness G756-viewkeeps-out G756-viewkeeps-result G756-viewkeeps-ctor G756-viewkeeps-store G756-viewkeeps-free G756-viewkeeps-impl-both G756-viewkeeps-impl-both-fwd G756-viewkeeps-impl-store G756-viewkeeps-impl-store-fwd G756-viewkeeps-impl-view G756-viewkeeps-impl-view-direct G756-viewkeeps-implref-store G756-viewkeeps-implmut-store G756-viewkeeps-implref-get G756-viewkeeps-hold-fn G756-viewkeeps-hold-nsfn G756-viewkeeps-hold-struct G756-viewkeeps-hold-starq G756-viewkeeps-hold-impl G756-viewkeeps-hold-ref G756-viewkeeps-hold-own-other G756-viewkeeps-hold-own-holder G756-viewkeeps-hold-fnlit G756-viewkeeps-hold-const G756-viewkeeps-hold-global G756-viewkeeps-hold-callback G756-viewkeeps-hold-callback2 MV-r16-gap1-crossmod-free MV-r16-gap2-unseen-impl-fn MV-r16-gap3-fnlit-local MV-r16-gap4-factory-ctor MV-r16-gap5-wrapper-ctor MV-r16-gap6-generic-into-param
 end
 
-mutant M-D756-viewkeeps-free
-rule R16 R9
+mutant M-D756-loan-interior
+rule R7 R11
 class R
-file internal/borrow/typewalk.go
-anchor \t\tif it.Owner == types.NoItem && it.BorrowedConstructorResult(w.tab) == ty.Item {\n
-replace \t\tif false && it.Owner == types.NoItem && it.BorrowedConstructorResult(w.tab) == ty.Item {\n
-note a view's keep by a non-generic free constructor of its module is not counted: Of(m: &Mutex[?&i32]): V from m keeps &GM and Put stores into it, so a local stored through a source-less MakeV() reaches GM; the witness is accepted and reads a dead frame when run; expected VDeadScope
-witness G756-viewkeeps-free
-end
-
-mutant M-D756-viewkeeps-implscan
-rule R16 R9
-class R
-file internal/borrow/typewalk.go
-anchor \tfor _, iid := range w.implsFor(ty.Item, vit.Module) {\n
-replace \tfor _, iid := range w.implsFor(ty.Item, vit.Module)[:0] {\n
-note the impl scan of viewKeeps cut alone: a view whose hand-out `from self` (`impl Src[&Mutex[?&i32]] for V`, or for &V) or keep (`Put(mut self, m: &Mutex[?&i32] into self)`) is declared on an impl method, not on the view's own, counts through its type arguments and own methods only, which the module scan, reading stores alone, does not see, so a source-less MakeV or V.Global hands back a view that holds nothing and a store of a local through it reaches GM; each witness is accepted and reads a dead frame when run; expected VDeadScope. A store `into self` on an impl method in the view's module, beside a keep by V.Of, is seen by the module scan too, so those four witnesses are under M-D756-viewkeeps-impl, which cuts both
-witness G756-viewkeeps-impl-both G756-viewkeeps-impl-both-fwd G756-viewkeeps-impl-view G756-viewkeeps-impl-view-direct G756-viewkeeps-implref-get
-end
-
-mutant M-D756-viewkeeps-impl
-rule R16 R9
-class R
-file internal/borrow/typewalk.go
-anchor \tfor _, iid := range w.implsFor(ty.Item, vit.Module) {\n
-replace \tfor _, iid := range w.implsFor(ty.Item, vit.Module)[:0] {\n
-also-file internal/borrow/typewalk.go
-also-anchor \tif s.keepsIn && !s.storeIn && w.holdStores(ty.Item, m) {\n
-also-replace \tif false && s.keepsIn && !s.storeIn && w.holdStores(ty.Item, m) {\n
-note the impl scan of viewKeeps cut, with the module scan (holdStores), which also sees a store `into self` declared on an impl method in the view's module: a view whose hand-out `from self` or store `into self` is declared on an impl method, for V, &V or mut V, not on the view's own, counts through its type arguments and own methods only, so a source-less MakeV or V.Global hands back a view that holds nothing and a store of a local through it reaches GM; each witness is accepted and reads a dead frame when run; expected VDeadScope. It names all nine witnesses: the four store witnesses, which only this two-anchor cut flips, and M-D756-viewkeeps-implscan's five
-witness G756-viewkeeps-impl-both G756-viewkeeps-impl-both-fwd G756-viewkeeps-impl-view G756-viewkeeps-impl-view-direct G756-viewkeeps-implref-get G756-viewkeeps-impl-store G756-viewkeeps-impl-store-fwd G756-viewkeeps-implref-store G756-viewkeeps-implmut-store
-end
-
-mutant M-D756-viewkeeps-implref
-rule R16 R9
-class R
-file internal/borrow/typewalk.go
-anchor \tif k := w.tab.Kind(t); k == types.KRef || k == types.KMut {\n\t\treturn w.tab.Get(t).Elem\n
-replace \tif k := w.tab.Kind(t); false && (k == types.KRef || k == types.KMut) {\n\t\treturn w.tab.Get(t).Elem\n
-note the impl scan reads an impl only when its For is the view type itself (typewalk.go implFor): a hand-out `from self` declared on `impl Src[&Mutex[?&i32]] for &V` is unseen, so the source-less MakeV hands back a view that holds nothing and a store of a local through what it hands out reaches GM; accepted and a dead read when run; expected VDeadScope. A store `into self` on such an impl in V's module is seen by the module scan as well, so -implref-store and -implmut-store are under M-D756-viewkeeps-impl, which cuts both
-witness G756-viewkeeps-implref-get
-end
-
-mutant M-D756-viewkeeps-hold
-rule R16 R9
-class R
-file internal/borrow/typewalk.go
-anchor \tif s.keepsIn && !s.storeIn && w.holdStores(ty.Item, m) {\n
-replace \tif false && s.keepsIn && !s.storeIn && w.holdStores(ty.Item, m) {\n
-note the module scan of viewKeeps cut (typewalk.go holdStores): a store into the view declared by a free function of its module (`PutInto(v: &V, io: Io, x: &i32 into v)`, or `*q into v`), by a receiver-less namespace function, or by a method or impl method of a type that holds V inline or by reference counts as no store, so V, which keeps &GM by V.Of, counts as keeping nothing and the source-less MakeV hands back a view that holds nothing; each witness is accepted and reads a dead frame when run; expected VDeadScope
-witness G756-viewkeeps-hold-fn G756-viewkeeps-hold-nsfn G756-viewkeeps-hold-struct G756-viewkeeps-hold-starq G756-viewkeeps-hold-impl G756-viewkeeps-hold-ref G756-viewkeeps-hold-own-other G756-viewkeeps-hold-own-holder
-end
-
-mutant M-D756-viewkeeps-hold-own
-rule R16 R9
-class R
-file internal/borrow/typewalk.go
-anchor \t\tif !ok || it.Kind != types.KindFunc {\n\t\t\treturn\n\t\t}\n\t\tif foreign
-replace \t\tif !ok || it.Kind != types.KindFunc || it.Owner == v && fd.Sig.Receiver != types.NoReceiver {\n\t\t\treturn\n\t\t}\n\t\tif foreign
-note the module scan skips V's own methods with a receiver (typewalk.go holdStores): an own method that stores into a parameter other than self that holds V (`V.PutOther(&self, o: &V, io: Io, x: &i32 into o)`, `V.PutVia(&self, h: &H, ... into h)`) counts as no store, as the own-method scan reads only stores into self, so the source-less MakeV hands back a view that holds nothing; each witness is accepted and reads a dead frame when run; expected VDeadScope
-witness G756-viewkeeps-hold-own-other G756-viewkeeps-hold-own-holder
-end
-
-mutant M-D756-viewkeeps-hold-fncarrier
-rule R16 R9
-class R
-file internal/borrow/typewalk.go
-anchor \tfor _, t := range append(ps, sig.Result) {\n
-replace \tfor _, t := range append(ps, sig.Result)[:0] {\n
-also-file internal/borrow/typewalk.go
-also-anchor \t\t\tif !r && w.fnStoresInto(ct, v, map[types.TypeID]bool{}, w.newRecur()) {\n
-also-replace \t\t\tif false && w.fnStoresInto(ct, v, map[types.TypeID]bool{}, w.newRecur()) {\n
-note the fn-type carrier scan of the view's module cut (typewalk.go storesIntoHolder's fnStoresInto over a signature's parameters and result, and the const/global branch of holdStores): a function that hands out a storing fn value by its result type (`Mk(): fn(v: &V, ... into v)`), or a const or global of such a fn type whose initializer is a storing fn literal, is the handle a foreign body sees in the view module's API, which the private storing function it cannot see would otherwise hide (the foreign-API filter); and a fn-typed parameter whose type declares such a store (`Stash(..., f: fn(vv: &V, io: Io, x: &i32 into vv))`, depth 1, or a callback's parameter of such a type, depth 2), which a storing fn literal of the module may reach; cut, the source-less MakeV hands back a view that holds nothing; each witness is accepted and reads a dead frame when run (the single-module forms isolate the carrier: a named storing function would be caught directly); expected VDeadScope
-witness G756-viewkeeps-hold-fnlit G756-viewkeeps-hold-const G756-viewkeeps-hold-global G756-viewkeeps-hold-callback G756-viewkeeps-hold-callback2
-end
-
-mutant M-D756-viewkeeps-impl-bind
-rule R16 R9
-class P
-file internal/borrow/typewalk.go
-anchor \t\tif set[i] {\n\t\t\tcontinue\n\t\t}\n
-replace \t\tif set[i] && false {\n\t\t\tcontinue\n\t\t}\n
-note a precision row for the impl scan: an impl's parameters left unbound by its For, as if free, so `impl[T] Src[&T] for V[T]` hands out any type at V[i32] and the source-less MakeV's result holds the global node: E0605 at the declared store of a local into it
-witness G756-viewkeeps-impl-gen-ok
-end
-
-mutant M-D756-viewkeeps-impl-match
-rule R16 R9
-class P
-file internal/borrow/typewalk.go
-anchor \t\tif !w.bindArg(a, t.Args[i], args, set) {\n
-replace \t\tif !w.bindArg(a, t.Args[i], args, set) && false {\n
-note a precision row for the impl scan: every impl for the view's item taken to apply, whatever instance its For names, so `impl Src[&Mutex[?&i32]] for V[Mutex[?&i32]]` counts for V[i32] and the source-less MakeV's result holds the global node: E0605 at the declared store of a local into it
-witness G756-viewkeeps-impl-other-ok
+file internal/check/kinds.go
+anchor \t\t\tfor _, af := range fr.args {\n\t\t\t\tif af.LoanInterior {\n\t\t\t\t\tf.LoanInterior = true\n\t\t\t\t}\n\t\t\t}
+replace \t\t\tfor _, af := range fr.args {\n\t\t\t\tif false && af.LoanInterior {\n\t\t\t\t\tf.LoanInterior = true\n\t\t\t\t}\n\t\t\t}
+note a plain view struct does not propagate LoanInterior from its type arguments: Box[Mutex[?&i32]] beside borrowed fields fails to collapse on &p; expected VDeadScope
+witness MV-readonly-view-box-mutex-reject.mk
 end
 
 mutant M-D756-deep
 rule R16 R9
 class R
 file internal/borrow/typewalk.go
-anchor (w.writableByType(e) || w.firstTakes(e, deep, seen, r))
-replace (w.writableByType(e) || false && w.firstTakes(e, deep, seen, r))
+anchor (w.writableByType(e) || w.firstTakes(e, deep, seen, r, true))
+replace (w.writableByType(e) || false && w.firstTakes(e, deep, seen, r, true))
 note only a result's first level counted: a source-less function hands back a global sync.Once's `&&Mutex[?&i32]`, whose first level takes no store by type, though OncePut wrote it at run time; G756-deep is accepted and reads a dead frame when run; expected VDeadScope
 witness G756-deep.mk
 end
@@ -966,7 +890,7 @@ mutant M-D756-static-deep
 rule R16 R9
 class R
 file internal/borrow/setup.go
-anchor \tri.takes = ri.carrier && (ri.writable || c.w.storesFirst(nodeType))\n
+anchor \tri.takes = ri.carrier && (ri.writable || c.w.storesFirst(c.tab.Ref(nodeType)))\n
 replace \tri.takes = ri.carrier && ri.writable\n
 note a named global takes stores only when its first level does: GB of `Box { m: &Mutex[?&i32] }` with its Mutex in EvalArena is neither refused at a sourced impl's boundary nor written by a guard's store through `(&GB).m`; G756-static-deep and G756-static-impl are accepted, and each faults at its first Lock when run (the evaluated Mutex is emitted read-only), which would be a dead read if it were writable; expected VDeadScope
 witness G756-static-deep.mk G756-static-impl.mk

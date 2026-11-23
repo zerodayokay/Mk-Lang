@@ -101,7 +101,7 @@ test "Body, Flush, a longer Body, Flush, a shorter Body: chunks of 4, 10 and 2 b
 
 // FcCut flushes inside a scope it has cancelled, so the Flush fails, then
 // ignores the error and returns as if all went well.
-FcCut(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res {
+FcCut(c: &SwApp, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void {
     try res.Body("abc".AsBytes())
     scope s := io.Scope() {
         s.Cancel()

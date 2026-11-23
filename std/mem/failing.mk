@@ -24,7 +24,7 @@ import std.raw
 // time reaches a Failing: plain loads and stores suffice.
 /// An allocator that passes requests to another and fails the ones a test
 /// picks by number, to drive code down its OutOfMemory paths.
-export view struct Failing {
+export mut view struct Failing {
     own: Own
     inner: &Alloc
     at: int

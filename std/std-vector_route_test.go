@@ -33,7 +33,7 @@ struct App {
     n: int
 }
 
-Answer(k: int, a: &Arena, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Answer(k: int, a: &Arena, req: &http.Request, res: mut http.Response): http.Error!void {
     var t := Text.New(a)
     var w := t.Writer()
     try Print(mut w, "{k}", (k))
@@ -49,7 +49,7 @@ Answer(k: int, a: &Arena, req: &http.Request, res: mut http.Response): http.Erro
 `)
 	for k := range svRouteHandlers {
 		fmt.Fprintf(&b, `
-H%d(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+H%d(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try Answer(%d, a, req, res)
 }
 `, k, k)

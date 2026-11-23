@@ -70,7 +70,7 @@ export Columns(c: &input.Ctx, s: mut input.Streams, stdin: mut Reader, args: []s
 
 /// Reads the rest of `r` whole and splits it into rows and fields. The
 /// limit is shared by every input.
-Collect(t: mut Table, r: mut Reader): input.Error!void *t into t {
+Collect(t: mut Table, r: mut Reader): input.Error!void {
     content := try input.ReadText(t.arena, r, t.limit)
     t.limit -= content.Len()
     for line in content.Lines() {

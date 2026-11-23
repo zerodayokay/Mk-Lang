@@ -401,8 +401,8 @@
       }
     },
     "type-declaration": {
-      "comment": "struct S, enum E, error E, interface I, type T, and the modifiers before them (export, open, unsafe, linear, view, packed, align).",
-      "match": "\\b(?:(export)\\s+)?(?:(open)\\s+)?(?:(unsafe)\\s+)?(?:(linear)\\s+)?(?:(view)\\s+)?(?:(packed)(?:\\([0-9]+\\))?\\s+)?(?:(align)\\([0-9_]+\\)\\s+)?(struct|enum|error|interface|type)\\s+([A-Za-z_][A-Za-z0-9_]*)(\\[[^\\]]*\\])?",
+      "comment": "struct S, enum E, error E, interface I, type T, and the modifiers before them (export, open, unsafe, linear, mut view, view, packed, align).",
+      "match": "\\b(?:(export)\\s+)?(?:(open)\\s+)?(?:(unsafe)\\s+)?(?:(linear)\\s+)?(?:(?:(mut)\\s+)?(view)\\s+)?(?:(packed)(?:\\([0-9]+\\))?\\s+)?(?:(align)\\([0-9_]+\\)\\s+)?(struct|enum|error|interface|type)\\s+([A-Za-z_][A-Za-z0-9_]*)(\\[[^\\]]*\\])?",
       "captures": {
         "1": {
           "name": "storage.modifier.export.mk"
@@ -426,12 +426,15 @@
           "name": "storage.modifier.mk"
         },
         "8": {
-          "name": "storage.type.$8.mk"
+          "name": "storage.modifier.mk"
         },
         "9": {
-          "name": "entity.name.type.mk"
+          "name": "storage.type.$9.mk"
         },
         "10": {
+          "name": "entity.name.type.mk"
+        },
+        "11": {
           "patterns": [
             {
               "include": "#type-parameters"

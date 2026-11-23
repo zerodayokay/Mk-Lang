@@ -28,7 +28,7 @@ struct Ring[T] {
 /// in the arena and is freed with it.
 export view struct Deque[T] {
     r: Ring[T]
-    arena: &Arena
+    alloc: &Alloc
 }
 
 /// A double-ended queue on an allocator, with the operations of Deque
@@ -147,7 +147,7 @@ RingGet[T](r: &Ring[T], i: int): ?&T {
 
 /// An empty Deque in a. O(1); allocates nothing until the first push.
 export Deque[T].New(a: &Arena): Deque[T] {
-    return Deque[T](r: EmptyRing[T](), arena: a)
+    return Deque[T](r: EmptyRing[T](), alloc: a.Alloc())
 }
 
 /// Appends x at the back. Fails with OutOfMemory when the deque is full
@@ -157,7 +157,7 @@ export Deque[T].New(a: &Arena): Deque[T] {
 /// to it.
 export Deque[T].Push(mut self, x: T into self): OutOfMemory!void {
     if self.r.n == self.r.cap {
-        if !RingGrow(mut self.r, self.arena.Alloc(), false) {
+        if !RingGrow(mut self.r, self.alloc, false) {
             fail OutOfMemory
         }
     }
@@ -167,7 +167,7 @@ export Deque[T].Push(mut self, x: T into self): OutOfMemory!void {
 /// Prepends x at the front, as Push. Amortized O(1).
 export Deque[T].PushFront(mut self, x: T into self): OutOfMemory!void {
     if self.r.n == self.r.cap {
-        if !RingGrow(mut self.r, self.arena.Alloc(), false) {
+        if !RingGrow(mut self.r, self.alloc, false) {
             fail OutOfMemory
         }
     }

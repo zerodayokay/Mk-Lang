@@ -101,7 +101,7 @@ const MaxAlign = 1073741824
 /// order return the buffer to where it was. Each block starts on at least
 /// an 8-byte boundary, so a block under 8 bytes takes 8. Alignments up to
 /// 2^30 are served; a larger one fails.
-export view struct Fixed {
+export mut view struct Fixed {
     own: Own
     base: *u8
     size: int

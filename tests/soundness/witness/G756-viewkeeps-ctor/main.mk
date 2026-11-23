@@ -4,7 +4,7 @@ import std.raw
 
 var GM: Mutex[?&i32] = Mutex[?&i32].New(none)
 
-view struct V {
+mut view struct V {
     p: *Mutex[?&i32]
 }
 

@@ -10,7 +10,7 @@ import std.http
 
 struct App {}
 
-Hello(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Hello(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("Content-Type", "text/plain")
     try res.Body(b"Hello, World!\n")
 }
@@ -19,7 +19,7 @@ const Routes: []http.Route[App] = [
     http.Route[App](method: "GET", pattern: "/", handler: Hello),
 ]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

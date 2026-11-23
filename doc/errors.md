@@ -109,7 +109,7 @@ For the borrow and flow codes, [the memory model](memory.md) explains the rules 
 | E0406 | reserved-by-defer | A move of a value a `defer` uses, or a `become` while a `defer`, `onerr` or `scope` is pending | Alternatives |
 | E0408 | not-plain | A copy of a value whose type is not plain | Alternatives |
 | E0409 | move-out-of-reference | A unique or linear value moved out of a field, an element or a reference | Compiles: destructure |
-| E0410 | must-declare-kind | An exported struct whose private fields make it a carrier, unique or linear, without the `view` or `linear` word that says so | Proven: add the word |
+| E0410 | must-declare-kind | An exported struct whose private fields make it a carrier, unique, interior-writable for loans, or linear, without the `view`, `mut view` or `linear` words that say so | Proven: add the words |
 | E0411 | moved-before-failure | A by-value parameter that is not plain is moved or changed at a point after which the function can still fail. The report gives the move or change and the later error exit | Alternatives: move after the last failure point, or split the function |
 | E0412 | private-in-signature | An exported signature or field mentions a private type. `Main` is exempt | Alternatives |
 | E0501 | exclusive-conflict | A `mut` borrow overlaps a live loan. The report gives the loan, its holder and the use that keeps it live | Alternatives; `from self.f` when the callee body shows it, proven for a private function and compiles for an exported one |

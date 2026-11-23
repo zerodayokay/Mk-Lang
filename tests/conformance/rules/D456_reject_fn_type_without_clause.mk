@@ -1,6 +1,6 @@
 // verdict: reject E0608
 // rule: D-456
-// note: a handler that sets a header states *res into res, and that flow is part of its type: a fn type without the clause does not cover it. D456_reject_handler_without_clause is the E0604 unit for a handler missing the clause
+// note: a function that declares `*res into res` has that flow as part of its type: a fn type without the clause does not cover it (E0608). D456_reject_handler_without_clause is the E0604 unit for a caller missing the clause on a mut view method
 import std.http
 
 struct App {

@@ -477,7 +477,7 @@ struct App {
     n: int
 }
 
-Ok(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Ok(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"ok")
 }
 

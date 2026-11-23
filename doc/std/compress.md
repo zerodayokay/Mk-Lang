@@ -84,7 +84,7 @@ A Zstandard frame names the window it needs, and the decoder must hold that much
 | `ZstdDecoder.New(a, limit)` | `limit + 256 KiB`, taken from `a` when the decoder is made | `Reader` or `ReaderLazy` |
 | `ZstdDecoder.NewLazy(a, limit)` | Sized to each frame at its header, so a small frame costs a small window; over a stream, less than three times the largest window | `ReaderLazy` only; `Reader` panics |
 
-With `NewLazy`, a window the arena cannot give is `OutOfMemory` from `Read`, and the next `Read` tries again. `ReaderLazy`'s signature says `*self into self`: its reads may store a new window, allocated from the decoder's arena, into the decoder ([memory](../memory.md#r11-into-and-q-into-p)).
+With `NewLazy`, a window the arena cannot give is `OutOfMemory` from `Read`, and the next `Read` tries again.
 
 ## HTTP content codings
 
@@ -329,14 +329,13 @@ wrap fails only with OutOfMemory, when a cannot give the decoder its
 buffers. The Reader it returns fails with ReadError where the stream is
 bad or src fails, as Inflater.Reader does; for zstd also where a cannot
 give a frame's window, which the decoder takes at the frame's header
-(ZstdDecoder.NewLazy). wrap's `a: &Arena into a` lets it store into a
-what a holds, as ZstdContent's does.
+(ZstdDecoder.NewLazy).
 
 Fields:
 
 - `name: str`: The coding's token in Accept-Encoding and Content-Encoding, such as
   "gzip".
-- `wrap: (fn(a: &Arena into a, src: mut Reader, buf: mut []u8): OutOfMemory!Reader from a, src, buf)`: Makes a Reader of the decoded body over src, with buf as its inline
+- `wrap: (fn(a: &Arena, src: mut Reader, buf: mut []u8): OutOfMemory!Reader from a, src, buf)`: Makes a Reader of the decoded body over src, with buf as its inline
   buffer and the decoder's state in a.
 
 ### `Corrupt`
@@ -619,10 +618,9 @@ allocates as New.
 ### `Inflater.Read`
 
 ```
-export Inflater.Read(mut self, r: mut Reader, buf: mut []u8): Error|ReadError!int *self into self
+export Inflater.Read(mut self, r: mut Reader, buf: mut []u8): Error|ReadError!int
 ```
 
-- Flows: What self points at may be written back into self.
 - Errors: Error|ReadError (Corrupt(offset: int), TooLarge, Truncated, OutOfMemory, ReadError)
 
 Decodes the next bytes into buf and returns their count: at least 1,
@@ -789,10 +787,9 @@ allocates 132 KiB and 128 KiB in a.
 ### `ZstdDecoder.Read`
 
 ```
-export ZstdDecoder.Read(mut self, r: mut Reader, buf: mut []u8): Error|ReadError!int *self into self
+export ZstdDecoder.Read(mut self, r: mut Reader, buf: mut []u8): Error|ReadError!int
 ```
 
-- Flows: What self points at may be written back into self.
 - Errors: Error|ReadError (Corrupt(offset: int), TooLarge, Truncated, OutOfMemory, ReadError)
 
 Decodes the next bytes into buf and returns their count: at least 1,
@@ -837,15 +834,14 @@ the decoding; allocates nothing.
 ### `ZstdDecoder.ReaderLazy`
 
 ```
-export ZstdDecoder.ReaderLazy(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf *self into self
+export ZstdDecoder.ReaderLazy(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf
 ```
 
-- Flows: The result borrows from self, r and buf. What self points at may be written back into self.
+- Flows: The result borrows from self, r and buf.
 
 A Reader of the decoded stream, as Reader, for a decoder from New or
-NewLazy. Its reads may store into self what self holds, which the
-signature declares as `*self into self`: a NewLazy decoder's window,
-taken at each frame's header as Read takes it. Its Io is r's.
+NewLazy. Its reads take a NewLazy decoder's window from the decoder's
+arena at each frame's header as Read takes it. Its Io is r's.
 
 It fails with ReadError where Read fails, a window the arena cannot
 give included, and from then on on every read. Cause says which

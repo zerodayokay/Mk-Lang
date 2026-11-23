@@ -36,13 +36,13 @@ Hello(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): h
     try Print(mut w, "{greeting}, {name}\n", (greeting: c.greeting, name))
 }
 
-Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Echo(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("X-Path", req.path)
     try res.Header("X-Bad", "a\r\nInjected: 1")
     try res.Body(req.body)
 }
 
-Chunks(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Chunks(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("Transfer-Encoding", "chunked")
     n := req.ParamInt("n") else {
         fail http.Status(code: 400)
@@ -53,7 +53,7 @@ Chunks(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): 
     }
 }
 
-Teapot(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Teapot(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Header("X-Kept", "yes")
     try res.Body(b"dropped")
     fail http.Status(code: 418)
@@ -71,7 +71,7 @@ Rest(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): ht
     try Print(mut w, "rest={rest}\n", (rest))
 }
 
-Fixed(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Fixed(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"fixed\n")
 }
 
@@ -91,7 +91,7 @@ const Routes: []http.Route[App] = [
     http.Route[App](method: "DELETE", pattern: "/empty", handler: Empty),
 ]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

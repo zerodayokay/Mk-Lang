@@ -2087,7 +2087,7 @@ Area(s: Shape): f64 {
 | Form | Declares |
 |---|---|
 | `struct Name { f: T }` | A [struct](#structs): named fields, held by value |
-| `linear struct`, `view struct` | A struct with a stated [kind](#linear-and-view-structs) |
+| `linear struct`, `view struct`, `mut view struct` | A struct with a stated [kind](#linear-and-view-structs) |
 | `enum Name { ... }` | An [enum](#enums): one of several variants, one per line, each with its own fields |
 | `enum Name: u8 { A = 1 }` | An enum with an integer [tag](#enum-tags) |
 | `error Name(f: T)` | An error ([section 9](#9-errors)) |
@@ -2189,10 +2189,11 @@ See also: [struct patterns](#struct-patterns) and [destructuring](#destructuring
 
 ### `linear` and `view` structs
 
-A struct's kind is the worst kind of its fields ([section 3](#3-types-and-kinds)). A struct that holds a linear value is linear, with no keyword. Two words state a kind the fields do not show:
+A struct's kind is the worst kind of its fields ([section 3](#3-types-and-kinds)). A struct that holds a linear value is linear, with no keyword. Three forms state a kind the fields do not show:
 
 - `linear struct` makes the struct linear even when its fields are plain. Every value must then be consumed on every path: passed on by value, or taken apart by a destructure. A struct with private fields is taken apart only in its own module, usually in a method that takes `self`.
-- `view struct` declares a carrier of loans, such as a struct built on raw pointers. A view is unique: it moves on use. See [`view` and `ends`](memory.md#r18-view-and-ends).
+- `view struct` declares a carrier of loans, such as a struct built on raw pointers, whose `&self` methods do not store loans through interior state. A view is unique: it moves on use.
+- `mut view struct` declares an interior-writable view: a carrier whose `&self` methods store loans behind raw pointers or interior state (such as `Arena` or `dyn.Ref`). It is unique and not `Freeze`. See [`view` and `ends`](memory.md#r18-view-and-ends).
 
 ```mk
 // verdict: ok
@@ -5070,11 +5071,11 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
 |---|---|---|
 | `b := a`, `a` plain | Copies `a`. Numbers, `bool`, `str`, `&T`, `[]T` and structs of plain fields are plain | [R1](memory.md#r1-value-kinds) |
 | `b := a`, `a` unique or linear | Moves `a` into `b`. Using `a` afterwards is E0401 | [R1](memory.md#r1-value-kinds), [R4](memory.md#r4-places-and-moves-out-of-them) |
-| `&p` | A shared borrow: any number at once, and no writes except through a `Cell`, `Mutex`, `Chan` or `Arena` | [R5](memory.md#r5-the-conflict-table) |
+| `&p` | A shared borrow: any number at once, and no writes except through a `Cell`, `Mutex`, `Chan`, `Arena`, or `mut view` | [R5](memory.md#r5-the-conflict-table) |
 | `mut p` | An exclusive borrow: reads and writes, nothing else touches `p` meanwhile. A local `p` must be `var` (E0508) | [R5](memory.md#r5-the-conflict-table) |
 | `self`, `&self`, `mut self` | A method takes its receiver by value, by shared borrow or by exclusive borrow | [Functions and methods](#functions-and-methods) |
 | `for x in mut xs` | Borrows each element exclusively in turn | [R20](memory.md#r20-disjoint-elements) |
-| `from`, `into`, `ends`, `view struct`, `linear struct` | What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | [Signatures at a glance](memory.md#5-signatures-at-a-glance) |
+| `from`, `into`, `ends`, `view struct`, `mut view struct`, `linear struct` | What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | [Signatures at a glance](memory.md#5-signatures-at-a-glance) |
 | `defer s`, `onerr s` | Run `s` at every exit, or at error exits only | [R21](memory.md#r21-onerr-and-exits), [`onerr`](#cleanup-on-the-error-path-onerr) |
 
 - A borrow lasts until the last use of anything that holds it, not until the end of the block.
@@ -9043,7 +9044,7 @@ export Make(): Inner { // <- E0412
 
 ### Exported kinds
 
-A struct's kind follows from its fields ([kinds](#kinds)). Another module cannot see private fields. So an exported struct whose private fields make it linear must say `linear`, and one they make a carrier of loans or unique must say `view` (E0410). Its kind is then visible in the declaration.
+A struct's kind follows from its fields ([kinds](#kinds)). Another module cannot see private fields. So an exported struct whose private fields make it linear must say `linear`, one they make interior-writable for loans (such as holding a private `mut view`, or a `Cell`, `Mutex` or `Chan` of a carrier) must say `mut view`, and one they make a carrier of loans or unique must say `view` (E0410). Its kind is then visible in the declaration.
 
 ```mk
 // verdict: reject E0410
@@ -9052,7 +9053,7 @@ export struct Window { // <- E0410
 }
 ```
 
-Write `export view struct Window`, or export the field.
+Write `export view struct Window`, or export the field. A struct that is both linear and interior-writable writes `export linear mut view struct`.
 
 - A private field of type `std.raw.Atomic` counts as exported for this rule. That is why `Mutex` has the kind [section 3](#3-types-and-kinds) gives it.
 - `mk apidiff` reports a type that gains or loses `Send` or `Share` between two versions ([tools](tools.md#6-api-diff)).
@@ -9443,7 +9444,7 @@ impl Send for Buf {} // <- E1101
 
 ### `view` structs and `ends self`
 
-A struct built on raw pointers has no reference field to show that it borrows. `view struct` declares it a carrier of loans, so the loan rules treat it as one. `ends self` on a release function, such as `Arena.Reset`, ends every loan on `self`. Both are rules of [the memory model, R18](memory.md#r18-view-and-ends), which shows a `view struct Iter[T]` over two raw pointers.
+A struct built on raw pointers has no reference field to show that it borrows. `view struct` declares it a carrier of loans whose `&self` methods do not store loans behind raw pointers; `mut view struct` declares an interior-writable view whose `&self` methods do, so the borrow rules treat a shared step into it as writable and codegen marks it not `Freeze`. `ends self` on a release function, such as `Arena.Reset`, ends every loan on `self`. Both are rules of [the memory model, R18](memory.md#r18-view-and-ends), which shows a `view struct Iter[T]` over two raw pointers.
 
 ### Undefined behaviour
 
@@ -9460,7 +9461,7 @@ These eight things are undefined behaviour: the program may do anything, and no 
 
 Two related facts:
 
-- A write through a raw pointer to memory inside a `Cell`, an atomic, a `Mutex`'s value or a `Chan`'s state, while no exclusive loan covers it, is defined.
+- A write through a raw pointer to memory inside a `Cell`, an atomic, a `Mutex`'s value, a `Chan`'s state, or a `mut view`, while no exclusive loan covers it, is defined.
 - A `const` or non-`var` by-value parameter has no address identity. Whether two `raw.Of` of it, or of a parameter and its argument, are equal is unspecified.
 
 See also: [the memory model, R19](memory.md#r19-unsafe), which states each duty in full.
@@ -12508,18 +12509,18 @@ error BadUrl
 error ProxyRefused(code: int)
 type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused
 http.ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): http.Error!Request from a
-http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void *res into res)): http.Error!void
+http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void)): http.Error!void
 http.Fetch(a: &Arena, io: Io, method: str, url: str, headers: []Header, body: []u8, limit: int): http.Error!Reply from a
 Request.Header(&self, name: str): ?str from self
 Request.Param(&self, name: str): ?str from self
 Request.ParamInt(&self, name: str): ?i64
 Response.New(a: &Arena): Response
 Response.Status(mut self, code: int)
-Response.Header(mut self, name: str, value: str): OutOfMemory!void *self into self
-Response.Body(mut self, data: []u8): OutOfMemory!void *self into self
+Response.Header(mut self, name: str, value: str): OutOfMemory!void
+Response.Body(mut self, data: []u8): OutOfMemory!void
 Response.Writer(mut self): Writer from self
 Response.Send(&self, io: Io, w: mut Writer): http.Error!void
-http.Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, res: mut Response): http.Error!void *res into res, *routes into a
+http.Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, res: mut Response): http.Error!void *routes into a
 Client.New(h: &Heap, l: ClientLimits): Client from h, l
 Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
 Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
@@ -12528,9 +12529,9 @@ Client.Close(self)
 Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
 Exchange.Close(self, io: Io): http.Error!void
 Exchange.Abandon(self)
-http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void *res into res)): http.Error!void
-http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void *res into res)): http.Error!void
-http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void *res into res)): http.Error!void
+http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
 Response.Flush(mut self, io: Io, link: &Link): http.Error!void
 Link.Takeover(&self): ?Taken
 Taken.Abandon(self)
@@ -12599,7 +12600,7 @@ linear struct Taken {
 struct Route[C] {
     export method: str
     export pattern: str
-    export handler: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void *res into res)
+    export handler: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void)
 }
 
 // std.regex. Regex and Error below are regex.Regex and regex.Error
@@ -12708,7 +12709,7 @@ compress.Deflate(a: &Arena, data: []u8): OutOfMemory![]u8 from a
 compress.Gzip(a: &Arena, data: []u8): OutOfMemory![]u8 from a
 Inflater.New(a: &Arena): Inflater
 Inflater.NewGzip(a: &Arena): Inflater
-Inflater.Read(mut self, r: mut Reader, buf: mut []u8): compress.Error|ReadError!int *self into self
+Inflater.Read(mut self, r: mut Reader, buf: mut []u8): compress.Error|ReadError!int
 Inflater.NewZlib(a: &Arena): Inflater
 Inflater.Reader(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf
 Inflater.Cause(&self): ?compress.Error
@@ -12725,9 +12726,9 @@ Encoder.Finish(self, w: mut Writer): WriteError!void
 Encoder.Abandon(self)
 ZstdDecoder.New(a: &Arena, window_limit: int): ZstdDecoder
 ZstdDecoder.NewLazy(a: &Arena, window_limit: int): ZstdDecoder
-ZstdDecoder.Read(mut self, r: mut Reader, buf: mut []u8): compress.Error|ReadError!int *self into self
+ZstdDecoder.Read(mut self, r: mut Reader, buf: mut []u8): compress.Error|ReadError!int
 ZstdDecoder.Reader(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf
-ZstdDecoder.ReaderLazy(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf *self into self
+ZstdDecoder.ReaderLazy(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf
 ZstdDecoder.Cause(&self): ?compress.Error
 
 enum Framing {

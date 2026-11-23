@@ -42,7 +42,7 @@ Load(db: &sqlite.Db, a: &Arena, io: Io, id: i64): LoadError!Note from a {
     return Note(id: id, title: title, body: body)
 }
 
-GetNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+GetNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := req.ParamInt("id") else {
         fail http.Status(code: 400)
     }
@@ -59,7 +59,7 @@ GetNote(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response):
     try note.FormatJson(mut w)
 }
 
-Health(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Health(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"ok\n")
 }
 
@@ -68,7 +68,7 @@ const Routes: []http.Route[App] = [
     http.Route[App](method: "GET", pattern: "/health", handler: Health),
 ]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

@@ -99,7 +99,7 @@ const FhMaxGranules = 0x7FFFFFFF
 /// boundary; alignments up to 2^30 are served. The bookkeeping lives at
 /// the start of the buffer: 416 bytes of a 4 KiB buffer, 960 of a 1 MiB
 /// one. A buffer over 16 GiB is used up to 16 GiB.
-export view struct FixedHeap {
+export mut view struct FixedHeap {
     own: Own
     base: *u8
     fls: int

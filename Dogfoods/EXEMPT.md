@@ -102,8 +102,8 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 ## std.http
 
 - `error ProxyRefused(code: int)` (both): no dogfood calls it. Covered instead: std/http/tests_proxy.mk's CONNECT blocks.
-- `http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void *res into res)): http.Error!void` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in chat's web cases through ServeWith, and std/http/tests_serveon.mk's blocks.
-- `http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void *res into res)): http.Error!void` (both): no dogfood calls it. Covered instead: std/http/tests_servechan.mk's blocks.
+- `http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in chat's web cases through ServeWith, and std/http/tests_serveon.mk's blocks.
+- `http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void` (both): no dogfood calls it. Covered instead: std/http/tests_servechan.mk's blocks.
 
 ## std.crypto
 
@@ -118,7 +118,7 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 - `Adler32State.Bytes(mut self, data: []u8)` (both): no dogfood calls it. Covered instead: std/compress/tests_adler.mk's split blocks.
 - `Adler32State.Sum(self): u32` (both): no dogfood calls it. Covered instead: std/compress/tests_adler.mk's split blocks.
 - `ZstdDecoder.NewLazy(a: &Arena, window_limit: int): ZstdDecoder` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in fetch's decoders case, and std/compress/tests_zstd.mk's window-cap blocks.
-- `ZstdDecoder.ReaderLazy(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf *self into self` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in fetch's decoders case, and std/compress/tests_zstd.mk's window-cap blocks.
+- `ZstdDecoder.ReaderLazy(mut self, r: mut Reader, buf: mut []u8): Reader from self, r, buf` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in fetch's decoders case, and std/compress/tests_zstd.mk's window-cap blocks.
 
 ## std.encoding
 

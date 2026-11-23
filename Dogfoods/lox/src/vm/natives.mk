@@ -32,7 +32,7 @@ export interface Native {
 gen dyn.Of(Native)
 
 /// What natives may reach: the heap, and the registry of shared native state.
-export view struct Host {
+export mut view struct Host {
     export heap: Heap
     states: List[dyn.Ref]
     keys: Map[u64, int]

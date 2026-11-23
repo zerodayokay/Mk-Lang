@@ -45,13 +45,7 @@ const (
 	// ReadNoItem: module or type Key has no item or member Name (negative).
 	ReadNoItem
 	// ReadExports: the export list of module Key, or the member list of type
-	// Key (glob-like readers, a member lookup that missed), or, with a
-	// module path and "#fns" as Key, the module's functions, consts,
-	// globals and impls as the reader sees them (borrow's module scan,
-	// iface.ModuleFuncsKey), or, with a module path and "#keeps", the
-	// methods of the module's views that declare a store into self, a keep
-	// or a hand-out, private ones included (borrow's own-method view scan,
-	// iface.ModuleKeepsKey).
+	// Key (glob-like readers, a member lookup that missed).
 	ReadExports
 	// ReadTarget: Target field Name; Hash is the hash of its value.
 	ReadTarget

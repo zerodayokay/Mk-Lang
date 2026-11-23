@@ -37,13 +37,17 @@ func TestRefStepsAndNodeModes(t *testing.T) {
 	if _, writable, _, _ := w.nodeFlags(&n2); writable {
 		t.Fatalf("p#2 of mut &mut i32 must not be writable by type")
 	}
-	// A view, a KParam or Self adds (exclusive, ANY).
+	// A mut view, a KParam or Self adds (exclusive, ANY). A plain view does
+	// not add ANY: it steps to its type arguments (shared) and its fields.
 	if s := w.refSteps(k.tab.Param(0)).steps; len(s) != 1 || !s[0].any || !s[0].excl {
 		t.Fatalf("refSteps(T) = %+v", s)
 	}
+	if s := w.refSteps(k.Arena).steps; len(s) != 1 || !s[0].any || !s[0].excl {
+		t.Fatalf("refSteps(Arena) = %+v: a mut view adds (excl, ANY)", s)
+	}
 	text := k.named("Text")
-	if s := w.refSteps(text).steps; len(s) < 2 || !s[0].any {
-		t.Fatalf("refSteps(Text) = %+v: a view adds ANY and still recurses its fields", s)
+	if s := w.refSteps(text).steps; len(s) != 1 || s[0].any || s[0].excl || s[0].referent != k.Arena {
+		t.Fatalf("refSteps(Text) = %+v: a plain view recurses its fields without ANY", s)
 	}
 	// str is (shared, u8).
 	if s := w.refSteps(types.Str).steps; len(s) != 1 || s[0].excl || s[0].referent != types.U8 {
@@ -147,5 +151,45 @@ func TestSubst(t *testing.T) {
 	want := k.tab.Optional(k.tab.Mut(k.named("List", types.Str)))
 	if got != want {
 		t.Fatalf("subst: got %s, want %s", k.tab.TypeString(got, nil), k.tab.TypeString(want, nil))
+	}
+}
+
+func TestMutViewAndNonCarrierTypewalk(t *testing.T) {
+	k := newKit(t)
+	w := walkerOf(k, nil)
+	roView := k.structItem(k.main, "RoV", 0, true, false, field("s", types.Str))
+	mutView := k.mutViewStruct(k.main, "MutV", 0, false, field("p", k.tab.RawPtr(types.I32)))
+	roT := k.tab.Named(roView, nil)
+	mvT := k.tab.Named(mutView, nil)
+	cellInt := k.tab.Named(k.known.Cell, []types.GenericArg{types.TypeArg(types.I32)})
+	cellRef := k.tab.Named(k.known.Cell, []types.GenericArg{types.TypeArg(k.tab.Ref(types.I32))})
+	mutexInt := k.tab.Named(k.known.Mutex, []types.GenericArg{types.TypeArg(types.I32)})
+	mutexRef := k.tab.Named(k.known.Mutex, []types.GenericArg{types.TypeArg(k.tab.Optional(k.tab.Ref(types.I32)))})
+	boxMutexRef := k.tab.Named(k.known.Box, []types.GenericArg{types.TypeArg(mutexRef)})
+	boxInt := k.tab.Named(k.known.Box, []types.GenericArg{types.TypeArg(types.I32)})
+
+	if w.writableByType(roT) || !w.writableByType(mvT) {
+		t.Fatalf("writableByType: ro=%v (want false), mv=%v (want true)", w.writableByType(roT), w.writableByType(mvT))
+	}
+	if w.writableByType(cellInt) || !w.writableByType(cellRef) {
+		t.Fatalf("writableByType Cell: int=%v (want false), &i32=%v (want true)", w.writableByType(cellInt), w.writableByType(cellRef))
+	}
+	if w.writableByType(mutexInt) || !w.writableByType(mutexRef) {
+		t.Fatalf("writableByType Mutex: int=%v (want false), ?&i32=%v (want true)", w.writableByType(mutexInt), w.writableByType(mutexRef))
+	}
+	if w.writableByType(boxInt) || !w.writableByType(boxMutexRef) {
+		t.Fatalf("writableByType Box: int=%v (want false), Mutex[?&i32]=%v (want true)", w.writableByType(boxInt), w.writableByType(boxMutexRef))
+	}
+	if w.storesFirst(roT) || !w.storesFirst(mvT) {
+		t.Fatalf("storesFirst: ro=%v (want false), mv=%v (want true)", w.storesFirst(roT), w.storesFirst(mvT))
+	}
+	if w.storesFirst(k.tab.Ref(cellInt)) || !w.storesFirst(k.tab.Ref(cellRef)) {
+		t.Fatalf("storesFirst &Cell: int=%v (want false), &i32=%v (want true)", w.storesFirst(k.tab.Ref(cellInt)), w.storesFirst(k.tab.Ref(cellRef)))
+	}
+	if w.storesFirst(k.Scope) || !w.storesFirst(k.tab.Ref(k.Scope)) {
+		t.Fatalf("storesFirst Scope=%v (want false), &Scope=%v (want true)", w.storesFirst(k.Scope), w.storesFirst(k.tab.Ref(k.Scope)))
+	}
+	if w.shallow(roT) || w.shallow(mvT) {
+		t.Fatalf("shallow: views must stay deep (ro=%v mv=%v)", w.shallow(roT), w.shallow(mvT))
 	}
 }

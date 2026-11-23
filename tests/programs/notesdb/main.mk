@@ -30,7 +30,7 @@ struct NewNote {
 
 gen json.Codec(NewNote)
 
-GetNote(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+GetNote(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := req.ParamInt("id") else {
         fail http.Status(code: 400)
     }
@@ -55,7 +55,7 @@ GetNote(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Resp
     try note.FormatJson(mut w)
 }
 
-PostNote(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+PostNote(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     text := str.From(req.body) else {
         fail http.Status(code: 400)
     }
@@ -116,7 +116,7 @@ DeleteNote(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.R
     res.Status(204)
 }
 
-Hello(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Hello(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try res.Body(b"hello, world\n")
 }
 
@@ -127,7 +127,7 @@ const Routes: []http.Route[sqlite.Db] = [
     http.Route[sqlite.Db](method: "GET", pattern: "/hello", handler: Hello),
 ]
 
-Handle(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &sqlite.Db, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 

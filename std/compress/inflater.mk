@@ -127,7 +127,7 @@ NewState(a: &Arena, mode: int): IState from a {
 // or neither: a failed second allocation leaves win none and oom set, so
 // a later Read tries again instead of reading as the end of the stream.
 // The first buffer stays in the arena, which frees it with the rest.
-TakeBuffers(s: mut IState) *s into s {
+TakeBuffers(s: mut IState) {
     s.oom = true
     a := s.a
     w := a.Slice[u8](WinCap) else {
@@ -191,7 +191,7 @@ export Inflater.NewZlib(a: &Arena): Inflater {
 /// and Read may be called again. O(input read + buf.Len()) per call; it
 /// allocates nothing, except the buffers when the constructor could not
 /// take them.
-export Inflater.Read(mut self, r: mut Reader, buf: mut []u8): Error|ReadError!int *self into self {
+export Inflater.Read(mut self, r: mut Reader, buf: mut []u8): Error|ReadError!int {
     s := self.f.Mut()
     if s.win.IsNone() && buf.Len() > 0 {
         TakeBuffers(s)

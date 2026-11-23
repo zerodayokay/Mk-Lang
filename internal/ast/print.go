@@ -101,6 +101,7 @@ func Describe(n Node, in *source.Interner) (name, attrs string) {
 		name = "StructDecl"
 		info(&n.ItemInfo)
 		flag(n.Linear, "linear")
+		flag(n.MutView, "mut")
 		flag(n.View, "view")
 	case *FieldMember:
 		name = "FieldMember"

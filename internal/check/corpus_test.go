@@ -119,7 +119,7 @@ var stdStubs = map[string]string{
 // imports std.dyn as far as Ref goes (std/dyn/ref.mk), as bodiless
 // intrinsics, so its struct's fn field is typed (internal/lower's stub).
 func init() {
-	stdStubs["std.dyn"] = "export view struct Ref {\n\tp: *u8\n\tkey: u64\n}\n" +
+	stdStubs["std.dyn"] = "export mut view struct Ref {\n\tp: *u8\n\tkey: u64\n}\n" +
 		"export Ref.Of[T](x: mut T): Ref from x\n" +
 		"export Ref.Mut[T](mut self): mut T from self\n" +
 		"export Ref.Get[T](&self): &T from self\n"

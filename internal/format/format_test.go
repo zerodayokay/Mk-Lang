@@ -506,6 +506,24 @@ func TestPerFieldClauseLayout(t *testing.T) {
 	}
 }
 
+// TestFormatMutViewStruct: `mut view struct` and `linear mut view struct`
+// format with canonical single-space spacing and stay idempotent.
+func TestFormatMutViewStruct(t *testing.T) {
+	in := "mut   view  struct A {\n    x: int\n}\n\nexport  linear  mut   view  struct B {\n    y: int\n}\n\npacked(4)  mut  view  struct C {\n    z: u32\n}\n"
+	want := "mut view struct A {\n    x: int\n}\n\nexport linear mut view struct B {\n    y: int\n}\n\npacked(4) mut view struct C {\n    z: u32\n}\n"
+	got, err := Source("t.mk", []byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	again, err := Source("t.mk", got)
+	if err != nil || string(again) != string(got) {
+		t.Fatalf("not idempotent: %v\n%s", err, again)
+	}
+}
+
 // docFiles lists the Markdown files under dir, doc/std's pages included, as
 // paths relative to dir with '/', in byte order: "reference.md",
 // "std/fs.md".

@@ -137,7 +137,7 @@ ConnSlot[T].Fill(self, t: T): Conn from self, t
 ConnSlot[T].Free(self, a: &Alloc)
 interface Transport {
 // std.http
-http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void *res into res)): http.Error!void
+http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
 Response.Flush(mut self, io: Io, link: &Link): http.Error!void
 Link.Takeover(&self): ?Taken
 Taken.Abandon(self)

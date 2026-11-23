@@ -42,7 +42,8 @@ func newHand(t *testing.T) *hand {
 	k.Cell = h.strct("Cell", 1, "", h.tab.Param(0))
 	k.Mutex = h.strct("Mutex", 1, "", types.U32, h.tab.Param(0))
 	k.Chan = h.strct("Chan", 1, "", h.tab.RawPtr(h.tab.Param(0)))
-	k.Arena = h.strct("Arena", 0, "linear view", h.tab.RawPtr(types.U8), types.Int)
+	k.SpinCore = h.strct("SpinCore", 1, "", types.U32, h.tab.Param(0))
+	k.Arena = h.strct("Arena", 0, "linear mut view", h.tab.RawPtr(types.U8), types.Int)
 	k.Io = h.strct("Io", 0, "", h.tab.RawPtr(types.U8))
 	k.Heap = h.strct("Heap", 0, "", h.tab.RawPtr(types.U8))
 	k.Alloc = h.strct("Alloc", 0, "", types.Int)
@@ -61,9 +62,10 @@ func (h *hand) item(name string, kind types.ItemKind, d types.Decl) types.ItemID
 	return id
 }
 
-// strct adds a struct with gens type parameters; kw holds "linear", "view".
+// strct adds a struct with gens type parameters; kw holds "linear", "view", "mut view".
 func (h *hand) strct(name string, gens int, kw string, fields ...types.TypeID) types.ItemID {
-	d := &types.StructDecl{Linear: contains(kw, "linear"), View: contains(kw, "view")}
+	mv := contains(kw, "mut view")
+	d := &types.StructDecl{Linear: contains(kw, "linear"), View: contains(kw, "view") || mv, MutView: mv}
 	for i := 0; i < gens; i++ {
 		d.Generics = append(d.Generics, types.GenericParam{Name: h.in.Intern(fmt.Sprintf("T%d", i))})
 	}
@@ -300,6 +302,49 @@ func TestFreeze_ReferenceView(t *testing.T) {
 	}
 	if f := h.c.Facts(h.named(h.c.known.Arena)); f.Freeze {
 		t.Errorf("Arena: Freeze true, want false (raw pointer fields)")
+	}
+}
+
+func TestLoanInteriorAndMutView(t *testing.T) {
+	h := newHand(t)
+	k, tab := &h.c.known, h.tab
+	refInt := tab.Ref(types.Int)
+	optRef := tab.Optional(refInt)
+	roView := h.strct("RoView", 0, "view", types.Str)
+	roBox := h.strct("RoBox", 1, "view", tab.RawPtr(tab.Param(0)))
+	mutView := h.strct("MutView", 0, "mut view", types.Int)
+	rows := []struct {
+		name         string
+		t            types.TypeID
+		mutView      bool
+		loanInterior bool
+		interior     bool
+		freeze       bool
+	}{
+		{"Cell[int]", h.named(k.Cell, types.Int), false, false, true, false},
+		{"Cell[&int]", h.named(k.Cell, refInt), false, true, true, false},
+		{"Mutex[int]", h.named(k.Mutex, types.Int), false, false, true, false},
+		{"Mutex[?&int]", h.named(k.Mutex, optRef), false, true, true, false},
+		{"Chan[int]", h.named(k.Chan, types.Int), false, false, true, false},
+		{"Chan[str]", h.named(k.Chan, types.Str), false, true, true, false},
+		{"SpinCore[int]", h.named(k.SpinCore, types.Int), false, false, true, false},
+		{"SpinCore[?&int]", h.named(k.SpinCore, optRef), false, true, true, false},
+		{"Atomic", h.named(k.Atomic), false, false, true, false},
+		{"Arena", h.named(k.Arena), true, true, true, false},
+		{"Scope", h.named(k.Scope), true, true, true, false},
+		{"RoView", h.named(roView), false, false, false, true},
+		{"MutView", h.named(mutView), true, true, true, false},
+		{"RoBox[int]", h.named(roBox, types.Int), false, false, false, false},
+		{"RoBox[Cell[int]]", h.named(roBox, h.named(k.Cell, types.Int)), false, false, false, false},
+		{"RoBox[Mutex[?&int]]", h.named(roBox, h.named(k.Mutex, optRef)), false, true, false, false},
+	}
+	for _, r := range rows {
+		f := h.c.Facts(r.t)
+		if f.MutView != r.mutView || f.LoanInterior != r.loanInterior || f.Interior != r.interior || f.Freeze != r.freeze {
+			t.Errorf("%s: got (mutView=%v loanInt=%v int=%v freeze=%v), want (%v %v %v %v)",
+				r.name, f.MutView, f.LoanInterior, f.Interior, f.Freeze,
+				r.mutView, r.loanInterior, r.interior, r.freeze)
+		}
 	}
 }
 

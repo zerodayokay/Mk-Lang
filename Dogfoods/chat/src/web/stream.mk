@@ -96,7 +96,7 @@ Unclaim(b: &Bridge) {
 /// Takes the connection over as a WebSocket and pumps its messages to and
 /// from a session until either side ends. Answers 503 when every bridge is
 /// in use. The handshake refuses a foreign origin with 403.
-Socket(c: &Front, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link, room: str, nick: ?str): http.Error!void *res into res {
+Socket(c: &Front, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link, room: str, nick: ?str): http.Error!void {
     k := c.Claim(io) else {
         res.Status(503)
         try res.Body(b"too many web clients\n")
@@ -185,7 +185,7 @@ Upstream(ws: &websocket.Conn, h: &Heap, io: Io, b: &Bridge) {
 /// room under `nick` (or `events-K`, K the bridge), and each line it is sent
 /// that is not a reply becomes one `data:` event, until `count` events (0
 /// for no limit), the client leaves, or the server shuts down.
-Events(c: &Front, a: &Arena, io: Io, res: mut http.Response, link: &http.Link, room: str, nick: ?str, count: int): http.Error!void *res into res {
+Events(c: &Front, a: &Arena, io: Io, res: mut http.Response, link: &http.Link, room: str, nick: ?str, count: int): http.Error!void {
     k := c.Claim(io) else {
         res.Status(503)
         try res.Body(b"too many web clients\n")

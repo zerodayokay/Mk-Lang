@@ -103,7 +103,7 @@ const Routes: []http.Route[App] = [
     http.Route[App](method: "DELETE", pattern: "/items/{id}", handler: DeleteItem),
 ]
 
-Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Handle(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     try http.Dispatch(a, io, Routes, c, req, res)
 }
 
@@ -130,7 +130,7 @@ AcceptsGzip(req: &http.Request): bool {
 
 /// Sends `body`, a JSON text, with `status`: gzip-compressed when it is at
 /// least GzipMin bytes and the request accepts gzip.
-Reply(a: &Arena, req: &http.Request, res: mut http.Response, status: int, body: str): http.Error!void *res into res {
+Reply(a: &Arena, req: &http.Request, res: mut http.Response, status: int, body: str): http.Error!void {
     res.Status(status)
     try res.Header("Content-Type", "application/json")
     if body.Len() >= GzipMin && AcceptsGzip(req) {
@@ -143,7 +143,7 @@ Reply(a: &Arena, req: &http.Request, res: mut http.Response, status: int, body: 
 }
 
 /// Sends a problem: `{"message":...}` with `status`.
-Refuse(a: &Arena, req: &http.Request, res: mut http.Response, status: int, message: str): http.Error!void *res into res {
+Refuse(a: &Arena, req: &http.Request, res: mut http.Response, status: int, message: str): http.Error!void {
     p := Problem(message: message)
     try Reply(a, req, res, status, try Encode(a, &p))
 }
@@ -164,7 +164,7 @@ GoodTag(tag: str): bool {
 /// The request's item, its text copied into `a`, or none after a 400 or
 /// 422 problem. The parsed body holds views of the request, so it lives in
 /// `scratch`, the handler's own arena.
-ReadItem(a: &Arena, scratch: &Arena, req: &http.Request, res: mut http.Response): http.Error!?ItemIn from a *res into res, *req into scratch {
+ReadItem(a: &Arena, scratch: &Arena, req: &http.Request, res: mut http.Response): http.Error!?ItemIn from a *req into scratch {
     text := str.From(req.body) else {
         try Refuse(a, req, res, 400, "the body is not UTF-8")
         return none
@@ -196,14 +196,13 @@ NewStored(h: &Alloc, n: &ItemIn): OutOfMemory!Stored from h {
 }
 
 /// The route's id, or none after a 400 problem.
-IdOf(a: &Arena, req: &http.Request, res: mut http.Response): http.Error!?i64 *res into res {
+IdOf(a: &Arena, req: &http.Request, res: mut http.Response): http.Error!?i64 {
     id := req.ParamInt("id") else {
         try Refuse(a, req, res, 400, "an item id is a number")
         return none
     }
     return some(id)
 }
-
 
 /// Stores `n` under the next id and returns the id.
 Insert(c: &App, io: Io, n: &ItemIn): Canceled|OutOfMemory!i64 {
@@ -221,7 +220,7 @@ Insert(c: &App, io: Io, n: &ItemIn): Canceled|OutOfMemory!i64 {
 
 /// `POST /items`: stores the item under the next id; 201 with the item and
 /// its Location.
-Create(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+Create(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     var scratch := try a.Sub()
     defer scratch.Free()
     n := try ReadItem(a, &scratch, req, res) else { return }
@@ -241,7 +240,7 @@ Lookup(c: &App, a: &Arena, io: Io, id: i64): Canceled|OutOfMemory!?str from a {
 }
 
 /// `GET /items/{id}`: the item, or 404.
-GetItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+GetItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try IdOf(a, req, res) else { return }
     body := try Lookup(c, a, io, id) else {
         try Refuse(a, req, res, 404, "no such item")
@@ -264,7 +263,7 @@ Update(c: &App, io: Io, id: i64, n: &ItemIn): Canceled|OutOfMemory!bool {
 }
 
 /// `PUT /items/{id}`: replaces the item's fields; 200 with the item, or 404.
-PutItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+PutItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try IdOf(a, req, res) else { return }
     var scratch := try a.Sub()
     defer scratch.Free()
@@ -287,7 +286,7 @@ Remove(c: &App, io: Io, id: i64): Canceled!bool {
 }
 
 /// `DELETE /items/{id}`: removes the item; 200, or 404.
-DeleteItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+DeleteItem(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     id := try IdOf(a, req, res) else { return }
     if !try Remove(c, io, id) {
         try Refuse(a, req, res, 404, "no such item")
@@ -333,7 +332,7 @@ Page(c: &App, a: &Arena, io: Io, tag: str, limit: i64): Canceled|OutOfMemory!str
 
 /// `GET /items?tag=T&limit=N`: the tag's items by id, at most N of them
 /// (20 when absent, 1 to 100), and how many the tag has.
-ListItems(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void *res into res {
+ListItems(c: &App, a: &Arena, io: Io, req: &http.Request, res: mut http.Response): http.Error!void {
     tag := QueryParam(req.query, "tag") else { "" }
     if !GoodTag(tag) {
         try Refuse(a, req, res, 400, "tag is 1 to 32 bytes of a-z, 0-9 and -")

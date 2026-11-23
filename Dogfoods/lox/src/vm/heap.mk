@@ -325,7 +325,7 @@ export Heap.Write(&self, w: mut Writer, v: code.Value, seen: mut Set[mem.Handle]
 
 /// Collects every object not reachable from `roots`, then compacts both spaces.
 /// `scratch` holds the worklist and is the caller's to free. O(live + dead + space).
-export Heap.Collect(mut self, scratch: &Arena, roots: []code.Value): OutOfMemory!Collection *self into self {
+export Heap.Collect(mut self, scratch: &Arena, roots: []code.Value): OutOfMemory!Collection {
     self.epoch +%= 1
     self.requested = false
     var gray := List[mem.Handle].New(scratch)
@@ -363,7 +363,7 @@ export Heap.Collect(mut self, scratch: &Arena, roots: []code.Value): OutOfMemory
 
 /// Moves the bytes of every live string and the items of every live list to the front of
 /// fresh spaces, in slot order, and makes them the spaces.
-Heap.Compact(mut self, scratch: &Arena): OutOfMemory!void *self into self {
+Heap.Compact(mut self, scratch: &Arena): OutOfMemory!void {
     var live := List[mem.Handle].New(scratch)
     for (handle, value) in self.pool.Iter() {
         match value.obj {

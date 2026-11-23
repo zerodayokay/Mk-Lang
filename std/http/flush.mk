@@ -106,7 +106,7 @@ Response.FlushTo(mut self, io: Io, w: mut Writer): Error!void {
         }
     }
     try self.WriteUnsent(w, false)
-    self.fl.dsent = self.data.Len()
+    self.fl.dsent = self.data.buf.Len()
     self.fl.tsent = self.text.Str().Len()
     try w.Flush()
 }
@@ -148,10 +148,10 @@ Response.WriteUnsent(&self, w: mut Writer, last: bool): WriteError!void {
     // that replaced the sent ones), then the Writer's
     // past those sent. Clamped, so neither slice can pass its end.
     tb := self.text.Str().AsBytes()
-    dn := self.data.Len()
+    dn := self.data.buf.Len()
     s1 := if self.fl.dsent < dn { self.fl.dsent } else { dn }
     s2 := if self.fl.tsent < tb.Len() { self.fl.tsent } else { tb.Len() }
-    try self.FlushPiece(w, self.data[s1..dn])
+    try self.FlushPiece(w, self.data.buf[s1..dn])
     try self.FlushPiece(w, tb[s2..tb.Len()])
     if last && self.fl.mode == FlushChunked {
         try w.Str("0\r\n\r\n")

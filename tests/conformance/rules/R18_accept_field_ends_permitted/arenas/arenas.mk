@@ -1,4 +1,4 @@
-export linear view struct O {
+export linear mut view struct O {
     arena: Arena
     n: int
 }

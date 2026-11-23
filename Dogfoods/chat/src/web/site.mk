@@ -114,7 +114,7 @@ Param(a: &Arena, query: str, name: str): OutOfMemory!?str from a {
 /// Serves one request of the web front end: the room list, a WebSocket
 /// session or a room's event stream. Fails only when the response cannot be
 /// built or sent.
-export Handle(c: &Front, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void *res into res {
+export Handle(c: &Front, a: &Arena, io: Io, req: &http.Request, res: mut http.Response, link: &http.Link): http.Error!void {
     if req.method != "GET" {
         res.Status(405)
         try res.Header("Allow", "GET")
@@ -155,7 +155,7 @@ export Handle(c: &Front, a: &Arena, io: Io, req: &http.Request, res: mut http.Re
 }
 
 /// Answers the room list: a line per room, `#name members=N topic=T`.
-Rooms(c: &Front, a: &Arena, io: Io, res: mut http.Response): http.Error!void *res into res {
+Rooms(c: &Front, a: &Arena, io: Io, res: mut http.Response): http.Error!void {
     table := c.hb.Table(io) else {
         fail Canceled
     }

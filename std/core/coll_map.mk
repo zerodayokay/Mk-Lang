@@ -19,7 +19,7 @@ import std.raw
 /// one.
 export view struct Map[K: Hash + Eq, V] {
     t: Table[K, V]
-    arena: &Arena
+    alloc: &Alloc
 }
 
 /// An iterator over a Map's or HeapMap's entries, in the map's iteration
@@ -32,7 +32,7 @@ export view struct MapIter[K, V] {
 /// A hash set in an arena: a Map with no values.
 export view struct Set[T: Hash + Eq] {
     t: Table[T, [0]u8]
-    arena: &Arena
+    alloc: &Alloc
 }
 
 /// An empty map in a. It hashes with a fixed function, so its order is the
@@ -41,13 +41,13 @@ export view struct Set[T: Hash + Eq] {
 /// and each operation O(n), so make a map of keys from untrusted input with
 /// NewKeyed. O(1); allocates nothing until the first insert.
 export Map[K, V].New(a: &Arena): Map[K, V] {
-    return Map[K, V](t: EmptyTable[K, V](), arena: a)
+    return Map[K, V](t: EmptyTable[K, V](), alloc: a.Alloc())
 }
 
 /// As New, but hashing with SipHash-1-3 under key. While key is secret, an
 /// attacker cannot choose keys that collide. O(1); allocates nothing.
 export Map[K, V].NewKeyed(a: &Arena, key: HashKey): Map[K, V] {
-    return Map[K, V](t: EmptyTableKeyed[K, V](key), arena: a)
+    return Map[K, V](t: EmptyTableKeyed[K, V](key), alloc: a.Alloc())
 }
 
 /// The value stored for k, or none. Expected O(1); allocates nothing.
@@ -87,7 +87,7 @@ export Map[K, V].Set(mut self, k: K into self, v: V into self): OutOfMemory!void
         Discard(k)
         return
     }
-    j := TablePlace(mut self.t, self.arena.Alloc(), false, hash, r.free)
+    j := TablePlace(mut self.t, self.alloc, false, hash, r.free)
     if j < 0 {
         fail OutOfMemory
     }
@@ -110,7 +110,7 @@ export Map[K, V].Replace(mut self, k: K into self, v: V into self): OutOfMemory!
         Discard(k)
         return some(Replace(SlotMut(ValueAt(self.t.slots, r.at), 0), v))
     }
-    j := TablePlace(mut self.t, self.arena.Alloc(), false, hash, r.free)
+    j := TablePlace(mut self.t, self.alloc, false, hash, r.free)
     if j < 0 {
         fail OutOfMemory
     }
@@ -134,7 +134,7 @@ export Map[K, V].Ensure(mut self, k: K into self, v: V into self): OutOfMemory!m
         Discard(v)
         return SlotMut(ValueAt(self.t.slots, r.at), 0)
     }
-    j := TablePlace(mut self.t, self.arena.Alloc(), false, hash, r.free)
+    j := TablePlace(mut self.t, self.alloc, false, hash, r.free)
     if j < 0 {
         fail OutOfMemory
     }
@@ -195,13 +195,13 @@ export MapIter[K, V].Next(mut self): ?(key: &K, value: &V) from self.map {
 /// releases, and it is not safe for keys from untrusted input: use NewKeyed.
 /// O(1); allocates nothing until the first Add.
 export Set[T].New(a: &Arena): Set[T] {
-    return Set[T](t: EmptyTable[T, [0]u8](), arena: a)
+    return Set[T](t: EmptyTable[T, [0]u8](), alloc: a.Alloc())
 }
 
 /// As New, but hashing with SipHash-1-3 under key, for members from
 /// untrusted input. O(1); allocates nothing.
 export Set[T].NewKeyed(a: &Arena, key: HashKey): Set[T] {
-    return Set[T](t: EmptyTableKeyed[T, [0]u8](key), arena: a)
+    return Set[T](t: EmptyTableKeyed[T, [0]u8](key), alloc: a.Alloc())
 }
 
 /// Adds x and returns true when it was not a member. When it was, the stored
@@ -218,7 +218,7 @@ export Set[T].Add(mut self, x: T into self): OutOfMemory!bool {
         Discard(x)
         return false
     }
-    j := TablePlace(mut self.t, self.arena.Alloc(), false, hash, r.free)
+    j := TablePlace(mut self.t, self.alloc, false, hash, r.free)
     if j < 0 {
         fail OutOfMemory
     }

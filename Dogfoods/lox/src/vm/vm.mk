@@ -36,7 +36,7 @@ struct Frame {
 
 /// A Lox virtual machine. It keeps its globals and heap across `Run` calls, so a REPL
 /// runs each entry in the same world.
-export view struct Vm {
+export mut view struct Vm {
     host: Host
     natives: List[Entry]
     stack: List[code.Value]
@@ -119,9 +119,7 @@ export Vm.ListGlobals(mut self, w: mut Writer, lo: str, hi: str): WriteError|Out
 
 /// Runs function `script` of `prog` to its end, writing what `print` prints to `out`.
 /// A runtime error fails with `Runtime`, and the VM is ready for the next `Run`.
-// A workaround: nothing writes into `prog`, but the compiler asks for `*prog into prog` and
-// `*self into prog` once the VM holds what it copied out of the program.
-export Vm.Run(mut self, a: &Arena, prog: &code.Program, script: int, out: mut Writer): Runtime|OutOfMemory|WriteError!void *prog into self, *self into self, *prog into prog, *self into prog {
+export Vm.Run(mut self, a: &Arena, prog: &code.Program, script: int, out: mut Writer): Runtime|OutOfMemory|WriteError!void *prog into self {
     for self.stack.Len() > 0 {
         _ = self.stack.Pop()
     }
@@ -353,7 +351,7 @@ Vm.FunctionValue(mut self, prog: &code.Program, index: int): OutOfMemory!code.Va
 
 /// Calls the value `argc` slots below the top with the `argc` values above it, and
 /// returns the frame to run next.
-Vm.Call(mut self, a: &Arena, prog: &code.Program, fr: Frame, argc: int): Runtime|OutOfMemory|WriteError!Frame *self into self {
+Vm.Call(mut self, a: &Arena, prog: &code.Program, fr: Frame, argc: int): Runtime|OutOfMemory|WriteError!Frame {
     callee := self.Peek(argc)
     o := self.host.heap.Get(callee) else {
         try self.Fault(prog, fr, "Can only call functions.")
@@ -412,8 +410,6 @@ Vm.Count(mut self, key: int): OutOfMemory!void {
     }
 }
 
-// A workaround: a row would keep the function's name, but copying names out of `prog`
-// into a list in `a` asks for `*prog into prog`.
 /// One row of the profile: the function's key in `Vm.calls` and its calls.
 struct Calls {
     key: int
@@ -469,7 +465,7 @@ Vm.Index(mut self, prog: &code.Program, fr: Frame, target: code.Value, index: co
 
 /// Collects when the heap asks for it, and fails when more objects than the limit
 /// survive.
-Vm.MaybeCollect(mut self, a: &Arena, prog: &code.Program, fr: Frame): Runtime|OutOfMemory|WriteError!void *self into self {
+Vm.MaybeCollect(mut self, a: &Arena, prog: &code.Program, fr: Frame): Runtime|OutOfMemory|WriteError!void {
     if !self.host.heap.Due() {
         return
     }

@@ -526,7 +526,7 @@ Fields:
 ### `Counting`
 
 ```
-export view struct Counting
+export mut view struct Counting
 ```
 
 An allocator that passes every request to another and counts the bytes
@@ -597,7 +597,7 @@ keep the table's rules. O(1); allocates nothing.
 ### `Failing`
 
 ```
-export view struct Failing
+export mut view struct Failing
 ```
 
 An allocator that passes requests to another and fails the ones a test
@@ -663,7 +663,7 @@ and the resizes to more bytes, the failed ones included. O(1).
 ### `Fallback`
 
 ```
-export view struct Fallback
+export mut view struct Fallback
 ```
 
 An allocator that serves a request from a caller's buffer when it fits
@@ -717,7 +717,7 @@ freed there by then. O(1).
 ### `Fixed`
 
 ```
-export view struct Fixed
+export mut view struct Fixed
 ```
 
 A bump allocator over a caller's buffer, which never touches the
@@ -769,7 +769,7 @@ from self can be used after it. O(1).
 ### `FixedHeap`
 
 ```
-export view struct FixedHeap
+export mut view struct FixedHeap
 ```
 
 A general-purpose allocator over a caller's buffer, which never touches
@@ -834,7 +834,7 @@ To keep two kinds of handle apart, wrap each in a one-field struct.
 ### `Limit`
 
 ```
-export view struct Limit
+export mut view struct Limit
 ```
 
 An allocator that passes requests to another while the bytes live

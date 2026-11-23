@@ -27,7 +27,7 @@ BcPut(c: &BcHub, h: &Heap into ch, ch: &Chan[sync.Shared[int]], io: Io): bool {
 
 // BcHandle is a chat server's handler: one frame per request, 204 when it was
 // sent, 503 when it was not.
-BcHandle(c: &BcHub, h: &Heap into ch, ch: &Chan[sync.Shared[int]], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void *res into res {
+BcHandle(c: &BcHub, h: &Heap into ch, ch: &Chan[sync.Shared[int]], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void {
     if BcPut(c, h, ch, io) {
         res.Status(204)
     } else {

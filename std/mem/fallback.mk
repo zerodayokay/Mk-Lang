@@ -29,7 +29,7 @@ import std.raw
 /// The buffer is a Fixed: only its last block is freed or grown in place.
 /// A block that cannot grow in place is allocated again by its container,
 /// in the buffer if it fits there and in the other allocator if not.
-export view struct Fallback {
+export mut view struct Fallback {
     own: Own
     fixed: Fixed
     inner: &Alloc

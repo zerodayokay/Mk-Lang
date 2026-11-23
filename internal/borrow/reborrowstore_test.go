@@ -212,14 +212,14 @@ func TestR12_OtherParamBesideViewStillRejected(t *testing.T) {
 	m.expect(t, m.check(t), diag.E0604, w)
 }
 
-// The guard: a struct declared `view` keeps the walk, since *self is then
-// itself a view (a deref that lands on a view walks on): VW.M(mut self)
+// The guard: a struct declared `mut view` keeps the walk, since *self is then
+// itself a mut view (a deref that lands on a view walks on): VW.M(mut self)
 // { self.x = self.y } is still E0604. It fails if ownInline stops checking
 // that the type after the deref is not a view.
 func TestR12_ViewStructStillWalks(t *testing.T) {
 	k := newKit(t)
 	ri := refI32(k)
-	k.structItem(k.main, "VW", 0, true, false, field("x", ri), field("y", ri))
+	k.mutViewStruct(k.main, "VW", 0, false, field("x", ri), field("y", ri))
 	vw := k.named("VW")
 	m := k.body(k.method("VW", "M", types.ByMut, vw, nil, types.Void, types.EmptyErrors))
 	w := m.assign(m.pl(1, deref(vw), fld(0, ri)), use(cp(m.pl(1, deref(vw), fld(1, ri)))))

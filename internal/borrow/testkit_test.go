@@ -78,7 +78,7 @@ func newKit(t testing.TB) *kit {
 	k.Io = tab.Named(k.known.Io, nil)
 	k.structItem(k.std, "List", 1, true, false, field("ptr", tab.RawPtr(p0)), field("n", types.Int), field("arena", tab.Ref(k.Arena)))
 	k.structItem(k.std, "HeapList", 1, true, true, field("ptr", tab.RawPtr(p0)), field("n", types.Int))
-	k.structItem(k.std, "Guard", 1, true, true, field("m", tab.RawPtr(k.named("Mutex", p0))))
+	k.mutViewStruct(k.std, "Guard", 1, true, field("m", tab.RawPtr(k.named("Mutex", p0))))
 	k.structItem(k.std, "Text", 0, true, false, field("ptr", raw), field("arena", tab.Ref(k.Arena)))
 
 	// The test prelude, module main.
@@ -124,6 +124,13 @@ func (k *kit) structItem(m *types.Module, name string, generics int, view, linea
 	id := k.items.AddItem(&types.Item{Module: m.ID, Name: k.in.Intern(name), Kind: types.KindStruct, Exported: true,
 		Key: types.ItemKey(m.Path, name), Decl: d})
 	k.byNm[name] = id
+	return id
+}
+
+// mutViewStruct declares a `mut view struct` (linear when linear is set) with n generics.
+func (k *kit) mutViewStruct(m *types.Module, name string, generics int, linear bool, fs ...fieldSpec) types.ItemID {
+	id := k.structItem(m, name, generics, true, linear, fs...)
+	k.items.Get(id).Decl.(*types.StructDecl).MutView = true
 	return id
 }
 
@@ -263,14 +270,14 @@ func (k *kit) computeFacts(t types.TypeID) types.Facts {
 		return types.Facts{Kind: types.Linear, Carrier: true}
 	case types.KArray, types.KOptional:
 		f := k.facts(ty.Elem)
-		f.View, f.Allocator, f.IsFn = false, false, false
+		f.View, f.MutView, f.Allocator, f.IsFn = false, false, false, false
 		return f
 	case types.KErrorUnion:
 		if ty.Elem == types.Void {
 			return plain
 		}
 		f := k.facts(ty.Elem)
-		f.View, f.Allocator, f.IsFn = false, false, false
+		f.View, f.MutView, f.Allocator, f.IsFn = false, false, false, false
 		return f
 	case types.KRecord:
 		f := plain
@@ -288,6 +295,7 @@ func combine(a, b types.Facts) types.Facts {
 	a.Kind = max(a.Kind, b.Kind)
 	a.Carrier = a.Carrier || b.Carrier
 	a.Interior = a.Interior || b.Interior
+	a.LoanInterior = a.LoanInterior || b.LoanInterior
 	a.Send = a.Send && b.Send
 	a.Share = a.Share && b.Share
 	a.Freeze = a.Freeze && b.Freeze
@@ -305,6 +313,15 @@ func (k *kit) namedFacts(t types.TypeID, ty *types.Type) types.Facts {
 			f.View, f.Carrier = true, true
 			f.Kind = max(f.Kind, types.Unique)
 		}
+		if sd.MutView {
+			f.MutView, f.Interior, f.LoanInterior, f.Freeze = true, true, true, false
+		} else if sd.View {
+			for _, a := range ty.Args {
+				if !a.IsConst && k.facts(a.Type).LoanInterior {
+					f.LoanInterior = true
+				}
+			}
+		}
 		if sd.Linear {
 			f.Kind = types.Linear
 		}
@@ -313,15 +330,21 @@ func (k *kit) namedFacts(t types.TypeID, ty *types.Type) types.Facts {
 	case k.known.Cell:
 		f.Interior, f.Share, f.Freeze = true, false, false
 		f.Kind = max(f.Kind, types.Unique)
+		if len(ty.Args) > 0 && !ty.Args[0].IsConst && k.facts(ty.Args[0].Type).Carrier {
+			f.LoanInterior = true
+		}
 	case k.known.Mutex, k.known.Chan:
 		f.Interior, f.Freeze = true, false
 		f.Kind = max(f.Kind, types.Unique)
+		if len(ty.Args) > 0 && !ty.Args[0].IsConst && k.facts(ty.Args[0].Type).Carrier {
+			f.LoanInterior = true
+		}
 	case k.known.Arena:
-		f.Interior, f.Allocator = true, true
+		f.MutView, f.Interior, f.LoanInterior, f.Allocator, f.Freeze = true, true, true, true, false
 	case k.known.Alloc, k.known.Heap:
 		f.Allocator = true
 	case k.known.Scope:
-		f.Interior = true
+		f.MutView, f.Interior, f.LoanInterior, f.Freeze = true, true, true, false
 	case k.known.Io:
 		f = types.Facts{Kind: types.Plain, Send: true, Share: true, Freeze: true}
 	}

@@ -37,7 +37,8 @@ func TestClosureTakesFromHeads(t *testing.T) {
 	rec("G")
 	rec("GH", types.FieldDecl{Name: k.in.Intern("h"), Type: k.tab.Optional(k.tab.Ref(k.named("H", p0)))})
 	rec("GV", types.FieldDecl{Name: k.in.Intern("w"), Type: k.tab.Optional(k.tab.Ref(k.named("V", p0)))})
-	cell := k.tab.Named(k.known.Cell, []types.GenericArg{types.TypeArg(types.I32)})
+	cellI32 := k.tab.Named(k.known.Cell, []types.GenericArg{types.TypeArg(types.I32)})
+	cellRef := k.tab.Named(k.known.Cell, []types.GenericArg{types.TypeArg(refI32(k))})
 	w := walkerOf(k, nil)
 	for _, c := range []struct {
 		name string
@@ -50,7 +51,8 @@ func TestClosureTakesFromHeads(t *testing.T) {
 		{"G[T]", k.named("G", p0), genNone, false},
 		{"G[T] gen", k.named("G", p0), genAll, true},
 		{"G[T] bare", k.named("G", p0), genBare, true},
-		{"G[?&Cell[i32]]", k.named("G", k.tab.Optional(k.tab.Ref(cell))), genNone, true},
+		{"G[?&Cell[i32]]", k.named("G", k.tab.Optional(k.tab.Ref(cellI32))), genNone, false},
+		{"G[?&Cell[&i32]]", k.named("G", k.tab.Optional(k.tab.Ref(cellRef))), genNone, true},
 		{"GH[int]", k.named("GH", types.Int), genNone, true},
 		{"GV[int]", k.named("GV", types.Int), genNone, true},
 	} {
