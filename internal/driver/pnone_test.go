@@ -360,7 +360,13 @@ export Main(sys: &System): WriteError!void {
 				if code == 0 {
 					t.Fatal("expected non-zero exit code from panic")
 				}
-				for _, want := range []string{"pnone-boom", "backtrace:", "OpBoom"} {
+				wants := []string{"pnone-boom", "backtrace:"}
+				if fp || target.OS == types.OSWindows {
+					wants = append(wants, "OpBoom")
+				} else {
+					wants = append(wants, "frame pointers were off")
+				}
+				for _, want := range wants {
 					if !strings.Contains(errOut, want) {
 						t.Errorf("stderr lacks %q:\n%s", want, errOut)
 					}
