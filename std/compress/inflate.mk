@@ -22,6 +22,8 @@
 // the stream at that position (the word refill loads whole words and
 // counts only whole bytes), so OR-ing a byte in again at nb is exact.
 
+import std.simd
+
 // Decoder status (Run's result).
 const SOk = 0
 const SDone = 1
@@ -354,6 +356,198 @@ Stored(d: mut Dec, src: []u8, out: mut []u8): int {
     return SOk
 }
 
+// HuffFast runs the unchecked fast loop while at least 16 input bytes and
+// 280 output bytes remain. Keeping it separate from SlowMatch leaves bb, nb
+// and ip as pure registers with no address-taken spills. Returns SOk when
+// either buffer nears its end, SEnd at end-of-block, or SBad on bad data.
+HuffFast(lit: &[2342]u32, dist: &[402]u32, c: mut Cur, src: []u8, out: mut []u8): int {
+    n := src.Len()
+    m := out.Len()
+    var ip := c.ip
+    var op := c.op
+    wbase := c.wbase
+    var bb := c.bb
+    var nb := c.nb
+    if ip < 0 || op < 0 || wbase < 0 || wbase > op || nb >= 64 {
+        return SOk
+    }
+    nlim := n - 24
+    mlim := m - 280
+    // One word refill gives at least 56 bits: enough for up to 4 primary
+    // literals (4 * 11 = 44 <= 56) or a full litlen+extra+dist+extra match
+    // (15 + 5 + 15 + 13 = 48). 280 bytes of room cover up to 3 literals
+    // plus the longest match (258) and 16-byte word-copy slack; 24 input
+    // bytes cover two 16-byte vector refills in one iteration.
+    for ip <= nlim && op <= mlim {
+        bb = bb | (simd.Vec[u8, 16].FromSlice(src, ip).Reinterpret[u64, 2]().Lane(0) << (nb & 63))
+        ip = ip + Trunc[int]((63 -% (nb & 63)) >> 3)
+        nb = nb | 56
+        var e := lit[Trunc[int](bb & 0x7FF)]
+        if (e & 0x700) == 0 {
+            l1 := u64(e & 15)
+            bb = bb >> l1
+            nb = nb -% l1
+            out[op] = Trunc[u8](e >> 16)
+            op = op + 1
+            e = lit[Trunc[int](bb & 0x7FF)]
+            if (e & 0x700) == 0 {
+                l2 := u64(e & 15)
+                bb = bb >> l2
+                nb = nb -% l2
+                out[op] = Trunc[u8](e >> 16)
+                op = op + 1
+                e = lit[Trunc[int](bb & 0x7FF)]
+                if (e & 0x700) == 0 {
+                    l3 := u64(e & 15)
+                    bb = bb >> l3
+                    nb = nb -% l3
+                    out[op] = Trunc[u8](e >> 16)
+                    op = op + 1
+                    e = lit[Trunc[int](bb & 0x7FF)]
+                    if (e & 0x700) == 0 {
+                        l4 := u64(e & 15)
+                        bb = bb >> l4
+                        nb = nb -% l4
+                        out[op] = Trunc[u8](e >> 16)
+                        op = op + 1
+                        continue
+                    }
+                }
+            }
+            if nb < 48 {
+                bb = bb | (simd.Vec[u8, 16].FromSlice(src, ip).Reinterpret[u64, 2]().Lane(0) << (nb & 63))
+                ip = ip + Trunc[int]((63 -% (nb & 63)) >> 3)
+                nb = nb | 56
+            }
+        }
+        if (e >> 8) & 7 == KSub {
+            e = lit[Trunc[int](e >> 16) +% Trunc[int]((bb >> 11) & ((u64(1) << u64((e >> 4) & 15)) -% 1))]
+        }
+        kind := (e >> 8) & 7
+        l := u64(e & 15)
+        if kind == KLit {
+            bb = bb >> l
+            nb = nb -% l
+            out[op] = Trunc[u8](e >> 16)
+            op = op + 1
+            continue
+        }
+        if kind != KLen {
+            if kind == KEnd {
+                bb = bb >> l
+                nb = nb -% l
+                c.bb = bb
+                c.nb = nb
+                c.ip = ip
+                c.op = op
+                return SEnd
+            }
+            c.bb = bb
+            c.nb = nb
+            c.ip = ip
+            c.op = op
+            c.eoff = (ip * 8 - Trunc[int](nb)) >> 3
+            return SBad
+        }
+        x := u64((e >> 4) & 15)
+        length := Trunc[int](e >> 16) +% Trunc[int]((bb >> l) & ((u64(1) << x) -% 1))
+        bb = bb >> (l +% x)
+        nb = nb -% (l +% x)
+        var de := dist[Trunc[int](bb & 0xFF)]
+        if (de >> 8) & 7 == KSub {
+            de = dist[Trunc[int](de >> 16) +% Trunc[int]((bb >> 8) & ((u64(1) << u64((de >> 4) & 15)) -% 1))]
+        }
+        if (de >> 8) & 7 != KLen {
+            c.bb = bb
+            c.nb = nb
+            c.ip = ip
+            c.op = op
+            c.eoff = (ip * 8 - Trunc[int](nb)) >> 3
+            return SBad
+        }
+        ld := u64(de & 15)
+        xd := u64((de >> 4) & 15)
+        dst := Trunc[int](de >> 16) +% Trunc[int]((bb >> ld) & ((u64(1) << xd) -% 1))
+        if dst <= 0 || dst > op - wbase {
+            c.bb = bb
+            c.nb = nb
+            c.ip = ip
+            c.op = op
+            c.eoff = (ip * 8 - Trunc[int](nb)) >> 3
+            return SBad
+        }
+        bb = bb >> (ld +% xd)
+        nb = nb -% (ld +% xd)
+        end := op + length
+        if end > m - 16 {
+            c.bb = bb
+            c.nb = nb
+            c.ip = ip
+            c.op = op
+            c.eoff = (ip * 8 - Trunc[int](nb)) >> 3
+            return SBad
+        }
+        var s := op - dst
+        var t := op
+        if dst >= 8 {
+            simd.Vec[u8, 8].FromSlice(out[..], s).CopyTo(out, t)
+            t = t + 8
+            if t < end {
+                s = s + 8
+                if dst >= 16 {
+                    for t < end {
+                        simd.Vec[u8, 16].FromSlice(out[..], s).CopyTo(out, t)
+                        s = s + 16
+                        t = t + 16
+                    }
+                } else {
+                    for t < end {
+                        simd.Vec[u8, 8].FromSlice(out[..], s).CopyTo(out, t)
+                        s = s + 8
+                        t = t + 8
+                    }
+                }
+            }
+        } else if dst == 1 {
+            v := simd.Vec[u8, 16].Splat(out[s])
+            for t < end {
+                v.CopyTo(out, t)
+                t = t + 16
+            }
+        } else if dst == 2 {
+            b0 := out[s]
+            b1 := out[s + 1]
+            v := simd.Vec[u8, 16].FromArray([b0, b1, b0, b1, b0, b1, b0, b1, b0, b1, b0, b1, b0, b1, b0, b1])
+            for t < end {
+                v.CopyTo(out, t)
+                t = t + 16
+            }
+        } else if dst == 4 {
+            b0 := out[s]
+            b1 := out[s + 1]
+            b2 := out[s + 2]
+            b3 := out[s + 3]
+            v := simd.Vec[u8, 16].FromArray([b0, b1, b2, b3, b0, b1, b2, b3, b0, b1, b2, b3, b0, b1, b2, b3])
+            for t < end {
+                v.CopyTo(out, t)
+                t = t + 16
+            }
+        } else {
+            for t < end {
+                out[t] = out[s]
+                s = s + 1
+                t = t + 1
+            }
+        }
+        op = end
+    }
+    c.bb = bb
+    c.nb = nb
+    c.ip = ip
+    c.op = op
+    return SOk
+}
+
 // HuffLoop decodes the symbols of a Huffman block with the tables lit and
 // dist until its end-of-block code (SEnd), or SInput, SRoom or SBad. eob
 // is the length of the block's end-of-block code: a block cannot end in
@@ -361,108 +555,22 @@ Stored(d: mut Dec, src: []u8, out: mut []u8): int {
 // truncated whatever the next symbol is (Go's compress/flate raises its
 // litlen read to that length in the same way).
 HuffLoop(lit: &[2342]u32, dist: &[402]u32, eob: u64, c: mut Cur, src: []u8, out: mut []u8): int {
-    var bb := c.bb
-    var nb := c.nb
-    var ip := c.ip
-    var op := c.op
-    wbase := c.wbase
     n := src.Len()
     m := out.Len()
+    wbase := c.wbase
     for {
-        // The fast loop: one word refill gives at least 56 bits, enough for
-        // a litlen code, its extra bits, a distance code and its extra bits
-        // (15 + 5 + 15 + 13 = 48); 266 bytes of room take the longest match
-        // and the 8 bytes a word copy may write past it.
-        for n - ip >= 16 && m - op >= 266 {
-            bb = bb | (Le64(src, ip) << nb)
-            ip += Trunc[int]((63 - nb) >> 3)
-            nb = nb | 56
-            var e := lit[Trunc[int](bb & 0x7FF)]
-            if (e >> 8) & 7 == KSub {
-                e = lit[Trunc[int](e >> 16) + Trunc[int]((bb >> 11) & ((u64(1) << u64((e >> 4) & 15)) - 1))]
+        if n - c.ip >= 24 && m - c.op >= 280 {
+            fst := HuffFast(lit, dist, c, src, out)
+            if fst != SOk {
+                return fst
             }
-            kind := (e >> 8) & 7
-            l := u64(e & 15)
-            if kind == KLit {
-                bb = bb >> l
-                nb -= l
-                out[op] = Trunc[u8](e >> 16)
-                op += 1
-                continue
-            }
-            if kind != KLen {
-                if kind == KEnd {
-                    bb = bb >> l
-                    nb -= l
-                    c.bb = bb
-                    c.nb = nb
-                    c.ip = ip
-                    c.op = op
-                    return SEnd
-                }
-                c.bb = bb
-                c.nb = nb
-                c.ip = ip
-                c.op = op
-                c.eoff = (ip * 8 - Trunc[int](nb)) >> 3
-                return SBad
-            }
-            x := u64((e >> 4) & 15)
-            length := Trunc[int](e >> 16) + Trunc[int]((bb >> l) & ((u64(1) << x) - 1))
-            bb = bb >> (l + x)
-            nb -= l + x
-            var de := dist[Trunc[int](bb & 0xFF)]
-            if (de >> 8) & 7 == KSub {
-                de = dist[Trunc[int](de >> 16) + Trunc[int]((bb >> 8) & ((u64(1) << u64((de >> 4) & 15)) - 1))]
-            }
-            if (de >> 8) & 7 != KLen {
-                c.bb = bb
-                c.nb = nb
-                c.ip = ip
-                c.op = op
-                c.eoff = (ip * 8 - Trunc[int](nb)) >> 3
-                return SBad
-            }
-            ld := u64(de & 15)
-            xd := u64((de >> 4) & 15)
-            dst := Trunc[int](de >> 16) + Trunc[int]((bb >> ld) & ((u64(1) << xd) - 1))
-            if dst > op - wbase {
-                c.bb = bb
-                c.nb = nb
-                c.ip = ip
-                c.op = op
-                c.eoff = (ip * 8 - Trunc[int](nb)) >> 3
-                return SBad
-            }
-            bb = bb >> (ld + xd)
-            nb -= ld + xd
-            end := op + length
-            var s := op - dst
-            var t := op
-            if dst >= 8 {
-                for t < end {
-                    w := Le64(out[..], s)
-                    PutLe64(out, t, w)
-                    s += 8
-                    t += 8
-                }
-            } else if dst == 1 {
-                w := u64(out[s]) *% 0x0101010101010101
-                for t < end {
-                    PutLe64(out, t, w)
-                    t += 8
-                }
-            } else {
-                for t < end {
-                    out[t] = out[s]
-                    s += 1
-                    t += 1
-                }
-            }
-            op = end
         }
         // The slow path: one symbol, every need checked, rewound to its
         // first bit when the input or the room runs out.
+        var bb := c.bb
+        var nb := c.nb
+        var ip := c.ip
+        var op := c.op
         sbb := bb
         snb := nb
         sip := ip
@@ -504,9 +612,6 @@ HuffLoop(lit: &[2342]u32, dist: &[402]u32, eob: u64, c: mut Cur, src: []u8, out:
                 op += c.need
             }
         }
-        if st == SOk {
-            continue
-        }
         if st == SInput || st == SRoom {
             bb = sbb
             nb = snb
@@ -516,7 +621,9 @@ HuffLoop(lit: &[2342]u32, dist: &[402]u32, eob: u64, c: mut Cur, src: []u8, out:
         c.nb = nb
         c.ip = ip
         c.op = op
-        return st
+        if st != SOk {
+            return st
+        }
     }
 }
 

@@ -21,6 +21,7 @@
 
 import std.core
 import std.hash
+import std.simd
 
 // WinHist is the history a distance may reach; WinCap the window: the
 // history, 64 KiB of new output per slide, and the room of one longest
@@ -561,16 +562,22 @@ ZlibTrail(g: mut GzPos, c: mut Cur, src: []u8, base: int): int {
 }
 
 // MoveDown copies b[from..from + n] to b[0..n], front to back, which is
-// right when from >= 0 even if the ranges overlap; 8 bytes a step.
+// right when from >= 0 even if the ranges overlap; 16 bytes a step when
+// from >= 16.
 MoveDown(b: mut []u8, from: int, n: int) {
     if from == 0 {
         return
     }
     var i := 0
+    if from >= 16 {
+        for i + 16 <= n {
+            simd.Vec[u8, 16].FromSlice(b[..], from + i).CopyTo(b, i)
+            i += 16
+        }
+    }
     if from >= 8 {
         for i + 8 <= n {
-            x := Le64(b[..], from + i)
-            PutLe64(b, i, x)
+            simd.Vec[u8, 8].FromSlice(b[..], from + i).CopyTo(b, i)
             i += 8
         }
     }
