@@ -53,9 +53,13 @@ const DriftStackBytes = 4096
 
 // DriftScratchLen is the scratch, in elements of T, for n elements, n >= 2:
 // max(n - n / 2, min(n, DriftFullBytes / SizeOf[T]()), DriftSmallScratch),
-// as Rust's.
+// as Rust's, or 0 for a zero-size T.
 DriftScratchLen[T](n: int): int {
-    full := DriftFullBytes / SizeOfT[T]()
+    size := SizeOfT[T]()
+    if size == 0 {
+        return 0
+    }
+    full := DriftFullBytes / size
     m := if n < full { n } else { full }
     h := n - n / 2
     c := if h > m { h } else { m }
@@ -63,13 +67,14 @@ DriftScratchLen[T](n: int): int {
 }
 
 // DriftStackCap is how many elements of T the stack scratch holds, or 0
-// when T cannot live in a [512]u64 (alignment above 8, a size above 4,096
-// bytes).
+// when T cannot live in a [512]u64 (alignment above 8, or a size of 0 or
+// above 4,096 bytes).
 DriftStackCap[T](): int {
-    if AlignOfT[T]() > 8 || SizeOfT[T]() > DriftStackBytes {
+    size := SizeOfT[T]()
+    if AlignOfT[T]() > 8 || size == 0 || size > DriftStackBytes {
         return 0
     }
-    return DriftStackBytes / SizeOfT[T]()
+    return DriftStackBytes / size
 }
 
 // DriftStable sorts s stably (SortStable's body): by insertion up to

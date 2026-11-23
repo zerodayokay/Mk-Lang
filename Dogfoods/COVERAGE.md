@@ -2,7 +2,7 @@
 
 Written by `go run ./tools/dogfood cover` on 2026-11-19, with mk 0.1.0 commit fc55f65b53f1, executing on x86_64-windows; do not edit by hand. A line is covered when some dogfood's own source references it (`mk query uses`; a site in generated code under `gen/` is shown as `gen:` and does not count) and, if it declares a function, some case executes it on every hosted target named above (an entry count above zero in a `--release --pgo-gen` build), or it is in `EXEMPT.md`.
 
-- Lines: 1332. Covered: 1134. Exempt: 62. Gaps: 136.
+- Lines: 1332. Covered: 1135. Exempt: 61. Gaps: 136.
 - Static references: incomplete: mk query uses failed (see the errors below); a line counts as referenced when a case executes it, and cover fails.
 - mk query uses error: notes: Dogfoods/notes: exit status 1: pkg.mk:16:27: E0202 unknown-module: C source ../../../Mk-evidence/vendor/sqlite/sqlite3.c does not exist (as spelled) | pkg.CSource(path: "../../../Mk-evidence/vendor/sqlite/sqlite3.c", flags: ["-DSQLITE_OS_OTHER=1", "-DSQLITE_THREADSAFE=0", "-DSQLITE_OMIT_LOCALTIME", "-DSQLITE_DEFAULT_MEMSTATUS=0", "-DSQLITE_TEMP_STORE=3", "-DSQLITE_WITHOUT_MSIZE", "-DSQLITE_DISABLE_INTRINSIC", "-DSQLITE_OMIT_SEH"]), | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ manifest: c_sources[0].path reason: invalid explain: mk explain E0202 1 error mk query: the package does not check far enough to answer uses
 
@@ -49,8 +49,8 @@ Written by `go run ./tools/dogfood cover` on 2026-11-19, with mk 0.1.0 commit fc
 | `Slice[T].Get(&self, i: int): ?&T` | orderbook | cron, orderbook, raft | cron/bench (windows), cron/run-detach (windows), cron/run-interrupt (windows) and 51 more | covered (executed) |
 | `Slice[T].GetMut(mut self, i: int): ?mut T` | orderbook | cron, orderbook, raft | cron/bench (windows), cron/run-detach (windows), cron/run-interrupt (windows) and 47 more | covered (executed) |
 | `Slice[T].Sort(mut self, const less: fn(&T, &T): bool)` | lox, orderbook | bigcalc, fm, kvd and 6 more | bigcalc/run_script (windows), fetch/bench (windows), fetch/decoders (windows) and 94 more | covered (executed) |
-| `Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void` | orderbook, textkit | orderbook, textkit | orderbook/basic (windows), textkit/sort-basic (windows) and more | covered (executed) |
-| `Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)` | lox, textkit | lox, textkit | lox/arith (windows), lox/bench (windows), lox/compile-errors (windows) and more | covered (executed) |
+| `Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void` | orderbook, textkit | orderbook, textkit | orderbook/account-missing (windows), orderbook/band (windows), orderbook/band-full (windows) and 24 more | covered (executed) |
+| `Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)` | lox, textkit | lox, textkit | lox/arith (windows), lox/bench (windows), lox/compile-errors (windows) and 16 more | covered (executed) |
 | `Slice[T].Search[K](&self, key: &K, const less: fn(&T, &K): bool): int` | lox, orderbook, textkit | lox, orderbook, textkit | lox/arith (windows), lox/bench (windows), lox/compile-errors (windows) and 40 more | covered (executed) |
 | `Slice[T].Swap(mut self, i: int, j: int)` | orderbook | bigcalc, orderbook | bigcalc/calc_bits (windows), orderbook/account-missing (windows), orderbook/band (windows) and 17 more | covered (executed) |
 | `Slice[T].Reverse(mut self)` | orderbook | orderbook | orderbook/band-full (windows), orderbook/basic (windows), orderbook/compact (windows) and 3 more | covered (executed) |

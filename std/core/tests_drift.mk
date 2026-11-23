@@ -21,8 +21,16 @@ struct TdCount {
     allocs: int
     frees: int
     bytes: int
+    align: int
+    free_align: int
     refuse: bool
     limit: int
+}
+
+TdCtx(c: mut TdCount): *u8 {
+    unsafe "a pointer cast: TdTable's entries cast it back to the TdCount" {
+        return raw.PtrCast[TdCount, u8](raw.OfMut(c))
+    }
 }
 
 TdAlloc(ctx: *u8, size: int, align: int): *u8 {
@@ -30,6 +38,7 @@ TdAlloc(ctx: *u8, size: int, align: int): *u8 {
         c := raw.PtrCast[u8, TdCount](ctx)
         (*c).allocs += 1
         (*c).bytes = size
+        (*c).align = align
         if (*c).refuse || ((*c).limit > 0 && size > (*c).limit) {
             return raw.Null[u8]()
         }
@@ -45,6 +54,7 @@ TdFree(ctx: *u8, p: *u8, size: int, align: int) {
     unsafe "ctx is the TdCount the test made, alive while it sorts, and inner its process heap's Alloc" {
         c := raw.PtrCast[u8, TdCount](ctx)
         (*c).frees += 1
+        (*c).free_align = align
         FreeBytes(&*(*c).inner, p, size, align)
     }
 }
@@ -76,12 +86,8 @@ TdStable(xs: []TsP16): bool {
 }
 
 test "SortStable uses stack scratch up to 4,096 bytes, takes one block of DriftScratchLen elements from its allocator beyond that, falls back to Len() / 2, and fails OutOfMemory before moving anything" (sys: &System) {
-    var c := TdCount(inner: raw.Of(sys.heap.Alloc()), allocs: 0, frees: 0, bytes: 0, refuse: false, limit: 0)
-    var ctx := raw.Null[u8]()
-    unsafe "a pointer cast: TdTable's entries cast it back to the TdCount" {
-        ctx = raw.PtrCast[TdCount, u8](raw.OfMut(mut c))
-    }
-    h := MakeHeap(ctx, raw.Of(&TdTable))
+    var c := TdCount(inner: raw.Of(sys.heap.Alloc()), allocs: 0, frees: 0, bytes: 0, align: 0, free_align: 0, refuse: false, limit: 0)
+    h := MakeHeap(TdCtx(mut c), raw.Of(&TdTable))
     a := h.Alloc()
     xs := try sys.arena.Slice[TsP16](3_000)
     for n in [20, 21, 256, 257, 1_000, 3_000] {
@@ -134,6 +140,142 @@ test "SortStable uses stack scratch up to 4,096 bytes, takes one block of DriftS
         still = still && xs[i].id == i
     }
     Assert(oom && still && c.frees == 0)
+}
+
+align(64) struct TdA64 {
+    k: int
+    id: int
+    pad: [6]u64
+}
+
+TdA64Less(a: &TdA64, b: &TdA64): bool {
+    return a.k < b.k
+}
+
+TdA16Less(a: &TsA16, b: &TsA16): bool {
+    return a.k < b.k
+}
+
+TdBigLess(a: &TsBig, b: &TsBig): bool {
+    return a.k < b.k
+}
+
+struct TdEmpty {}
+
+TdEmptyLess(a: &TdEmpty, b: &TdEmpty): bool {
+    return false
+}
+
+test "SortStable never uses stack scratch for over-aligned or over-4,096-byte elements, passes exact alignment, handles narrow half-slice fallback, and allocates nothing for zero-size types" (sys: &System) {
+    Assert(AlignOf[TdA64]() == 64 && SizeOf[TdA64]() == 64 && DriftStackCap[TdA64]() == 0)
+    Assert(DriftScratchLen[TdEmpty](100) == 0 && DriftStackCap[TdEmpty]() == 0)
+    var c := TdCount(inner: raw.Of(sys.heap.Alloc()), allocs: 0, frees: 0, bytes: 0, align: 0, free_align: 0, refuse: false, limit: 0)
+    h := MakeHeap(TdCtx(mut c), raw.Of(&TdTable))
+    a := h.Alloc()
+    // At n = 20, even over-aligned TdA64 allocates nothing.
+    var c20: [20]TdA64 = [TdA64(k: 0, id: 0, pad: [0; 6]); 20]
+    for i in 0..20 {
+        c20[i] = TdA64(k: (20 - i) % 5, id: i, pad: [0; 6])
+    }
+    c.refuse = true
+    try c20.SortStable(a, TdA64Less)
+    Assert(c.allocs == 0 && c.frees == 0)
+    for i in 1..20 {
+        Assert(c20[i - 1].k < c20[i].k || (c20[i - 1].k == c20[i].k && c20[i - 1].id < c20[i].id))
+    }
+    // Past 20 elements, align(64) skips stack scratch even when n * 64 <= 4,096:
+    // refused fails OutOfMemory before any element moves; narrow half-slice fallback
+    // succeeds with exact alignment 64 and frees its block.
+    for n in [21, 31, 47, 48] {
+        xs := try sys.arena.Slice[TdA64](n)
+        for i in 0..n {
+            xs[i] = TdA64(k: (n - i) % 7, id: i, pad: [0; 6])
+        }
+        c.allocs = 0
+        c.frees = 0
+        c.align = 0
+        c.free_align = 0
+        c.refuse = true
+        c.limit = 0
+        var oom := false
+        xs.SortStable(a, TdA64Less) else {
+            oom = true
+        }
+        Assert(oom && c.allocs == 2 && c.frees == 0 && c.align == 64)
+        for i in 0..n {
+            Assert(xs[i].id == i)
+        }
+        c.refuse = false
+        c.allocs = 0
+        c.frees = 0
+        c.limit = (n / 2) * 64
+        try xs.SortStable(a, TdA64Less)
+        Assert(c.allocs == 2 && c.frees == 1 && c.bytes == (n / 2) * 64 && c.align == 64 && c.free_align == 64)
+        for i in 1..n {
+            Assert(xs[i - 1].k < xs[i].k || (xs[i - 1].k == xs[i].k && xs[i - 1].id < xs[i].id))
+        }
+    }
+    // Same check for align(16) TsA16 at n = 21 (336 bytes <= 4,096).
+    var a21: [21]TsA16 = [TsA16(k: 0, id: 0); 21]
+    for i in 0..21 {
+        a21[i] = TsA16(k: (21 - i) % 6, id: i)
+    }
+    c.refuse = false
+    c.allocs = 0
+    c.frees = 0
+    c.align = 0
+    c.free_align = 0
+    c.limit = 10 * 16 - 1
+    var a16_oom := false
+    a21.SortStable(a, TdA16Less) else {
+        a16_oom = true
+    }
+    Assert(a16_oom && c.allocs == 2 && c.frees == 0 && c.align == 16)
+    for i in 0..21 {
+        Assert(a21[i].id == i)
+    }
+    c.allocs = 0
+    c.frees = 0
+    c.limit = 10 * 16
+    try a21.SortStable(a, TdA16Less)
+    Assert(c.allocs == 2 && c.frees == 1 && c.bytes == 10 * 16 && c.align == 16 && c.free_align == 16)
+    for i in 1..21 {
+        Assert(a21[i - 1].k < a21[i].k || (a21[i - 1].k == a21[i].k && a21[i - 1].id < a21[i].id))
+    }
+    // Elements larger than 4,096 bytes (TsBig, 4,104 bytes) skip stack scratch at n = 21.
+    big := try sys.arena.Slice[TsBig](21)
+    for i in 0..21 {
+        big[i].TsSet((21 - i) % 5, i)
+    }
+    c.allocs = 0
+    c.frees = 0
+    c.limit = 10 * SizeOf[TsBig]() - 1
+    var big_oom := false
+    big.SortStable(a, TdBigLess) else {
+        big_oom = true
+    }
+    Assert(big_oom && c.allocs == 2 && c.frees == 0)
+    for i in 0..21 {
+        Assert(big[i].id == i && big[i].TsIntact())
+    }
+    c.allocs = 0
+    c.frees = 0
+    c.limit = 10 * SizeOf[TsBig]()
+    try big.SortStable(a, TdBigLess)
+    Assert(c.allocs == 2 && c.frees == 1 && c.bytes == 10 * SizeOf[TsBig]())
+    for i in 1..21 {
+        Assert(big[i].TsIntact() && (big[i - 1].k < big[i].k || (big[i - 1].k == big[i].k && big[i - 1].id < big[i].id)))
+    }
+    // Zero-size T allocates nothing at any length.
+    c.refuse = true
+    c.limit = 0
+    c.allocs = 0
+    c.frees = 0
+    for n in [20, 21, 48, 300] {
+        zs := try sys.arena.Slice[TdEmpty](n)
+        try zs.SortStable(a, TdEmptyLess)
+    }
+    Assert(c.allocs == 0 && c.frees == 0)
 }
 
 test "the scratch is the whole slice up to 8,000,000 bytes and half of it beyond, 48 elements at least, and the stack holds 4,096 bytes of it" {

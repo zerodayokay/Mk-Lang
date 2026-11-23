@@ -279,12 +279,8 @@ TsSortBy[T: TsElem](s: mut []T, h: &Alloc, way: int, rel: int): OutOfMemory!void
             try s.SortStable(h, TsCoin[T])
         }
     } else if way == 2 {
-        var c := TdCount(inner: raw.Of(h), allocs: 0, frees: 0, bytes: 0, refuse: false, limit: (s.Len() / 2) * SizeOfT[T]())
-        var ctx := raw.Null[u8]()
-        unsafe "a pointer cast: TdTable's entries cast it back to the TdCount" {
-            ctx = raw.PtrCast[TdCount, u8](raw.OfMut(mut c))
-        }
-        lim := MakeHeap(ctx, raw.Of(&TdTable))
+        var c := TdCount(inner: raw.Of(h), allocs: 0, frees: 0, bytes: 0, align: 0, free_align: 0, refuse: false, limit: (s.Len() / 2) * SizeOfT[T]())
+        lim := MakeHeap(TdCtx(mut c), raw.Of(&TdTable))
         if rel == 0 {
             try s.SortStable(lim.Alloc(), TsOrd[T])
         } else if rel == 1 {
@@ -434,8 +430,9 @@ test "every sort of 9-, 16- and 40-byte elements at every length to 5,000, under
     try TsAll(sys.arena, h, try sys.arena.Slice[TsP40](5_008), true, 0x7FFF_FFFF_FFFF)
 }
 
-// TsA16 is 16 bytes aligned to 16, over the stack cache's 8, so SortStable
-// merges it without the cache (BlkCacheCap 0).
+// TsA16 is 16 bytes aligned to 16, over the stack scratch/cache's 8, so
+// SortStableInPlace merges it without the stack cache (BlkCacheCap 0) and
+// SortStable without the stack scratch (DriftStackCap 0).
 align(16) struct TsA16 {
     k: int
     id: int
@@ -702,12 +699,8 @@ TsOSortBy[T: TsOwned](s: mut []T, h: &Alloc, way: int, rel: int): OutOfMemory!vo
             try s.SortStable(h, TsOCoin[T])
         }
     } else if way == 2 {
-        var c := TdCount(inner: raw.Of(h), allocs: 0, frees: 0, bytes: 0, refuse: false, limit: (s.Len() / 2) * SizeOfT[T]())
-        var ctx := raw.Null[u8]()
-        unsafe "a pointer cast: TdTable's entries cast it back to the TdCount" {
-            ctx = raw.PtrCast[TdCount, u8](raw.OfMut(mut c))
-        }
-        lim := MakeHeap(ctx, raw.Of(&TdTable))
+        var c := TdCount(inner: raw.Of(h), allocs: 0, frees: 0, bytes: 0, align: 0, free_align: 0, refuse: false, limit: (s.Len() / 2) * SizeOfT[T]())
+        lim := MakeHeap(TdCtx(mut c), raw.Of(&TdTable))
         if rel == 0 {
             try s.SortStable(lim.Alloc(), TsOOrd[T])
         } else if rel == 1 {

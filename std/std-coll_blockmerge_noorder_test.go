@@ -357,12 +357,11 @@ func blkNoOrderKeys(pat, d, n int) []int {
 
 type blkNoOrderCase struct{ rel, pat, n, d int }
 
-// The models blkNoOrderModel runs: SortStableInPlace (StableSort), and
-// SortStable's full-scratch and half-scratch bodies (DriftSort).
+// The models blkNoOrderModel runs: SortStableInPlace (StableSort) and
+// SortStable (DriftSort).
 const (
 	noOrderInPlace = iota
 	noOrderStable
-	noOrderIn
 )
 
 // blkNoOrderModel sorts c's keys with the model kind under c's relation.
@@ -371,8 +370,6 @@ func blkNoOrderModel(c blkNoOrderCase, kind int) *blkModel[blkKey] {
 	switch kind {
 	case noOrderStable:
 		m.driftStable()
-	case noOrderIn:
-		m.bufSort()
 	default:
 		m.stableSort()
 	}

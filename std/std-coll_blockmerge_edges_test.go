@@ -68,7 +68,7 @@ var tsTypes = []struct {
 	{"TsBig", 0, 200, 0x7FFFFFFF},
 }
 
-// TestStdColl_BlockMergeModelEdges runs the Go model of SortStable
+// TestStdColl_BlockMergeModelEdges runs the Go model of SortStableInPlace
 // (blkModel.stableSort) over the inputs std/core/tests_sort.mk sorts for
 // its elements of 2 bytes and more (every length of TsLengths, TsKeyAt's
 // seven patterns under the order, and always true, always false and

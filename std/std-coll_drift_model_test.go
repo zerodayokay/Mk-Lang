@@ -63,10 +63,11 @@ func (m *blkModel[T]) driftStable() {
 	m.driftWith(n, driftScratchLen(n, m.elemSize()))
 }
 
-// bufSort models DriftSort through half-slice (n / 2) scratch slots.
+// bufSort models SortStable's half-slice fallback: StableSort up to
+// driftInsertMax, else DriftSort through n / 2 scratch slots.
 func (m *blkModel[T]) bufSort() {
 	n := len(m.s)
-	if n < 2*blkRun {
+	if n <= driftInsertMax {
 		m.stableSort()
 		return
 	}
