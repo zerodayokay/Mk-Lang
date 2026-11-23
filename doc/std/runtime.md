@@ -335,8 +335,10 @@ export Main(sys: &System): vm.Error|WriteError!void {
         _ = runtime.AddFaultFilter(NullCheck)
         var code := try vm.CodeRegion.New(4096)
         onerr code.Release()
-        (mut code.Writable()[0..8]).CopyFrom(NullLoad[..])
-        code.Flush(0, 8)
+        var w := try code.Edit()
+        (mut w.Bytes()[0..8]).CopyFrom(NullLoad[..])
+        w.Flush(0, 8)
+        w.Done()
         f := raw.FnFromAddr[fn(): u32](code.Entry(0))
         try sys.Print("f() = {v:x}\n", (v: f()))
         code.Release()
@@ -349,7 +351,7 @@ $ mk run .
 f() = ffff
 ```
 
-- The fault is in a code region, so it reaches the filters on Windows and Linux alike. Registers are numbered as x86_64 encodes them: 0 is `rax`, 4 is `rsp`.
+- The fault is in a code region, so it reaches the filters on Windows, Linux and macOS alike. Registers are numbered as x86_64 encodes them: 0 is `rax`, 4 is `rsp`.
 - See [std.vm](vm.md) for code regions.
 
 ### Write a crash dump

@@ -82,6 +82,8 @@ pthread_attr_setstacksize
 pthread_create
 pthread_get_stackaddr_np
 pthread_get_stacksize_np
+pthread_jit_write_protect_np
+pthread_jit_write_protect_supported_np
 pthread_join
 pthread_kill
 pthread_main_np

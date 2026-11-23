@@ -184,8 +184,8 @@ func judgeStdTest(t *testing.T, tc driver.TestCase) {
 
 // stdSkipped reports a block that ended with status 0 after printing
 // "skip: <reason>" as its first line: one whose feature the target does not
-// have by design (macOS's code regions), so its name's verdict cannot be
-// reached. The reason is logged; the block is neither a pass nor a failure.
+// have by design, so its name's verdict cannot be reached. The reason is
+// logged; the block is neither a pass nor a failure.
 func stdSkipped(tc driver.TestCase) (string, bool) {
 	if tc.Status != 0 {
 		return "", false

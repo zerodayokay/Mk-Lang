@@ -9,6 +9,14 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 - `Slice[T].SortStable` now takes an explicit allocator (`Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void`), removing the hidden process-heap allocation hook (`SortHeap` / `SortHeapInit`) and eliminating the sole exception to Mk's zero-hidden-allocation invariant. Scratch memory up to 4,096 bytes (for types aligned to at most 8) stays on the stack; larger scratch comes from `a` (falling back to `Len() / 2` elements before failing with `OutOfMemory`, with the slice unchanged) and is freed before returning. `Slice[T].SortStableIn` is removed, superseded by `SortStable`.
 - Added `Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)` in layer 0 (`std.core`): a strictly zero-heap-allocation stable block merge sort that works at compile time and in freestanding programs.
 
+### Standard library
+
+- `std.vm.CodeRegion` now opens writes through an exclusive linear scoped guard: `CodeRegion.Edit(mut self): Error!CodeWriter from self` returns a `CodeWriter` with `Bytes(mut self): mut []u8 from self`, `Flush(&self, offset: int, len: int)`, and infallible `Done(self)` (replacing `Writable`, `Flush`, `Seal`, and `Unseal`), and `CodeRegion.Commit` takes `mut self`. Regions start sealed and stay sealed outside an active `CodeWriter`, enforcing W^X at compile time.
+
+### Platforms
+
+- `aarch64-macos` and `x86_64-macos` now implement `std.vm.CodeRegion`: arm64 macOS uses `MAP_JIT` with per-thread `pthread_jit_write_protect_np` switching (and `sys_icache_invalidate`), and x86_64 macOS toggles private anonymous pages between `PROT_READ|PROT_WRITE` and `PROT_READ|PROT_EXEC` via `mprotect`, both wired into `runtime.AddFaultFilter`.
+
 ### Performance
 
 - In optimized builds outside `--debug` and `--profile size` on `x86_64` and `aarch64`, module-private `const` function dispatch tables used via `become` (`become handlers[op](...)`) automatically emit `preserve_nonecc` handler bodies (`<sym>$pnone`) and companion dispatch tables (`<table_sym>$pnone`) alongside C ABI entry wrappers, keeping 8 to 12 state arguments in registers across threaded tail-call dispatches with no stack spills.

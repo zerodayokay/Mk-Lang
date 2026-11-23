@@ -125,21 +125,12 @@ ReserveMisaligned(size: int, align: int): bool {
 // `mov eax, v; ret`, with the value it returns.
 const RetArm64: [8]u8 = [
     0x00, 0x00, 0x80, 0x52, // movz w0, #0
-    0xC0, 0x03, 0x5F, 0xD6 // ret
+    0xC0, 0x03, 0x5F, 0xD6  // ret
 ]
 
 // RetLen is the length of the target's `return v` code.
 RetLen(): int {
     return if Target.arch == Arch.Arm64 { 8 } else { 6 }
-}
-
-// NoCodeRegions is whether the target makes no code region, where every
-// block that needs one returns at once: macOS. Apple silicon runs
-// generated code only from a MAP_JIT mapping, which is one view whose
-// writability is switched per thread, never the second, writable view a
-// CodeRegion has, and macOS's layer makes none on Intel either.
-NoCodeRegions(): bool {
-    return Target.os == core.Os.Macos
 }
 
 // CallAt calls the code at addr, which takes nothing and returns a u32 in
@@ -162,34 +153,51 @@ CallAt(addr: uint): u32 {
     return r
 }
 
-test "VM a code region runs code written through its writable view" {
-    if NoCodeRegions() {
-        return
-    }
-    c := CodeRegion.New(100) else {
+// EmitRet opens a CodeWriter with defer w.Done(), writes `return v` at o,
+// and flushes it.
+EmitRet(c: mut CodeRegion, o: int, v: u8): Error!void {
+    var w := try c.Edit()
+    defer w.Done()
+    WriteRet(w.Bytes(), o, v)
+    w.Flush(o, RetLen())
+}
+
+test "VM a code region runs code written through Edit" {
+    var c := CodeRegion.New(100) else {
         Assert(false)
         return
     }
+    defer c.Release()
     Assert(c.Size() == PageSize())
-    var w := c.Writable()
-    WriteRet(w, 0, 42)
     n := RetLen()
-    c.Flush(0, n)
+    var w := c.Edit() else {
+        Assert(false)
+        return
+    }
+    var b := w.Bytes()
+    waddr := raw.Addr(raw.DataMut(b))
+    WriteRet(b, 0, 42)
+    w.Flush(0, n)
+    w.Done()
     e := c.Entry(0)
     first: u8 = if Target.arch == Arch.Arm64 { 0x40 } else { 0xB8 }
     last: u8 = if Target.arch == Arch.Arm64 { 0xD6 } else { 0xC3 }
-    unsafe "the executable view is readable: it holds the bytes the writable view wrote" {
+    unsafe "the executable view is readable: it holds the bytes Edit wrote" {
         Assert(raw.Read(raw.FromAddr[u8](e)) == first)
         Assert(raw.Read(raw.FromAddr[u8](e + Trunc[uint](n - 1))) == last)
     }
-    Assert(e != raw.Addr(raw.DataMut(w)))
+    if Target.os == core.Os.Macos {
+        Assert(e == waddr)
+    } else {
+        Assert(e != waddr)
+    }
     Assert(CallAt(e) == 42)
     // A second function, written later at another offset.
-    WriteRet(w, 64, 7)
-    c.Flush(64, n)
+    EmitRet(mut c, 64, 7) else {
+        Assert(false)
+    }
     Assert(CallAt(c.Entry(64)) == 7)
     Assert(CallAt(e) == 42)
-    c.Release()
 }
 
 test "VM a code region of a size that is not positive is Misaligned" {
@@ -242,12 +250,7 @@ test "VM Decommit of a range that is not whole pages panics [exit 101: Region.De
     r.Release()
 }
 
-test "VM CodeRegion.Entry outside the region panics [exit 101: CodeRegion.Entry: offset outside the region]" (sys: &System) {
-    if NoCodeRegions() {
-        sys.Print("skip: macOS gives std no code regions\n", ()) else {
-        }
-        return
-    }
+test "VM CodeRegion.Entry outside the region panics [exit 101: CodeRegion.Entry: offset outside the region]" {
     c := CodeRegion.New(64) else {
         return
     }
@@ -372,55 +375,74 @@ ImmOf(w: []u8, o: int): u8 {
     return w[o + 1]
 }
 
-// Seal and Unseal change the writable view only; Entry's code runs
-// before, while and after. The write that faults while sealed is
-// std.runtime's test (tests_fault.mk), with a filter that sees it.
-test "VM a sealed code region runs at Entry, and Unseal lets a patch through" {
-    if NoCodeRegions() {
-        return
-    }
-    c := CodeRegion.New(2 * PageSize()) else {
+// Outside Edit the region is sealed and Entry's code runs; opening another
+// Edit patches across pages and re-seals on Done. The write that faults
+// outside Edit is std.runtime's test (tests_fault.mk), with a filter that
+// sees it.
+test "VM Edit opens a write window, seals on Done, and supports repeated patches" {
+    var c := CodeRegion.New(2 * PageSize()) else {
         Assert(false)
         return
     }
-    var w := c.Writable()
-    WriteRet(w, 0, 42)
-    c.Flush(0, RetLen())
+    defer c.Release()
+    EmitRet(mut c, 0, 42) else {
+        Assert(false)
+    }
     e := c.Entry(0)
     Assert(CallAt(e) == 42)
-    c.Seal() else {
+    // Open a second write window, inspect existing bytes, and patch two pages.
+    var w := c.Edit() else {
         Assert(false)
+        return
     }
-    Assert(CallAt(e) == 42)
-    Assert(ImmOf(w[..], 0) == 42)
-    c.Seal() else {
-        Assert(false)
-    }
-    Assert(CallAt(e) == 42)
-    c.Unseal() else {
-        Assert(false)
-    }
-    WriteRet(w, 0, 7)
-    WriteRet(w, PageSize(), 9)
-    c.Flush(0, 2 * PageSize())
-    Assert(CallAt(e) == 7)
-    c.Seal() else {
-        Assert(false)
-    }
+    var b := w.Bytes()
+    Assert(ImmOf(b[..], 0) == 42)
+    WriteRet(b, 0, 7)
+    WriteRet(b, PageSize(), 9)
+    w.Flush(0, 2 * PageSize())
+    w.Done()
     Assert(CallAt(e) == 7)
     Assert(CallAt(c.Entry(PageSize())) == 9)
-    c.Release()
+}
+
+test "VM nested Edit on two code regions keeps outer writer writable after inner Done" {
+    var a := CodeRegion.New(PageSize()) else {
+        Assert(false)
+        return
+    }
+    defer a.Release()
+    var b := CodeRegion.New(PageSize()) else {
+        Assert(false)
+        return
+    }
+    defer b.Release()
+    var wa := a.Edit() else {
+        Assert(false)
+        return
+    }
+    var wb := b.Edit() else {
+        wa.Done()
+        Assert(false)
+        return
+    }
+    WriteRet(wb.Bytes(), 0, 19)
+    wb.Flush(0, RetLen())
+    wb.Done()
+    // wa is still live after wb.Done().
+    WriteRet(wa.Bytes(), 0, 23)
+    wa.Flush(0, RetLen())
+    wa.Done()
+    Assert(CallAt(a.Entry(0)) == 23)
+    Assert(CallAt(b.Entry(0)) == 19)
 }
 
 test "VM a reserved code region runs what Commit took, and keeps it over a second Commit" {
-    if NoCodeRegions() {
-        return
-    }
     ps := PageSize()
-    c := CodeRegion.Reserve(8 * ps) else {
+    var c := CodeRegion.Reserve(8 * ps) else {
         Assert(false)
         return
     }
+    defer c.Release()
     Assert(c.Size() == 8 * ps)
     c.Commit(ps, ps) else {
         Assert(false)
@@ -428,42 +450,37 @@ test "VM a reserved code region runs what Commit took, and keeps it over a secon
     c.Commit(4 * ps, 2 * ps) else {
         Assert(false)
     }
-    var w := c.Writable()
-    Assert(w[ps] == 0 && w[5 * ps + 8] == 0)
-    WriteRet(w, ps, 42)
-    WriteRet(w, 5 * ps, 5)
+    var w := c.Edit() else {
+        Assert(false)
+        return
+    }
+    var b := w.Bytes()
+    Assert(b[ps] == 0 && b[5 * ps + 8] == 0)
+    WriteRet(b, ps, 42)
+    WriteRet(b, 5 * ps, 5)
     // Only committed pages are flushed: aarch64's cache maintenance (dc
-    // cvau) faults on a page of the executable view not committed.
-    c.Flush(ps, RetLen())
-    c.Flush(5 * ps, RetLen())
+    // cvau / sys_icache_invalidate) faults on a page not committed.
+    w.Flush(ps, RetLen())
+    w.Flush(5 * ps, RetLen())
+    w.Done()
     Assert(CallAt(c.Entry(ps)) == 42)
     Assert(CallAt(c.Entry(5 * ps)) == 5)
-    // Pages 1, 4 and 5 committed, the others not: Seal and Unseal go by
+    // Pages 1, 4 and 5 committed, the others not: Edit and Done go by
     // runs of committed pages (Windows refuses one call over a gap, 487).
-    c.Seal() else {
-        Assert(false)
-    }
-    Assert(CallAt(c.Entry(ps)) == 42)
-    c.Unseal() else {
-        Assert(false)
-    }
     c.Commit(0, 8 * ps) else {
         Assert(false)
     }
     Assert(CallAt(c.Entry(ps)) == 42)
     Assert(CallAt(c.Entry(5 * ps)) == 5)
-    WriteRet(w, 7 * ps, 3)
-    c.Flush(7 * ps, RetLen())
+    EmitRet(mut c, 7 * ps, 3) else {
+        Assert(false)
+    }
     Assert(CallAt(c.Entry(7 * ps)) == 3)
-    c.Release()
 }
 
 test "VM CodeRegion.Commit outside whole pages of the region is Misaligned" {
-    if NoCodeRegions() {
-        return
-    }
     ps := PageSize()
-    c := CodeRegion.Reserve(4 * ps) else {
+    var c := CodeRegion.Reserve(4 * ps) else {
         Assert(false)
         return
     }
@@ -490,7 +507,7 @@ test "VM CodeRegion.Commit outside whole pages of the region is Misaligned" {
     }
     Assert(bad == 4)
     c.Release()
-    n := CodeRegion.New(ps) else {
+    var n := CodeRegion.New(ps) else {
         Assert(false)
         return
     }
@@ -503,31 +520,24 @@ test "VM CodeRegion.Commit outside whole pages of the region is Misaligned" {
     n.Release()
 }
 
-test "VM a write to a page a reserved code region has not committed faults [exit 101: panic: invalid memory access at]" (sys: &System) {
-    if NoCodeRegions() {
-        sys.Print("skip: macOS gives std no code regions\n", ()) else {
-        }
+test "VM a write to a page a reserved code region has not committed faults [exit 101: panic: invalid memory access at]" {
+    var c := CodeRegion.Reserve(2 * PageSize()) else {
         return
     }
-    c := CodeRegion.Reserve(2 * PageSize()) else {
-        return
-    }
+    defer c.Release()
     c.Commit(0, PageSize()) else {}
-    var w := c.Writable()
-    w[PageSize() + 8] = 1
-    c.Release()
+    var w := c.Edit() else {
+        return
+    }
+    defer w.Done()
+    w.Bytes()[PageSize() + 8] = 1
 }
 
 // The executable view of a page not committed is inaccessible too: a read
 // of it faults (a committed page would read 0, so this tells the two apart,
 // where a call into a zero page faults in either case).
-test "VM a read through the executable view of a page a reserved code region has not committed faults [exit 101: panic: invalid memory access at]" (sys: &System) {
-    if NoCodeRegions() {
-        sys.Print("skip: macOS gives std no code regions\n", ()) else {
-        }
-        return
-    }
-    c := CodeRegion.Reserve(2 * PageSize()) else {
+test "VM a read through the executable view of a page a reserved code region has not committed faults [exit 101: panic: invalid memory access at]" {
+    var c := CodeRegion.Reserve(2 * PageSize()) else {
         return
     }
     c.Commit(0, PageSize()) else {}

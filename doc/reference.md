@@ -9187,7 +9187,7 @@ src/f.mk:1:8: E0202 unknown-module: module std.fs is not available on x86_64-fre
 
 std's system layer for macOS calls libSystem. Arguments, the environment, memory, threads, clocks, random bytes, files, directories, sockets (TCP, UDP and Unix), the kqueue poller, child processes (`posix_spawn`), pipes, ptys and the terminal, signals, faults, descriptor passing and `std.dl` are implemented. What differs from Linux:
 
-- `std.vm` code regions (`CodeRegion.New`) fail with `SysErr.Unsupported`: arm64 macOS runs generated code only from `MAP_JIT` memory, which has no second, writable view. Fault filters (`runtime.AddFaultFilter`) work as on Linux.
+- `std.vm` code regions (`CodeRegion.New`, `CodeRegion.Reserve`, `CodeRegion.Edit`) work on both macOS architectures: on arm64 through a `MAP_JIT` mapping whose per-thread write protection switches via `pthread_jit_write_protect_np` during `CodeRegion.Edit` (requiring the `com.apple.security.cs.allow-jit` entitlement under the Hardened Runtime), and on x86_64 through a private anonymous mapping toggled between read-write and read-execute via `mprotect`. Fault filters (`runtime.AddFaultFilter`) work as on Linux.
 - A `proc.Pipe` end is a blocking end served by the thread pool, not one on the poller.
 - Byte-range locks (`LockRange`) are POSIX record locks: closing any descriptor of a file drops the process's locks on it.
 - A saved terminal mode is 64 bytes, not 36.
@@ -11188,7 +11188,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.csv` | `Records Record Options DefaultOptions WriteRecord Codec Error` |
 | `std.dl` | `Open Library Search Error`, Provisional |
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
-| `std.vm` | `PageSize Reserve Region CodeRegion Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
+| `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
 | `std.testing` | `Fuzz Bench` |
 | `std.build` | `File Profile ProfileKind`, read at compile time only |
@@ -13243,7 +13243,7 @@ struct PanicInfo {
     export column: int
 }
 
-// std.vm, unsafe only. Region, CodeRegion, Prot and Error below are vm's
+// std.vm, unsafe only. Region, CodeRegion, CodeWriter, Prot and Error below are vm's
 error Misaligned
 error Unsupported
 error Os(code: i64)
@@ -13259,13 +13259,13 @@ Region.Release(self)
 CodeRegion.New(size: int): vm.Error!CodeRegion
 CodeRegion.Reserve(size: int): vm.Error!CodeRegion
 CodeRegion.Size(&self): int
-CodeRegion.Writable(&self): mut []u8 from self
 CodeRegion.Entry(&self, offset: int): uint
-CodeRegion.Commit(&self, offset: int, len: int): vm.Error!void
-CodeRegion.Seal(&self): vm.Error!void
-CodeRegion.Unseal(&self): vm.Error!void
-CodeRegion.Flush(&self, offset: int, len: int)
+CodeRegion.Commit(mut self, offset: int, len: int): vm.Error!void
+CodeRegion.Edit(mut self): vm.Error!CodeWriter from self
 CodeRegion.Release(self)
+CodeWriter.Bytes(mut self): mut []u8 from self
+CodeWriter.Flush(&self, offset: int, len: int)
+CodeWriter.Done(self)
 
 enum Prot {
     None

@@ -2,11 +2,13 @@
 // changes, executable memory that is never writable and executable at once,
 // and a raw system call.
 //
-// What: VmProtect, VmCode with VmCodeNew, VmCodeCommit and VmCodeFree,
-// VmFlush and RawSyscall.
+// What: VmProtect, VmCode with VmCodeNew, VmCodeCommit, VmCodePerPage,
+// VmCodeBeginWrite, VmCodeEndWrite, VmCodeProtect and VmCodeFree, VmFlush
+// and RawSyscall.
 //
-// How: a code region is two views of one memfd (W^X: one mapping
-// read-write, one read-execute, never one page both). Each call returns the
+// How: a code region is two views of one memfd (W^X: the writable mapping
+// kept PROT_READ outside an active CodeWriter, the executable mapping
+// PROT_READ|PROT_EXEC throughout, never one page both). Each call returns the
 // kernel's errno (positive) or 0, so the caller can make vm.Error.Os(code).
 
 import std.raw
@@ -41,9 +43,9 @@ export VmProtect(p: *u8, size: int, prot: u32): i64 {
     }
 }
 
-/// VmCode is a code region's two views of one memfd: w read-write, x
-/// read-execute, each size bytes; err the errno when it could not be made
-/// (then both are null).
+/// VmCode is a code region's two views of one memfd: w the writable view
+/// (read-only while sealed, read-write during Edit), x read-execute, each
+/// size bytes; err the errno when it could not be made (then both are null).
 export struct VmCode {
     export w: *u8
     export x: *u8
@@ -53,16 +55,16 @@ export struct VmCode {
 // VmName is the memfd's name, as /proc/<pid>/maps shows it ("memfd:mk-code").
 const VmName: str = "mk-code\0"
 
-/// VmCodeNew makes a code region of size bytes (a whole number of pages):
-/// memfd_create (MFD_EXEC where the kernel knows it), ftruncate, then one
-/// MAP_SHARED mapping read-write and one read-execute of the same pages
-/// (commit), or both with no access until VmCodeCommit (not commit); the
-/// fd is closed, the mappings keep the memory. On any failure what was made
-/// is undone and err holds the errno.
+/// VmCodeNew makes a code region of size bytes (a whole number of pages),
+/// sealed by default: memfd_create (MFD_EXEC where the kernel knows it),
+/// ftruncate, then one MAP_SHARED mapping read-only and one read-execute of
+/// the same pages (commit), or both with no access until VmCodeCommit (not
+/// commit); the fd is closed, the mappings keep the memory. On any failure
+/// what was made is undone and err holds the errno.
 /// O(1): five system calls (six on a kernel before 6.3); commits nothing
 /// until written.
 export VmCodeNew(size: int, commit: bool): VmCode {
-    wp: uint = if commit { ProtRW } else { ProtNone }
+    wp: uint = if commit { VmProtRead } else { ProtNone }
     xp: uint = if commit { VmProtRead | VmProtExec } else { ProtNone }
     unsafe "system calls on an fd this function owns and closes; the mappings are new and the caller's" {
         var fd := Syscall(Nrs().memfd_create, raw.Addr(raw.StrData(VmName)), MfdCloexec | MfdExec, 0, 0, 0, 0)
@@ -94,18 +96,17 @@ export VmCodeNew(size: int, commit: bool): VmCode {
 }
 
 /// VmCodeCommit commits [offset, offset + size) of a region VmCodeNew made
-/// with commit false, page-aligned and inside it: the writable view's pages
-/// become prot (1 read, 2 read-write), then the executable view's
+/// with commit false, page-aligned and inside it, in the sealed state: the
+/// writable view's pages become read-only, then the executable view's
 /// read-execute; the memfd supplies pages on touch, so nothing is charged
 /// before it. When the second mprotect fails the first is undone. 0, or the
 /// errno.
 /// O(1): two system calls; allocates nothing.
-export VmCodeCommit(c: &VmCode, offset: int, size: int, prot: u32): i64 {
-    wp: uint = if prot == 2 { ProtRW } else { VmProtRead }
+export VmCodeCommit(c: &VmCode, offset: int, size: int): i64 {
     o := Trunc[uint](offset)
     n := Trunc[uint](size)
     unsafe "system calls; both ranges lie in the caller's views" {
-        e := Syscall(Nrs().mprotect, raw.Addr(c.w) + o, n, wp, 0, 0, 0)
+        e := Syscall(Nrs().mprotect, raw.Addr(c.w) + o, n, VmProtRead, 0, 0, 0)
         if IsErr(e) {
             return VmErrno(e)
         }
@@ -115,6 +116,35 @@ export VmCodeCommit(c: &VmCode, offset: int, size: int, prot: u32): i64 {
             return VmErrno(x)
         }
         return 0
+    }
+}
+
+/// VmCodePerPage is true on Linux: entering and leaving a write window
+/// updates the writable view's committed runs through VmCodeProtect.
+/// O(1); allocates nothing.
+export VmCodePerPage(): bool {
+    return true
+}
+
+/// VmCodeBeginWrite is a no-op on Linux (VmCodeProtect unseals committed
+/// pages of the writable view). O(1); allocates nothing.
+export VmCodeBeginWrite(c: &VmCode): i64 {
+    return 0
+}
+
+/// VmCodeEndWrite is a no-op on Linux (VmCodeProtect seals committed pages of
+/// the writable view). O(1); allocates nothing.
+export VmCodeEndWrite(c: &VmCode) {
+}
+
+/// VmCodeProtect sets the writable view's committed pages [offset, offset +
+/// size) to PROT_READ|PROT_WRITE (writable) or PROT_READ (sealed); the
+/// executable view is untouched. 0, or the errno.
+/// O(1): one system call; allocates nothing.
+export VmCodeProtect(c: &VmCode, offset: int, size: int, writable: bool): i64 {
+    pr: uint = if writable { ProtRW } else { VmProtRead }
+    unsafe "system call; [w + offset, w + offset + size) lies in the caller's writable view" {
+        return VmErrno(Syscall(Nrs().mprotect, raw.Addr(c.w) + Trunc[uint](offset), Trunc[uint](size), pr, 0, 0, 0))
     }
 }
 

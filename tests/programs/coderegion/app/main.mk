@@ -1,5 +1,5 @@
 // With no argument it prints one line per part and exits 0:
-// 1. code written through a CodeRegion's writable view (`mov eax, 42; ret`), flushed, runs at
+// 1. code written through CodeRegion.Edit (`mov eax, 42; ret`), flushed, runs at
 //    its entry and returns 42;
 // 2. a write to a page protected to None faults; a filter makes the page read-write and resumes
 //    the thread at the same instruction, which then succeeds (a guard page a program manages);
@@ -92,20 +92,24 @@ SkipIllegal(c: &runtime.FaultContext): runtime.FaultAction {
 // region cannot be made.
 Run(code: []u8, lo: bool): i64 {
     unsafe "std.vm is unsafe only" {
-        c := vm.CodeRegion.New(64) else {
+        var c := vm.CodeRegion.New(64) else {
             return -1
         }
-        var w := c.Writable()
-        for i in 0..code.Len() {
-            w[i] = code[i]
+        defer c.Release()
+        var w := c.Edit() else {
+            return -1
         }
-        c.Flush(0, code.Len())
+        var b := w.Bytes()
+        for i in 0..code.Len() {
+            b[i] = code[i]
+        }
+        w.Flush(0, code.Len())
+        w.Done()
         if lo {
             CodeLo.Store(u64(c.Entry(0)))
         }
         r := CallCode(c.Entry(0))
         CodeLo.Store(0)
-        c.Release()
         return i64(r)
     }
 }

@@ -29,8 +29,7 @@ import std.vm
 | Make pages read-only or inaccessible | `Region.Protect` with a `Prot` |
 | Give the space back | `Region.Release` |
 | Memory for generated code | `CodeRegion.New` (committed) or `CodeRegion.Reserve` (committed by the page) |
-| Write code, then run it | `CodeRegion.Writable`, `CodeRegion.Flush`, `CodeRegion.Entry` |
-| Lock written code against writes | `CodeRegion.Seal`, `CodeRegion.Unseal` |
+| Write code, then run it | `CodeRegion.Edit` -> `CodeWriter` (`Bytes`, `Flush`, `Done`), then `CodeRegion.Entry` |
 
 ## Regions
 
@@ -47,17 +46,20 @@ Two tasks that commit overlapping ranges at once must exclude each other themsel
 
 ## Code regions
 
-A `CodeRegion` is memory for code that the program generates. It has two views of the same memory: a writable one, which you write instructions into, and an executable one, which runs them. No page is writable and executable in one view (W^X).
+A `CodeRegion` is memory for code that the program generates, enforcing W^X on every target: no page is writable and executable at once, and the region stays sealed (not writable) outside an active `CodeWriter` returned by `Edit`.
 
-1. Write the bytes into `Writable()`.
-2. Call `Flush(offset, len)`, the instruction-cache flush.
-3. Turn `Entry(offset)`, the executable address, into a `fn` value with `raw.FnFromAddr[F](...)`, and call it.
+1. Open an exclusive write window with `var w := try c.Edit()`.
+2. Write the bytes into `w.Bytes()`.
+3. Call `w.Flush(offset, len)`, the instruction-cache flush.
+4. Close the window with `w.Done()` (or `defer w.Done()`), re-sealing the region.
+5. Turn `c.Entry(offset)`, the executable address, into a `fn` value with `raw.FnFromAddr[F](...)`, and call it.
 
-- `Seal` makes the writable view read-only, so a stray write faults until `Unseal`. It never touches the executable view, so code at `Entry` keeps running throughout.
-- `CodeRegion.New(size)` commits every page. `CodeRegion.Reserve(size)` commits none, and `Commit` takes pages as code grows; while the region is sealed, the pages `Commit` takes are read-only through the writable view. A write to a page not committed faults, and so does a call into one, as a fault in a code region.
+- `CodeWriter` is linear and borrows `CodeRegion` mutably (`mut self`), so the compiler prevents forgetting `Done` (E0402), prevents holding `w.Bytes()` past `Done` (E0503), and prevents calling `Entry`, `Commit`, `Edit` or `Release` while a write window is open.
+- Do not hold a `CodeWriter` across an `Io` wait or task suspension: on arm64 macOS JIT write protection belongs to the calling OS thread, so resuming on another carrier would leave the original carrier write-enabled.
+- `CodeRegion.New(size)` commits every page in the sealed state. `CodeRegion.Reserve(size)` commits none, and `Commit(offset, len)` takes pages in the sealed state as code grows. A write to a page not committed faults, and so does a read or call into one (a call faults as a fault in a code region).
 - A fault in a code region goes to the fault filters of [std.runtime](runtime.md#fault-filters), never to Mk's report of a fault in Mk code. The runtime tracks code regions for this in a table of 64, so `New` and `Reserve` fail with `Unsupported` while 64 are live.
 - `Entry` panics with code 2 for an offset outside `[0, Size())`.
-- On Windows a code region is a pagefile-backed section mapped twice; on Linux a memfd mapped twice.
+- On Windows a code region is a pagefile-backed section mapped twice (the writable view read-only outside `Edit`, the executable view read-execute throughout); on Linux a memfd mapped twice the same way; on arm64 macOS a `MAP_JIT` mapping whose write-vs-execute mode switches per thread through `pthread_jit_write_protect_np` (other threads stay in execute mode while one thread edits); on x86_64 macOS a private anonymous mapping whose committed pages toggle between read-write during `Edit` and read-execute outside it.
 
 ## Errors
 
@@ -68,7 +70,7 @@ A `CodeRegion` is memory for code that the program generates. It has two views o
 | `Misaligned` | An offset, length or size is not a whole number of pages, or is outside the region |
 | `OutOfMemory` | The OS has no such range, or refuses the commit charge |
 | `Unsupported` | This target cannot do it, or 64 code regions are live |
-| `Os(code)` | Any other refusal, with the OS's code (`GetLastError` on Windows, `errno` on Linux) |
+| `Os(code)` | Any other refusal, with the OS's code (`GetLastError` on Windows, `errno` on Linux and macOS) |
 
 A `Commit` that fails part way leaves the pages it committed before the failure committed.
 
@@ -76,7 +78,7 @@ A `Commit` that fails part way leaves the pages it committed before the failure 
 
 `std.vm` never allocates from a Mk allocator. A `Region` keeps one bit per page in a bitmap of its own, a second reservation rounded up to a page. That is one page for up to 128 MiB of 4 KiB pages, 1 MiB for 32 GiB. On Linux the reservation is made with `MAP_NORESERVE`, so even a 32 GiB reservation costs no commit charge, and the bitmap is not charged either. On Windows the bitmap is charged.
 
-`Reserve` and `Release` are a few system calls. `Commit`, `Decommit`, `Protect`, `Seal` and `Unseal` cost one system call per run of pages they change, plus a scan of the bitmap at 64 pages per word.
+`Reserve` and `Release` are a few system calls. `Commit`, `Decommit` and `Protect` cost one system call per run of pages they change, plus a scan of the bitmap at 64 pages per word. `CodeRegion.Edit` and `CodeWriter.Done` are O(1) on arm64 macOS (toggling per-thread JIT write protection); on Windows, Linux and x86_64 macOS they cost one system call per run of committed pages (one in all for `CodeRegion.New`) plus the bitmap scan.
 
 ## Examples
 
@@ -148,20 +150,26 @@ WriteReturn(w: mut []u8, at: int, n: u8) {
     (mut w[at..at + 6]).CopyFrom(code[..])
 }
 
+// EmitReturn opens an exclusive write window, writes and flushes a function,
+// and re-seals the region on exit via defer w.Done().
+EmitReturn(c: mut vm.CodeRegion, at: int, n: u8): vm.Error!void {
+    unsafe "at..at + 6 lies inside the committed code region" {
+        var w := try c.Edit()
+        defer w.Done()
+        WriteReturn(w.Bytes(), at, n)
+        w.Flush(at, 6)
+    }
+}
+
 export Main(sys: &System): vm.Error|WriteError!void {
     unsafe "the region holds whole functions at offsets 0 and 64, flushed before each call" {
-        var c := try vm.CodeRegion.New(4096) // committed whole
+        var c := try vm.CodeRegion.New(4096) // committed whole, sealed
         onerr c.Release()
-        WriteReturn(c.Writable(), 0, 42) // write through the writable view
-        c.Flush(0, 6)                    // make the bytes visible to execution
+        try EmitReturn(mut c, 0, 42)
         f := raw.FnFromAddr[fn(): u32](c.Entry(0)) // run through the executable view
         try sys.Print("f() = {v}\n", (v: f()))
 
-        try c.Seal() // the writable view is read-only; f still runs
-        try sys.Print("sealed, f() = {v}\n", (v: f()))
-        try c.Unseal()
-        WriteReturn(c.Writable(), 64, 7) // a second function
-        c.Flush(64, 6)
+        try EmitReturn(mut c, 64, 7) // open a second write window for a second function
         g := raw.FnFromAddr[fn(): u32](c.Entry(64))
         try sys.Print("g() = {v}\n", (v: g()))
         c.Release()
@@ -172,7 +180,6 @@ export Main(sys: &System): vm.Error|WriteError!void {
 ```text
 $ mk run .
 f() = 42
-sealed, f() = 42
 g() = 7
 ```
 
@@ -202,9 +209,11 @@ export Main(sys: &System): vm.Error|WriteError!void {
         try sys.Print("reserved {n} pages\n", (n: c.Size() / page))
         var next := 0 // the first page not yet used
         for n in [3, 5, 8] {
-            try c.Commit(next, page) // one more page, as the code grows
-            WriteReturn(c.Writable(), next, Trunc[u8](n))
-            c.Flush(next, 6)
+            try c.Commit(next, page) // one more page, sealed, as the code grows
+            var w := try c.Edit()
+            WriteReturn(w.Bytes(), next, Trunc[u8](n))
+            w.Flush(next, 6)
+            w.Done()
             f := raw.FnFromAddr[fn(): u32](c.Entry(next))
             try sys.Print("page {p}: f() = {v}\n", (p: next / page, v: f()))
             next += page
@@ -236,38 +245,66 @@ Stability: Stable.
 export linear struct CodeRegion
 ```
 
-Memory for generated code, seen through two views: a writable one and
-an executable one, never both on one page (W^X). Code is written
-through Writable, made visible by Flush, and run at Entry. On Windows
-it is a pagefile-backed section mapped twice; on Linux a memfd mapped
-twice.
+Memory for generated code, enforcing W^X on every target: no page is
+writable and executable at once, and the region stays sealed (not
+writable) outside an active CodeWriter from Edit. To emit or patch code,
+call Edit to open a linear CodeWriter, write through CodeWriter.Bytes,
+flush the instruction cache with CodeWriter.Flush, close the window with
+CodeWriter.Done, and run at Entry.
 
-Seal makes the writable view read-only between batches of writes, and
-Unseal makes it writable again. Neither touches the executable view, so
-code at Entry runs throughout. A region from New is committed whole;
-one from Reserve has no page committed until Commit takes it. It is
-linear: end it with Release.
+On Windows it is a pagefile-backed section mapped twice (a writable view
+kept read-only outside Edit, and a read-execute view untouched
+throughout); on Linux a memfd mapped twice the same way; on arm64 macOS a
+MAP_JIT mapping whose write-vs-execute mode switches per thread through
+pthread_jit_write_protect_np; on x86_64 macOS a private anonymous mapping
+whose committed pages switch between read-write during Edit and
+read-execute outside it.
+
+A region from New is committed whole; one from Reserve has no page
+committed until Commit takes it. Linear: end it with Release.
 
 ### `CodeRegion.Commit`
 
 ```
-export CodeRegion.Commit(&self, offset: int, len: int): Error!void
+export CodeRegion.Commit(mut self, offset: int, len: int): Error!void
 ```
 
 - Errors: Error (OutOfMemory, Misaligned, Os(code: i64), Unsupported)
 
 Commits [offset, offset + len) of a region from Reserve. Its pages not
-yet committed read as zero and become writable through the writable
-view (read-only while the region is sealed) and executable through the
-other. Pages already committed keep their contents and protection. On
-a region from New, whose pages are all committed, it only checks the
-range. Concurrent calls, and a Seal or Unseal at the same time, are the
-caller's to exclude.
+yet committed read as zero and become sealed (non-writable until Edit)
+and executable at Entry. Pages already committed keep their contents and
+protection. On a region from New, whose pages are all committed, it only
+checks the range. Taking mut self prevents Commit from racing with Edit
+or Entry.
 
 Fails with Misaligned for a range that is not whole pages inside the
 region, and Os when the OS refuses; the runs committed before it stay
 committed. O(len / (64 pages)) bitmap words, plus one system call per
 run of uncommitted pages (two on Linux); allocates nothing.
+
+### `CodeRegion.Edit`
+
+```
+export CodeRegion.Edit(mut self): Error!CodeWriter from self
+```
+
+- Flows: The result borrows from self.
+- Errors: Error (OutOfMemory, Misaligned, Os(code: i64), Unsupported)
+
+Opens an exclusive write window into the region, returning a linear
+CodeWriter borrowing self. On Windows and Linux every committed page of
+the writable view becomes read-write while the executable view stays
+read-execute; on arm64 macOS the calling thread switches to JIT write
+mode (pthread_jit_write_protect_np(0)) while other threads remain in
+execute mode; on x86_64 macOS every committed page switches from
+read-execute to read-write.
+
+Fails with Os when the OS refuses; any pages already made writable before
+the refusal are sealed again as far as the OS allows and the region stays
+sealed. O(1) on arm64 macOS; on Windows, Linux and x86_64 macOS
+O(Size / (64 pages)) bitmap words plus one system call per run of
+committed pages (one in all for a region from New); allocates nothing.
 
 ### `CodeRegion.Entry`
 
@@ -279,18 +316,6 @@ The executable address of the byte at offset, to pass to
 raw.FnFromAddr, which makes the fn value. An offset outside
 [0, Size()) panics with the bounds code (2). O(1); allocates nothing.
 
-### `CodeRegion.Flush`
-
-```
-export CodeRegion.Flush(&self, offset: int, len: int)
-```
-
-Makes the bytes written at [offset, offset + len) visible to execution:
-the instruction-cache flush, which is FlushInstructionCache on Windows
-and a fence on x86_64 Linux, whose caches are coherent. Call it after
-writing code and before running it. A range outside the region is
-clipped to it. O(1); allocates nothing.
-
 ### `CodeRegion.New`
 
 ```
@@ -299,12 +324,12 @@ export CodeRegion.New(size: int): Error!CodeRegion
 
 - Errors: Error (OutOfMemory, Misaligned, Os(code: i64), Unsupported)
 
-A code region of size bytes, rounded up to whole pages, committed
-whole.
+A code region of size bytes, rounded up to whole pages, committed whole
+and sealed (not writable until Edit).
 
 Fails with Misaligned for a size that is not positive, Os when the OS
-refuses (Os(38), ENOSYS, on x86_64-nutshell), and Unsupported
-while 64 code regions are live: a fault in a 65th could not reach
+refuses (Os(38), ENOSYS, on x86_64-nutshell), and Unsupported while 64
+code regions are live: a fault in a 65th could not reach
 runtime.AddFaultFilter's filters. O(1) system calls, and a scan of the
 64 region slots; allocates nothing on the heap.
 
@@ -314,8 +339,8 @@ runtime.AddFaultFilter's filters. O(1) system calls, and a scan of the
 export CodeRegion.Release(self)
 ```
 
-Unmaps both views, and gives back a reserved region's commit bitmap.
-O(1) system calls; allocates nothing.
+Unmaps the region's view(s), and gives back a reserved region's commit
+bitmap. O(1) system calls; allocates nothing.
 
 ### `CodeRegion.Reserve`
 
@@ -326,36 +351,17 @@ export CodeRegion.Reserve(size: int): Error!CodeRegion
 - Errors: Error (OutOfMemory, Misaligned, Os(code: i64), Unsupported)
 
 A code region of size bytes, rounded up to whole pages, reserved with
-no page committed. A page can be written and run only once Commit takes
-it. A write to a page not committed faults, and so does a call into
-one, as a fault in a code region, which goes to
-runtime.AddFaultFilter's filters. On Windows it is a section made
-SEC_RESERVE; on Linux a memfd with both views mapped with no access.
+no page committed. A page can be written (inside Edit) and run only once
+Commit takes it. A write to a page not committed faults, and so does a
+read or call into one (a call into one faults as a fault in a code
+region, which goes to runtime.AddFaultFilter's filters). On Windows it is
+a section made SEC_RESERVE; on Linux a memfd with both views mapped with
+no access; on macOS a mapping with PROT_NONE (MAP_JIT on arm64).
 
 Fails as New does, and with OutOfMemory when its commit bitmap (one bit
 per page rounded up to a page, as a Region's) cannot be made. O(1)
 system calls, and a scan of the 64 region slots; allocates nothing on
 the heap.
-
-### `CodeRegion.Seal`
-
-```
-export CodeRegion.Seal(&self): Error!void
-```
-
-- Errors: Error (OutOfMemory, Misaligned, Os(code: i64), Unsupported)
-
-Seals the region: every committed page of the writable view becomes
-read-only, so a write through Writable faults, as an access fault in Mk
-code, until Unseal. Pages that Commit takes while sealed are committed
-read-only. The executable view is not touched: code at Entry runs
-throughout. Sealing a sealed region seals it again.
-
-Fails with Os when the OS refuses. The region then counts as sealed
-though some pages may still be writable, so the caller seals again or
-releases it. O(Size / (64 pages)) bitmap words, plus one system call
-per run of committed pages (one in all for a region from New);
-allocates nothing.
 
 ### `CodeRegion.Size`
 
@@ -366,36 +372,67 @@ export CodeRegion.Size(&self): int
 The region's size in bytes, a whole number of pages. O(1); allocates
 nothing.
 
-### `CodeRegion.Unseal`
+### `CodeWriter`
 
 ```
-export CodeRegion.Unseal(&self): Error!void
+export linear view struct CodeWriter
 ```
 
-- Errors: Error (OutOfMemory, Misaligned, Os(code: i64), Unsupported)
+An open exclusive write window into a CodeRegion, returned by
+CodeRegion.Edit. It borrows the CodeRegion mutably while live, so no
+concurrent Edit, Commit, Entry or Release can touch the region until Done
+closes the window. Write code through Bytes, flush the instruction cache
+with Flush, and end the window with Done.
 
-Unseals the region: every committed page of the writable view becomes
-writable again, for the next batch of writes. The executable view is
-not touched.
+Linear: every path must close it with Done (use `defer w.Done()`). Do not
+hold a CodeWriter across an Io wait or task suspension: on arm64 macOS
+JIT write protection belongs to the calling OS thread, so resuming on
+another carrier would leave the original carrier write-enabled.
 
-Fails with Os when the OS refuses. The region then stays sealed, and
-the pages made writable before the refusal are sealed again as far as
-the OS allows. O(Size / (64 pages)) bitmap words, plus one system call
-per run of committed pages (one in all for a region from New);
-allocates nothing.
-
-### `CodeRegion.Writable`
+### `CodeWriter.Bytes`
 
 ```
-export CodeRegion.Writable(&self): mut []u8 from self
+export CodeWriter.Bytes(mut self): mut []u8 from self
 ```
 
 - Flows: The result borrows from self.
 
-The writable view's bytes, to write code into. What they hold is seen
-through the executable view after Flush. A write through them faults
-while the region is sealed, and on a page that a region from Reserve
-has not committed. O(1); allocates nothing.
+The region's writable bytes while this CodeWriter lives. What they hold
+is seen through the executable view after Flush and Done. A write to a
+page that a region from Reserve has not committed faults. O(1); allocates
+nothing.
+
+### `CodeWriter.Done`
+
+```
+export CodeWriter.Done(self)
+```
+
+Closes the write window and seals the region again: every committed page
+of the writable view becomes read-only on Windows and Linux; on x86_64
+macOS every committed page returns to read-execute; on arm64 macOS the
+calling thread's JIT write protection is re-enabled
+(pthread_jit_write_protect_np(1) when no nested window remains).
+
+Infallible so `defer w.Done()` works on every path; if the OS refuses a
+page protection change, Done still attempts every remaining committed
+run. O(1) on arm64 macOS; on Windows, Linux and x86_64 macOS
+O(Size / (64 pages)) bitmap words plus one system call per run of
+committed pages (one in all for a region from New); allocates nothing.
+
+### `CodeWriter.Flush`
+
+```
+export CodeWriter.Flush(&self, offset: int, len: int)
+```
+
+Makes the bytes written at [offset, offset + len) visible to execution:
+FlushInstructionCache on Windows, sys_icache_invalidate on arm64 macOS,
+data-cache clean and instruction-cache invalidate on arm64 Linux, and a
+fence on x86_64 Linux and macOS, whose caches are coherent. Call it after
+writing code and before Done. A range outside the region is clipped to
+it; on arm64 only committed pages may be flushed. O(len / cache line) on
+arm64, O(1) on x86_64; allocates nothing.
 
 ### `Error`
 
@@ -420,7 +457,8 @@ outside the region.
 export error Os(code: i64)
 ```
 
-The OS refused, with its code (GetLastError on Windows, errno on Linux).
+The OS refused, with its code (GetLastError on Windows, errno on Linux
+and macOS).
 
 ### `PageSize`
 

@@ -2,8 +2,9 @@
 // what std/sys/linux exports, so std checks and builds for the target until
 // the Nutshell backend replaces this directory.
 //
-// What: VmProtect, VmCodeNew, VmCodeCommit, VmCodeFree, VmFlush and
-// RawSyscall, what std.vm and std.linux need.
+// What: VmProtect, VmCodeNew, VmCodeCommit, VmCodePerPage, VmCodeBeginWrite,
+// VmCodeEndWrite, VmCodeProtect, VmCodeFree, VmFlush and RawSyscall, what
+// std.vm and std.linux need.
 //
 // How: no protection change and no code region can be made, so each fails
 // with ENOSYS (38).
@@ -31,7 +32,30 @@ export VmCodeNew(size: int, commit: bool): VmCode {
 
 /// VmCodeCommit has std/sys/linux's contract; this placeholder returns 38.
 /// O(1); allocates nothing.
-export VmCodeCommit(c: &VmCode, offset: int, size: int, prot: u32): i64 {
+export VmCodeCommit(c: &VmCode, offset: int, size: int): i64 {
+    return 38
+}
+
+/// VmCodePerPage has std/sys/linux's contract.
+/// O(1); allocates nothing.
+export VmCodePerPage(): bool {
+    return true
+}
+
+/// VmCodeBeginWrite has std/sys/linux's contract; this placeholder returns 38.
+/// O(1); allocates nothing.
+export VmCodeBeginWrite(c: &VmCode): i64 {
+    return 38
+}
+
+/// VmCodeEndWrite has std/sys/linux's contract; this placeholder does nothing.
+/// O(1); allocates nothing.
+export VmCodeEndWrite(c: &VmCode) {
+}
+
+/// VmCodeProtect has std/sys/linux's contract; this placeholder returns 38.
+/// O(1); allocates nothing.
+export VmCodeProtect(c: &VmCode, offset: int, size: int, writable: bool): i64 {
     return 38
 }
 

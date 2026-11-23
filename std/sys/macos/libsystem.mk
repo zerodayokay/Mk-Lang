@@ -74,6 +74,8 @@ extern pthread_attr_setstacksize(attr: *u8, size: uint): i32
 extern pthread_create(t: *u64, attr: *u8, start: fn(*u8): *u8, arg: *u8): i32
 extern pthread_get_stackaddr_np(t: u64): *u8
 extern pthread_get_stacksize_np(t: u64): uint
+extern pthread_jit_write_protect_np(enabled: i32)
+extern pthread_jit_write_protect_supported_np(): i32
 extern pthread_join(t: u64, ret: *u8): i32
 extern pthread_kill(t: u64, sig: i32): i32
 extern pthread_main_np(): i32

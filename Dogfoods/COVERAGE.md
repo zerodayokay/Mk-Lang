@@ -1505,13 +1505,13 @@ Written by `go run ./tools/dogfood cover` on 2026-11-19, with mk 0.1.0 commit fc
 | `CodeRegion.New(size: int): vm.Error!CodeRegion` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
 | `CodeRegion.Reserve(size: int): vm.Error!CodeRegion` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
 | `CodeRegion.Size(&self): int` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
-| `CodeRegion.Writable(&self): mut []u8 from self` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
 | `CodeRegion.Entry(&self, offset: int): uint` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
-| `CodeRegion.Commit(&self, offset: int, len: int): vm.Error!void` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
-| `CodeRegion.Seal(&self): vm.Error!void` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
-| `CodeRegion.Unseal(&self): vm.Error!void` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
-| `CodeRegion.Flush(&self, offset: int, len: int)` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
+| `CodeRegion.Commit(mut self, offset: int, len: int): vm.Error!void` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
+| `CodeRegion.Edit(mut self): vm.Error!CodeWriter from self` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
 | `CodeRegion.Release(self)` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
+| `CodeWriter.Bytes(mut self): mut []u8 from self` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
+| `CodeWriter.Flush(&self, offset: int, len: int)` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
+| `CodeWriter.Done(self)` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
 | `enum Prot {` | - | - | - | gap: not executed, and references are unknown (mk query uses: see Static references above) |
 
 ## std.linux

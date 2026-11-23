@@ -120,7 +120,7 @@ const LoadNullArm64: []u8 = [
     0x00, 0x02, 0x80, 0xD2, // movz x0, #0x10
     0x00, 0x00, 0x40, 0xF9, // ldr x0, [x0]
     0x40, 0x05, 0x80, 0x52, // movz w0, #42
-    0xC0, 0x03, 0x5F, 0xD6 // ret
+    0xC0, 0x03, 0x5F, 0xD6  // ret
 ]
 
 // LoadCode is the target's LoadNull.
@@ -137,23 +137,20 @@ LoadLen(): uint {
     return if Target.arch == Arch.Arm64 { 4 } else { 8 }
 }
 
-// PutCode writes code at offset o of w and flushes it.
-PutCode(c: &vm.CodeRegion, w: mut []u8, o: int, code: []u8) {
-    for i in 0..code.Len() {
-        w[o + i] = code[i]
-    }
+// PutCode writes code at offset o of c through an Edit window and flushes it.
+PutCode(c: mut vm.CodeRegion, o: int, code: []u8): bool {
     unsafe "vm's functions are unsafe only" {
-        c.Flush(o, code.Len())
+        var w := c.Edit() else {
+            return false
+        }
+        defer w.Done()
+        var b := w.Bytes()
+        for i in 0..code.Len() {
+            b[o + i] = code[i]
+        }
+        w.Flush(o, code.Len())
+        return true
     }
-}
-
-// NoCodeRegions is whether the target makes no code region, where every
-// block that needs one returns at once: macOS. Apple silicon runs
-// generated code only from a MAP_JIT mapping, which is one view whose
-// writability is switched per thread, never the second, writable view a
-// vm.CodeRegion has, and macOS's layer makes none on Intel either.
-NoCodeRegions(): bool {
-    return Target.os == Os.Macos
 }
 
 var CodeLo: raw.Atomic[u64] = raw.Atomic[u64].New(0)
@@ -190,20 +187,16 @@ CallCode(addr: uint): u32 {
 }
 
 test "Filter a fault in a code region goes to the filters, and Resume at an edited pc continues there" {
-    if NoCodeRegions() {
-        return
-    }
     unsafe "AddFaultFilter is unsafe only; vm's functions too" {
-        c := vm.CodeRegion.New(64) else {
+        var c := vm.CodeRegion.New(64) else {
             Assert(false)
             return
         }
-        var w := c.Writable()
-        PutCode(&c, w, 0, LoadCode())
+        defer c.Release()
+        Assert(PutCode(mut c, 0, LoadCode()))
         CodeLo.Store(u64(c.Entry(0)))
         _ = AddFaultFilter(SkipLoad)
         Assert(CallCode(c.Entry(0)) == 42)
-        c.Release()
     }
 }
 
@@ -250,14 +243,12 @@ RaceWorker(j: int, n: int) {
     size := (j % 4 + 1) * 16 * 4096
     for _ in 0..n {
         unsafe "vm's functions are unsafe only; the code is LoadCode's" {
-            c := vm.CodeRegion.New(size) else {
+            var c := vm.CodeRegion.New(size) else {
                 _ = RaceBad.Add(1000000)
                 return
             }
             off := c.Size() - 4096
-            var w := c.Writable()
-            PutCode(&c, w, off, LoadCode())
-            if CallCode(c.Entry(off)) != 42 {
+            if !PutCode(mut c, off, LoadCode()) || CallCode(c.Entry(off)) != 42 {
                 _ = RaceBad.Add(1)
             }
             c.Release()
@@ -266,9 +257,6 @@ RaceWorker(j: int, n: int) {
 }
 
 test "Filter code regions made and released by 16 tasks at once each route their fault [env MK_CARRIERS=16]" (sys: &System) {
-    if NoCodeRegions() {
-        return
-    }
     unsafe "AddFaultFilter is unsafe only" {
         _ = AddFaultFilter(SkipAnyLoad)
     }
@@ -288,31 +276,20 @@ CodeFault(filter: bool) {
         if filter {
             _ = AddFaultFilter(PassAll)
         }
-        c := vm.CodeRegion.New(64) else {
+        var c := vm.CodeRegion.New(64) else {
             return
         }
-        var w := c.Writable()
-        PutCode(&c, w, 0, LoadCode())
+        defer c.Release()
+        _ = PutCode(mut c, 0, LoadCode())
         FaultKindSeen.Store(u64(CallCode(c.Entry(0))))
-        c.Release()
     }
 }
 
-test "Filter an unresumed fault in a code region is reported as one [exit 101: fault in a code region]" (sys: &System) {
-    if NoCodeRegions() {
-        sys.Print("skip: macOS gives std no code regions\n", ()) else {
-        }
-        return
-    }
+test "Filter an unresumed fault in a code region is reported as one [exit 101: fault in a code region]" {
     CodeFault(false)
 }
 
-test "Filter a fault in a code region that every filter passes is reported as one [exit 101: fault in a code region]" (sys: &System) {
-    if NoCodeRegions() {
-        sys.Print("skip: macOS gives std no code regions\n", ()) else {
-        }
-        return
-    }
+test "Filter a fault in a code region that every filter passes is reported as one [exit 101: fault in a code region]" {
     CodeFault(true)
 }
 
@@ -323,18 +300,17 @@ const CallSelf: []u8 = [0xE8, 0xFB, 0xFF, 0xFF, 0xFF]
 // a function's prologue does, and calls its own start again.
 const CallSelfArm64: []u8 = [
     0xFD, 0x7B, 0xBF, 0xA9, // 1: stp x29, x30, [sp, #-16]!
-    0xFF, 0xFF, 0xFF, 0x97 // bl 1b
+    0xFF, 0xFF, 0xFF, 0x97  // bl 1b
 ]
 
 OverflowInRegion() {
     unsafe "vm's functions are unsafe only; the code is CallSelf's" {
-        c := vm.CodeRegion.New(4096) else {
+        var c := vm.CodeRegion.New(4096) else {
             return
         }
-        var w := c.Writable()
-        PutCode(&c, w, 0, if Target.arch == Arch.Arm64 { CallSelfArm64 } else { CallSelf })
+        defer c.Release()
+        _ = PutCode(mut c, 0, if Target.arch == Arch.Arm64 { CallSelfArm64 } else { CallSelf })
         FaultKindSeen.Store(u64(CallCode(c.Entry(0))))
-        c.Release()
     }
 }
 
@@ -342,11 +318,6 @@ OverflowInRegion() {
 // in a code region is a stack overflow, whatever its pc. On bd81ffa2 Linux
 // reported a fault in a code region and exited 139.
 test "Filter a task's stack overflow in a code region is reported as a stack overflow [exit 101: panic: stack limit in task]" (sys: &System) {
-    if NoCodeRegions() {
-        sys.Print("skip: macOS gives std no code regions\n", ()) else {
-        }
-        return
-    }
     unsafe "AddFaultFilter is unsafe only" {
         _ = AddFaultFilter(PassAll)
     }
@@ -405,14 +376,14 @@ ProtectedRead(addr: uint): u64 {
 HoldThen(n: int): int {
     unsafe "vm's functions are unsafe only; the code is LoadCode's" {
         if n == 0 {
-            c := vm.CodeRegion.New(4096) else {
+            var c := vm.CodeRegion.New(4096) else {
                 return 5
             }
-            var w := c.Writable()
-            PutCode(&c, w, 0, LoadCode())
-            r := CallCode(c.Entry(0))
-            c.Release()
-            return int(r)
+            defer c.Release()
+            if !PutCode(mut c, 0, LoadCode()) {
+                return 4
+            }
+            return int(CallCode(c.Entry(0)))
         }
         h := vm.CodeRegion.New(4096) else {
             return 3
@@ -424,9 +395,6 @@ HoldThen(n: int): int {
 }
 
 test "Filter a 64th live code region routes its fault, and a 65th is refused" {
-    if NoCodeRegions() {
-        return
-    }
     unsafe "AddFaultFilter is unsafe only" {
         _ = AddFaultFilter(SkipAnyLoad)
     }
@@ -577,7 +545,7 @@ const RegCodeArm64: []u8 = [
     0xFB, 0x73, 0x44, 0xA9, // 172: ldp x27, x28, [sp, #64]
     0xFD, 0x7B, 0x45, 0xA9, // 176: ldp x29, x30, [sp, #80]
     0xFF, 0x83, 0x01, 0x91, // 180: add sp, sp, #96
-    0xC0, 0x03, 0x5F, 0xD6 // 184: ret
+    0xC0, 0x03, 0x5F, 0xD6  // 184: ret
 ]
 const RegLoadAtArm64: int = 148
 
@@ -615,20 +583,16 @@ RegCheck(c: &FaultContext): FaultAction {
 }
 
 test "Filter FaultContext reads every register in the target's encoding order, and SetReg and SetPc take effect" {
-    if NoCodeRegions() {
-        return
-    }
     unsafe "AddFaultFilter is unsafe only; vm's functions too" {
-        c := vm.CodeRegion.New(4096) else {
+        var c := vm.CodeRegion.New(4096) else {
             Assert(false)
             return
         }
-        var w := c.Writable()
-        PutCode(&c, w, 0, if Target.arch == Arch.Arm64 { RegCodeArm64 } else { RegCode })
+        defer c.Release()
+        Assert(PutCode(mut c, 0, if Target.arch == Arch.Arm64 { RegCodeArm64 } else { RegCode }))
         RegLo.Store(u64(c.Entry(0)))
         _ = AddFaultFilter(RegCheck)
         Assert(CallCode(c.Entry(0)) == 2000)
-        c.Release()
     }
 }
 
@@ -696,7 +660,7 @@ const Ud2: []u8 = [0x0F, 0x0B, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC3]
 const UdfArm64: []u8 = [
     0x00, 0x00, 0x00, 0x00, // udf #0
     0x40, 0x05, 0x80, 0x52, // movz w0, #42
-    0xC0, 0x03, 0x5F, 0xD6 // ret
+    0xC0, 0x03, 0x5F, 0xD6  // ret
 ]
 
 // SkipUd2 resumes past an Illegal fault at a code region's ud2 or udf (2
@@ -722,36 +686,26 @@ SkipUd2(c: &FaultContext): FaultAction {
 // Ud2Region writes the target's Ud2 into a new code region and calls it.
 Ud2Region(filter: bool): u32 {
     unsafe "AddFaultFilter is unsafe only; vm's functions too" {
-        c := vm.CodeRegion.New(64) else {
+        var c := vm.CodeRegion.New(64) else {
             Assert(false)
             return 0
         }
-        var w := c.Writable()
-        PutCode(&c, w, 0, if Target.arch == Arch.Arm64 { UdfArm64 } else { Ud2 })
+        defer c.Release()
+        Assert(PutCode(mut c, 0, if Target.arch == Arch.Arm64 { UdfArm64 } else { Ud2 }))
         CodeLo.Store(u64(c.Entry(0)))
         if filter {
             _ = AddFaultFilter(SkipUd2)
         }
-        r := CallCode(c.Entry(0))
-        c.Release()
-        return r
+        return CallCode(c.Entry(0))
     }
 }
 
 test "Filter an illegal instruction in a code region reaches the filters as Illegal, and Resume past it continues" {
-    if NoCodeRegions() {
-        return
-    }
     Assert(Ud2Region(true) == 42)
     Assert(FaultKindSeen.Load() == 3)
 }
 
-test "Filter an unresumed illegal instruction in a code region is reported as a fault in one [exit 101: fault in a code region]" (sys: &System) {
-    if NoCodeRegions() {
-        sys.Print("skip: macOS gives std no code regions\n", ()) else {
-        }
-        return
-    }
+test "Filter an unresumed illegal instruction in a code region is reported as a fault in one [exit 101: fault in a code region]" {
     unsafe "AddFaultFilter is unsafe only" {
         _ = AddFaultFilter(PassAll)
     }
@@ -785,7 +739,7 @@ test "Filter Linux and macOS take a fault as Mk's by its pc, its thread or its s
 // first word.
 const RetArm64: [8]u8 = [
     0x00, 0x00, 0x80, 0x52, // movz w0, #0
-    0xC0, 0x03, 0x5F, 0xD6 // ret
+    0xC0, 0x03, 0x5F, 0xD6  // ret
 ]
 
 // RetLen is the length of the code WriteRetAt writes.
@@ -824,88 +778,132 @@ SetImmAt(w: mut []u8, o: int, v: u8) {
     w[o + 1] = v
 }
 
-// A write through a sealed region's writable view faults at that
-// write's address (the filter sees it there, as an access fault, and
-// unprotects the page to let it through), while Entry's code runs before
-// and after.
-test "Filter a write through a sealed code region's writable view faults there" {
-    if NoCodeRegions() {
-        return
+// SkipSealedWrite records an access fault on FaultPage and resumes past
+// ProbeWriteByte's 3-byte x86_64 or 4-byte aarch64 store, working identically
+// on dual-view (Windows, Linux), mprotect (x86_64 macOS) and MAP_JIT
+// (arm64 macOS) code regions.
+SkipSealedWrite(c: &FaultContext): FaultAction {
+    unsafe "the globals are this test process's" {
+        page := FaultPage.Load()
+        ps := PageSizeOf()
+        if c.Addr() < Trunc[uint](page) || c.Addr() >= Trunc[uint](page) + Cast[uint](ps) {
+            return FaultAction.Pass
+        }
+        FaultSeen.Store(FaultSeen.Load() + 1)
+        k: u64 = match c.Kind() {
+            .Stack { 1 }
+            .Access { 2 }
+            .Illegal { 3 }
+        }
+        FaultKindSeen.Store(k)
     }
-    unsafe "AddFaultFilter is unsafe only; vm's functions too" {
-        c := vm.CodeRegion.New(4096) else {
-            Assert(false)
-            return
+    step: uint = if Target.arch == Arch.Arm64 { 4 } else { 3 }
+    var d := *c
+    d.SetPc(c.Pc() + step)
+    return FaultAction.Resume(ctx: d)
+}
+
+// ProbeWriteByte attempts a 1-byte store to addr using a fixed-length
+// instruction that SkipSealedWrite skips when addr is sealed.
+ProbeWriteByte(addr: uint) {
+    if Target.arch == Arch.X64 {
+        unsafe "addr is a sealed code-region page: the write faults and SkipSealedWrite skips it" {
+            asm("mov byte ptr [rax], 1", in("rax") addr)
         }
-        var w := c.Writable()
-        WriteRetAt(w, 0, 42)
-        c.Flush(0, RetLen())
-        c.Seal() else {
-            Assert(false)
+    }
+    if Target.arch == Arch.Arm64 {
+        unsafe "addr is a sealed code-region page: the write faults and SkipSealedWrite skips it" {
+            asm("strb wzr, [{a}]", a: in(reg) addr)
         }
-        Assert(CallCode(c.Entry(0)) == 42)
-        FaultPage.Store(u64(raw.Addr(raw.DataMut(w))))
-        _ = AddFaultFilter(Unprotect)
-        SetImmAt(w, 0, 7)
-        Assert(FaultSeen.Load() == 1)
-        Assert(FaultKindSeen.Load() == 2)
-        c.Flush(0, RetLen())
-        Assert(CallCode(c.Entry(0)) == 7)
-        c.Unseal() else {
-            Assert(false)
-        }
-        SetImmAt(w, 0, 9)
-        c.Flush(0, RetLen())
-        Assert(CallCode(c.Entry(0)) == 9)
-        Assert(FaultSeen.Load() == 1)
-        c.Release()
     }
 }
 
-// Commit while sealed never makes a writable page.
-test "Filter a page a sealed reserved code region commits is read-only through its writable view" {
-    if NoCodeRegions() {
-        return
-    }
-    ps := PageSizeOf()
+// Outside Edit a code region is sealed: a raw write to its writable address
+// faults at that address (Access), while Entry's code runs throughout and a
+// subsequent Edit writes cleanly without faulting.
+test "Filter a write to a sealed code region faults outside Edit" {
     unsafe "AddFaultFilter is unsafe only; vm's functions too" {
-        c := vm.CodeRegion.Reserve(4 * ps) else {
+        var c := vm.CodeRegion.New(4096) else {
             Assert(false)
             return
         }
-        c.Seal() else {
+        defer c.Release()
+        var w := c.Edit() else {
             Assert(false)
+            return
         }
+        var b := w.Bytes()
+        waddr := raw.Addr(raw.DataMut(b))
+        WriteRetAt(b, 0, 42)
+        w.Flush(0, RetLen())
+        w.Done()
+        Assert(CallCode(c.Entry(0)) == 42)
+        FaultPage.Store(u64(waddr))
+        _ = AddFaultFilter(SkipSealedWrite)
+        ProbeWriteByte(waddr)
+        Assert(FaultSeen.Load() == 1)
+        Assert(FaultKindSeen.Load() == 2)
+        Assert(CallCode(c.Entry(0)) == 42)
+        var w2 := c.Edit() else {
+            Assert(false)
+            return
+        }
+        SetImmAt(w2.Bytes(), 0, 9)
+        w2.Flush(0, RetLen())
+        w2.Done()
+        Assert(CallCode(c.Entry(0)) == 9)
+        Assert(FaultSeen.Load() == 1)
+    }
+}
+
+// Commit always commits pages in the sealed state (non-writable until Edit).
+test "Filter a page a reserved code region commits is sealed until Edit" {
+    ps := PageSizeOf()
+    unsafe "AddFaultFilter is unsafe only; vm's functions too" {
+        var c := vm.CodeRegion.Reserve(4 * ps) else {
+            Assert(false)
+            return
+        }
+        defer c.Release()
+        // Capture the writable base address before committing page 2.
+        var w0 := c.Edit() else {
+            Assert(false)
+            return
+        }
+        wbase := raw.Addr(raw.DataMut(w0.Bytes()))
+        w0.Done()
         c.Commit(2 * ps, ps) else {
             Assert(false)
         }
-        var w := c.Writable()
-        Assert(w[2 * ps] == 0)
-        FaultPage.Store(u64(raw.Addr(raw.DataMut(w))) + Cast[u64](2 * ps))
-        _ = AddFaultFilter(Unprotect)
-        WriteRetAt(w, 2 * ps, 11)
+        page2 := wbase + Trunc[uint](2 * ps)
+        Assert(raw.Read(raw.FromAddr[u8](page2)) == 0)
+        FaultPage.Store(u64(page2))
+        _ = AddFaultFilter(SkipSealedWrite)
+        ProbeWriteByte(page2)
         Assert(FaultSeen.Load() == 1)
-        c.Flush(2 * ps, RetLen())
+        Assert(FaultKindSeen.Load() == 2)
+        var w := c.Edit() else {
+            Assert(false)
+            return
+        }
+        WriteRetAt(w.Bytes(), 2 * ps, 11)
+        w.Flush(2 * ps, RetLen())
+        w.Done()
         Assert(CallCode(c.Entry(2 * ps)) == 11)
-        c.Release()
+        Assert(FaultSeen.Load() == 1)
     }
 }
 
 // A call into a page a reserved code region has not committed is a
 // fault in a code region, as the fault path's table routes it.
-test "Filter a call into an uncommitted page of a reserved code region is a fault in one [exit 101: fault in a code region]" (sys: &System) {
-    if NoCodeRegions() {
-        sys.Print("skip: macOS gives std no code regions\n", ()) else {
-        }
-        return
-    }
+test "Filter a call into an uncommitted page of a reserved code region is a fault in one [exit 101: fault in a code region]" {
     ps := PageSizeOf()
     unsafe "vm's functions are unsafe only" {
-        c := vm.CodeRegion.Reserve(2 * ps) else {
+        var c := vm.CodeRegion.Reserve(2 * ps) else {
             return
         }
+        defer c.Release()
         c.Commit(0, ps) else {}
         FaultKindSeen.Store(u64(CallCode(c.Entry(ps))))
-        c.Release()
     }
 }

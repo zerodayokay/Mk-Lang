@@ -1,6 +1,6 @@
 // Why: runtime.AddFaultFilter must see a fault before Mk's own report and
 // take it over, as on Linux; std.vm's code regions route their faults here
-// too, though macOS gives std none (VmCodeNew fails, vm.mk).
+// too.
 //
 // What: one filter hook, called by SigFault (fault.mk) on the alternate
 // signal stack before Mk's report, and a table of code regions whose faults

@@ -2,12 +2,13 @@
 // code at run time, and on Windows that must hold to W^X: no page is ever
 // writable and executable at once.
 //
-// What: VmProtect, VmCode with VmCodeNew, VmCodeCommit and VmCodeFree, and
-// VmFlush.
+// What: VmProtect, VmCode with VmCodeNew, VmCodeCommit, VmCodePerPage,
+// VmCodeBeginWrite, VmCodeEndWrite, VmCodeProtect and VmCodeFree, and VmFlush.
 //
 // How: protection changes on committed pages (VirtualProtect), a code
-// region's two views of one pagefile-backed section (one view read-write,
-// one read-execute), and the instruction-cache flush
+// region's two views of one pagefile-backed section (the writable view kept
+// PAGE_READONLY outside an active CodeWriter, the executable view
+// PAGE_EXECUTE_READ throughout), and the instruction-cache flush
 // (FlushInstructionCache). Each returns GetLastError's code or 0, so the
 // caller can make vm.Error.Os.
 
@@ -40,22 +41,25 @@ export VmProtect(p: *u8, size: int, prot: u32): i64 {
     }
 }
 
-/// VmCode is a code region's two views of one section: w read-write, x
-/// read-execute, each size bytes; err GetLastError's code when it could not
-/// be made (then both are null).
+/// VmCode is a code region's two views of one section: w the writable view
+/// (read-only while sealed, read-write during Edit), x read-execute, each
+/// size bytes; err GetLastError's code when it could not be made (then both
+/// are null).
 export struct VmCode {
     export w: *u8
     export x: *u8
     export err: i64
 }
 
-/// VmCodeNew makes a code region of size bytes: a pagefile-backed section
-/// created PAGE_EXECUTE_READWRITE (the most any view may take), committed
-/// whole (commit) or SEC_RESERVE (not commit: every page reserved until
-/// VmCodeCommit), mapped once FILE_MAP_WRITE and once FILE_MAP_READ |
-/// FILE_MAP_EXECUTE; the section handle is closed, the views keep it. On
-/// any failure what was made is undone and err holds the code.
-/// O(1): four system calls; commits nothing until written.
+/// VmCodeNew makes a code region of size bytes, sealed by default: a
+/// pagefile-backed section created PAGE_EXECUTE_READWRITE (the most any view
+/// may take), committed whole (commit) or SEC_RESERVE (not commit: every page
+/// reserved until VmCodeCommit), mapped once FILE_MAP_WRITE and once
+/// FILE_MAP_READ | FILE_MAP_EXECUTE; the section handle is closed, the views
+/// keep it. When commit is true, the writable view is immediately set
+/// PAGE_READONLY so the region starts sealed. On any failure what was made is
+/// undone and err holds the code.
+/// O(1): four or five system calls; commits nothing until written.
 export VmCodeNew(size: int, commit: bool): VmCode {
     u := Trunc[u64](size)
     prot: u32 = if commit { VmPageExecuteReadWrite } else { VmPageExecuteReadWrite | VmSecReserve }
@@ -77,21 +81,62 @@ export VmCodeNew(size: int, commit: bool): VmCode {
             _ = UnmapViewOfFile(w)
             return VmCode(w: raw.Null[u8](), x: raw.Null[u8](), err: e)
         }
+        if commit {
+            var old: u32 = 0
+            if VirtualProtect(w, Trunc[uint](size), VmPageReadOnly, raw.OfMut(mut old)) == 0 {
+                se := i64(GetLastError())
+                _ = UnmapViewOfFile(w)
+                _ = UnmapViewOfFile(x)
+                return VmCode(w: raw.Null[u8](), x: raw.Null[u8](), err: se)
+            }
+        }
         return VmCode(w: w, x: x, err: 0)
     }
 }
 
 /// VmCodeCommit commits [offset, offset + size) of a region VmCodeNew made
-/// with commit false, page-aligned and inside it: VirtualAlloc(MEM_COMMIT)
-/// through the writable view, with prot 1 read-only or 2 read-write, which
-/// commits the section's pages, so the executable view sees them
-/// PAGE_EXECUTE_READ (probed on Windows 11). 0, or
-/// GetLastError's code.
+/// with commit false, page-aligned and inside it, in the sealed state:
+/// VirtualAlloc(MEM_COMMIT) through the writable view with PAGE_READONLY,
+/// which commits the section's pages so the executable view sees them
+/// PAGE_EXECUTE_READ. 0, or GetLastError's code.
 /// O(1): one system call; commits size bytes.
-export VmCodeCommit(c: &VmCode, offset: int, size: int, prot: u32): i64 {
-    pr: u32 = if prot == 2 { PageReadWrite } else { VmPageReadOnly }
+export VmCodeCommit(c: &VmCode, offset: int, size: int): i64 {
     unsafe "kernel32; [w + offset, w + offset + size) lies in the caller's writable view" {
-        if raw.IsNull(VirtualAlloc(raw.FromAddr[u8](raw.Addr(c.w) + Trunc[uint](offset)), Trunc[uint](size), MemCommit, pr)) {
+        if raw.IsNull(VirtualAlloc(raw.FromAddr[u8](raw.Addr(c.w) + Trunc[uint](offset)), Trunc[uint](size), MemCommit, VmPageReadOnly)) {
+            return i64(GetLastError())
+        }
+        return 0
+    }
+}
+
+/// VmCodePerPage is true on Windows: entering and leaving a write window
+/// updates the writable view's committed runs through VmCodeProtect.
+/// O(1); allocates nothing.
+export VmCodePerPage(): bool {
+    return true
+}
+
+/// VmCodeBeginWrite is a no-op on Windows (VmCodeProtect unseals committed
+/// pages of the writable view). O(1); allocates nothing.
+export VmCodeBeginWrite(c: &VmCode): i64 {
+    return 0
+}
+
+/// VmCodeEndWrite is a no-op on Windows (VmCodeProtect seals committed pages
+/// of the writable view). O(1); allocates nothing.
+export VmCodeEndWrite(c: &VmCode) {
+}
+
+/// VmCodeProtect sets the writable view's committed pages [offset, offset +
+/// size) to PAGE_READWRITE (writable) or PAGE_READONLY (sealed); the
+/// executable view is untouched. 0, or GetLastError's code.
+/// O(1): one system call; allocates nothing.
+export VmCodeProtect(c: &VmCode, offset: int, size: int, writable: bool): i64 {
+    pr: u32 = if writable { PageReadWrite } else { VmPageReadOnly }
+    var old: u32 = 0
+    unsafe "kernel32; [w + offset, w + offset + size) lies in the caller's writable view" {
+        p := raw.FromAddr[u8](raw.Addr(c.w) + Trunc[uint](offset))
+        if VirtualProtect(p, Trunc[uint](size), pr, raw.OfMut(mut old)) == 0 {
             return i64(GetLastError())
         }
         return 0
