@@ -256,13 +256,16 @@ func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, 
 	}
 	dg := diag.New(diag.E0410, it.Span, "the exported struct `"+c.cfg.Interner.Str(it.Name)+"` must say `"+words[:len(words)-1]+"`: its private fields make it so").
 		Fact("needs", diag.TextList(needs...)).Fact("fields", diag.TextList(changing...))
-	if needMutView && d.View {
-		// `view` is already present: add `mut ` before it (and `linear `
-		// before `view` too when both are needed).
+	if d.View {
+		// `view` is already present: insert `linear ` and/or `mut ` before it
+		// so the order stays `linear [mut] view struct`.
 		if at, ok := structToken(fx, n, ast.TokView); ok {
-			ins := "mut "
+			ins := ""
 			if needLinear {
-				ins = "linear mut "
+				ins += "linear "
+			}
+			if needMutView {
+				ins += "mut "
 			}
 			dg.Fix(diag.Fix{Class: diag.Proven, Edits: []diag.Edit{{Span: at, Text: ins}}, Why: "the private fields decide the struct's kind"})
 		}

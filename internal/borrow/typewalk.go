@@ -713,8 +713,10 @@ func bitOf(b bool) memoBit {
 // refSteps is the references stored directly in t's bytes, as (mode,
 // referent): &U and []U give (shared, U); str gives (shared, u8); mut U and
 // mut []U give (exclusive, U); the walk recurses through [N], ?, E!, records,
-// struct fields and enum payloads; a view struct, a KParam or KSelf adds
-// (exclusive, ANY), and a view still recurses its fields.
+// struct fields and enum payloads; a `mut view struct`, a loan-interior-writable
+// plain view, a KParam or KSelf adds (exclusive, ANY), while a read-only plain
+// view adds its type arguments and their refSteps, and every view still
+// recurses its fields.
 func (w *walker) refSteps(t types.TypeID) *refInfo {
 	if r, ok := w.refs[t]; ok {
 		return r

@@ -21,7 +21,8 @@ import (
 type irange struct{ lo, hi uint32 }
 
 // isInteriorItem reports whether a named item is one of the interior
-// types: Cell, Mutex, raw.Atomic, Chan, Arena or Scope.
+// types: Cell, Mutex, raw.Atomic, Chan, SpinCore, Arena, Scope or any
+// `mut view struct`.
 func (e *Evaluator) isInteriorItem(it types.ItemID) bool {
 	if it == types.NoItem {
 		return false
@@ -30,6 +31,11 @@ func (e *Evaluator) isInteriorItem(it types.ItemID) bool {
 	switch it {
 	case k.Cell, k.Mutex, k.Atomic, k.Chan, k.SpinCore, k.Arena, k.Scope:
 		return true
+	}
+	if e.cfg.Items != nil {
+		if sd, ok := e.cfg.Items.Get(it).Decl.(*types.StructDecl); ok && sd.MutView {
+			return true
+		}
 	}
 	return false
 }

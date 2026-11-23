@@ -1168,7 +1168,7 @@ Fix: copy the word into memory that outlives `index` and add the copy: `try inde
 **What a store reaches.** The callee may store at any depth below `p`, so the clause reaches every root that the argument of `p` reaches and that can be written. Walk the path from the argument:
 
 - An exclusive step keeps writing possible, and a shared step ends it.
-- A step through a `Cell` or a `view` restores it, because those write past a shared reference. So `Mutex[mut &i32]` stays writable through its guard. The restoring step may come after shared ones: `c: &Ctx`, whose field `h: &Hub` holds a `Chan`, takes `*c into c`, since the channel writes past both references.
+- A step through a `Cell`, `Mutex` or `Chan` of a carrier, or through a `mut view`, restores it, because those write loans past a shared reference. So `Mutex[mut &i32]` stays writable through its guard. The restoring step may come after shared ones: `c: &Ctx`, whose field `h: &Hub` holds a `Chan[&i32]`, takes `*c into c`, since the channel writes loans past both references.
 - A root that cannot be written cannot receive a store, so one `into` does not affect unrelated roots. The test is about what can be written, not about type names: a store that changes type, such as `&p.x` from `p: &Point`, is still caught.
 
 A store through a `mut` field of a local wrapper reaches what the field points at:
@@ -1931,9 +1931,11 @@ Peek(p: *i32): i32 {
 - A body that writes through raw pointers, and a bodiless `extern`, may do only what a checked body with the same signature may do. Its clauses are its contract, and a store they do not declare breaks it.
 - `unsafe` needs a reason string, and its module needs permission in the manifest.
 
-Three duties are worth naming:
+Five duties are worth naming:
 
 - **Interior-writable views.** A `view` whose `unsafe` code writes loans through `&self` behind raw pointers, or hands out loan-interior-writable storage (such as `&Mutex[?&i32]` or `&Alloc`) from raw pointers through `&self`, must be declared `mut view struct` (R18). A plain `view struct` promises that `&self` cannot accept loan stores except through its type arguments.
+- **Borrowed exclusive views.** A plain `view struct` whose raw pointer borrows external storage exclusively for writing through `mut self` (such as `Guard[T]`, `SpinGuard[T]` or `ChunksMut[T]`) must carry a `[0]mut T` marker field or be declared `mut view struct`. Without an exclusive marker, passing the view by value looks like moving an owning container (`List[T]`, `Box[T]`) rather than borrowing mutable external memory.
+- **Type-erased views.** A non-generic plain `view struct` that erases a carrier behind raw pointers must not return that carrier to callers (even through `mut self` or consuming `self`), because a non-generic plain view carries no type argument for the borrow checker to walk. A type-erased box that hands its value back must be declared `mut view struct` (`ErasedBox`, `dyn.Ref`); a plain `view struct` like `core.SealedBox` may expose its contents only to zero-flow callbacks returning `void`.
 - **Fresh memory.** An allocator method that returns `mut T from self` with a shared `self`, such as `Arena.Put` and `Arena.Slice`, hands out an exclusive reference backed by a shared loan, so two results are usable at once. The loan rules do not check that they point at disjoint storage; the `unsafe` body does, by returning fresh memory every time. A method on `&Arena` that returned a `mut` reference to existing contents would be unsound, and the rules would not catch it.
 - **Stores into owned memory.** Memory that a by-value parameter owns, as a `Box` owns its value, may take a store with no `into` clause when two things hold. The body moves that parameter into the result and nowhere else, and the result is a carrier `from` both that parameter and the stored value. `ErasedBox.Fill(b: Box[?T], x: T): ErasedBox from b, x` writes `x` into the memory `b` owns. `b` is consumed, so only the result reaches that memory afterwards, and the result holds `x`'s loans beside `b`'s. Both sources are needed: with the result `from b` alone, `x`'s loans could end while the box still holds `x`. A checked body cannot make this store (E0604), so only `unsafe` code uses it. `Box[T].New(a: &Alloc, x: T): OutOfMemory!Box[T] from a, x` works the same way.
 

@@ -39,38 +39,93 @@ export interface Transport {
     Abandon(self)
 }
 
-export linear mut view struct Conn {
-    box: core.ErasedBox
+export linear view struct Conn {
+    box: core.SealedBox
     h: &Heap
     reads: Mutex[int]
     writes: Mutex[int]
-    do_read: fn(&core.ErasedBox, Io, mut []u8): Error!int
-    do_write: fn(&core.ErasedBox, Io, []u8): Error!void
-    do_close: fn(&core.ErasedBox, Io): Error!void
-    do_abandon: fn(core.ErasedBox, &Heap)
+    do_read: fn(&core.SealedBox, Io, mut []u8): Error!int
+    do_write: fn(&core.SealedBox, Io, []u8): Error!void
+    do_close: fn(&core.SealedBox, Io): Error!void
+    do_abandon: fn(core.SealedBox, &Heap)
 }
 
 export NewConn[T: Transport + Send + Share](h: &Heap, t: T): OutOfMemory!Conn from h, t {
-    b := try Box[T].New(h.Alloc(), t)
-    return Conn(box: core.ErasedBox.Of[T](b), h: h, reads: Mutex[int].New(0), writes: Mutex[int].New(0), do_read: ConnRead[T], do_write: ConnWrite[T], do_close: ConnClose[T], do_abandon: ConnAbandon[T])
+    empty: ?T = none
+    b := Box[?T].New(h.Alloc(), empty) else e {
+        match empty {
+            some(x) { x.Abandon() }
+            none {}
+        }
+        fail e
+    }
+    return Conn(box: core.SealedBox.Fill[T](b, t), h: h, reads: Mutex[int].New(0), writes: Mutex[int].New(0), do_read: ConnRead[T], do_write: ConnWrite[T], do_close: ConnClose[T], do_abandon: ConnAbandon[T])
 }
 
-ConnRead[T: Transport + Send + Share](b: &core.ErasedBox, io: Io, buf: mut []u8): Error!int {
-    return try b.Ref[T]().Read(io, buf)
+DoConnRead[T: Transport + Send + Share](x: &?T, a: (io: Io, buf: mut []u8, out: mut (n: int, err: ?Error))) {
+    (io, buf, out) := a
+    if t := &*x {
+        match t.Read(io, buf) {
+            ok(n) { *out = (n: n, err: none) }
+            err(e) { *out = (n: 0, err: some(e)) }
+        }
+    }
 }
 
-ConnWrite[T: Transport + Send + Share](b: &core.ErasedBox, io: Io, data: []u8): Error!void {
-    try b.Ref[T]().WriteAll(io, data)
+DoConnWrite[T: Transport + Send + Share](x: &?T, a: (io: Io, data: []u8, err: mut ?Error)) {
+    (io, data, err) := a
+    if t := &*x {
+        match t.WriteAll(io, data) {
+            ok(_) { *err = none }
+            err(e) { *err = some(e) }
+        }
+    }
 }
 
-ConnClose[T: Transport + Send + Share](b: &core.ErasedBox, io: Io): Error!void {
-    try b.Ref[T]().Close(io)
+DoConnClose[T: Transport + Send + Share](x: &?T, a: (io: Io, err: mut ?Error)) {
+    (io, err) := a
+    if t := &*x {
+        match t.Close(io) {
+            ok(_) { *err = none }
+            err(e) { *err = some(e) }
+        }
+    }
 }
 
-ConnAbandon[T: Transport + Send + Share](b: core.ErasedBox, h: &Heap) {
-    box := b.Take[T]()
-    t := box.Take(h.Alloc())
-    t.Abandon()
+DoConnAbandon[T: Transport + Send + Share](box: Box[?T], h: &Heap) {
+    match box.Take(h.Alloc()) {
+        some(t) { t.Abandon() }
+        none {}
+    }
+}
+
+ConnRead[T: Transport + Send + Share](b: &core.SealedBox, io: Io, buf: mut []u8): Error!int {
+    var out: (n: int, err: ?Error) = (n: 0, err: none)
+    b.With[?T, (io: Io, buf: mut []u8, out: mut (n: int, err: ?Error))]((io: io, buf: buf, out: mut out), DoConnRead[T])
+    if e := out.err {
+        fail e
+    }
+    return out.n
+}
+
+ConnWrite[T: Transport + Send + Share](b: &core.SealedBox, io: Io, data: []u8): Error!void {
+    var err: ?Error = none
+    b.With[?T, (io: Io, data: []u8, err: mut ?Error)]((io: io, data: data, err: mut err), DoConnWrite[T])
+    if e := err {
+        fail e
+    }
+}
+
+ConnClose[T: Transport + Send + Share](b: &core.SealedBox, io: Io): Error!void {
+    var err: ?Error = none
+    b.With[?T, (io: Io, err: mut ?Error)]((io: io, err: mut err), DoConnClose[T])
+    if e := err {
+        fail e
+    }
+}
+
+ConnAbandon[T: Transport + Send + Share](b: core.SealedBox, h: &Heap) {
+    b.TakeWith[?T, &Heap](h, DoConnAbandon[T])
 }
 
 export Conn.Read(&self, io: Io, buf: mut []u8): Error!int {

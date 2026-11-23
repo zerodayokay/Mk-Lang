@@ -447,6 +447,51 @@ export view struct NonCarrierCellOnlyView {
 	}
 }
 
+func TestE0410_ViewNeedsLinearFixOrder(t *testing.T) {
+	w := newWorld(t, true)
+	src := `export linear struct Res {
+	x: int
+}
+
+export view struct ViewLin {
+	r: Res
+}
+`
+	b := checkCodes(t, w, "m", opt{}, "E0410@5:20", src)
+	d := b.diags()[0]
+	if got := fact(d, "needs"); got != "[linear]" {
+		t.Fatalf("needs %q, want [linear]", got)
+	}
+	if len(d.Fixes) != 1 || len(d.Fixes[0].Edits) != 1 {
+		t.Fatalf("fixes %+v", d.Fixes)
+	}
+	ed := d.Fixes[0].Edits[0]
+	patched := src[:ed.Span.Start] + ed.Text + src[ed.Span.End:]
+	if !strings.Contains(patched, "export linear view struct ViewLin") {
+		t.Errorf("fix produced invalid syntax:\n%s", patched)
+	}
+}
+
+func TestE0410_RecursivePlainViewLoanInterior(t *testing.T) {
+	w := newWorld(t, true)
+	b := checkCodes(t, w, "m", opt{}, "E0410@10:20", `view struct RoList[T] {
+	p: *T
+}
+
+struct Node {
+	next: RoList[Node]
+	c: Cell[?&i32]
+}
+
+export view struct Bad {
+	xs: RoList[Node]
+}
+`)
+	if got := fact(b.diags()[0], "needs"); got != "[mut view]" {
+		t.Errorf("needs %q, want [mut view]", got)
+	}
+}
+
 func TestMain(t *testing.T) {
 	w := newWorld(t, true)
 	for i, form := range []string{"", ": int", ": Oops!void", ": Oops!int"} {

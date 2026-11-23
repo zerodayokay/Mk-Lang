@@ -214,8 +214,8 @@ mutant M-R11-reach
 rule R11
 class R
 file internal/borrow/store.go
-anchor \t\t\twork = append(work, hop{l: loanID(m), excl: e || ti.writable, fromP1: fp1, fromAlloc: fa})
-replace \t\t\tif false {\n\t\t\t\twork = append(work, hop{l: loanID(m), excl: e || ti.writable, fromP1: fp1, fromAlloc: fa})\n\t\t\t}
+anchor \t\t\twork = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: fa, capFld: cf, noAlloc: na})
+replace \t\t\tif false {\n\t\t\t\twork = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: fa, capFld: cf, noAlloc: na})\n\t\t\t}
 note writable(L0) stops at the first level (H37, H66); expected VDeadScope
 end
 
@@ -223,10 +223,20 @@ mutant M-R11-fromp1
 rule R11
 class R
 file internal/borrow/store.go
-anchor \t\tif a := c.allocOf(t); (h.first || h.fromP1) && a != noRoot && !seenRoot[a] {
-replace \t\tif a := c.allocOf(t); h.first && a != noRoot && !seenRoot[a] {
-note a direct step from p#1 through p.inner to p#2 skips p#A: a shared reference to a struct holding &Arena drops stores into its allocator; expected VDeadScope
-witness MV-holder-arena-fromp1-reject.mk
+anchor \t\tif a := c.allocOf(t); !noAlloc && (h.first || lo.inner && (h.fromAlloc == noRoot || c.allocContent(h.fromAlloc, h.l))) && a != noRoot {
+replace \t\tif a := c.allocOf(t); h.first && a != noRoot {
+note a hop onto p#2 through an inner loan that may reach an allocator skips p#A: a shared reference to a struct holding &Arena, &&Holder wrapped in a local struct, or a tagged struct holding &Arena drops stores into its allocator; expected VDeadScope
+witness MV-holder-arena-fromp1-reject.mk MV-holder-arena-deep-reject.mk MV-holder-arena-tagged-reject.mk
+end
+
+mutant M-R11-noalloc-loop
+rule R11
+class P
+file internal/borrow/store.go
+anchor \t\t\tna := noAlloc && ti.kind == rkAbstract && ti.depth == 2 && loanID(m) == c.params[ti.param].inner
+replace \t\t\tna := false && noAlloc && ti.kind == rkAbstract && ti.depth == 2 && loanID(m) == c.params[ti.param].inner
+note a precision row: stepping along p#2's own inner self-loop drops noAlloc, so storing sys.args into a local Arena causes later writes into that Arena to jump to sys#A and fail E0505
+witness MV-noalloc-arena-ok.mk
 end
 
 mutant M-D115-view
@@ -371,8 +381,8 @@ mutant M-D654-narrow
 rule R11
 class R
 file internal/borrow/store.go
-anchor \t\tif ti.carrier && (e || ti.writable) {\n\t\t\tif !seenRoot[t] {
-replace \t\tif ti.carrier && (e || ti.writable && (h.first || ti.view)) {\n\t\t\tif !seenRoot[t] {
+anchor \t\tif ti.carrier && (e || ti.writable) {\n\t\t\tc.setCapField(t, cf)\n\t\t\tif !seenRoot[t] {
+replace \t\tif ti.carrier && (e || ti.writable && (h.first || ti.view)) {\n\t\t\tc.setCapField(t, cf)\n\t\t\tif !seenRoot[t] {
 note past a shared step only a view restores writing, a Cell, Mutex or Chan not (the rejected narrowing); W1 is accepted and its caller's cell keeps a dead local; expected VDeadScope
 end
 
@@ -708,6 +718,16 @@ anchor \t\t\tfor _, af := range fr.args {\n\t\t\t\tif af.LoanInterior {\n\t\t\t\
 replace \t\t\tfor _, af := range fr.args {\n\t\t\t\tif false && af.LoanInterior {\n\t\t\t\t\tf.LoanInterior = true\n\t\t\t\t}\n\t\t\t}
 note a plain view struct does not propagate LoanInterior from its type arguments: Box[Mutex[?&i32]] beside borrowed fields fails to collapse on &p; expected VDeadScope
 witness MV-readonly-view-box-mutex-reject.mk
+end
+
+mutant M-D756-rec-view-low
+rule R9 R18
+class R
+file internal/check/kinds.go
+anchor \t\t\tif len(fr.args) > 0 {\n\t\t\t\tlow = min(low, fr.low)\n\t\t\t}
+replace \t\t\tif f.LoanInterior {\n\t\t\t\tlow = min(low, fr.low)\n\t\t\t}
+note a recursive plain view struct (List[Node] where Node holds Cell[?&i32]) skips fr.low when LoanInterior is assumed false in the cycle and permanently memoizes LoanInterior=false, bypassing E0410 on exported structs wrapping List[Node]; expected VDeadScope
+witness MV-recursive-view-loan-interior-reject.mk
 end
 
 mutant M-D756-deep

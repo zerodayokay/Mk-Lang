@@ -82,6 +82,14 @@ func (c *checker) behindKeep(st *state, s setID, alloc bool) setID {
 				// borrows the allocator itself (the keep below).
 				h = c.sets.minus(h, c.allocMaking(st, t))
 			}
+			// Stepping behind a tagged noAlloc loan (such as `sys.args: []str`
+			// beside `sys.arena`) stays noAlloc on the parameter's own inner
+			// loop: nothing reached through `[]str` can be an allocator.
+			if lo.noAlloc && lo.param != types.NoParam && int(lo.param) < len(c.params) {
+				if pi := uint32(c.params[lo.param].inner); c.sets.has(h, pi) {
+					h = c.sets.unite(c.sets.minus(h, c.sets.of(pi)), c.sets.of(l))
+				}
+			}
 			out = c.sets.unite(out, h)
 			if ti := &c.roots[t]; alloc && ti.allocator || lo.static && ti.kind == rkStatic && ti.carrier {
 				keep = append(keep, l)
@@ -519,12 +527,13 @@ func (c *checker) tag(s setID, p pathID) setID {
 		shared = true
 		alloc = alloc || c.w.allocRefs(c.tab.Get(last).Elem)
 	}
+	noAlloc := last != types.NoType && !alloc && !c.w.reachesAlloc(last)
 	var out []uint32
 	changed := false
 	for _, l := range c.sets.get(s) {
 		lo := &c.loans[l]
 		if lo.abstract && lo.inner && lo.tag == nil {
-			out = append(out, uint32(c.tagged(lo.param, fields, alloc, shared)))
+			out = append(out, uint32(c.tagged(lo.param, fields, alloc, shared, noAlloc)))
 			changed = true
 			continue
 		}

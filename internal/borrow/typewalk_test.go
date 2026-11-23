@@ -193,3 +193,34 @@ func TestMutViewAndNonCarrierTypewalk(t *testing.T) {
 		t.Fatalf("shallow: views must stay deep (ro=%v mv=%v)", w.shallow(roT), w.shallow(mvT))
 	}
 }
+
+func TestReachesAlloc(t *testing.T) {
+	k := newKit(t)
+	w := walkerOf(k, nil)
+	refArena := k.tab.Ref(k.Arena)
+	wrap := k.structItem(k.main, "Wrap", 0, false, false, field("a", refArena), field("n", k.tab.Ref(types.I32)))
+	plain := k.structItem(k.main, "PlainPair", 0, false, false, field("s", types.Str), field("n", k.tab.Ref(types.I32)))
+	inlineA := k.structItem(k.main, "InlineA", 0, false, false, field("a", k.Arena))
+	en := k.enumItem("MaybeAlloc", 0, []fieldSpec{field("a", refArena)}, []fieldSpec{field("n", k.tab.Ref(types.I32))})
+	mutView := k.mutViewStruct(k.main, "MutV", 0, false, field("p", k.tab.RawPtr(types.I32)))
+	rows := []struct {
+		name string
+		t    types.TypeID
+		want bool
+	}{
+		{"[]str", k.tab.Slice(types.Str), false},
+		{"&i32", k.tab.Ref(types.I32), false},
+		{"PlainPair", k.tab.Named(plain, nil), false},
+		{"&Arena", refArena, true},
+		{"Wrap{&Arena,&i32}", k.tab.Named(wrap, nil), true},
+		{"InlineA{Arena}", k.tab.Named(inlineA, nil), true},
+		{"MaybeAlloc", k.tab.Named(en, nil), true},
+		{"MutV", k.tab.Named(mutView, nil), true},
+		{"T", k.tab.Param(0), true},
+	}
+	for _, r := range rows {
+		if got := w.reachesAlloc(r.t); got != r.want {
+			t.Errorf("reachesAlloc(%s) = %v, want %v", r.name, got, r.want)
+		}
+	}
+}

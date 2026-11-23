@@ -191,7 +191,7 @@ var catalogue = [...]Entry{
 	{E0406, "reserved-by-defer", "Alternatives"},
 	{E0408, "not-plain", "Alternatives"},
 	{E0409, "move-out-of-reference", "Compiles: destructure"},
-	{E0410, "must-declare-kind", "Proven: add the word"},
+	{E0410, "must-declare-kind", "Proven: add the words"},
 	{E0411, "moved-before-failure", "Alternatives: move after the last failure point, or split the function"},
 	{E0412, "private-in-signature", "Alternatives"},
 	{E0501, "exclusive-conflict", "Alternatives; `from self.f` when the callee body shows it, proven for a private function and compiles for an exported one"},

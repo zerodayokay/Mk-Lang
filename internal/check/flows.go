@@ -927,29 +927,45 @@ func (c *Checker) reachesInterior(t types.TypeID, seen map[types.TypeID]bool, r 
 		if ty.Item != types.NoItem && (ty.Item == k.Arena || ty.Item == k.Scope) {
 			return true
 		}
-		d, ok := c.cfg.Items.Get(ty.Item).Decl.(*types.StructDecl)
-		if !ok || seen[t] {
+		if seen[t] {
 			return false
 		}
-		if d.MutView {
-			return true
-		}
-		seen[t] = true
-		if stop, leave := r.enter(t); stop {
-			return false
-		} else if leave != nil {
-			defer leave()
-		}
-		if d.View {
-			for _, a := range ty.Args {
-				if !a.IsConst && c.reachesInterior(a.Type, seen, r) {
+		switch d := c.cfg.Items.Get(ty.Item).Decl.(type) {
+		case *types.StructDecl:
+			if d.MutView {
+				return true
+			}
+			seen[t] = true
+			if stop, leave := r.enter(t); stop {
+				return false
+			} else if leave != nil {
+				defer leave()
+			}
+			if d.View {
+				for _, a := range ty.Args {
+					if !a.IsConst && c.reachesInterior(a.Type, seen, r) {
+						return true
+					}
+				}
+			}
+			for _, f := range d.Fields {
+				if c.reachesInterior(c.subst(f.Type, ty.Args, types.NoType), seen, r) {
 					return true
 				}
 			}
-		}
-		for _, f := range d.Fields {
-			if c.reachesInterior(c.subst(f.Type, ty.Args, types.NoType), seen, r) {
-				return true
+		case *types.EnumDecl:
+			seen[t] = true
+			if stop, leave := r.enter(t); stop {
+				return false
+			} else if leave != nil {
+				defer leave()
+			}
+			for _, v := range d.Variants {
+				for _, f := range v.Fields {
+					if c.reachesInterior(c.subst(f.Type, ty.Args, types.NoType), seen, r) {
+						return true
+					}
+				}
 			}
 		}
 	}

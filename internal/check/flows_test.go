@@ -336,3 +336,27 @@ func TestE0608_FlowMismatch(t *testing.T) {
 		t.Errorf("an undeclared into is covered")
 	}
 }
+
+func TestE0507_EnumReachesInterior(t *testing.T) {
+	w := newWorld(t, true)
+	checkCodes(t, w, "m", opt{}, "E0507@11:34", `enum CarrierEnum {
+	A(c: &Cell[&i32])
+	B(v: i32)
+}
+
+enum NonCarrierEnum {
+	A(c: &Cell[i32])
+	B(v: i32)
+}
+
+Bad(e: &NonCarrierEnum, x: &i32) *x into e {
+	_ = e
+	_ = x
+}
+
+Good(e: &CarrierEnum, x: &i32) *x into e {
+	_ = e
+	_ = x
+}
+`)
+}

@@ -388,12 +388,15 @@ BoxClose[T: Transport + Send + Share](c: &Conn, io: Io): Error!void {
     Panic("net.Conn: a boxed operation on a handle")
 }
 
-BoxAbandon[T: Transport + Send + Share](b: core.SealedBox, h: &Heap) {
-    box := b.Take[?T]()
+DoBoxAbandon[T: Transport + Send + Share](box: Box[?T], h: &Heap) {
     match box.Take(h.Alloc()) {
         some(t) { t.Abandon() }
         none {}
     }
+}
+
+BoxAbandon[T: Transport + Send + Share](b: core.SealedBox, h: &Heap) {
+    b.TakeWith[?T, &Heap](h, DoBoxAbandon[T])
 }
 
 // The operations of a Conn over one OS handle: Stream's, on c.sock.

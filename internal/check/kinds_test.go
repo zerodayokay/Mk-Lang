@@ -348,6 +348,33 @@ func TestLoanInteriorAndMutView(t *testing.T) {
 	}
 }
 
+func TestLoanInterior_RecursivePlainView(t *testing.T) {
+	// struct Node { next: RoList[Node]; c: Cell[?&int] }
+	// Asking Facts(Node) first must not memoize RoList[Node].LoanInterior=false
+	// while Node is assumed false on the cycle stack.
+	for _, nodeFirst := range []bool{true, false} {
+		h := newHand(t)
+		roList := h.strct("RoList", 1, "view", h.tab.RawPtr(h.tab.Param(0)))
+		node := h.items.AddItem(&types.Item{Module: h.mod, Kind: types.KindStruct, Key: types.ItemKey("h", "Node")})
+		nodeT := h.named(node)
+		listNodeT := h.named(roList, nodeT)
+		cellRef := h.named(h.c.known.Cell, h.tab.Optional(h.tab.Ref(types.Int)))
+		h.items.Get(node).Decl = &types.StructDecl{Fields: []types.FieldDecl{{Type: listNodeT}, {Type: cellRef}}}
+		var fn, fl types.Facts
+		if nodeFirst {
+			fn = h.c.Facts(nodeT)
+			fl = h.c.Facts(listNodeT)
+		} else {
+			fl = h.c.Facts(listNodeT)
+			fn = h.c.Facts(nodeT)
+		}
+		if !fn.LoanInterior || !fl.LoanInterior {
+			t.Errorf("nodeFirst=%v: Node.LoanInterior=%v RoList[Node].LoanInterior=%v, want both true",
+				nodeFirst, fn.LoanInterior, fl.LoanInterior)
+		}
+	}
+}
+
 func TestFactsMemoConcurrent(t *testing.T) {
 	h := newHand(t)
 	pair := h.strct("Pair", 2, "", h.tab.Param(0), h.tab.Param(1))

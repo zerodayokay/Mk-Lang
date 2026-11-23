@@ -85,6 +85,7 @@ export struct Mutex[T] {
 export linear view struct Guard[T] {
     m: *Mutex[T]
     io: Io
+    marker: [0]mut T
 }
 
 unsafe impl[T: Send] Send for Mutex[T] {}
@@ -167,7 +168,7 @@ export Mutex[T].Lock(&self, io: Io): Canceled!Guard[T] {
     if (s & MutexL) != 0 || !w.Cas(s, s | MutexL) {
         try MutexLockSlow(w, io, true)
     }
-    return Guard[T](m: raw.Of(self), io: io)
+    return Guard[T](m: raw.Of(self), io: io, marker: [])
 }
 
 // CancelPoint returns Canceled when io's task is in a cancelled scope that
@@ -602,7 +603,7 @@ export Guard[T].Store(mut self, x: T into self) {
 /// waiter has waited 1 ms and lost the lock once more, Unlock hands the lock
 /// to it directly. O(1); allocates nothing.
 export Guard[T].Unlock(self) {
-    Guard(m, io) := self
+    Guard(m, io, marker: _) := self
     MutexUnlockWord(MutexWordAt(m), io)
 }
 

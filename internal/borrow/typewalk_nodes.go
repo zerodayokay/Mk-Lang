@@ -279,3 +279,39 @@ func (w *walker) allocRefs(t types.TypeID) bool {
 	}
 	return true
 }
+
+// reachesAlloc reports whether t reaches an allocator (Arena, Alloc or Heap)
+// or ANY through its reference steps at any depth. A tagged inner loan whose
+// field type reaches no allocator (such as `&str` beside an `&Arena` field)
+// cannot lead to p#A; one that does (or an untagged p.inner) can.
+func (w *walker) reachesAlloc(t types.TypeID) bool {
+	seen := map[types.TypeID]bool{}
+	rc := w.newRecur()
+	var walk func(types.TypeID) bool
+	walk = func(u types.TypeID) bool {
+		if seen[u] {
+			return false
+		}
+		seen[u] = true
+		if stop, leave := rc.enter(u); stop {
+			return true
+		} else if leave != nil {
+			defer leave()
+		}
+		if w.factsOf(u).Allocator {
+			return true
+		}
+		for _, f := range w.inlineFields(u) {
+			if walk(f) {
+				return true
+			}
+		}
+		for _, s := range w.refSteps(u).steps {
+			if s.any || walk(s.referent) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(t)
+}

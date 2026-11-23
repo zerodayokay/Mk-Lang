@@ -1,6 +1,6 @@
 // verdict: reject E0604
 // rule: D-456
-// note: calling a method that declares `*self into self` on a mut view parameter requires `*res into res` on the caller; without it each call is E0604 (for read-only view `http.Response`, see D456_accept_handler_without_clause)
+// note: calling a method that declares `*self into self` on a mut view parameter requires `*res into res` on the caller; without it each call is E0604 (for read-only view `http.Response`, see D456_accept_handler_clause)
 mut view struct Sink {
     n: int
 }

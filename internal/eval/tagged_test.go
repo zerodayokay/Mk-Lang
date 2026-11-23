@@ -634,6 +634,46 @@ func TestSB_FactsDisagree(t *testing.T) {
 	wantViolation(t, w.tcall(w.evaluator(0), f, nil), VFacts)
 }
 
+// TestSB_MutViewInterior: a mut view struct is interior for tagged mode —
+// a bogus Freeze=true layout reports VFacts, and Freeze=false permits raw
+// writes through a shared reference without VSharedWrite.
+func TestSB_MutViewInterior(t *testing.T) {
+	w := newWorld(t)
+	_, of, write, _ := w.rawFns()
+	mv, mvt := w.structType("lib", "MV", types.I64)
+	w.items.Get(mv).Decl.(*types.StructDecl).View = true
+	w.items.Get(mv).Decl.(*types.StructDecl).MutView = true
+	// Bogus Freeze=true layout must report VFacts on borrow.
+	badLay := w.structOf([]types.TypeID{types.I64}, 0)
+	badLay.Shape.Freeze = true
+	w.layouts[mvt] = badLay
+	fBad := w.fn("lib", "BadFreeze", types.I64)
+	xb := w.body(fBad, types.I64)
+	lv, lr := xb.local(mvt), xb.local(w.tab.Ref(mvt))
+	xb.assign(0, lp(lv), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: mv, Ops: xb.b.AddOperands(imm(types.I64, 1))})
+	xb.assign(0, lp(lr), refOf(lp(lv)))
+	xb.assign(0, lp(0), use(imm(types.I64, 0)))
+	xb.ret(0)
+	xb.done()
+	wantViolation(t, w.tcall(w.evaluator(0), fBad, nil), VFacts)
+
+	// Correct Freeze=false layout permits a raw write under a shared borrow.
+	okLay := w.structOf([]types.TypeID{types.I64}, 0)
+	okLay.Shape.Freeze = false
+	w.layouts[mvt] = okLay
+	fOk := w.fn("lib", "WriteUnderShared", types.I64)
+	s := &seq{bb: w.body(fOk, types.I64)}
+	v, r, p, u := s.local(mvt), s.local(w.tab.Ref(mvt)), s.local(w.tab.RawPtr(mvt)), s.local(types.Void)
+	s.assign(s.cur, lp(v), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: mv, Ops: s.b.AddOperands(imm(types.I64, 1))})
+	s.assign(s.cur, lp(r), refOf(lp(v)))
+	s.call(of, []types.TypeID{mvt}, lp(p), cp(r))
+	s.call(write, []types.TypeID{mvt}, lp(u), cp(p), cp(v))
+	s.assign(s.cur, lp(0), use(imm(types.I64, 0)))
+	s.ret(s.cur)
+	s.done()
+	wantClean(t, w.tcall(w.evaluator(0), fOk, nil))
+}
+
 // TestSB_PageMemoryOwner: memory from the page override accessed through
 // its own pointer after other tags is clean; freed then read is VDead.
 func TestSB_PageMemoryOwner(t *testing.T) {

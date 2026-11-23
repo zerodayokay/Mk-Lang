@@ -2024,7 +2024,7 @@ export Main(sys: &System): WriteError!void {
 | E0401 | use-after-move | A unique or linear value used after it moved ([kinds](#kinds)) |
 | E0402 | not-consumed | A linear value not consumed on some path ([linear values](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)) |
 | E0408 | not-plain | An error payload with a reference ([error sets and results](#error-sets-and-results)) |
-| E0410 | must-declare-kind | An exported struct whose private fields make it `view` or `linear`, without the keyword ([exported kinds](#exported-kinds)) |
+| E0410 | must-declare-kind | An exported struct whose private fields make it `view`, `mut view` or `linear`, without the keywords ([exported kinds](#exported-kinds)) |
 | E0507 | mut-through-shared | Writing an element through a `[]T` ([slices](#slices-t-and-mut-t)) |
 | E0508 | mut-of-immutable | `mut x` of a local that is not `var` ([references](#references-t-and-mut-t)) |
 | E0608 | flow-mismatch | A function given as a `fn` type whose clauses do not cover the function's ([function types](#function-types)) |
@@ -2239,7 +2239,7 @@ Maybe(keep: bool): int {
 }
 ```
 
-An exported struct must say `linear` or `view` when its private fields give it that kind (E0410). See [exported kinds](#exported-kinds) and [linear values](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path).
+An exported struct must say `linear`, `view` or `mut view` when its private fields give it that kind (E0410). See [exported kinds](#exported-kinds) and [linear values](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path).
 
 ### Enums
 
@@ -9222,7 +9222,7 @@ All of it is checked and linked here, and none of it has run on a Mac yet.
 | E0206 | duplicate-name | Two imports binding one name, two directories with one import path ([imports](#imports), [import paths](#import-paths)) |
 | E0208 | unused | An import the file never uses ([imports](#imports)) |
 | E0214 | internal-module | An `internal` module imported from another package ([packages](packages.md#10-internal-modules)) |
-| E0410 | must-declare-kind | An exported struct whose private fields need `view` or `linear` ([exported kinds](#exported-kinds)) |
+| E0410 | must-declare-kind | An exported struct whose private fields need `view`, `mut view` or `linear` ([exported kinds](#exported-kinds)) |
 | E0412 | private-in-signature | A private type in an exported item ([exports](#exports-and-visibility)) |
 
 Run `mk explain E0205` for any code. The package errors, E0202 with its `reason` facts and E0214 to E0217, are listed in [packages](packages.md#17-package-errors).

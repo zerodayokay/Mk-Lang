@@ -103,10 +103,13 @@ type loan struct {
 	target rootID
 	site   mir.SpanID
 	// Abstract loans: the parameter, outer or inner; a tagged inner loan's
-	// field path after the first deref, and its base.
+	// field path after the first deref, and its base. noAlloc is set on a
+	// tagged inner loan whose field type reaches no allocator (reachesAlloc),
+	// so hopping through it onto p#2 never jumps to p#A.
 	param    types.ParamIndex
 	abstract bool
 	inner    bool
+	noAlloc  bool
 	tag      []uint32
 	base     loanID
 	// Loop loans: a for loop's holder and element loans.
@@ -564,20 +567,24 @@ type slotInfo struct {
 }
 
 // tagged returns the tagged inner loan of parameter p for a field path,
-// interned: finite, one per (parameter, path, alloc, shared). With
+// interned: finite, one per (parameter, path, alloc, shared, noAlloc). With
 // alloc (the path ends at a field whose references all refer to allocators,
 // allocRefs) the loan targets p#A, not p#2: a loan read from an allocator
 // field stays with the allocator's node. With shared (a read-only &T field
 // of a mut R hidden environment), the loan is non-exclusive even when another
-// capture in the same environment is mutable. It is otherwise the tagged
-// p.inner it always was (base, tag, flows), so every rule that reads a
-// tagged inner loan reads it unchanged.
-func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared bool) loanID {
+// capture in the same environment is mutable. With noAlloc (the field type
+// reaches no allocator, reachesAlloc), the loan stays off p#A. It is otherwise
+// the tagged p.inner it always was (base, tag, flows), so every rule that reads
+// a tagged inner loan reads it unchanged.
+func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared, noAlloc bool) loanID {
 	if len(path) == 0 {
 		return c.params[p].inner
 	}
 	alloc = alloc && c.params[p].nA != noRoot
-	key := tagKey{p: p, path: pathKey(path), alloc: alloc, shared: shared}
+	if alloc {
+		noAlloc = false
+	}
+	key := tagKey{p: p, path: pathKey(path), alloc: alloc, shared: shared, noAlloc: noAlloc}
 	if l, ok := c.tags[key]; ok {
 		return l
 	}
@@ -588,17 +595,18 @@ func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared bool) 
 		target = c.params[p].nA
 	}
 	excl := bl.excl && !shared
-	l := c.addLoan(loan{excl: excl, place: noPath, target: target, param: p, abstract: true, inner: true,
+	l := c.addLoan(loan{excl: excl, place: noPath, target: target, param: p, abstract: true, inner: true, noAlloc: noAlloc,
 		tag: append([]uint32(nil), path...), base: base, loop: mir.NoLoop})
 	c.tags[key] = l
 	return l
 }
 
 type tagKey struct {
-	p      types.ParamIndex
-	path   string
-	alloc  bool
-	shared bool
+	p       types.ParamIndex
+	path    string
+	alloc   bool
+	shared  bool
+	noAlloc bool
 }
 
 func pathKey(xs []uint32) string {

@@ -27,7 +27,7 @@ export view struct ChunksMut[T] {
     ptr: *T
     left: int
     n: int
-    marker: [0]&T
+    marker: [0]mut T
 }
 
 /// The first i elements and the rest, both mut. Panics (code 2) unless

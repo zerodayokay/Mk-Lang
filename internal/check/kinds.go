@@ -355,14 +355,15 @@ func (w *factsWalk) named(t types.TypeID, ty *types.Type) (types.Facts, int) {
 			// A plain view struct cannot accept loan stores into its own
 			// storage through `&self`, but its elements (type arguments) may
 			// be loan-interior-writable (e.g. `Box[Mutex[?&i32]]`,
-			// `List[Cell[&i32]]`).
+			// `List[Cell[&i32]]`). Both true and false depend on the argument
+			// facts, so any cycle assumption in fr.args must stop memoization.
 			fr := &w.stack[len(w.stack)-1]
 			for _, af := range fr.args {
 				if af.LoanInterior {
 					f.LoanInterior = true
 				}
 			}
-			if f.LoanInterior {
+			if len(fr.args) > 0 {
 				low = min(low, fr.low)
 			}
 		}

@@ -332,8 +332,8 @@ func TestRecursiveTypeWalkProbes(t *testing.T) {
 
 // TestStaticsThatTakeStoresStillDo: the closure answer at the bound
 // (borrow's closureTakes) keeps E0602 for a static of a polymorphically
-// recursive type that can take a store: a G[?&Mutex[int]] whose argument is
-// a Mutex, and a G[int] whose declaration reaches an H[T] holding ?&Mutex[T]
+// recursive type that can take a store: a G[?&Mutex[?&i32]] whose argument is
+// a carrier Mutex, and a G[int] whose declaration reaches an H[T] holding ?&Mutex[T]
 // (testdata/cd7r4/f4mtx, f4mutex).
 func TestStaticsThatTakeStoresStillDo(t *testing.T) {
 	t.Parallel()

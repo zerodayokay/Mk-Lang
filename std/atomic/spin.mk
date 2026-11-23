@@ -30,6 +30,7 @@ export view struct Spin[T] {
 /// path must end it with Unlock.
 export linear view struct SpinGuard[T] {
     p: *core.SpinCore[T]
+    marker: [0]mut T
 }
 
 /// Returns a Spin holding x, unlocked. O(1); it allocates nothing, so a
@@ -52,7 +53,7 @@ export Spin[T].New(x: T): Spin[T] {
 /// It never yields the task, so with one carrier a task spinning on a lock
 /// that another task holds never lets that task run.
 export Spin[T].Lock(&self): SpinGuard[T] {
-    return SpinGuard[T](p: core.SpinLock(&self.c))
+    return SpinGuard[T](p: core.SpinLock(&self.c), marker: [])
 }
 
 /// Consumes the Spin and returns its value. A Spin passed by value has no
@@ -83,6 +84,6 @@ export SpinGuard[T].Store(mut self, x: T into self) {
 /// holder sees every write made under the lock. The store is not SeqCst, so
 /// it orders no later load of this task. O(1); it allocates nothing.
 export SpinGuard[T].Unlock(self) {
-    SpinGuard(p) := self
+    SpinGuard(p, marker: _) := self
     core.SpinUnlock(p)
 }

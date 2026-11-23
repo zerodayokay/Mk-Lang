@@ -465,7 +465,7 @@ func TestSTDCOMPRESS_InflaterBigStreams(t *testing.T) {
 // czSC3Prog calls Read three times over stdin and prints each answer.
 const czSC3Prog = `import std.compress
 
-Once(out: mut Writer, z: mut compress.Inflater, r: mut Reader, buf: mut []u8): WriteError!void *z into z {
+Once(out: mut Writer, z: mut compress.Inflater, r: mut Reader, buf: mut []u8): WriteError!void {
     got := z.Read(r, buf) else e {
         match e {
             compress.Corrupt(offset: o) {

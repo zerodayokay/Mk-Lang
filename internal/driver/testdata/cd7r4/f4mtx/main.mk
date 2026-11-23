@@ -3,9 +3,9 @@ struct G[T] {
     next: ?&G[?T]
 }
 
-var GI: G[?&Mutex[int]] = G[?&Mutex[int]](v: none, next: none)
+var GI: G[?&Mutex[?&i32]] = G[?&Mutex[?&i32]](v: none, next: none)
 
-Pick(x: &i32): &G[?&Mutex[int]] from x {
+Pick(x: &i32): &G[?&Mutex[?&i32]] from x {
     return &GI
 }
 
