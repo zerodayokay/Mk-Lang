@@ -264,3 +264,69 @@ func projKinds(b *mir.Body, p mir.Place) string {
 	}
 	return strings.Join(parts, ".")
 }
+
+// TestMutCaptureLowering checks mut and reborrow environments, mixed shared
+// and mut fields, reborrowing a captured mut []T to a callee without
+// ArgReborrow on a projected place, nested mut captures, and pass-1 slotting
+// of a plain argument written after a capturing literal.
+func TestMutCaptureLowering(t *testing.T) {
+	src := capLowerDecls +
+		"Touch(xs: mut []i32) {\n\tif xs.Len() > 0 {\n\t\txs[0] = 7\n\t}\n}\n\n" +
+		"After(const f: fn(), x: int): int {\n\tf()\n\treturn x\n}\n\n" +
+		"Mixed(xs: mut []i32, limit: i32): int {\n\tvar hits := 0\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\tif *a > limit {\n\t\t\thits += 1\n\t\t}\n\t\treturn *a < *b\n\t})\n\treturn hits\n}\n\n" +
+		"Reborrow(xs: mut []i32, r: mut i32, zs: mut []i32) {\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\t*r = *a\n\t\tTouch(zs)\n\t\treturn *a < *b\n\t})\n}\n\n" +
+		"NestedMut(xs: mut []i32): int {\n\tvar count := 0\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\tvar ys: [2]i32 = [1, 2]\n\t\tSort(mut ys[..], fn(c: &i32, d: &i32): bool {\n\t\t\tcount += 1\n\t\t\treturn *c < *d\n\t\t})\n\t\treturn *a < *b\n\t})\n\treturn count\n}\n\n" +
+		"Order(): int {\n\tvar x := 1\n\treturn After(fn() { x += 10 }, x)\n}\n"
+	l := lowerSrc(t, src)
+
+	// Mixed: mut (hits: mut int, limit: &i32), passed by ArgMove.
+	mixed := l.body("Mixed")
+	mc := onlyCall(t, l, "Mixed", "m.Sort")
+	margs := mixed.Args[mc.Args.Start : mc.Args.Start+mc.Args.Len]
+	if len(margs) != 3 {
+		t.Fatalf("Mixed Sort call has %d args, want 3:\n%s", len(margs), l.print("Mixed"))
+	}
+	if margs[2].Mode != mir.ArgMove {
+		t.Errorf("Mixed env mode %v, want ArgMove", margs[2].Mode)
+	}
+	if got := l.w.tab.TypeString(mixed.OperandType(margs[2].Operand), nil); got != "mut (hits: mut int, limit: &i32)" {
+		t.Errorf("Mixed env type %s, want mut (hits: mut int, limit: &i32)", got)
+	}
+
+	// Reborrow: mut (r: mut i32, zs: mut []i32); Touch(zs) uses a temporary
+	// RvSlice passed by ArgMove (never ArgReborrow on a projected place).
+	reb := l.body("Reborrow")
+	rc := onlyCall(t, l, "Reborrow", "m.Sort")
+	rargs := reb.Args[rc.Args.Start : rc.Args.Start+rc.Args.Len]
+	if got := l.w.tab.TypeString(reb.OperandType(rargs[2].Operand), nil); got != "mut (r: mut i32, zs: mut []i32)" {
+		t.Errorf("Reborrow env type %s, want mut (r: mut i32, zs: mut []i32)", got)
+	}
+	rlit := l.body("Reborrow#fn0")
+	tc := onlyCall(t, l, "Reborrow#fn0", "m.Touch")
+	targs := rlit.Args[tc.Args.Start : tc.Args.Start+tc.Args.Len]
+	if len(targs) != 1 || targs[0].Mode != mir.ArgMove || targs[0].Operand.Place.Proj.Len != 0 {
+		t.Errorf("Touch(zs) arg = %+v, want ArgMove of temporary:\n%s", targs, l.print("Reborrow#fn0"))
+	}
+
+	// NestedMut: outer literal reborrows its own mut capture exclusively.
+	outer := l.body("NestedMut#fn0")
+	foundExcl := false
+	for _, blk := range outer.Blocks {
+		for _, st := range blk.Stmts {
+			if st.Kind == mir.StAssign && st.Rvalue.Kind == mir.RvRef && st.Rvalue.Borrow == mir.Exclusive && st.Rvalue.Place.Local == 3 {
+				foundExcl = true
+			}
+		}
+	}
+	if !foundExcl {
+		t.Errorf("NestedMut#fn0 does not exclusively reborrow its outer capture:\n%s", l.print("NestedMut#fn0"))
+	}
+
+	// Order: x is copied into a temporary before mut x is formed for the literal.
+	orderText := l.print("Order")
+	idxCopy := strings.Index(orderText, "= copy _1")
+	idxMut := strings.Index(orderText, "= mut _1")
+	if idxCopy < 0 || idxMut < 0 || idxCopy > idxMut {
+		t.Errorf("Order should copy x into a pass-1 temp before mut x:\n%s", orderText)
+	}
+}

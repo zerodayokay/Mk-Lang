@@ -110,6 +110,7 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 	var heldBy map[loanID]rootID
 	if c.report {
 		c.via = map[rootID]viaHop{}
+		c.capField = map[rootID]int{}
 		heldBy = map[loanID]rootID{}
 		if arg != noRoot {
 			for _, l := range c.sets.get(l0) {
@@ -143,6 +144,7 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 			// pass it, except into what was stored into its contents
 			// (allocStored): a holder in its memory leads on to that loan's
 			// target.
+			c.noteCapField(t, h.l)
 			if !seenRoot[t] {
 				seenRoot[t] = true
 				at[t] = len(out)
@@ -169,6 +171,7 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 			continue
 		}
 		if ti.carrier && (e || ti.writable) {
+			c.noteCapField(t, h.l)
 			if !seenRoot[t] {
 				seenRoot[t] = true
 				at[t] = len(out)
@@ -185,17 +188,20 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 		// was not read from an allocator field (a local copy of a struct
 		// holding one, a result from *p) may still refer to an allocator,
 		// as one merged node would.
-		if a := c.allocOf(t); h.first && a != noRoot && !seenRoot[a] {
+		if a := c.allocOf(t); h.first && a != noRoot {
 			if ai := &c.roots[a]; ai.carrier && (e || ai.writable) {
-				if other != nil {
-					other[a] = true
-				}
-				seenRoot[a] = true
-				at[a] = len(out)
-				out = append(out, a)
-				fld = append(fld, -1)
-				if r, ok := heldBy[h.l]; ok && r != a {
-					c.via[a] = viaHop{holder: r, l: h.l}
+				c.noteCapField(a, h.l)
+				if !seenRoot[a] {
+					if other != nil {
+						other[a] = true
+					}
+					seenRoot[a] = true
+					at[a] = len(out)
+					out = append(out, a)
+					fld = append(fld, -1)
+					if r, ok := heldBy[h.l]; ok && r != a {
+						c.via[a] = viaHop{holder: r, l: h.l}
+					}
 				}
 			}
 		}
@@ -355,6 +361,18 @@ func (c *checker) storeAbstract(ctx *stmtCtx, t rootID, l loanID) {
 		// it is judged into nothing. The self-reach rule's inferred stores
 		// (csrConst) are left out.
 		if !c.csrConst && node.takes && c.staticTakesStores(lo.target) {
+			if c.hiddenParam(p) {
+				name := c.captureTargetName(p, t)
+				d := c.captureE0609(ctx.span, name, "store",
+					"the literal stores a reference into global memory ("+c.rootName(lo.target)+
+						"), which takes stores, into `"+name+"`, which it captured; a capture is no parameter, so no clause can name it").
+					Fact("loan", c.loanFact(l))
+				if c.staticStore == nil {
+					c.staticStore = map[*diag.Diagnostic]bool{}
+				}
+				c.staticStore[d] = true
+				return
+			}
 			d := c.errAt(diag.E0604, ctx.span, "this stores a reference into global memory (%s), which takes stores, into %s; no clause can name a static, so %s's caller would not see it and would judge a store through it into nothing",
 				c.rootName(lo.target), c.paramName(p), c.paramName(p)).Fact("loan", c.loanFact(l))
 			if c.staticStore == nil {
@@ -374,11 +392,26 @@ func (c *checker) storeAbstract(ctx *stmtCtx, t rootID, l loanID) {
 		// *p of a reference or slice parameter. A by-value parameter's p#1
 		// stands for the referents of all its first-level references
 		// (S { x: &&i32, b: mut &i32 }), so a loan one of them held may not
-		// be stored into another: it is judged as any other.
-		if node.depth == 1 && !c.byValueParamIndex(p) && (l == c.params[p].inner || lo.tag != nil && lo.base == c.params[p].inner) {
+		// be stored into another: it is judged as any other; a hidden
+		// environment parameter's fields are independent captures too.
+		if node.depth == 1 && !c.byValueParamIndex(p) && !c.hiddenParam(p) && (l == c.params[p].inner || lo.tag != nil && lo.base == c.params[p].inner) {
 			return
 		}
 		if c.declaredInto(p, l) {
+			return
+		}
+		if c.hiddenParam(p) {
+			// Storing a parameter's or another capture's loan into a captured
+			// variable could outlive that loan's scope, and no clause names a
+			// capture.
+			dst := c.captureTargetName(p, t)
+			var msg string
+			if src, ok := c.loanCapture(l); ok {
+				msg = "the literal stores a loan on `" + src + "` into `" + dst + "`, which it captured; a capture is no parameter, so no clause can name it"
+			} else {
+				msg = "the literal stores a loan of `" + c.paramName(lo.param) + "` into `" + dst + "`, which it captured; a capture is no parameter, so no clause can name it"
+			}
+			c.captureE0609(ctx.span, dst, "store", msg).Fact("loan", c.loanFact(l))
 			return
 		}
 		if name, ok := c.loanCapture(l); ok {
@@ -522,6 +555,18 @@ func (c *checker) flowChain(x, p types.ParamIndex) bool {
 func (c *checker) directWrite(st *state, ctx *stmtCtx, p pathID, S setID) {
 	c.via = nil // no walk: no holder to name
 	pi := c.paths.get(p)
+	directCap := -1
+	if c.report {
+		c.capField = map[rootID]int{}
+		if ri := &c.roots[pi.root]; (ri.kind == rkParam || ri.kind == rkAbstract) && c.hiddenParam(ri.param) {
+			for _, stp := range pi.steps {
+				if stp.kind == stField {
+					directCap = int(stp.a)
+					break
+				}
+			}
+		}
+	}
 	roots := []rootID{pi.root}
 	// fld is, per final root, the field it is reached at: a split frame
 	// root through loans whose place names that field, else -1.
@@ -552,10 +597,16 @@ func (c *checker) directWrite(st *state, ctx *stmtCtx, p pathID, S setID) {
 			for _, l := range c.sets.get(c.held(st, r)) {
 				if t := c.loans[l].target; t != noRoot {
 					add(t, c.fieldOfLoan(loanID(l), t))
+					if directCap < 0 {
+						c.noteCapField(t, loanID(l))
+					}
 					// A deref onto p#2 also lands on p#A, reached
 					// directly, as on one merged node.
 					if a := c.allocOf(t); a != noRoot {
 						add(a, -1)
+						if directCap < 0 {
+							c.noteCapField(a, loanID(l))
+						}
 					}
 				}
 			}
@@ -575,13 +626,27 @@ func (c *checker) directWrite(st *state, ctx *stmtCtx, p pathID, S setID) {
 					// the view lives in is written.
 					if src.view {
 						allocs = append(allocs, t)
+						if directCap < 0 {
+							c.noteCapField(t, loanID(l))
+						}
 					}
 					continue
 				}
 				add(t, c.fieldOfLoan(loanID(l), t))
+				if directCap < 0 {
+					c.noteCapField(t, loanID(l))
+				}
 			}
 		}
 		roots = next
+	}
+	if directCap >= 0 {
+		for _, t := range roots {
+			c.setCapField(t, directCap)
+		}
+		for _, a := range allocs {
+			c.setCapField(a, directCap)
+		}
 	}
 	done := make(map[rootID]bool, len(roots))
 	for _, t := range roots {

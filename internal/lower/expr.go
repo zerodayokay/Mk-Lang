@@ -108,11 +108,11 @@ func (bl *builder) placeProper(e ast.Expr) mir.Place {
 		case UseParam:
 			return bl.b.Place(bl.remapped(mir.LocalID(u.Param)))
 		case UseCapture:
-			return bl.capturePlace(u.Capture, x.Span())
+			return bl.capturePlace(u.Capture, u.Direct, x.Span())
 		case UseSelfField:
 			sp := bl.b.Place(1)
 			if u.Capture != 0 {
-				sp = bl.capturePlace(u.Capture-1, x.Span()) // a literal of the invariant
+				sp = bl.capturePlace(u.Capture-1, false, x.Span()) // a literal of the invariant
 			}
 			self := bl.deref(sp, x.Span())
 			return bl.field(self, u.Field, bl.typeOf(x))

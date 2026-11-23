@@ -99,15 +99,34 @@ func TestHiddenEnvParams(t *testing.T) {
 	if !IsEnvType(w.tab, w.env) {
 		t.Error("IsEnvType(&(x: &i64)) is false")
 	}
+	mutEnv := w.tab.Mut(w.tab.Record([]types.RecordField{{Name: w.in.Intern("x"), Type: w.tab.Mut(types.I64)}}))
+	mixedEnv := w.tab.Mut(w.tab.Record([]types.RecordField{
+		{Name: w.in.Intern("x"), Type: w.tab.Ref(types.I64)},
+		{Name: w.in.Intern("y"), Type: w.tab.Mut(types.I64)},
+	}))
+	sliceEnv := w.tab.Mut(w.tab.Record([]types.RecordField{{Name: w.in.Intern("xs"), Type: w.tab.MutSlice(types.I64)}}))
+	for name, ty := range map[string]types.TypeID{
+		"mut (x: mut i64)":          mutEnv,
+		"mut (x: &i64, y: mut i64)": mixedEnv,
+		"mut (xs: mut []i64)":       sliceEnv,
+	} {
+		if !IsEnvType(w.tab, ty) {
+			t.Errorf("IsEnvType(%s) is false", name)
+		}
+	}
 	for name, ty := range map[string]types.TypeID{
 		"none":                types.NoType,
 		"i64":                 types.I64,
 		"&i64":                w.tab.Ref(types.I64),
 		"&()":                 w.tab.Ref(w.tab.Record(nil)),
+		"mut ()":              w.tab.Mut(w.tab.Record(nil)),
 		"&(x: mut i64)":       w.envOf(w.tab.Mut(types.I64)),
+		"&(x: mut []i64)":     w.envOf(w.tab.MutSlice(types.I64)),
 		"&(x: i64)":           w.envOf(types.I64),
 		"&(x: []i64)":         w.envOf(w.tab.Slice(types.I64)),
 		"mut (x: &i64)":       w.tab.Mut(w.tab.Get(w.env).Elem),
+		"mut (x: i64)":        w.tab.Mut(w.tab.Record([]types.RecordField{{Name: w.in.Intern("x"), Type: types.I64}})),
+		"mut (x: []i64)":      w.tab.Mut(w.tab.Record([]types.RecordField{{Name: w.in.Intern("x"), Type: w.tab.Slice(types.I64)}})),
 		"(x: &i64) by value":  w.tab.Get(w.env).Elem,
 		"*(x: &i64), raw ptr": w.tab.RawPtr(w.tab.Get(w.env).Elem),
 	} {
@@ -116,9 +135,18 @@ func TestHiddenEnvParams(t *testing.T) {
 		}
 	}
 
-	// M1: one hidden parameter past the signature.
+	// M1: one hidden parameter past the signature (&R or mut R).
 	if err := w.litBody(w.env).Validate(w.sigEnv(w.lit)); err != nil {
-		t.Fatalf("literal body with a hidden environment parameter refused: %v", err)
+		t.Fatalf("literal body with a hidden &R environment parameter refused: %v", err)
+	}
+	if err := w.litBody(mutEnv).Validate(w.sigEnv(w.lit)); err != nil {
+		t.Fatalf("literal body with a hidden mut R environment parameter refused: %v", err)
+	}
+	if err := w.litBody(mixedEnv).Validate(w.sigEnv(w.lit)); err != nil {
+		t.Fatalf("literal body with a hidden mixed mut R environment parameter refused: %v", err)
+	}
+	if err := w.litBody(sliceEnv).Validate(w.sigEnv(w.lit)); err != nil {
+		t.Fatalf("literal body with a hidden mut []T environment parameter refused: %v", err)
 	}
 	wantInv(t, "a non-environment extra parameter", "M1", "not an environment type",
 		w.litBody(types.I64).Validate(w.sigEnv(w.lit)))
@@ -138,10 +166,23 @@ func TestHiddenEnvParams(t *testing.T) {
 	if err := w.callerBody(envArg).Validate(w.sigEnv(w.caller)); err != nil {
 		t.Fatalf("direct call with an environment argument refused: %v", err)
 	}
-	wantInv(t, "an extra i64 argument", "M5", "not a copy of an environment type",
+	wantInv(t, "an extra i64 argument", "M5", "not an environment type",
 		w.callerBody(Arg{Operand: Copy(LocalPlace(1)), Mode: ArgCopy}).Validate(w.sigEnv(w.caller)))
-	wantInv(t, "an environment argument by move", "M5", "not a copy of an environment type",
+	wantInv(t, "a shared environment argument by move", "M5", "not a copy of &R",
 		w.callerBody(Arg{Operand: Move(LocalPlace(2)), Mode: ArgMove}).Validate(w.sigEnv(w.caller)))
+
+	// M5, direct call with a mut R environment: ArgMove and ArgReborrow pass, ArgCopy fails.
+	wMut := newEnvWorld()
+	wMut.env = wMut.tab.Mut(wMut.tab.Record([]types.RecordField{{Name: wMut.in.Intern("x"), Type: wMut.tab.Mut(types.I64)}}))
+	if err := wMut.callerBody(Arg{Operand: Move(LocalPlace(2)), Mode: ArgMove}).Validate(wMut.sigEnv(wMut.caller)); err != nil {
+		t.Fatalf("direct call with a moved mut R environment refused: %v", err)
+	}
+	if err := wMut.callerBody(Arg{Operand: Copy(LocalPlace(2)), Mode: ArgReborrow}).Validate(wMut.sigEnv(wMut.caller)); err != nil {
+		t.Fatalf("direct call with a reborrowed mut R environment refused: %v", err)
+	}
+	wantInv(t, "a mut R environment argument by copy", "M5", "not a move or reborrow of mut R",
+		wMut.callerBody(Arg{Operand: Copy(LocalPlace(2)), Mode: ArgCopy}).Validate(wMut.sigEnv(wMut.caller)))
+
 	b = w.callerBody(envArg)
 	b.Blocks[0].Term.Args = b.AddArgs(envArg)
 	// The environment argument alone fills L's i64 parameter: only arguments
@@ -160,7 +201,7 @@ func TestHiddenEnvParams(t *testing.T) {
 	}
 	b = w.callerBody(Arg{Operand: Copy(LocalPlace(1)), Mode: ArgCopy})
 	b.Blocks[0].Term.Callee = Callee{Kind: CallValue, Value: Copy(LocalPlace(3))}
-	wantInv(t, "a value call with an extra i64 argument", "M5", "not a copy of an environment type", b.Validate(w.sigEnv(w.caller)))
+	wantInv(t, "a value call with an extra i64 argument", "M5", "not an environment type", b.Validate(w.sigEnv(w.caller)))
 	b = w.callerBody(envArg)
 	b.Blocks[0].Term.Callee = Callee{Kind: CallValue, Value: Copy(LocalPlace(3))}
 	b.Blocks[0].Term.Args = Range{}

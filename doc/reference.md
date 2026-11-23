@@ -4878,26 +4878,36 @@ Above(xs: []i32, limit: i32): int {
 `keep` is not `const`, so the literal must be a value, and a value cannot capture `limit`.
 
 - A literal passed to a `const` parameter of `fn` type has the `from` and `into` clauses of the parameter's `fn` type, and writes none of its own. A store beyond them is E0604.
-- What a literal may do with what it captures, and the borrows that makes, are in [captures](memory.md#r13-order-of-evaluation).
+- What a literal may do with what it captures — reading via `&`, mutating `var` locals or reborrowing `mut` references and slices via `mut` (E0508 if not `var`), and the borrows and loan rules that enforce statement scope — is in [captures](memory.md#r13-order-of-evaluation).
+
+```mk
+// verdict: ok
+Sorted(xs: mut []i32): int {
+    var compares := 0
+    xs.Sort(fn(a: &i32, b: &i32): bool {
+        compares += 1
+        return *a < *b
+    })
+    return compares
+}
+```
 
 ```mk
 // verdict: reject E0609
-// a capturing literal is no value, and cannot write what it captures
+// a capturing literal cannot escape as a value, and cannot move out of a capture
 Over(limit: i32): fn(&i32): bool {
     return fn(x: &i32): bool { return *x > limit } // <- E0609
 }
 
-Sorted(xs: mut []i32): int {
-    var swaps := 0
+MoveCapture(xs: mut []i32, ys: mut []i32) {
     xs.Sort(fn(a: &i32, b: &i32): bool {
-        swaps += 1 // <- E0609
-        return *a < *b
+        m := ys // <- E0609
+        return m.Len() > 0 && *a < *b
     })
-    return swaps
 }
 ```
 
-To count or collect from a callback, write a loop instead, or give the callback type a `mut` state parameter. See [keep a callback for later](cookbook.md#keep-a-callback-for-later).
+To store or return a callback, store a `fn` value beside its plain state. See [keep a callback for later](cookbook.md#keep-a-callback-for-later).
 
 ### Other expressions
 

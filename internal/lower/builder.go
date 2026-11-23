@@ -184,10 +184,9 @@ func newBuilder(cfg *Config, in Input) *builder {
 	return bl
 }
 
-// capturePlace is capture i of a capturing literal's body, *((*env).x_i):
-// a deref of the hidden parameter to the record, its
-// field i (&T_i), and a deref of that.
-func (bl *builder) capturePlace(i uint32, at source.Span) mir.Place {
+// capturePlace is capture i of a capturing literal's body: (*env).x_i when
+// direct (a reborrowed mut T or mut []T), else *((*env).x_i).
+func (bl *builder) capturePlace(i uint32, direct bool, at source.Span) mir.Place {
 	if bl.env == mir.NoLocal {
 		source.ICEf(at, "lower: a capture in a body with no environment parameter")
 	}
@@ -196,7 +195,11 @@ func (bl *builder) capturePlace(i uint32, at source.Span) mir.Place {
 	if ft == types.NoType {
 		source.ICEf(at, "lower: capture %d past the environment record", i)
 	}
-	return bl.deref(bl.field(rec, i, ft), at)
+	fld := bl.field(rec, i, ft)
+	if direct {
+		return fld
+	}
+	return bl.deref(fld, at)
 }
 
 // span returns the SpanID of s, deduplicated in first-use order.

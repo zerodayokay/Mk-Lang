@@ -1,17 +1,20 @@
 // Why: a fn literal that captures locals is safe only where its environment
 // of borrowed locals cannot outlive them: as the whole argument of a const
 // parameter. The rules for where it stands and what its body may do with a
-// capture live together here.
+// capture live here and in captures_mut.go.
 //
 // What: LitEnv and CaptureType (the environment), literalCaptures,
-// captureSource and waitCaptures (typing it on both sides), judgeCaptureUses
-// and captureWrite (E0609), judgeConstFnUses (E0705 for a misused const fn
-// parameter), CallbackRecipe.
+// captureSource and waitCaptures (typing it on both sides), captureMove
+// (E0609), judgeConstFnUses (E0705 for a misused const fn parameter),
+// CallbackRecipe.
 //
-// How: the enclosing unit types the environment and publishes it through a
-// captureRec; the literal's unit waits on it, then adds one non-var local
-// per capture, so every place rule (fields, indexing, &, receivers,
-// auto-deref) treats a capture as a local of type T_i.
+// How: when the enclosing unit types a capturing literal in a const fn
+// argument position, it types the literal eagerly with the captured
+// variables' origins (type, var-ness, contract/invariant flag) so
+// judgeCaptureUses decides per capture whether the environment holds &T,
+// mut T or a reborrowed mut T / mut []T. The checked literal body and
+// environment type are published through captureRec; the literal's unit
+// waits on done and returns that body directly.
 
 package check
 
@@ -31,31 +34,41 @@ import (
 type LitEnv struct {
 	Lit  ast.NodeID   // the FnLit node in the enclosing unit
 	Item types.ItemID // the literal item
-	Ref  types.TypeID // &R, R the record of &T_i fields: the hidden parameter's type
+	// Ref is &R (when every capture is read-only) or mut R (when at least one
+	// capture is mutated or reborrowed): the hidden parameter's type.
+	Ref types.TypeID
 	// Sources are the captured names as the enclosing unit sees them, in
 	// field order: a UseLocal of a local, a parameter or, in a literal that
 	// captures them itself, its own capture local.
 	Sources []Use
+	// Modes records how each capture is borrowed into the environment record,
+	// in field order.
+	Modes []CaptureMode
 }
 
-// CaptureType is one field of a literal's environment: the captured name
-// and its type T (the field is &T).
+// CaptureType is one field of a literal's environment: the captured name,
+// its type T, and how it is captured (CapShared, CapMut or CapReborrow).
 type CaptureType struct {
 	Name source.Symbol
 	Type types.TypeID
+	Mode CaptureMode
 }
 
 // captureRec is one capturing literal's handoff from its enclosing unit to
-// its own unit. The enclosing unit writes it while typing the FnLit
-// and closes done when its run ends, normally or by panic; the literal's
-// unit waits on done, so the writes are ordered before its reads (Go memory
-// model) and no lock is needed.
+// its own unit. The enclosing unit types the literal eagerly while typing
+// the FnLit and closes done when its run ends, normally or by panic; the
+// literal's unit waits on done, so the writes are ordered before its reads
+// (Go memory model) and no lock is needed.
 type captureRec struct {
-	done  chan struct{}
-	once  sync.Once
-	set   bool // written once; later typings (a fields-loop copy) compare
-	ok    bool
-	types []types.TypeID
+	done   chan struct{}
+	once   sync.Once
+	set    bool // written once; later typings (a fields-loop copy) compare
+	ok     bool
+	types  []types.TypeID
+	modes  []CaptureMode
+	envRef types.TypeID
+	body   *Body
+	ice    *source.InternalError
 	// diag is the enclosing unit's diagnostic that leaves the literal with
 	// no environment; the literal's unit carries it too, so it is never
 	// lowered (diag.Order keeps one of the two equal diagnostics).
@@ -107,14 +120,28 @@ const captureWait = 2 * time.Minute
 // closeLiteralRecords closes the records of the capturing literals this
 // unit's item owns (run's defer): a record nothing wrote gets ok false and
 // the unit's first diagnostic, so the literal unit accepts silently.
+// An eager literal unit leaves closing to its top-level enclosing unit so
+// that the enclosing unit's full read set is merged into every nested
+// literal's body before any waiting Check call reads it.
 func (u *unit) closeLiteralRecords() {
-	ii := u.m.byItem[u.it.ID]
+	if u.eager {
+		return
+	}
+	u.closeDescendants(u.it.ID, &u.b.Reads, u.b.Diags)
+}
+
+func (u *unit) closeDescendants(owner types.ItemID, reads *types.ReadSet, diags []*diag.Diagnostic) {
+	ii := u.m.byItem[owner]
 	if ii == nil {
 		return
 	}
 	for _, lit := range ii.Literals {
 		li := u.m.byItem[lit]
-		if li == nil || len(li.Captures) == 0 {
+		if li == nil {
+			continue
+		}
+		if len(li.Captures) == 0 {
+			u.closeDescendants(lit, reads, diags)
 			continue
 		}
 		r := u.m.captureRecOf(lit)
@@ -122,19 +149,29 @@ func (u *unit) closeLiteralRecords() {
 			if !r.set {
 				r.set, r.ok = true, false
 			}
-			if !r.ok && r.diag == nil && len(u.b.Diags) > 0 {
-				r.diag = u.b.Diags[0]
+			if !r.ok && r.diag == nil && len(diags) > 0 {
+				r.diag = diags[0]
 			}
 			if r.ok {
 				// The enclosing unit's read set when it ended: the
 				// literal's covers every fact its environment's types came
-				// from. A copy, so the literal
-				// unit never shares the enclosing body's slices.
-				var rs types.ReadSet
-				rs.Merge(&u.b.Reads)
-				r.reads = rs
+				// from.
+				if r.body != nil {
+					r.body.Reads.Merge(reads)
+				} else {
+					var rs types.ReadSet
+					rs.Merge(reads)
+					r.reads = rs
+				}
 			}
 		}
+		// Close nested literals of lit using lit's combined reads/diags when
+		// lit was checked eagerly, else the parent's.
+		nextReads, nextDiags := reads, diags
+		if r.body != nil {
+			nextReads, nextDiags = &r.body.Reads, r.body.Diags
+		}
+		u.closeDescendants(lit, nextReads, nextDiags)
 		r.close()
 	}
 }
@@ -206,33 +243,60 @@ func (u *unit) literalCaptures(e *ast.FnLit, it *types.Item, ii *resolve.ItemInf
 		}
 	}
 	ts := make([]types.TypeID, len(caps))
+	origins := make([]captureOrigin, len(caps))
 	srcs := make([]Use, len(caps))
-	fields := make([]types.RecordField, len(caps))
 	for i, c := range caps {
-		t, use := u.captureSource(c.Of, e)
-		if t == types.Poison || t == types.NoType {
+		orig, use := u.captureSource(c.Of, e)
+		if orig.typ == types.Poison || orig.typ == types.NoType {
 			// The source's type is unknown: this unit reported (or another
 			// stage did) the error that hid it.
 			rec.fail(nil)
 			return
 		}
-		ts[i], srcs[i] = t, use
-		fields[i] = types.RecordField{Name: c.Name, Type: u.tab.Ref(t)}
+		ts[i], origins[i], srcs[i] = orig.typ, orig, use
 	}
-	ref := u.tab.Ref(u.tab.Record(fields))
+	var ref types.TypeID
+	var modes []CaptureMode
 	if !rec.closed() {
 		if !rec.set {
-			rec.set, rec.ok, rec.types = true, true, ts
-		} else if rec.ok && !sameTypes(rec.types, ts) {
-			source.ICEf(e.Span(), "check: a capturing literal typed twice with different capture types")
+			// Type the literal body eagerly so judgeCaptureUses decides which
+			// captures need mut or reborrow and builds EnvRef before the
+			// enclosing unit is lowered and borrow-checked.
+			lu := u.m.newUnitWithCaptures(it, ii, origins)
+			lu.x.rec.signature(it.Key)
+			ie := source.Guard(it.Key.String(), it.Span, lu.run)
+			if ie != nil {
+				modes = make([]CaptureMode, len(caps))
+				ref = envTypeOf(u.tab, caps, origins, modes)
+				rec.set, rec.ok, rec.types, rec.modes, rec.envRef, rec.ice = true, true, ts, modes, ref, ie
+			} else {
+				modes = make([]CaptureMode, len(lu.b.Captures))
+				for i, ct := range lu.b.Captures {
+					modes[i] = ct.Mode
+				}
+				ref = lu.b.EnvRef
+				u.b.Reads.Merge(&lu.b.Reads)
+				rec.set, rec.ok, rec.types, rec.modes, rec.envRef, rec.body = true, true, ts, modes, ref, lu.b
+			}
+		} else if rec.ok {
+			if !sameTypes(rec.types, ts) {
+				source.ICEf(e.Span(), "check: a capturing literal typed twice with different capture types")
+			}
+			modes, ref = rec.modes, rec.envRef
+		} else {
+			return
 		}
+	} else if rec.ok {
+		modes, ref = rec.modes, rec.envRef
+	} else {
+		return
 	}
 	for _, env := range u.b.Envs {
 		if env.Lit == e.ID() {
 			return // a fields-loop copy types the literal again
 		}
 	}
-	u.b.Envs = append(u.b.Envs, LitEnv{Lit: e.ID(), Item: it.ID, Ref: ref, Sources: srcs})
+	u.b.Envs = append(u.b.Envs, LitEnv{Lit: e.ID(), Item: it.ID, Ref: ref, Sources: srcs, Modes: modes})
 }
 
 func sameTypes(a, b []types.TypeID) bool {
@@ -247,40 +311,69 @@ func sameTypes(a, b []types.TypeID) bool {
 	return true
 }
 
-// captureSource is a capture's type T_i and its Use in this, the enclosing
-// unit: a local's declared or inferred type, a parameter's, this
-// literal's own capture, or, in a requires or ensures predicate, the owner
-// function's parameter or result, which the predicate holds as its &P
-// parameter: T_i is P, and the source is that &P local,
-// which lower borrows through. A Ref this unit cannot map is an ICE at
-// literal e: silent Poison would leave a valid program's literal with no
-// environment.
-func (u *unit) captureSource(of resolve.Ref, e *ast.FnLit) (types.TypeID, Use) {
+// captureSource is a capture's origin (type, var-ness, reborrowability,
+// contract flag, declaration span) and its Use in this, the enclosing unit:
+// a local's declared or inferred type, a parameter's, this literal's own
+// capture, or, in a requires or ensures predicate, the owner function's
+// parameter or result, which the predicate holds as its &P parameter: T_i is
+// P, and the source is that &P local, which lower borrows through. A Ref this
+// unit cannot map is an ICE at literal e: silent Poison would leave a valid
+// program's literal with no environment.
+func (u *unit) captureSource(of resolve.Ref, e *ast.FnLit) (captureOrigin, Use) {
+	isReborrowType := func(t types.TypeID) bool {
+		k := u.tab.Kind(t)
+		return k == types.KMut || k == types.KMutSlice
+	}
 	switch of.Kind {
 	case resolve.RefLocal:
 		id := u.local(LocalID(of.A))
 		if types.ItemID(of.B) == u.it.ID && int(id) < len(u.b.Locals) {
-			return u.b.Locals[id].Type, Use{Kind: UseLocal, Local: id}
+			loc := u.b.Locals[id]
+			canAddVar := false
+			if u.rb != nil && int(of.A) < len(u.rb.Locals) && u.rb.Locals[of.A].Kind == resolve.LocalBind {
+				canAddVar = true
+			}
+			return captureOrigin{
+				typ:       loc.Type,
+				isVar:     loc.Var,
+				reborrow:  isReborrowType(loc.Type),
+				declSpan:  loc.Span,
+				canAddVar: canAddVar,
+			}, Use{Kind: UseLocal, Local: id}
 		}
 	case resolve.RefParam, resolve.RefResult:
 		id := LocalID(of.A)
 		if of.Kind == resolve.RefParam && types.ItemID(of.B) == u.it.ID && id >= 1 && int(id) < len(u.b.Locals) {
-			return u.b.Locals[id].Type, Use{Kind: UseLocal, Local: id}
+			loc := u.b.Locals[id]
+			if _, isInv := u.b.Node.(*ast.InvariantMember); isInv {
+				return captureOrigin{typ: loc.Type, contract: true, declSpan: loc.Span}, Use{Kind: UseLocal, Local: id}
+			}
+			isRecv := u.sig != nil && u.sig.Receiver != types.NoReceiver && id == 1
+			isValSelf := isRecv && u.sig.Receiver == types.ByValue
+			canAddVar := !isRecv && loc.Span.File != source.NoFile
+			return captureOrigin{
+				typ:       loc.Type,
+				isVar:     loc.Var,
+				reborrow:  isReborrowType(loc.Type),
+				declSpan:  loc.Span,
+				canAddVar: canAddVar,
+				isValSelf: isValSelf,
+			}, Use{Kind: UseLocal, Local: id}
 		}
 		if t, id, ok := u.predicateLocal(of); ok {
 			if id == 0 {
-				return types.Poison, Use{}
+				return captureOrigin{typ: types.Poison}, Use{}
 			}
-			return t, Use{Kind: UseLocal, Local: id}
+			return captureOrigin{typ: t, contract: true}, Use{Kind: UseLocal, Local: id}
 		}
 	case resolve.RefCapture:
 		if types.ItemID(of.B) == u.it.ID && int(of.A) < len(u.b.Captures) {
 			id := u.capBase + LocalID(of.A)
-			return u.b.Captures[of.A].Type, Use{Kind: UseLocal, Local: id}
+			return u.capOrigins[of.A], Use{Kind: UseLocal, Local: id}
 		}
 	}
 	source.ICEf(e.Span(), "check: a capture of %s %d of item %d in the unit of %s", of.Kind, of.A, of.B, u.it.Key)
-	return types.Poison, Use{}
+	return captureOrigin{typ: types.Poison}, Use{}
 }
 
 // constFnSource reports whether capture source of is a const parameter of
@@ -308,108 +401,52 @@ func (u *unit) constFnSource(of resolve.Ref) bool {
 	return p.Const && u.tab.Kind(p.Type) == types.KFn
 }
 
-// waitCaptures is the literal unit's side: wait for the enclosing
-// unit, then add one non-var local per capture, of type T_i (Poison, with
-// the enclosing unit's diagnostic carried, when there is no environment).
-func (u *unit) waitCaptures(ii *resolve.ItemInfo) {
-	rec := u.m.captureRecOf(u.it.ID)
-	select {
-	case <-rec.done:
-	case <-time.After(captureWait):
-		source.ICEf(u.it.Span, "check: capturing literal %s waited %v for its enclosing unit (Units() order)", u.it.Key, captureWait)
-	}
+// initCaptures installs one capture local per capture of literal item ii from
+// origins (the eager check path, called from literalCaptures).
+func (u *unit) initCaptures(ii *resolve.ItemInfo, origins []captureOrigin) {
 	b := u.b
 	if len(b.Locals) == 0 {
 		b.Locals = make([]Local, 1)
 	}
 	u.capBase = LocalID(len(b.Locals))
-	var fields []types.RecordField
+	u.capOrigins = origins
+	u.hasCaptures = true
 	for i, c := range ii.Captures {
-		t := types.Poison
-		if rec.ok && i < len(rec.types) {
-			t = rec.types[i]
-		}
-		b.Locals = append(b.Locals, Local{Name: c.Name, Type: t, Capture: uint32(i) + 1, Span: c.First})
+		t := origins[i].typ
+		b.Locals = append(b.Locals, Local{Name: c.Name, Type: t, Var: origins[i].isVar, Capture: uint32(i) + 1, Span: c.First})
 		b.Captures = append(b.Captures, CaptureType{Name: c.Name, Type: t})
-		fields = append(fields, types.RecordField{Name: c.Name, Type: u.tab.Ref(t)})
-	}
-	if !rec.ok {
-		// No environment. The enclosing unit's diagnostic is carried when it
-		// has one; with none, what hid the literal is outside that unit (a
-		// parse error recovered around it, FuzzCheck 63976af49801fb2b), so
-		// the captures stay Poison and accept silently. Such a
-		// body is never lowered: a build stops at the parse error, and a
-		// capture with no environment parameter is lower's ICE, never a
-		// silent miscompile.
-		if rec.diag != nil {
-			b.Diags = append(b.Diags, rec.diag)
-		}
-		return
-	}
-	b.EnvRef = u.tab.Ref(u.tab.Record(fields))
-	b.Reads.Merge(&rec.reads)
-}
-
-// captureOf is the capture a place expression's root names in this literal
-// unit, through fields, indexing, parentheses and dereferences of references
-// (never a raw pointer's, which is unsafe's); ok false otherwise.
-func (u *unit) captureOf(e ast.Expr) (source.Symbol, *ast.Ident, bool) {
-	if len(u.b.Captures) == 0 {
-		return 0, nil, false
-	}
-	for {
-		switch x := e.(type) {
-		case *ast.ParenExpr:
-			e = x.X
-		case *ast.FieldExpr:
-			e = x.X
-		case *ast.IndexExpr:
-			e = x.X
-		case *ast.SliceExpr:
-			e = x.X
-		case *ast.UnaryExpr:
-			if x.Op != ast.TokStar || u.tab.Kind(u.b.TypeOf(x.X.ID())) == types.KRawPtr {
-				return 0, nil, false
-			}
-			e = x.X
-		case *ast.Ident:
-			if u.b.Uses == nil {
-				return 0, nil, false
-			}
-			use := u.b.Uses[u.b.slot(x.ID())]
-			if use.Kind != UseLocal || int(use.Local) >= len(u.b.Locals) || u.b.Locals[use.Local].Capture == 0 {
-				return 0, nil, false
-			}
-			return u.b.Locals[use.Local].Name, x, true
-		default:
-			return 0, nil, false
-		}
 	}
 }
 
-// captureWrite is E0609 for a write, a mut borrow or a mut self call on a
-// place rooted at a capture, reported at the path's root.
-func (u *unit) captureWrite(place ast.Expr, reason string) bool {
-	if u.b.EnvRef == types.NoType {
-		return false // no environment: the enclosing unit's error explains it
+// waitCaptureRec waits for a capturing literal's enclosing unit to publish its
+// captureRec.
+func (m *Module) waitCaptureRec(it *types.Item) *captureRec {
+	rec := m.captureRecOf(it.ID)
+	select {
+	case <-rec.done:
+	case <-time.After(captureWait):
+		source.ICEf(it.Span, "check: capturing literal %s waited %v for its enclosing unit (Units() order)", it.Key, captureWait)
 	}
-	name, root, ok := u.captureOf(place)
-	if !ok {
-		return false
+	return rec
+}
+
+// waitCaptures is the literal unit's fallback path when its enclosing unit
+// did not check it eagerly (for instance, the literal stood outside a const
+// argument, or a parse error hid it): add Poison locals and carry any
+// enclosing diagnostic.
+func (u *unit) waitCaptures(ii *resolve.ItemInfo, rec *captureRec) {
+	b := u.b
+	if len(b.Locals) == 0 {
+		b.Locals = make([]Local, 1)
 	}
-	n := u.c.cfg.Interner.Str(name)
-	var msg string
-	switch reason {
-	case "write":
-		msg = "the literal assigns `" + n + "`, which it captured; a capture is read through a shared reference"
-	case "mut-self":
-		msg = "the literal calls a `mut self` method on `" + n + "`, which it captured; a capture is read through a shared reference"
-	default:
-		msg = "the literal borrows `" + n + "` `mut`, which it captured; a capture is read through a shared reference"
+	u.capBase = LocalID(len(b.Locals))
+	for i, c := range ii.Captures {
+		b.Locals = append(b.Locals, Local{Name: c.Name, Type: types.Poison, Capture: uint32(i) + 1, Span: c.First})
+		b.Captures = append(b.Captures, CaptureType{Name: c.Name, Type: types.Poison})
 	}
-	d := u.err(diag.E0609, root.Span(), msg).Fact("captured", diag.TextList(n)).Text("reason", reason).In(diag.PhaseTypes)
-	captureAlts(d, true)
-	return true
+	if rec != nil && rec.diag != nil {
+		b.Diags = append(b.Diags, rec.diag)
+	}
 }
 
 // CallbackRecipe is the sentence every E0609 message ends with: the one
@@ -515,181 +552,10 @@ func (u *unit) useOf(id ast.NodeID) Use {
 	return u.b.Uses[i]
 }
 
-// judgeCaptureUses walks a capturing literal's unit after its
-// statements are typed: every maximal place path rooted at a capture
-// (the root, then field, index, parenthesis and reference-dereference steps)
-// is judged by its parent context. A mut borrow (unary mut, mut p[a..b],
-// for .. in mut p, a captured mut T or mut []T passed on) is E0609
-// mut-borrow, a mut self receiver E0609 mut-self, a non-Plain path in a value
-// position E0609 move; a shared borrow, a &self receiver and a Plain copy are
-// accepted. An assignment's place is captureWrite's, at the statement; a
-// match scrutinee and a destructuring source are borrow's backstop's, which
-// sees the bindings. A path through a raw pointer's dereference is unsafe's.
-func (u *unit) judgeCaptureUses() {
-	if u.b.EnvRef == types.NoType || len(u.b.Captures) == 0 {
-		return
-	}
-	var stack []ast.Node
-	type site struct {
-		id    *ast.Ident
-		chain []ast.Node // the ancestors, outermost first
-	}
-	var sites []site
-	ast.Inspect(u.b.Node, func(n ast.Node) bool {
-		if n == nil {
-			stack = stack[:len(stack)-1]
-			return false
-		}
-		if id, ok := n.(*ast.Ident); ok {
-			if use := u.useOf(id.ID()); use.Kind == UseLocal && int(use.Local) < len(u.b.Locals) && u.b.Locals[use.Local].Capture != 0 {
-				sites = append(sites, site{id, append([]ast.Node(nil), stack...)})
-			}
-		}
-		if _, ok := n.(*ast.FnLit); ok && n != u.b.Node {
-			return false // a nested literal is its own unit
-		}
-		stack = append(stack, n)
-		return true
-	})
-	for _, s := range sites {
-		u.judgeCapturePath(s.id, s.chain)
-	}
-}
-
-// judgeCapturePath climbs id's maximal place path through chain (its
-// ancestors) and judges the path's parent context.
-func (u *unit) judgeCapturePath(id *ast.Ident, chain []ast.Node) {
-	var p ast.Expr = id
-	i := len(chain) - 1
-climb:
-	for ; i >= 0; i-- {
-		switch x := chain[i].(type) {
-		case *ast.ParenExpr:
-			p = x
-		case *ast.FieldExpr:
-			if x.X != p || u.useOf(x.ID()).Kind != UseField {
-				break climb
-			}
-			p = x
-		case *ast.IndexExpr:
-			if x.X != p || len(x.Args) != 1 {
-				break climb
-			}
-			p = x
-		case *ast.UnaryExpr:
-			if x.Op != ast.TokStar || x.X != p {
-				break climb
-			}
-			if u.tab.Kind(u.b.TypeOf(p.ID())) == types.KRawPtr {
-				return // a raw pointer's target is unsafe's
-			}
-			p = x
-		default:
-			break climb
-		}
-	}
-	if i < 0 {
-		return
-	}
-	var grand ast.Node
-	if i > 0 {
-		grand = chain[i-1]
-	}
-	t := u.b.TypeOf(p.ID())
-	switch x := chain[i].(type) {
-	case *ast.AssignStmt:
-		if x.Target == p {
-			return // captureWrite's, reported while typing the statement
-		}
-	case *ast.DestructureStmt, *ast.MatchStmt:
-		return // the bindings decide: borrow's backstop
-	case *ast.UnaryExpr:
-		switch x.Op {
-		case ast.TokMut:
-			u.captureWrite(p, "mut-borrow")
-			return
-		case ast.TokAmp:
-			return
-		}
-	case *ast.SliceExpr:
-		if x.X == p {
-			if g, ok := grand.(*ast.UnaryExpr); ok && g.Op == ast.TokMut {
-				u.captureWrite(p, "mut-borrow")
-			}
-			return
-		}
-	case *ast.RefSource:
-		if x.X == p {
-			if x.Mode == ast.ByMutRef {
-				u.captureWrite(p, "mut-borrow")
-			}
-			return
-		}
-	case *ast.FieldExpr:
-		if x.X == p {
-			if c, ok := grand.(*ast.CallExpr); ok && c.Fun == ast.Expr(x) {
-				switch u.receiverMode(c, p) {
-				case types.ByMut:
-					u.captureWrite(p, "mut-self")
-					return
-				case types.ByShared:
-					return
-				}
-				// a by-value self: a value position, below
-			} else {
-				return // a method named without a call (E0609 already) or a member read
-			}
-		}
-	case *ast.CallExpr:
-		if x.Fun == p {
-			return // a call through a captured fn value reads it
-		}
-	case *ast.Arg:
-		if k := u.tab.Kind(t); k == types.KMut || k == types.KMutSlice {
-			u.captureWrite(p, "mut-borrow") // an implicit reborrow, or a move of a unique reference
-			return
-		}
-	}
-	if t == types.NoType || t == types.Poison || u.c.FactsIn(u.env, t).Kind == types.Plain {
-		return // a copy
-	}
-	u.captureMove(p, t)
-}
-
-// receiverMode is how method call c takes its receiver p: by check's
-// Adjust on p (&self, mut self), else by the callee's declared receiver (a
-// slice passed to a Slice[T] method with no Adjust).
-func (u *unit) receiverMode(c *ast.CallExpr, p ast.Expr) types.Receiver {
-	if a := u.b.Adjust; a != nil {
-		if i := int(p.ID()) - int(u.b.Base); i >= 0 && i < len(a) {
-			switch a[i].Kind {
-			case AdjRefMut:
-				return types.ByMut
-			case AdjRefShared:
-				return types.ByShared
-			case AdjCopyThrough:
-				return types.ByValue
-			}
-		}
-	}
-	use := u.useOf(c.ID())
-	if use.Item == types.NoItem {
-		return types.ByShared
-	}
-	if d, ok := u.c.cfg.Items.Get(use.Item).Decl.(*types.FuncDecl); ok && d.Sig.Receiver != types.NoReceiver {
-		return d.Sig.Receiver
-	}
-	return types.ByShared
-}
-
 // captureMove is E0609 move: a non-Plain capture in a value position.
-func (u *unit) captureMove(p ast.Expr, t types.TypeID) {
-	name, root, ok := u.captureOf(p)
-	if !ok {
-		return
-	}
-	n := u.c.cfg.Interner.Str(name)
-	d := u.err(diag.E0609, root.Span(), "the literal moves `"+n+"`, which it captured; a capture is read through a shared reference, and only a plain one is copied").
+func (u *unit) captureMove(root *ast.Ident, ci int, t types.TypeID) {
+	n := u.c.cfg.Interner.Str(u.b.Captures[ci].Name)
+	d := u.err(diag.E0609, root.Span(), "the literal moves `"+n+"`, which it captured; a capture is borrowed and cannot be moved out of, and only a plain one is copied").
 		Fact("captured", diag.TextList(n)).Text("reason", "move").Text("type", u.str(t)).In(diag.PhaseTypes)
 	captureAlts(d, false)
 }

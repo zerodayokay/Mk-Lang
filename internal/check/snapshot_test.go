@@ -59,6 +59,7 @@ var snaps = []snap{
 	{code: diag.E0410, src: "export struct H {\n\tname: str\n}\n"},
 	{code: diag.E0412, src: "struct Hidden {\n\tn: int\n}\n\nexport F(h: Hidden) {\n}\n"},
 	{code: diag.E0507, src: "Put(p: &int, q: &int)\n\t*q into p\n{\n}\n"},
+	{code: diag.E0508, name: "E0508_capture_immutable", src: "Each(const f: fn(x: &int): bool): bool {\n\tx := 1\n\treturn f(&x)\n}\n\nF(k: int): bool {\n\tn := k\n\treturn Each(fn(a: &int): bool {\n\t\tp := mut n\n\t\treturn *p > *a\n\t})\n}\n"},
 	{code: diag.E0601, src: "Longer(a: &str, b: &str): &str {\n\treturn a\n}\n"},
 	{code: diag.E0607, src: "struct Sink {\n\tbuf: mut []u8\n}\n\nSink.Out(mut self): mut []u8 from self.buf {\n\treturn mut *self.buf\n}\n"},
 	{code: diag.E0608, src: `interface I {
@@ -83,7 +84,7 @@ impl I for Tok {
 	{code: diag.E0704, src: "str.Shout(self): str {\n\treturn self\n}\n"},
 	{code: diag.E0705, src: "G[const N: int]() {\n}\n\nF(n: int) {\n\tG[n]()\n}\n"},
 	{code: diag.E0609, name: "E0609_capture_move", src: "Each(const f: fn(x: &int): bool): bool {\n\tx := 1\n\treturn f(&x)\n}\n\nF(zs: mut []int): bool {\n\treturn Each(fn(a: &int): bool {\n\t\tm := zs\n\t\treturn m.Len() > *a\n\t})\n}\n"},
-	{code: diag.E0609, name: "E0609_capture_mut", src: "Each(const f: fn(x: &int): bool): bool {\n\tx := 1\n\treturn f(&x)\n}\n\nF(k: int): bool {\n\tvar n := k\n\tn += 1\n\treturn Each(fn(a: &int): bool {\n\t\tp := mut n\n\t\treturn *p > *a\n\t})\n}\n"},
+	{code: diag.E0609, name: "E0609_capture_mut", src: "Each(const f: fn(): bool): bool {\n\treturn f()\n}\n\nF(var k: int): int\n\trequires Each(fn(): bool {\n\t\tk += 1\n\t\treturn k > 0\n\t})\n{\n\treturn k\n}\n"},
 	{code: diag.E0705, name: "E0705_const_fn_use", src: "Loose(f: fn(&int): bool): bool {\n\treturn true\n}\n\nG(const less: fn(&int): bool): bool {\n\treturn Loose(less)\n}\n"},
 	{code: diag.E0609, name: "E0609_capture_const_not_fn", src: "Keep[F](const f: F): int {\n\treturn 0\n}\n\nF(k: int): int {\n\treturn Keep(fn(x: int): int { return x + k })\n}\n"},
 	{code: diag.E0705, name: "E0705_const_fn_to_const_not_fn", src: "Keep[F](const f: F): int {\n\treturn 0\n}\n\nG(const less: fn(&int): bool): int {\n\treturn Keep(less)\n}\n"},

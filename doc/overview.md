@@ -468,14 +468,17 @@ Combined(): int {
 
 There is no overloading, no default argument, no variadic parameter and no named argument. By convention, parameters come in one order: the receiver, then an arena or allocator, then `io`, then the rest.
 
-A `fn` literal is a function written inline. It is not a closure: a literal used as a value cannot read the caller's locals (E0609). The exception is a literal passed to a `const` parameter of type `fn`, such as `Sort`'s `less`. That literal is compiled into the call, so it may read the enclosing locals:
+A `fn` literal is a function written inline. It is not a closure: a literal used as a value cannot capture the caller's locals (E0609). The exception is a literal passed directly to a `const` parameter of type `fn`, such as `Sort`'s `less`. That literal is compiled into the call, so it may read the enclosing locals and mutate `var` locals (or reborrow `mut` references and slices) for the duration of that call:
 
 ```mk
 // verdict: ok
-ByDistance(xs: mut []int, origin: int) {
+ByDistance(xs: mut []int, origin: int): int {
+    var compares := 0
     xs.Sort(fn(a: &int, b: &int): bool {
+        compares += 1
         return (*a - origin) * (*a - origin) < (*b - origin) * (*b - origin)
     })
+    return compares
 }
 ```
 

@@ -182,7 +182,6 @@ func (u *unit) asmValue(op *ast.AsmOperand) {
 			Text("reason", "not a place").Text("expected", "a place").Text("found", "an expression")
 		return
 	}
-	u.captureWrite(op.Value, "write") // a capture is read only
 	u.externVarWrite(op.Value, "write")
 	u.asmType(op, t, false)
 }

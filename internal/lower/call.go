@@ -19,6 +19,7 @@ package lower
 
 import (
 	"mk/internal/ast"
+	"mk/internal/check"
 	"mk/internal/mir"
 	"mk/internal/source"
 	"mk/internal/types"
@@ -246,9 +247,10 @@ func (bl *builder) emitCallAt(x *ast.CallExpr, c Call, edge *errEdge, spawn mir.
 			}
 		}
 		// Every operand that runs after this one: the later operands of
-		// pass 1 and every borrow form of pass 2, including those written
-		// before it (F(mut ys[Next(mut i)], i) passes the i read in pass 1).
-		if bl.readsLate(pa.op) && (!bl.laterInert(ps[i+1:], pa.op.Place) || !bl.laterInert(borrowForms(ps[:i]), pa.op.Place)) &&
+		// pass 1, every borrow form of pass 2, and every capturing literal
+		// whose environment is built in pass 3 (F(fn() { x += 1 }, x) reads
+		// x before pass 3 forms mut x).
+		if bl.readsLate(pa.op) && (!bl.laterInert(ps[i+1:], pa.op.Place) || !bl.laterInert(bl.lateForms(ps[:i]), pa.op.Place)) &&
 			!(tail && bl.fixedParam(pa.op)) {
 			pa.op = bl.slot(pa.op, pa.e.Span())
 		}
@@ -283,7 +285,11 @@ func (bl *builder) emitCallAt(x *ast.CallExpr, c Call, edge *errEdge, spawn mir.
 		if spawn != mir.NoLocal {
 			source.ICEf(lit.Span(), "lower: a capturing literal in an s.go call (E0609 is check's)")
 		}
-		envArgs = append(envArgs, mir.Arg{Operand: bl.environment(env, lit.Span()), Mode: mir.ArgCopy})
+		envMode := mir.ArgCopy
+		if bl.tab.Kind(env.Ref) == types.KMut {
+			envMode = mir.ArgMove
+		}
+		envArgs = append(envArgs, mir.Arg{Operand: bl.environment(env, lit.Span()), Mode: envMode})
 	}
 	// Print and Arena.Fmt: the per-call thin body (format.go), after every
 	// operand is formed, so the evaluation order is unchanged.
@@ -398,15 +404,13 @@ func (bl *builder) fixedParam(op mir.Operand) bool {
 }
 
 // environment builds a capturing literal's environment at its call:
-// t_i := &source_i for each capture in field order, e := record(t_1, ..,
-// t_n), r := &e, all temporaries of the call's statement at the literal's
-// span; it returns copy r. A source is a
-// local, a parameter or, in a capturing literal, its own capture, which is
-// reborrowed shared. A local is borrowed un-narrowed: the field type is the
-// declared T (check's captureSource), never an if T is branch's view.
+// t_i := &source_i, mut source_i, mut *source_i or mut source_i[..] for each
+// capture in field order, e := record(t_1, .., t_n), r := &e (or mut e when
+// any capture is mutable), all temporaries of the call's statement at the
+// literal's span; it returns copy r (for &R) or move r (for mut R).
 func (bl *builder) environment(env Env, at source.Span) mir.Operand {
 	rt := bl.tab.Get(env.Ref)
-	if rt.Kind != types.KRef {
+	if rt.Kind != types.KRef && rt.Kind != types.KMut {
 		source.ICEf(at, "lower: an environment of type %s", bl.tab.TypeString(env.Ref, bl.sig.Generics))
 	}
 	rec := rt.Elem
@@ -423,29 +427,52 @@ func (bl *builder) environment(env Env, at source.Span) mir.Operand {
 		case UseParam:
 			p = bl.b.Place(mir.LocalID(s.Param))
 		case UseCapture:
-			p = bl.capturePlace(s.Capture, at)
+			p = bl.capturePlace(s.Capture, s.Direct, at)
 		default:
 			source.ICEf(at, "lower: an environment source of kind %d", s.Kind)
 		}
 		ft := fields[i].Type
-		if s.Kind == UseParam && bl.b.PlaceType(p) == ft {
-			// A requires or ensures predicate holds the owner's parameter
-			// or result as &P, and the capture is of P (check's
-			// captureSource): borrow *p, a shared reborrow. No
-			// other source has the field's type, since a type is never a
-			// reference to itself.
-			p = bl.deref(p, at)
-		}
-		if bl.tab.Ref(bl.b.PlaceType(p)) != ft {
-			source.ICEf(at, "lower: an environment field of type %s for a source of type %s", bl.tab.TypeString(ft, bl.sig.Generics), bl.tab.TypeString(bl.b.PlaceType(p), bl.sig.Generics))
+		mode := check.CapShared
+		if i < len(env.Modes) {
+			mode = env.Modes[i]
 		}
 		t := bl.newTemp(ft, at)
-		bl.assign(bl.b.Place(t), mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Shared, Place: p, Origin: mir.OriginPlain, Type: ft}, at)
+		switch mode {
+		case check.CapMut:
+			if bl.tab.Mut(bl.b.PlaceType(p)) != ft {
+				source.ICEf(at, "lower: a mut environment field of type %s for a source of type %s", bl.tab.TypeString(ft, bl.sig.Generics), bl.tab.TypeString(bl.b.PlaceType(p), bl.sig.Generics))
+			}
+			bl.assign(bl.b.Place(t), mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Exclusive, Place: p, Origin: mir.OriginPlain, Type: ft}, at)
+		case check.CapReborrow:
+			if bl.b.PlaceType(p) != ft {
+				source.ICEf(at, "lower: a reborrowed environment field of type %s for a source of type %s", bl.tab.TypeString(ft, bl.sig.Generics), bl.tab.TypeString(bl.b.PlaceType(p), bl.sig.Generics))
+			}
+			if bl.tab.Kind(ft) == types.KMutSlice {
+				bl.assign(bl.b.Place(t), mir.Rvalue{Kind: mir.RvSlice, Borrow: mir.Exclusive, Place: p, Origin: mir.OriginPlain, Type: ft}, at)
+			} else {
+				bl.assign(bl.b.Place(t), mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Exclusive, Place: bl.deref(p, at), Origin: mir.OriginPlain, Type: ft}, at)
+			}
+		default:
+			if s.Kind == UseParam && bl.b.PlaceType(p) == ft {
+				// A requires or ensures predicate holds the owner's parameter
+				// or result as &P, and the capture is of P (check's
+				// captureSource): borrow *p, a shared reborrow.
+				p = bl.deref(p, at)
+			}
+			if bl.tab.Ref(bl.b.PlaceType(p)) != ft {
+				source.ICEf(at, "lower: an environment field of type %s for a source of type %s", bl.tab.TypeString(ft, bl.sig.Generics), bl.tab.TypeString(bl.b.PlaceType(p), bl.sig.Generics))
+			}
+			bl.assign(bl.b.Place(t), mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Shared, Place: p, Origin: mir.OriginPlain, Type: ft}, at)
+		}
 		ops[i] = bl.valueOfTemp(t, at)
 	}
 	e := bl.newTemp(rec, at)
 	bl.assign(bl.b.Place(e), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggRecord, Type: rec, Ops: bl.b.AddOperands(ops...)}, at)
 	r := bl.newTemp(env.Ref, at)
+	if rt.Kind == types.KMut {
+		bl.assign(bl.b.Place(r), mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Exclusive, Place: bl.b.Place(e), Origin: mir.OriginPlain, Type: env.Ref}, at)
+		return mir.Move(bl.b.Place(r))
+	}
 	bl.assign(bl.b.Place(r), mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Shared, Place: bl.b.Place(e), Origin: mir.OriginPlain, Type: env.Ref}, at)
 	return mir.Copy(bl.b.Place(r))
 }
@@ -483,19 +510,27 @@ func (bl *builder) laterInert(ps []pendingArg, x mir.Place) bool {
 	return true
 }
 
-// borrowForms are the pass-2 operands of ps.
-func borrowForms(ps []pendingArg) []pendingArg {
+// lateForms are the pass-2 borrow forms and pass-3 capturing literals of ps.
+func (bl *builder) lateForms(ps []pendingArg) []pendingArg {
 	var out []pendingArg
 	for _, p := range ps {
 		if p.borrow {
 			out = append(out, p)
+			continue
+		}
+		if p.param != nil && p.param.Const && !p.implicit && !p.recv {
+			if lit, ok := unparen(p.e).(*ast.FnLit); ok {
+				if _, ok := bl.in.Env(lit.ID()); ok {
+					out = append(out, p)
+				}
+			}
 		}
 	}
 	return out
 }
 
-// isReborrow is the reborrow rule: a mut T or mut []T local passed with no projection to
-// a declared mut parameter with no into.
+// isReborrow is the reborrow rule: a mut T or mut []T local, parameter or
+// capture passed with no projection to a declared mut parameter with no into.
 func (bl *builder) isReborrow(e ast.Expr, p *types.Param) bool {
 	if p == nil || p.Into != types.NoParam {
 		return false
@@ -505,7 +540,7 @@ func (bl *builder) isReborrow(e ast.Expr, p *types.Param) bool {
 		return false
 	}
 	u := bl.in.Use(id.ID())
-	if (u.Kind != UseLocal && u.Kind != UseParam) || bl.in.Adjust(id.ID()).Kind != AdjNone || bl.in.Convert(id.ID()).Kind != ConvNone {
+	if (u.Kind != UseLocal && u.Kind != UseParam && u.Kind != UseCapture) || bl.in.Adjust(id.ID()).Kind != AdjNone || bl.in.Convert(id.ID()).Kind != ConvNone {
 		return false
 	}
 	pk := bl.tab.Kind(p.Type)
@@ -539,13 +574,8 @@ func (bl *builder) isRecvReborrow(e ast.Expr, sig *types.Signature) bool {
 	}
 	k := bl.tab.Kind(bl.typeOf(id))
 	switch u.Kind {
-	case UseLocal, UseParam:
+	case UseLocal, UseParam, UseCapture:
 		return k == types.KMut || k == types.KMutSlice
-	case UseCapture:
-		// A captured mut []T to a &self Slice[T] method is the
-		// shared view, read through the capture; a mut self one is
-		// check's E0609, never lowered.
-		return k == types.KMutSlice && sig.Receiver == types.ByShared
 	}
 	return false
 }
@@ -590,6 +620,10 @@ func (bl *builder) borrowArg(pa *pendingArg, c Call, call source.Span) {
 			pa.mode = bl.argMode(pa.op, at)
 			return
 		}
+		if p.Proj.Len > 0 {
+			pa.op, pa.mode = bl.reborrowPlace(p, call, at)
+			return
+		}
 		pa.op = mir.Copy(p)
 		pa.mode = mir.ArgReborrow
 		return
@@ -622,8 +656,13 @@ func (bl *builder) borrowArg(pa *pendingArg, c Call, call source.Span) {
 			pa.mode = bl.argMode(pa.op, at)
 			return
 		}
-		// Reborrow of a local.
-		pa.op = mir.Copy(bl.place(pa.e))
+		// Reborrow of a local, parameter or capture.
+		p := bl.place(pa.e)
+		if p.Proj.Len > 0 {
+			pa.op, pa.mode = bl.reborrowPlace(p, call, at)
+			return
+		}
+		pa.op = mir.Copy(p)
 		pa.mode = mir.ArgReborrow
 		return
 	}
@@ -631,8 +670,9 @@ func (bl *builder) borrowArg(pa *pendingArg, c Call, call source.Span) {
 	// with one layer reborrows; a whole &T local is copied.
 	adj := bl.in.Adjust(pa.e.ID())
 	if id, ok := unparen(pa.e).(*ast.Ident); ok && adj.Deref == 1 {
-		// A captured &T is copied as a &T local is; a capture is
-		// never reborrowed mut (check's E0609).
+		// A captured &T is copied as a &T local is; a captured mut T has a
+		// projection ((*env).x), so it falls through to emit an RvRef{Exclusive}
+		// temporary below (ArgReborrow is for whole locals only).
 		if u := bl.in.Use(id.ID()); u.Kind == UseLocal || u.Kind == UseParam || u.Kind == UseCapture && pa.kind == mir.Shared {
 			base := bl.placeProper(id)
 			k := bl.tab.Kind(bl.b.PlaceType(base))
@@ -679,6 +719,27 @@ func (bl *builder) borrowArg(pa *pendingArg, c Call, call source.Span) {
 	bl.assign(bl.b.Place(l), mir.Rvalue{Kind: mir.RvRef, Borrow: pa.kind, Place: p, Origin: mir.OriginPlain, Type: t}, call)
 	pa.op = bl.valueOfTemp(l, at)
 	pa.mode = bl.argMode(pa.op, at)
+}
+
+// reborrowPlace forms a temporary reborrow of a projected mut T or mut []T
+// place (such as a capture (*env).x): MIR's ArgReborrow is for whole locals
+// only, so a projected place reborrows through an RvRef or RvSlice temporary
+// passed by ArgMove.
+func (bl *builder) reborrowPlace(p mir.Place, call, at source.Span) (mir.Operand, mir.ArgMode) {
+	t := bl.b.PlaceType(p)
+	l := bl.newTemp(t, at)
+	var rv mir.Rvalue
+	switch bl.tab.Kind(t) {
+	case types.KMutSlice:
+		rv = mir.Rvalue{Kind: mir.RvSlice, Borrow: mir.Exclusive, Place: p, Type: t}
+	case types.KMut:
+		rv = mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Exclusive, Place: bl.deref(p, at), Origin: mir.OriginPlain, Type: t}
+	default:
+		source.ICEf(at, "lower: reborrowPlace on %s", bl.tab.TypeString(t, nil))
+	}
+	bl.assign(bl.b.Place(l), rv, call)
+	op := bl.valueOfTemp(l, at)
+	return op, bl.argMode(op, at)
 }
 
 // scopeHeader is a Scope[E] receiver's Scope: field 0 of Scope[E]'s layout,

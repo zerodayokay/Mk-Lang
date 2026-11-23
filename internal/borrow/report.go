@@ -78,12 +78,29 @@ func (c *checker) paramName(p types.ParamIndex) string {
 	return "parameter " + strconv.Itoa(int(p))
 }
 
-// placeString spells a path in Mk: `p.f`, `*r`, `xs[_]`.
+// placeString spells a path in Mk: `p.f`, `*r`, `xs[_]`. A path rooted at a
+// hidden environment parameter peels the synthetic `*env.x` (and wrapper deref)
+// so diagnostics name the captured variable as the user wrote it.
 func (c *checker) placeString(p pathID) string {
 	pi := c.paths.get(p)
 	s := c.rootName(pi.root)
 	before := pi.rootType
-	for i, st := range pi.steps {
+	start := 0
+	if ri := &c.roots[pi.root]; ri.kind == rkParam && c.hiddenParam(ri.param) {
+		fs := c.envFields(ri.param)
+		if len(pi.steps) >= 2 && pi.steps[0].kind == stDeref && pi.steps[1].kind == stField && int(pi.steps[1].a) < len(fs) {
+			ft := fs[pi.steps[1].a].Type
+			s = c.symbol(fs[pi.steps[1].a].Name)
+			before = pi.types[1]
+			start = 2
+			if (c.tab.Kind(ft) == types.KRef || c.tab.Kind(ft) == types.KMut) && start < len(pi.steps) && pi.steps[start].kind == stDeref {
+				before = pi.types[start]
+				start++
+			}
+		}
+	}
+	for i := start; i < len(pi.steps); i++ {
+		st := pi.steps[i]
 		switch st.kind {
 		case stField:
 			s += "." + c.fieldName(before, st.a)

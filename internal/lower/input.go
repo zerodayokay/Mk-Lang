@@ -130,20 +130,23 @@ const (
 	UseTarget             // the universe name Target
 	UseConstParam         // a const type parameter used as a value: Generic is its index
 	UseNoneLit            // the universe value none
-	// UseCapture is a name a capturing literal reads from its enclosing
-	// body: Capture is its field index in the environment record,
-	// the place *((*env).x).
+	// UseCapture is a name a capturing literal reads or mutates from its
+	// enclosing body: Capture is its field index in the environment record,
+	// the place (*env).x when Direct (reborrowed mut T / mut []T) else *((*env).x).
 	UseCapture
 )
 
-// Env is a capturing literal's environment at its call: the
-// record type is Ref's element, its fields &T_i in Sources' order.
+// Env is a capturing literal's environment at its call: the record type is
+// Ref's element, its fields &T_i, mut T_i or mut []T_i in Sources' order.
 type Env struct {
 	Item types.ItemID // the literal item
-	Ref  types.TypeID // &R, the literal body's hidden parameter type
+	Ref  types.TypeID // &R or mut R, the literal body's hidden parameter type
 	// Sources are the captured names in field order, as the enclosing body
 	// sees them: UseLocal, UseParam, or UseCapture of its own environment.
 	Sources []Use
+	// Modes records how each capture is borrowed into the environment record,
+	// in field order.
+	Modes []check.CaptureMode
 }
 
 // Consumed is what an onerr body consumes: exactly one of Binding and Param
@@ -164,6 +167,7 @@ type Use struct {
 	Field   uint32
 	Generic uint32
 	Capture uint32 // UseCapture: the environment field index; UseSelfField: 1 + the field index of self's capture, 0 for the predicate's own self
+	Direct  bool   // UseCapture: true when the environment field holds the reborrowed value directly (CapReborrow)
 }
 
 // CallKind is what a call expression does.

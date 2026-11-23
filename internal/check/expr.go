@@ -121,8 +121,11 @@ type unit struct {
 	// goRecv is, for a method call under s.go, the type its receiver
 	// passes to self (callee.recvPassed): goExpr judges that one
 	// crossing.
-	goRecv  map[ast.NodeID]types.TypeID
-	capBase LocalID
+	goRecv      map[ast.NodeID]types.TypeID
+	capBase     LocalID
+	capOrigins  []captureOrigin
+	hasCaptures bool
+	eager       bool
 	// naming is the fn value whose requires valueRequires judges, nil
 	// elsewhere: a restate demand there names no callee.
 	naming ast.Node
@@ -131,6 +134,33 @@ type unit struct {
 // newUnit prepares the unit of item it: the Body over its node range, its
 // signature's generics and its parameters as the first locals.
 func (m *Module) newUnit(it *types.Item) *unit {
+	return m.newUnitBase(it)
+}
+
+// newUnitWithCaptures prepares a capturing literal unit checked eagerly from
+// its enclosing unit's literalCaptures with origins already typed.
+func (m *Module) newUnitWithCaptures(it *types.Item, ii *resolve.ItemInfo, origins []captureOrigin) *unit {
+	u := m.newUnitBase(it)
+	u.eager = true
+	u.initCaptures(ii, origins)
+	if len(u.b.Locals) > 0 {
+		u.b.Locals[0].Type = u.result
+	}
+	return u
+}
+
+// newUnitWithFallbackCaptures prepares a capturing literal unit whose
+// enclosing unit did not produce an environment (Poison captures).
+func (m *Module) newUnitWithFallbackCaptures(it *types.Item, ii *resolve.ItemInfo, rec *captureRec) *unit {
+	u := m.newUnitBase(it)
+	u.waitCaptures(ii, rec)
+	if len(u.b.Locals) > 0 {
+		u.b.Locals[0].Type = u.result
+	}
+	return u
+}
+
+func (m *Module) newUnitBase(it *types.Item) *unit {
 	c := m.c
 	n, fx := m.nodeOf(it.ID)
 	b := newBody(it.ID, fx, n)
@@ -174,9 +204,6 @@ func (m *Module) newUnit(it *types.Item) *unit {
 				u.declLocal[rl.Decl] = LocalID(i)
 			}
 		}
-	}
-	if ii := m.byItem[it.ID]; ii != nil && len(ii.Captures) > 0 && it.Kind == types.KindLiteral {
-		u.waitCaptures(ii)
 	}
 	if _, ok := b.Node.(*ast.Contract); ok && u.sig != nil {
 		u.predicateLocals()

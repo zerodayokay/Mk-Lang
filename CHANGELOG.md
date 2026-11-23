@@ -4,6 +4,10 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
+### Language
+
+- Non-escaping `fn` literals passed directly to a `const` `fn` parameter (outside `s.go`) may now mutably capture enclosing `var` locals and reborrow `mut T` / `mut []T` bindings with no new syntax: assignments, `mut` borrows, and `mut self` calls on a capture form an exclusive borrow at the call site alongside its other operands (R13) that ends with the statement (R14), so R5 catches conflicting borrows (`E0501`/`E0502`/`E0504`). Mutating a non-`var` capture is `E0508`; writing through a captured `&T`/`[]T` stays `E0507`; escaping, moving out of a capture, mutating in a contract or invariant, returning or storing a capture loan, and storing a non-static loan into a captured carrier remain `E0609` (and storing a literal-local loan is `E0505`).
+
 ### Changed
 
 - `Slice[T].SortStable` now takes an explicit allocator (`Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void`), removing the hidden process-heap allocation hook (`SortHeap` / `SortHeapInit`) and eliminating the sole exception to Mk's zero-hidden-allocation invariant. Scratch memory up to 4,096 bytes (for types aligned to at most 8) stays on the stack; larger scratch comes from `a` (falling back to `Len() / 2` elements before failing with `OutOfMemory`, with the slice unchanged) and is freed before returning. `Slice[T].SortStableIn` is removed, superseded by `SortStable`.

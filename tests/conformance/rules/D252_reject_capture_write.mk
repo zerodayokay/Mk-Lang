@@ -1,23 +1,23 @@
-// verdict: reject E0609
+// verdict: reject E0508
 // rule: D-252
-// note: inside the literal a capture is read through &, so it is not assigned and not borrowed mut
+// note: mutating or borrowing `mut` a captured local that is not `var` is E0508
 Bump(n: mut int) {
     *n += 1
 }
 
 Sorted(xs: mut []i32): int {
-    var swaps := 0
+    swaps := 0
     xs.Sort(fn(a: &i32, b: &i32): bool {
-        swaps += 1 // <- E0609
+        swaps += 1 // <- E0508
         return *a < *b
     })
     return swaps
 }
 
 Counted(xs: mut []i32): int {
-    var calls := 0
+    calls := 0
     xs.Sort(fn(a: &i32, b: &i32): bool {
-        Bump(mut calls) // <- E0609
+        Bump(mut calls) // <- E0508
         return *a < *b
     })
     return calls

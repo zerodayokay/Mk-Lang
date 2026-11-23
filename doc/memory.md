@@ -1432,12 +1432,25 @@ A borrow's whole place, index expressions and bounds checks included, is evaluat
 
 **Captures.** A `fn` literal may name locals and parameters of the enclosing function when it is written directly as the argument of a `const` parameter of `fn` type, in a call that is not `s.go`:
 
-- Each captured name `x` is a shared borrow `&x`, formed at the call together with the `&p` and `mut p` operands. So `xs.Sort(fn(a: &i32, b: &i32): bool { return xs.Len() > 1 })` borrows `xs` both `mut` and `&`, which is E0501.
-- Inside the literal, `x` is read through that shared reference. Assigning `x`, moving it, borrowing it `mut` or calling a `mut self` method on it is E0609.
-- A capture is not a parameter of the literal, so no clause can name it. A literal whose result could hold a loan on a captured name, or that stores one into one of its parameters, is E0609.
-- In a contract predicate, the names are the function's parameters and `result`, or the struct's fields through `self`.
+- A captured name `x` that the literal only reads is a shared borrow `&x`. One that the literal assigns, borrows `mut`, calls a `mut self` method on, or reborrows `mut` is an exclusive borrow (`mut x`, or a reborrow `mut *x` or `mut x[..]` when `x` is already a `mut T` or `mut []T`). Both kinds of capture borrow are formed at the call together with the `&p` and `mut p` operands (after plain arguments are evaluated), so R5 catches conflicting borrows: `xs.Sort(fn(a: &i32, b: &i32): bool { return xs.Len() > 1 })`, `xs.Sort(fn(a: &i32, b: &i32): bool { xs.Push(1) else {}; return *a < *b })`, and two `const` `fn` arguments mutating the same local are E0501.
+- To mutate a captured binding or value (`x = v`, `mut x`, `x.MutMethod()`), `x` must be declared `var` (E0508), unless the literal only mutates through a captured `mut T` or `mut []T` (`*r = v`, `zs[i] = v`). Writing through a captured `&T` or `[]T` is E0507.
+- Inside the literal, a captured variable is borrowed and cannot be moved out of (even a `var` linear or unique local): moving a non-plain capture is E0609.
+- A capture is not a parameter of the literal, so no `from` or `into` clause can name it. A literal whose result could hold a loan on a captured name, that stores a loan on a captured name into one of its parameters, or that stores a non-static loan (from a parameter, another capture, or writable global memory) into a captured variable is E0609. Storing a literal-local loan into a captured variable is E0505.
+- In a contract predicate or struct `invariant`, the names are the function's parameters and `result`, or the struct's fields through `self`, and are read-only (mutating a capture there is E0609).
 - A bracket argument is never a `fn` literal (E0101). A literal in a `fields` loop body may not capture a name that loop declares (E0609).
-- No result of the call holds a capture loan, and the capture loans end with the call's statement (R14).
+- No result of the call holds a capture loan, and the capture loans — shared and exclusive alike — end with the call's statement (R14).
+
+```mk
+// verdict: ok
+CountSorted(xs: mut []i32): int {
+    var compares := 0
+    xs.Sort(fn(a: &i32, b: &i32): bool {
+        compares += 1
+        return *a < *b
+    })
+    return compares
+}
+```
 
 ```mk
 // verdict: reject E0609
@@ -1455,6 +1468,24 @@ Collect(a: &Arena, x: i32): OutOfMemory!int {
 ```
 
 Fix: collect values, not references to captured names (a `List[i32]` and `out.Push(x)`), or write a loop instead of a callback.
+
+```mk
+// verdict: reject E0609
+WithRef(const f: fn(&i32)) {
+    n: i32 = 1
+    f(&n)
+}
+
+KeepRef() {
+    var best: ?&i32 = none
+    WithRef(fn(p: &i32) {
+        best = some(p) // <- E0609
+    })
+    _ = best
+}
+```
+
+Fix: store a plain value (`var best: ?i32 = none` and `best = some(*p)`), or write a loop where the owner's scope is visible.
 
 ### R14. Temporaries
 
@@ -1480,7 +1511,7 @@ Fix: bind the temporary to a local, `p := MakePoint()`, then borrow `&p`.
 - For `if` and `match`, the statement is the whole construct.
 - For `for`, the value iterated over, an `ItemsMut()` result included, lives for the whole loop (it holds R20's one loan). Every other temporary of the header or the body lives one iteration.
 - A linear temporary must be consumed within its statement.
-- The capture loans of R13 are temporaries of their call's statement.
+- The capture loans of R13 — both shared and exclusive — are temporaries of their call's statement, so a mutably-captured local is usable again on the next statement.
 
 ### R15. Reassigning a reference ends loans through it
 

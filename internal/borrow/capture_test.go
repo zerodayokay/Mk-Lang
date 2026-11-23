@@ -11,6 +11,7 @@
 package borrow
 
 import (
+	"strings"
 	"testing"
 
 	"mk/internal/diag"
@@ -319,4 +320,270 @@ func factText(d *diag.Diagnostic, key string) string {
 		}
 	}
 	return ""
+}
+
+// mutEnv builds a mut environment record whose fields are &T (when muts[i] is
+// false) or mut T (when muts[i] is true), returning (rec, mut rec).
+func (k capKit) mutEnv(names []string, ts []types.TypeID, muts []bool) (rec, ref types.TypeID) {
+	var fs []types.RecordField
+	for i, n := range names {
+		ft := k.tab.Ref(ts[i])
+		if muts[i] {
+			ft = k.tab.Mut(ts[i])
+		}
+		fs = append(fs, types.RecordField{Name: k.in.Intern(n), Type: ft})
+	}
+	rec = k.tab.Record(fs)
+	return rec, k.tab.Mut(rec)
+}
+
+// buildMutEnv is lower's pass 3 for a mut environment: t_i := &src_i or
+// mut src_i per field kind, e := record, r := mut e, passed by ArgMove.
+func (k capKit) buildMutEnv(m *mb, rec, ref types.TypeID, srcs ...mir.Place) (mir.Arg, []mir.LocalID) {
+	fs := k.tab.Get(rec).Fields
+	var temps []mir.LocalID
+	var ops []mir.Operand
+	for i, p := range srcs {
+		t := m.temp(fs[i].Type)
+		if k.tab.Kind(fs[i].Type) == types.KMut {
+			m.set(t, mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Exclusive, Place: p, Type: fs[i].Type})
+			ops = append(ops, mv(m.local(t)))
+		} else {
+			m.set(t, mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Shared, Place: p, Type: fs[i].Type})
+			ops = append(ops, cp(m.local(t)))
+		}
+		temps = append(temps, t)
+	}
+	e := m.temp(rec)
+	m.set(e, m.agg(mir.AggRecord, types.NoItem, rec, ops...))
+	r := m.temp(ref)
+	m.set(r, mir.Rvalue{Kind: mir.RvRef, Borrow: mir.Exclusive, Place: m.local(e), Type: ref})
+	temps = append(temps, e, r)
+	return argMove(m.local(r)), temps
+}
+
+// TestMutCaptureConflictsAtCall checks R5/R13/R14 for mut captures:
+//   - mut capture beside &x or another mut capture of x is E0501;
+//   - mut captures of two distinct locals are clean;
+//   - a mut capture's loan ends at the call's statement end (R14).
+func TestMutCaptureConflictsAtCall(t *testing.T) {
+	t.Run("mut-capture-beside-shared-arg", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		ri := k.tab.Ref(types.Int)
+		f1 := k.tab.Fn(types.FnType{Params: []types.FnParam{{Type: ri}}, Result: types.Void})
+		look := k.fn("Look", []types.Param{k.param("x", ri), {Name: k.in.Intern("f"), Type: f1, Const: true}}, types.Void, types.EmptyErrors)
+		m := k.body(k.sig("G", []types.Param{k.param("k", types.Int)}, types.Void, types.EmptyErrors))
+		n := m.user("n", types.Int, true)
+		m.set(n, use(cp(m.local(1))))
+		x := m.temp(ri)
+		m.set(x, ref(m.local(n)))
+		rec, rf := k.mutEnv([]string{"n"}, []types.TypeID{types.Int}, []bool{true})
+		envArg, temps := k.buildMutEnv(m, rec, rf, m.local(n))
+		next := m.block()
+		m.call(look.Item, nil, []mir.Arg{argCopy(m.local(x)), {Operand: k.fnConst(f1, look.Item), Mode: mir.ArgCopy}, envArg}, m.local(0), next)
+		m.at(next)
+		m.end(temps[2], temps[1], temps[0], x)
+		m.ret(mir.ExitNormal)
+		r := m.check(t)
+		if len(r.Diags) != 1 || r.Diags[0].Code != diag.E0501 {
+			t.Fatalf("want one E0501, got %v", r.Diags)
+		}
+	})
+	t.Run("two-mut-captures-same-and-disjoint", func(t *testing.T) {
+		for _, same := range []bool{true, false} {
+			k := capKit{newKit(t)}
+			f0 := k.tab.Fn(types.FnType{Result: types.Void})
+			two := k.fn("Two", []types.Param{
+				{Name: k.in.Intern("f"), Type: f0, Const: true},
+				{Name: k.in.Intern("g"), Type: f0, Const: true},
+			}, types.Void, types.EmptyErrors)
+			m := k.body(k.sig("G", nil, types.Void, types.EmptyErrors))
+			a := m.user("a", types.Int, true)
+			b := m.user("b", types.Int, true)
+			m.set(a, use(imm(types.Int, 0)))
+			m.set(b, use(imm(types.Int, 0)))
+			recA, rfA := k.mutEnv([]string{"a"}, []types.TypeID{types.Int}, []bool{true})
+			envA, tA := k.buildMutEnv(m, recA, rfA, m.local(a))
+			second := b
+			if same {
+				second = a
+			}
+			recB, rfB := k.mutEnv([]string{"b"}, []types.TypeID{types.Int}, []bool{true})
+			envB, tB := k.buildMutEnv(m, recB, rfB, m.local(second))
+			next := m.block()
+			m.call(two.Item, nil, []mir.Arg{
+				{Operand: k.fnConst(f0, two.Item), Mode: mir.ArgCopy},
+				{Operand: k.fnConst(f0, two.Item), Mode: mir.ArgCopy},
+				envA, envB,
+			}, m.local(0), next)
+			m.at(next)
+			m.end(tB[2], tB[1], tB[0], tA[2], tA[1], tA[0])
+			// After the call statement ends, a and b are writable again (R14).
+			m.set(a, use(imm(types.Int, 1)))
+			m.set(b, use(imm(types.Int, 2)))
+			m.ret(mir.ExitNormal)
+			r := m.check(t)
+			if same {
+				if len(r.Diags) != 1 || r.Diags[0].Code != diag.E0501 {
+					t.Fatalf("same local: want one E0501, got %v", r.Diags)
+				}
+			} else {
+				m.expect(t, r)
+			}
+		}
+	})
+}
+
+// TestMutCaptureBody checks mutations and borrows inside a mut-capturing
+// literal: writing a mut capture and disjoint borrows of two mut captures are
+// clean; overlapping mut borrows of one capture are E0501 naming the capture;
+// writing through a captured &int is E0507 naming *p (not E0609); moving a
+// var linear capture is E0609 (move).
+func TestMutCaptureBody(t *testing.T) {
+	t.Run("disjoint-mut-captures-and-write", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		rec, rf := k.mutEnv([]string{"a", "b"}, []types.TypeID{types.Int, types.Int}, []bool{true, true})
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		pa := m.user("pa", k.tab.Mut(types.Int), false)
+		pb := m.user("pb", k.tab.Mut(types.Int), false)
+		m.set(pa, mutRef(k.capturePlace(m, env, rec, 0)))
+		m.set(pb, mutRef(k.capturePlace(m, env, rec, 1)))
+		m.assign(m.pl(pa, deref(types.Int)), use(imm(types.Int, 1)))
+		m.assign(m.pl(pb, deref(types.Int)), use(imm(types.Int, 2)))
+		m.end(pb, pa)
+		m.assign(k.capturePlace(m, env, rec, 0), use(imm(types.Int, 3)))
+		m.ret(mir.ExitNormal)
+		m.expect(t, m.check(t))
+	})
+	t.Run("overlapping-mut-borrow-is-E0501", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		rec, rf := k.mutEnv([]string{"a"}, []types.TypeID{types.Int}, []bool{true})
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		p1 := m.user("p1", k.tab.Mut(types.Int), false)
+		p2 := m.user("p2", k.tab.Mut(types.Int), false)
+		m.set(p1, mutRef(k.capturePlace(m, env, rec, 0)))
+		at := m.set(p2, mutRef(k.capturePlace(m, env, rec, 0)))
+		m.assign(m.pl(p1, deref(types.Int)), use(imm(types.Int, 1)))
+		m.assign(m.pl(p2, deref(types.Int)), use(imm(types.Int, 2)))
+		m.end(p2, p1)
+		m.ret(mir.ExitNormal)
+		r := m.check(t)
+		m.expect(t, r, diag.E0501, at)
+		if msg := r.Diags[0].Message; !strings.Contains(msg, "a") || strings.Contains(msg, "env") {
+			t.Errorf("E0501 message %q should name capture `a`, not `env`", msg)
+		}
+	})
+	t.Run("write-through-captured-shared-ref-is-E0507", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		ri := k.tab.Ref(types.Int)
+		rec, rf := k.env([]string{"p"}, []types.TypeID{ri})
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		ft := k.tab.Get(rec).Fields[0].Type
+		at := m.assign(m.pl(env, deref(rec), fld(0, ft), deref(ri), deref(types.Int)), use(imm(types.Int, 1)))
+		m.ret(mir.ExitNormal)
+		r := Check(m.b, k.kit.env(m.sig))
+		m.expect(t, r, diag.E0507, at)
+		if got := factText(r.Diags[0], "place"); got != "*p" {
+			t.Errorf("E0507 place %q, want \"*p\"", got)
+		}
+	})
+	t.Run("move-mut-linear-capture-is-E0609", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		rec, rf := k.mutEnv([]string{"res"}, []types.TypeID{k.Res}, []bool{true})
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		v := m.temp(k.Res)
+		at := m.set(v, use(mv(k.capturePlace(m, env, rec, 0))))
+		next := m.block()
+		m.call(k.item("Res.Close"), nil, []mir.Arg{argMove(m.local(v))}, m.local(m.temp(types.Void)), next)
+		m.at(next)
+		m.ret(mir.ExitNormal)
+		r := Check(m.b, k.kit.env(m.sig))
+		m.expect(t, r, diag.E0609, at)
+		if factText(r.Diags[0], "reason") != "move" {
+			t.Errorf("E0609 reason %q, want move", factText(r.Diags[0], "reason"))
+		}
+	})
+}
+
+// TestE0609_StoreIntoCapture checks soundness when storing loans into a
+// mutably-captured carrier variable:
+//   - a parameter's loan stored into a capture is E0609 (store);
+//   - another capture's loan stored into a capture is E0609 (store);
+//   - a literal-local loan stored into a capture is E0505;
+//   - a non-writable static loan stored into a capture is clean.
+func TestE0609_StoreIntoCapture(t *testing.T) {
+	ri := func(k capKit) types.TypeID { return k.tab.Ref(types.Int) }
+	t.Run("param-loan-into-capture", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		rec, rf := k.mutEnv([]string{"count", "dst"}, []types.TypeID{types.Int, ri(k)}, []bool{true, true})
+		m, env := k.literalBody("L", []types.Param{k.param("p", ri(k))}, types.Void, rf)
+		at := m.assign(k.capturePlace(m, env, rec, 1), use(cp(m.local(1))))
+		m.ret(mir.ExitNormal)
+		r := m.check(t)
+		m.expect(t, r, diag.E0609, at)
+		if d := r.Diags[0]; factText(d, "reason") != "store" || factText(d, "captured") != "[dst]" || d.Phase != diag.PhaseFlow {
+			t.Fatalf("E0609 facts: reason %q captured %q phase %v", factText(d, "reason"), factText(d, "captured"), d.Phase)
+		}
+	})
+	t.Run("capture-loan-into-other-capture", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		rec, rf := k.mutEnv([]string{"dst", "src"}, []types.TypeID{ri(k), types.Int}, []bool{true, false})
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		ft := k.tab.Get(rec).Fields[1].Type
+		at := m.assign(k.capturePlace(m, env, rec, 0), use(cp(m.pl(env, deref(rec), fld(1, ft)))))
+		m.ret(mir.ExitNormal)
+		r := m.check(t)
+		m.expect(t, r, diag.E0609, at)
+		if d := r.Diags[0]; factText(d, "reason") != "store" || factText(d, "captured") != "[dst]" {
+			t.Fatalf("E0609 facts: reason %q captured %q", factText(d, "reason"), factText(d, "captured"))
+		}
+	})
+	t.Run("local-loan-into-capture-is-E0505", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		rec, rf := k.mutEnv([]string{"dst"}, []types.TypeID{ri(k)}, []bool{true})
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		loc := m.user("loc", types.Int, false)
+		m.set(loc, use(imm(types.Int, 7)))
+		rref := m.temp(ri(k))
+		m.set(rref, ref(m.local(loc)))
+		at := m.assign(k.capturePlace(m, env, rec, 0), use(cp(m.local(rref))))
+		m.end(rref, loc)
+		m.ret(mir.ExitNormal)
+		r := m.check(t)
+		if len(r.Diags) != 1 || r.Diags[0].Code != diag.E0505 {
+			t.Fatalf("want one E0505 at %v, got %v", at, r.Diags)
+		}
+	})
+	t.Run("static-into-capture-is-clean", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		cItem := k.items.AddItem(&types.Item{Module: k.main.ID, Key: types.ItemKey("t", "K"), Name: k.in.Intern("K"),
+			Kind: types.KindConst, Decl: &types.ConstDecl{Type: types.Str}})
+		rec, rf := k.mutEnv([]string{"dst"}, []types.TypeID{types.Str}, []bool{true})
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		s := m.temp(types.Str)
+		m.set(s, mir.Rvalue{Kind: mir.RvConstRef, Item: cItem, Type: types.Str})
+		m.assign(k.capturePlace(m, env, rec, 0), use(cp(m.local(s))))
+		m.end(s)
+		m.ret(mir.ExitNormal)
+		m.expect(t, m.check(t))
+	})
+	t.Run("writable-global-into-capture-is-E0609", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		cellT := k.tab.Named(k.known.Cell, []types.GenericArg{types.TypeArg(ri(k))})
+		rcell := k.tab.Ref(cellT)
+		gItem := k.items.AddItem(&types.Item{Module: k.main.ID, Key: types.ItemKey("t", "G"), Name: k.in.Intern("G"),
+			Kind: types.KindGlobal, Decl: &types.GlobalDecl{Type: cellT}})
+		rec, rf := k.mutEnv([]string{"dst"}, []types.TypeID{rcell}, []bool{true})
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		g := m.temp(rcell)
+		m.set(g, mir.Rvalue{Kind: mir.RvGlobalRef, Item: gItem, Type: rcell})
+		at := m.assign(k.capturePlace(m, env, rec, 0), use(cp(m.local(g))))
+		m.end(g)
+		m.ret(mir.ExitNormal)
+		r := m.check(t)
+		m.expect(t, r, diag.E0609, at)
+		if d := r.Diags[0]; factText(d, "reason") != "store" || factText(d, "captured") != "[dst]" {
+			t.Fatalf("E0609 facts: reason %q captured %q", factText(d, "reason"), factText(d, "captured"))
+		}
+	})
 }

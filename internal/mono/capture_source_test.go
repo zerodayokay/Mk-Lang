@@ -412,3 +412,78 @@ Outer(xs: []i32): i32 {
 		}
 	}
 }
+
+// TestMutCaptureForwardingSource: a mut-capturing literal passed to a const fn
+// parameter called repeatedly in a loop and forwarded across another const fn
+// threads its hidden mut R environment parameter with ArgReborrow, and every
+// monomorphized body validates cleanly.
+func TestMutCaptureForwardingSource(t *testing.T) {
+	src := `Each(xs: []i32, const f: fn(&i32)) {
+    for x in xs {
+        f(&x)
+    }
+}
+
+Forward(xs: []i32, const f: fn(&i32)) {
+    Each(xs, f)
+    Each(xs, f)
+}
+
+Sum(xs: []i32, scale: i32): i32 {
+    var total: i32 = 0
+    Forward(xs, fn(x: &i32) {
+        total += *x * scale
+    })
+    return total
+}
+`
+	sw := newSrcWorld(t, src)
+	in, ds := sw.collect(t, Options{}, sw.limitRoots()...)
+	if len(ds) != 0 {
+		t.Fatalf("diagnostics: %v", ds)
+	}
+	fwd := instancesOf(in, sw.item(t, "Forward"))
+	if len(fwd) != 1 {
+		t.Fatalf("%d instances of Forward, want 1", len(fwd))
+	}
+	// Forward takes a mut R hidden parameter and threads it to both Each calls
+	// via ArgReborrow.
+	fb := fwd[0].Body
+	if fb.ParamCount != 3 || sw.tab.Kind(fb.Locals[3].Type) != types.KMut || !mir.IsEnvType(sw.tab, fb.Locals[3].Type) {
+		t.Fatalf("Forward hidden param: ParamCount=%d type=%s", fb.ParamCount, sw.tab.TypeString(fb.Locals[3].Type, nil))
+	}
+	reborrows := 0
+	for _, blk := range fb.Blocks {
+		tm := blk.Term
+		if tm.Kind != mir.TermCall || tm.Callee.Kind != mir.CallDirect || tm.Callee.Fn.Item != sw.item(t, "Each") {
+			continue
+		}
+		args := fb.Args[tm.Args.Start:tm.Args.End()]
+		if len(args) != 3 || args[2].Mode != mir.ArgReborrow {
+			t.Errorf("Forward -> Each call args = %+v, want 3 args with ArgReborrow env", args)
+		}
+		reborrows++
+	}
+	if reborrows != 2 {
+		t.Errorf("saw %d forwarded mut env calls, want 2", reborrows)
+	}
+	each := instancesOf(in, sw.item(t, "Each"))
+	if len(each) != 1 {
+		t.Fatalf("%d instances of Each, want 1", len(each))
+	}
+	eb := each[0].Body
+	called := 0
+	for _, blk := range eb.Blocks {
+		tm := blk.Term
+		if tm.Kind == mir.TermCall && tm.Callee.Kind == mir.CallDirect && sw.items.Get(tm.Callee.Fn.Item).Kind == types.KindLiteral {
+			args := eb.Args[tm.Args.Start:tm.Args.End()]
+			if len(args) != 2 || args[1].Mode != mir.ArgReborrow {
+				t.Errorf("Each -> literal call args = %+v, want 2 args with ArgReborrow env", args)
+			}
+			called++
+		}
+	}
+	if called != 1 {
+		t.Errorf("saw %d literal calls in Each, want 1", called)
+	}
+}

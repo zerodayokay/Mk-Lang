@@ -130,16 +130,25 @@ func containsAll(s string, parts ...string) bool {
 	return true
 }
 
-// TestE0609_Writes: inside the literal a capture is read through a
-// shared reference: assigning it or a part of it is E0609 write.
+// TestCaptureWrites: inside a const fn literal, assigning a `var` capture
+// is allowed (capturing it `mut`), while assigning a non-`var` capture is
+// E0508 in the flow group (with a proven `var ` fix for a local `:=`).
 func TestE0609_Writes(t *testing.T) {
-	pre := capDecls + "F(xs: mut []i32, b: Box) {\n\tvar n := 0\n"
+	pre := capDecls + "F(xs: mut []i32, b: Box) {\n\tvar n := 0\n\tm := 0\n"
 	runCapCases(t, []bodyCase{
-		{"assign", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tn = 1\n\t\treturn true\n\t})\n}\n", "E0609@25:3"},
-		{"compound", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tn += 1\n\t\treturn true\n\t})\n}\n", "E0609@25:3"},
-		{"field", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tb.n = 1\n\t\treturn true\n\t})\n}\n", "E0609@25:3"},
-		{"read", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tm := n + b.n\n\t\treturn m > 0\n\t})\n\tn = 2\n\t_ = n\n}\n", ""},
+		{"assign var", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tn = 1\n\t\treturn true\n\t})\n\t_ = m\n}\n", ""},
+		{"compound var", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tn += 1\n\t\treturn true\n\t})\n\t_ = m\n}\n", ""},
+		{"assign non-var local", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tm = 1\n\t\treturn true\n\t})\n\t_ = n\n}\n", "E0508@26:3"},
+		{"field non-var param", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tb.n = 1\n\t\treturn true\n\t})\n\t_ = n + m\n}\n", "E0508@26:3"},
+		{"read", pre + "\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tk := n + b.n + m\n\t\treturn k > 0\n\t})\n\tn = 2\n\t_ = n\n}\n", ""},
 	})
+	w, ds := capDiags(t, pre+"\tSort(xs, fn(a: &i32, c: &i32): bool {\n\t\tm += 1\n\t\treturn true\n\t})\n\t_ = n\n}\n")
+	if len(ds) != 1 || ds[0].Code != diag.E0508 || ds[0].Phase != diag.PhaseFlow || fact(ds[0], "captured") != "[m]" || fact(ds[0], "reason") != "write" {
+		t.Fatalf("E0508 facts:\n%s", dump(w, ds))
+	}
+	if len(ds[0].Fixes) != 1 || ds[0].Fixes[0].Class != diag.Proven || len(ds[0].Fixes[0].Edits) != 1 || ds[0].Fixes[0].Edits[0].Text != "var " {
+		t.Fatalf("E0508 fix: %+v", ds[0].Fixes)
+	}
 }
 
 // TestEnvTypes: the enclosing unit's Body.Envs and the literal unit's
@@ -240,18 +249,20 @@ const useDecls = capDecls + "struct Bag {\n\tn: int\n}\n\nBag.Peek(&self): int {
 	"Bag.Push(mut self, x: int) {\n\tself.n = x\n}\n\nTake(xs: mut []i32) {\n}\n\n" +
 	"linear struct Res {\n\tid: int\n}\n\nRes.Close(self) {\n}\n\n"
 
-// TestE0609_Uses: inside the literal a capture is read
-// through a shared reference: a shared borrow, a plain copy or field read,
-// a &self method, Cell.Store, a plain element read and a raw-pointer write in
-// unsafe are accepted; a mut borrow (mut x, mut x[..], for .. in mut x, a
-// captured mut []T passed to a mut parameter), a mut self method and a move
-// of a non-plain capture are E0609, in the types group, at the capture.
+// TestE0609_Uses: inside a const fn literal, a shared borrow, a plain copy
+// or field read, a &self method, Cell.Store, a plain element read, a raw-pointer
+// write in unsafe, and mutating a `var` local or reborrowing a `mut T`/`mut []T`
+// are accepted; mutating a non-`var` capture is E0508; moving any non-plain
+// capture (even a `var` linear local or a `mut []T` passed to `into`/generic)
+// and mutating a capture inside a contract are E0609 in the types group.
 func TestE0609_Uses(t *testing.T) {
-	pre := useDecls + "G(xs: mut []i32, zs: mut []i32, b: Bag, c: Cell[int], p: *i32, r: Res) {\n\tvar n := 0\n\tvar arr: [3]i32 = [1, 2, 3]\n"
+	pre := useDecls + "TakeInto(xs: mut []i32 into dst, dst: mut ?mut []i32) {\n}\n\n" +
+		"TakeGen[T](x: T) {\n}\n\n" +
+		"G(xs: mut []i32, zs: mut []i32, b: Bag, c: Cell[int], p: *i32, r: Res) {\n\tvar n := 0\n\tvar arr: [3]i32 = [1, 2, 3]\n\tvar vb := Bag(n: 0)\n\tvar vr := Res(id: 1)\n\tvar opt: ?mut []i32 = none\n"
 	lit := func(body string) string {
-		return pre + "\tSort(xs, fn(a: &i32, d: &i32): bool {\n" + body + "\t\treturn true\n\t})\n\tn = 1\n\t_ = n\n\tarr[0] = 1\n\tr.Close()\n}\n"
+		return pre + "\tSort(xs, fn(a: &i32, d: &i32): bool {\n" + body + "\t\treturn true\n\t})\n\tn = 1\n\t_ = n\n\tarr[0] = 1\n\tvb.Push(2)\n\tr.Close()\n\tvr.Close()\n\t_ = opt\n}\n"
 	}
-	// The literal's first line is 47.
+	// The literal's first line is 57.
 	runCapCases(t, []bodyCase{
 		{"shared borrow", lit("\t\tq := &n\n\t\t_ = q\n"), ""},
 		{"plain copy and field", lit("\t\tm := n + b.n\n\t\t_ = m\n"), ""},
@@ -259,25 +270,99 @@ func TestE0609_Uses(t *testing.T) {
 		{"Cell.Store", lit("\t\tc.Store(1)\n"), ""},
 		{"element read", lit("\t\t_ = arr[1] + zs[0]\n"), ""},
 		{"raw pointer write", lit("\t\tunsafe \"p points at a live i32\" {\n\t\t\t*p = 1\n\t\t}\n"), ""},
-		{"mut borrow", lit("\t\tq := mut n\n\t\t*q = 1\n"), "E0609@48:12"},
-		{"mut slice", lit("\t\tq := mut arr[0..2]\n\t\t_ = q\n"), "E0609@48:12"},
-		{"for in mut", lit("\t\tfor e in mut arr {\n\t\t\t*e = 1\n\t\t}\n"), "E0609@48:16"},
-		{"mut self", lit("\t\tb.Push(1)\n"), "E0609@48:3"},
-		{"mut parameter", lit("\t\tTake(zs)\n"), "E0609@48:8"},
-		{"move", lit("\t\tm := zs\n\t\t_ = m\n"), "E0609@48:8"},
-		{"by-value self", lit("\t\tr.Close()\n"), "E0609@48:3"},
+		{"mut borrow var", lit("\t\tq := mut n\n\t\t*q = 1\n"), ""},
+		{"mut slice var", lit("\t\tq := mut arr[0..2]\n\t\t_ = q\n"), ""},
+		{"for in mut var", lit("\t\tfor e in mut arr {\n\t\t\t*e = 1\n\t\t}\n"), ""},
+		{"mut self var", lit("\t\tvb.Push(1)\n"), ""},
+		{"mut self non-var", lit("\t\tb.Push(1)\n"), "E0508@57:3"},
+		{"mut parameter reborrow", lit("\t\tTake(zs)\n"), ""},
+		{"mut slice write reborrow", lit("\t\tzs[0] = 1\n"), ""},
+		{"mut parameter into is move", lit("\t\tTakeInto(zs, mut opt)\n"), "E0609@57:12"},
+		{"mut parameter generic is move", lit("\t\tTakeGen(zs)\n"), "E0609@57:11"},
+		{"move", lit("\t\tm := zs\n\t\t_ = m\n"), "E0609@57:8"},
+		{"by-value self", lit("\t\tr.Close()\n"), "E0609@57:3"},
+		{"by-value self var linear", lit("\t\tvr.Close()\n"), "E0609@57:3"},
 	})
-	// The reason and the group of each form.
-	for _, tc := range []struct{ body, reason string }{
-		{"\t\tq := mut n\n\t\t*q = 1\n", "mut-borrow"},
-		{"\t\tb.Push(1)\n", "mut-self"},
-		{"\t\tm := zs\n\t\t_ = m\n", "move"},
-	} {
-		w, ds := capDiags(t, lit(tc.body))
-		if len(ds) != 1 || fact(ds[0], "reason") != tc.reason || ds[0].Phase != diag.PhaseTypes {
-			t.Errorf("%q: %s", tc.reason, dump(w, ds))
+	// Move stays E0609 in types; non-var mut-self is E0508 in flow.
+	w, ds := capDiags(t, lit("\t\tm := zs\n\t\t_ = m\n"))
+	if len(ds) != 1 || ds[0].Code != diag.E0609 || fact(ds[0], "reason") != "move" || ds[0].Phase != diag.PhaseTypes {
+		t.Errorf("move: %s", dump(w, ds))
+	}
+	w, ds = capDiags(t, lit("\t\tb.Push(1)\n"))
+	if len(ds) != 1 || ds[0].Code != diag.E0508 || fact(ds[0], "reason") != "mut-self" || ds[0].Phase != diag.PhaseFlow {
+		t.Errorf("mut-self non-var: %s", dump(w, ds))
+	}
+	// Mutating a capture inside a contract predicate is E0609 in types.
+	contractMut := "Each(const f: fn(): bool): bool {\n\treturn f()\n}\n\n" +
+		"H(var x: int): int\n\trequires Each(fn(): bool {\n\t\tx += 1\n\t\treturn x > 0\n\t})\n{\n\treturn x\n}\n"
+	w, ds = capDiags(t, contractMut)
+	if got := codes(w, ds); got != "E0609@7:3" {
+		t.Errorf("contract mut: %q\n%s", got, dump(w, ds))
+	}
+}
+
+// TestMutCaptureEnvs checks Body.Envs, Modes, EnvRef and Captures for shared,
+// mut, reborrow, mixed, nested, and write-through-& captures.
+func TestMutCaptureEnvs(t *testing.T) {
+	checkEnv := func(t *testing.T, src, fnKey, litKey, wantEnv string, wantModes []CaptureMode) {
+		t.Helper()
+		w := newWorld(t, true)
+		b := w.add("m", opt{}, src)
+		var outer, lit *Body
+		for _, id := range b.m.Units() {
+			body := w.c.Check(b.m, id)
+			if len(body.Diags) > 0 {
+				t.Fatalf("%s:\n%s", w.items.Get(id).Key, dump(w, body.Diags))
+			}
+			switch w.items.Get(id).Key.String() {
+			case fnKey:
+				outer = body
+			case litKey:
+				lit = body
+			}
+		}
+		if outer == nil || lit == nil || len(outer.Envs) == 0 {
+			t.Fatalf("missing bodies: outer=%v lit=%v", outer != nil, lit != nil)
+		}
+		var env LitEnv
+		for _, e := range outer.Envs {
+			if w.items.Get(e.Item).Key.String() == litKey {
+				env = e
+				break
+			}
+		}
+		if got := w.tab.TypeString(env.Ref, nil); got != wantEnv {
+			t.Errorf("outer env %s, want %s", got, wantEnv)
+		}
+		if got := w.tab.TypeString(lit.EnvRef, nil); got != wantEnv {
+			t.Errorf("literal env %s, want %s", got, wantEnv)
+		}
+		if len(env.Modes) != len(wantModes) || len(lit.Captures) != len(wantModes) {
+			t.Fatalf("modes %v / captures %d, want %v", env.Modes, len(lit.Captures), wantModes)
+		}
+		for i, m := range wantModes {
+			if env.Modes[i] != m || lit.Captures[i].Mode != m {
+				t.Errorf("capture %d: env mode %v, lit mode %v, want %v", i, env.Modes[i], lit.Captures[i].Mode, m)
+			}
 		}
 	}
+	t.Run("mixed shared and mut", func(t *testing.T) {
+		src := capDecls + "F(xs: mut []i32, limit: i32) {\n\tvar hits := 0\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\tif *a > limit {\n\t\t\thits += 1\n\t\t}\n\t\treturn *a < *b\n\t})\n\t_ = hits\n}\n"
+		checkEnv(t, src, "m.F", "m.F#fn0", "mut (hits: mut int, limit: &i32)", []CaptureMode{CapMut, CapShared})
+	})
+	t.Run("reborrow mut ref and mut slice", func(t *testing.T) {
+		src := capDecls + "F(xs: mut []i32, r: mut i32, zs: mut []i32) {\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\t*r = *a\n\t\tzs[0] = *b\n\t\treturn *a < *b\n\t})\n}\n"
+		checkEnv(t, src, "m.F", "m.F#fn0", "mut (r: mut i32, zs: mut []i32)", []CaptureMode{CapReborrow, CapReborrow})
+	})
+	t.Run("nested mut propagates to outer literal", func(t *testing.T) {
+		src := capDecls + "F(xs: mut []i32) {\n\tvar count := 0\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\tvar ys: [2]i32 = [1, 2]\n\t\tSort(mut ys[..], fn(c: &i32, d: &i32): bool {\n\t\t\tcount += 1\n\t\t\treturn *c < *d\n\t\t})\n\t\treturn *a < *b\n\t})\n\t_ = count\n}\n"
+		checkEnv(t, src, "m.F", "m.F#fn0", "mut (count: mut int)", []CaptureMode{CapMut})
+		checkEnv(t, src, "m.F#fn0", "m.F#fn0#fn0", "mut (count: mut int)", []CaptureMode{CapMut})
+	})
+	t.Run("write through captured shared ref stays CapShared for borrow E0507", func(t *testing.T) {
+		src := capDecls + "F(xs: mut []i32, p: &i32) {\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\t*p = 1\n\t\treturn *a < *b\n\t})\n}\n"
+		checkEnv(t, src, "m.F", "m.F#fn0", "&(p: &&i32)", []CaptureMode{CapShared})
+	})
 }
 
 // constFnDecls has functions with a const fn parameter; G starts on line 15.

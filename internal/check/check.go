@@ -544,6 +544,19 @@ func (m *Module) Main() types.ItemID { return m.main }
 // function's read set includes ReadSignature of itself).
 func (c *Checker) Check(m *Module, unit types.ItemID) *Body {
 	it := c.cfg.Items.Get(unit)
+	if ii := m.byItem[it.ID]; ii != nil && len(ii.Captures) > 0 && it.Kind == types.KindLiteral {
+		rec := m.waitCaptureRec(it)
+		if rec.ice != nil {
+			panic(rec.ice)
+		}
+		if rec.ok && rec.body != nil {
+			return rec.body
+		}
+		u := m.newUnitWithFallbackCaptures(it, ii, rec)
+		u.x.rec.signature(it.Key)
+		u.run()
+		return u.b
+	}
 	u := m.newUnit(it)
 	u.x.rec.signature(it.Key)
 	u.run()

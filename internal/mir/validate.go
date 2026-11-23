@@ -147,7 +147,7 @@ func (v *validator) run() (err error) {
 		}
 		for i := len(s.Params) + 1; i <= int(b.ParamCount); i++ {
 			if !IsEnvType(v.tab, b.Locals[i].Type) {
-				v.fail("M1", "param %d past the signature's %d has %s, not an environment type &R", i, len(s.Params), v.ts(b.Locals[i].Type))
+				v.fail("M1", "param %d past the signature's %d has %s, not an environment type &R or mut R", i, len(s.Params), v.ts(b.Locals[i].Type))
 			}
 		}
 	}
@@ -483,16 +483,27 @@ func (v *validator) call(bl *Block, t *Terminator) {
 }
 
 // envArgs checks the arguments of a call past its callee's n declared
-// parameters: each is an environment argument, an ArgCopy of an environment
-// type. How many there are is mono's to check. A spawned call has none: s.go
-// of a capturing literal is E0609.
+// parameters: each is an environment argument — an ArgCopy of &R or an
+// ArgMove or ArgReborrow of mut R (IsEnvType). How many there are is mono's
+// to check. A spawned call has none: s.go of a capturing literal is E0609.
 func (v *validator) envArgs(t *Terminator, extra []Arg, n int) {
 	if len(extra) > 0 && t.Spawn != NoLocal {
 		v.fail("M5", "a spawned call with %d arguments past the callee's %d parameters", len(extra), n)
 	}
 	for i, a := range extra {
-		if t := v.argOperand(a.Operand); a.Mode != ArgCopy || !IsEnvType(v.tab, t) {
-			v.fail("M5", "argument %d past the callee's %d parameters is %v %s, not a copy of an environment type &R", n+i+1, n, a.Mode, v.ts(t))
+		et := v.argOperand(a.Operand)
+		if !IsEnvType(v.tab, et) {
+			v.fail("M5", "argument %d past the callee's %d parameters is %v %s, not an environment type &R or mut R", n+i+1, n, a.Mode, v.ts(et))
+		}
+		switch v.tab.Kind(et) {
+		case types.KRef:
+			if a.Mode != ArgCopy {
+				v.fail("M5", "argument %d past the callee's %d parameters is %v %s, not a copy of &R", n+i+1, n, a.Mode, v.ts(et))
+			}
+		case types.KMut:
+			if a.Mode != ArgMove && a.Mode != ArgReborrow {
+				v.fail("M5", "argument %d past the callee's %d parameters is %v %s, not a move or reborrow of mut R", n+i+1, n, a.Mode, v.ts(et))
+			}
 		}
 	}
 }

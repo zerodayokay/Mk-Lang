@@ -858,7 +858,7 @@ CountAbove(xs: []i32, limit: i32): int {
 }
 ```
 
-- A `fn` literal that reads locals cannot be stored (E0609).
+- A `fn` literal that captures locals cannot be stored (E0609).
 - Store a named function whose first parameter takes the state by reference, and store the plain state beside it.
 - For an open set of types behind one interface, use `gen dyn.Of(I)` instead.
 

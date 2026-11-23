@@ -231,6 +231,17 @@ func insertParams(b *mir.Body, ts []types.TypeID) []mir.LocalID {
 	return ids
 }
 
+// envArg is the call argument threading hidden environment parameter e:
+// ArgCopy for a shared &R environment, ArgReborrow for an exclusive mut R
+// environment so the callee may call or forward the literal more than once.
+func (bl *builder) envArg(b *mir.Body, e mir.LocalID) mir.Arg {
+	mode := mir.ArgCopy
+	if bl.tab.Kind(b.Locals[e].Type) == types.KMut {
+		mode = mir.ArgReborrow
+	}
+	return mir.Arg{Operand: mir.Copy(mir.LocalPlace(e)), Mode: mode}
+}
+
 // threadEnvs threads the environments through the instance body b, after
 // its operands are substituted and every const argument is a constant: a call
 // through a const parameter with an environment, now direct, gets the
@@ -251,7 +262,7 @@ func (bl *builder) threadEnvs(b *mir.Body, pl *envPlan) {
 				if t.Callee.Kind != mir.CallDirect {
 					ice("instance %s: a call through const parameter %d was not made direct", nameOf(bl.env, bl.item, bl.args), p)
 				}
-				all := append(append([]mir.Arg(nil), args...), mir.Arg{Operand: mir.Copy(mir.LocalPlace(pl.envOf[p])), Mode: mir.ArgCopy})
+				all := append(append([]mir.Arg(nil), args...), bl.envArg(b, pl.envOf[p]))
 				t.Args = b.AddArgs(all...)
 				continue
 			}
@@ -277,7 +288,7 @@ func (bl *builder) threadEnvs(b *mir.Body, pl *envPlan) {
 			if pl != nil {
 				if q, ok := pl.fwd[t.Args.Start+uint32(i)]; ok {
 					if e, ok := pl.envOf[q]; ok {
-						envs = append(envs, mir.Arg{Operand: mir.Copy(mir.LocalPlace(e)), Mode: mir.ArgCopy})
+						envs = append(envs, bl.envArg(b, e))
 						changed = true
 						continue
 					}

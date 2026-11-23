@@ -419,10 +419,10 @@ func (u *unit) fnLit(e *ast.FnLit, want types.TypeID) types.TypeID {
 		return types.Poison
 	}
 	*u.b.use(e.ID()) = Use{Kind: UseItem, Item: it.ID}
+	u.expectedFlows(&d.Sig, want)
 	if ii := u.m.byItem[it.ID]; ii != nil && len(ii.Captures) > 0 {
 		u.literalCaptures(e, it, ii)
 	}
-	u.expectedFlows(&d.Sig, want)
 	if d.Sig.Flows.Ambiguous {
 		u.literalE0601(it.ID)
 	}

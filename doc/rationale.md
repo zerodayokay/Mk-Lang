@@ -76,7 +76,7 @@ So a program means the same in a debug build and a release build. Rust traps in 
 
 A closure that outlives its call needs a decision about where its captures live: the stack, the heap or inline. Rust answers with `Fn`, `FnMut`, `FnOnce`, `move` and capture analysis. That is five concepts, and more for the reader to track. Odin has only non-capturing lambdas, and Zig's maintainers recommend a context struct, for the same reason.
 
-Mk has `fn` literals. A literal passed as a `const` argument may read the caller's locals, because it runs only during the call:
+Mk has `fn` literals. A literal passed as a `const` argument may read and mutate the caller's locals (`var` locals, or reborrowed `mut` references and slices), because it runs only during the call and its borrows end with the statement:
 
 ```mk
 // verdict: ok
@@ -87,7 +87,7 @@ SortBy(xs: mut []i32, descending: bool) {
 }
 ```
 
-A callback that is stored, returned, or writes what it captures is a struct with a method. That is the real cost: middleware and functional options become structs.
+A callback that is stored or returned is a struct with a method. That is the real cost: middleware and functional options become structs.
 
 ### Why no iterator adapters?
 

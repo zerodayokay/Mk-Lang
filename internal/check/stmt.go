@@ -382,7 +382,6 @@ func (u *unit) assign(s *ast.AssignStmt) {
 		u.err(diag.E0301, s.Target.Span(), "only a local, a field, an element or a dereference can be assigned").
 			Text("reason", "not a place").Text("expected", "a place").Text("found", "an expression")
 	}
-	u.captureWrite(s.Target, "write")   // a capture is read only
 	u.externVarWrite(s.Target, "write") // an extern var is written through a pointer
 	if s.Op == ast.TokAssign {
 		u.expr(s.Value, t)

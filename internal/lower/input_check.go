@@ -188,7 +188,7 @@ func (in *checkInput) Env(lit ast.NodeID) (Env, bool) {
 			}
 			srcs[i] = in.localUse(s.Local)
 		}
-		return Env{Item: e.Item, Ref: e.Ref, Sources: srcs}, true
+		return Env{Item: e.Item, Ref: e.Ref, Sources: srcs, Modes: e.Modes}, true
 	}
 	return Env{}, false
 }
@@ -232,7 +232,9 @@ func (in *checkInput) localUse(l check.LocalID) Use {
 		return Use{Kind: UseParam, Param: 1}
 	}
 	if loc.Capture != 0 {
-		return Use{Kind: UseCapture, Capture: loc.Capture - 1}
+		ci := loc.Capture - 1
+		direct := int(ci) < len(in.b.Captures) && in.b.Captures[ci].Mode == check.CapReborrow
+		return Use{Kind: UseCapture, Capture: ci, Direct: direct}
 	}
 	return Use{Kind: UseLocal, Binding: loc.Node}
 }
