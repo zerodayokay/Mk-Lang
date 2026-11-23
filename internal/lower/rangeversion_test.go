@@ -224,9 +224,9 @@ var pvKernelWant = map[string]string{
 	"codegen/fmtints": "bounds=1 reduce=1",
 	"codegen/intsum":  "bounds=0 reduce=1",
 	"codegen/matmul":  "bounds=2 reduce=0",
-	"codegen/sieve":   "bounds=0 reduce=0",
+	"codegen/sieve":   "bounds=1 reduce=0",
 	"binarytrees/mk":  "bounds=0 reduce=0",
-	"fannkuch/mk":     "bounds=1 reduce=0",
+	"fannkuch/mk":     "bounds=3 reduce=0",
 	"fmtints/mk":      "bounds=1 reduce=1",
 	"intsum/mk":       "bounds=0 reduce=0",
 	"intsum/mkwrap":   "bounds=0 reduce=0",
@@ -236,7 +236,7 @@ var pvKernelWant = map[string]string{
 	"nbody/mk":        "bounds=0 reduce=0",
 	"sieve/mk":        "bounds=0 reduce=0",
 	"sieve/mkwrap":    "bounds=0 reduce=0",
-	"sortints/mk":     "bounds=0 reduce=0",
+	"sortints/mk":     "bounds=8 reduce=0",
 	"spectralnorm/mk": "bounds=0 reduce=0",
 }
 

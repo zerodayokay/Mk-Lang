@@ -1,31 +1,17 @@
 // Why: a bounds check in a hot loop blocks vectorisation even when one test
 // before the loop could show every index in range.
 //
-// What: VersionLoops and VersionOptions, a codegen-only rewrite that versions
-// loops on a hoisted bounds test for affine indexes (versionBounds) and
-// checked reductions (rangereduce.go); countedLoops, shape, affineOf,
-// checkOf and lenOf find them; versionMut holds the test-only mutants.
+// What: VersionLoops and VersionOptions, a codegen-only rewrite that runs
+// accumulator TRE (rectre.go), counted-loop bounds versioning (versionBounds),
+// monotone while-loop bounds versioning (rangemono.go), and checked reduction
+// versioning (rangereduce.go).
 //
-// How: it runs after mono, in a release build. The range analysis in Lower
-// changes no CFG, and ProvedBounds.Fold keeps the block count and the
-// compares, so eval's step count and borrow's block-indexed onerr decisions
-// stay valid. Versioning adds blocks and statements, so it never runs on a
-// body eval, borrow or a cache holds: VersionLoops returns a new body and
-// leaves its argument as it was, and the driver calls it only on the
-// instance bodies it hands codegen (internal/driver/loopversion.go).
-//
-// Before an innermost counted loop `for c in c0..hi` whose bounds checks
-// index s[x], with x the counter or a counter stepped once per iteration,
-// plus or minus a loop-invariant base, a guard tests once, in arithmetic
-// that never traps, that every index the loop can form lies in
-// [0, s.Len()). When it holds, a copy of the loop runs in which those
-// checks are `goto ok` and the index additions cannot overflow; otherwise
-// the original loop runs, every check as lower emitted it, so a failing
-// index traps at the same site, in the same order (a check not proved stays
-// explicit MIR; the fast copy carries its proof in the guard).
-//
-// The decision reads the body alone, so equal bodies give equal output (no
-// whole-unit fact is read here). The size limits are functions of the MIR.
+// How: runs after mono in release builds on instance bodies handed to codegen
+// (internal/driver/loopversion.go), returning a new body so eval, borrow and
+// cache bodies stay untouched. Before a qualifying loop, a non-trapping guard
+// checks every formed index lies in [0, len); on pass a check-free fast copy
+// runs, otherwise the original loop runs with identical trap sites and order.
+// Decisions depend only on the body's MIR.
 
 package lower
 
@@ -98,13 +84,20 @@ func versionLoops(cfg *Config, b *mir.Body, opt VersionOptions) (out *mir.Body, 
 		return b, 0, 0
 	}
 	out = elimAccTailRec(cfg, b, opt)
-	if !hasLatch(out) || len(out.Blocks) > verMaxBlocks {
+	if len(out.Loops) == 0 && !hasLatch(out) || len(out.Blocks) > verMaxBlocks {
 		return out, 0, 0
 	}
 	if !opt.NoBounds {
-		out, bounds = versionBounds(cfg, out, opt.mut)
+		if hasLatch(out) {
+			out, bounds = versionBounds(cfg, out, opt.mut)
+		}
+		if bounds < verMaxLoops && len(out.Blocks) <= verMaxBlocks {
+			var mb int
+			out, mb = versionMonotone(cfg, out, opt.mut, verMaxLoops-bounds)
+			bounds += mb
+		}
 	}
-	if !opt.NoReduce && len(out.Blocks) <= verMaxBlocks {
+	if !opt.NoReduce && hasLatch(out) && len(out.Blocks) <= verMaxBlocks {
 		chunk := opt.chunk
 		if chunk == 0 {
 			chunk = redChunk
