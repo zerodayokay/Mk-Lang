@@ -114,10 +114,13 @@ func notBuilt(t types.Target) *diag.Diagnostic {
 // with the error in err.
 func (s *Session) Build(out string) (Result, []string, error) {
 	s.forBuild = true
-	s.deferWalk = true // walktail.go; Check, Run and Test on this session walk synchronously
-	defer func() { s.deferWalk = false }()
 	s.startTools()
 	defer s.joinTools()
+	if r, paths, ok := s.tryFastBuild(out); ok {
+		return r, paths, nil
+	}
+	s.deferWalk = true // walktail.go; Check, Run and Test on this session walk synchronously
+	defer func() { s.deferWalk = false }()
 	r := s.runCheck()
 	defer s.w.maybeGC() // once, after the executables are written
 	p := s.p
@@ -152,7 +155,8 @@ func (s *Session) Build(out string) (Result, []string, error) {
 	}
 	var paths []string
 	var ds []*diag.Diagnostic
-	for _, bin := range bins {
+	fastOuts := make([]fastBinOut, len(bins))
+	for bi, bin := range bins {
 		dest := out
 		if dest == "" || len(bins) > 1 || outIsDir(out) {
 			dest = filepath.Join(out, bin.name+exeSuffix(s.cfg.Target))
@@ -176,12 +180,13 @@ func (s *Session) Build(out string) (Result, []string, error) {
 		if !s.cfg.NoCache && bin.script == "" {
 			keyed = bin.name + exeSuffix(s.cfg.Target)
 		}
-		exe, bds := s.native(bin, func(tmp string) (string, []*diag.Diagnostic) {
+		fastOuts[bi].name = bin.name
+		exe, bds := s.nativeStored(bin, func(tmp string) (string, []*diag.Diagnostic) {
 			if p.joinWalk() {
 				return "", nil // no executable after an E0708 (walktail.go)
 			}
 			return placeExe(tmp, dest)
-		}, keyed)
+		}, keyed, &fastOuts[bi])
 		ds = append(ds, bds...)
 		if exe != "" {
 			paths = append(paths, exe)
@@ -197,6 +202,7 @@ func (s *Session) Build(out string) (Result, []string, error) {
 	}
 	r = s.p.result(s.w, s.cfg.MaxDiags)
 	r.Reached = StageNative
+	s.recordFastBuild(bins, fastOuts, r)
 	return r, paths, nil
 }
 
@@ -422,6 +428,10 @@ func scrubWork(s, work string) string {
 // temporary goes to place(tmp), or, with keyed set instead, to
 // <store>/bin/<link key>/<keyed>.
 func (s *Session) native(bin binTarget, place func(tmp string) (string, []*diag.Diagnostic), keyed string) (string, []*diag.Diagnostic) {
+	return s.nativeStored(bin, place, keyed, nil)
+}
+
+func (s *Session) nativeStored(bin binTarget, place func(tmp string) (string, []*diag.Diagnostic), keyed string, stored *fastBinOut) (string, []*diag.Diagnostic) {
 	if d := notBuilt(s.cfg.Target); d != nil {
 		return "", []*diag.Diagnostic{d} // before any tool runs
 	}
@@ -435,7 +445,7 @@ func (s *Session) native(bin binTarget, place func(tmp string) (string, []*diag.
 	}
 	s.w.display = s.displayNames(nil) // run-time reports name dependencies locally (sitedisplay.go)
 	return s.w.native(nativeJob{tools: tools, name: bin.name, mainMod: bin.mod.path, pkg: s.binMods(bin.mod), timed: s.p.timed, pkgRoot: s.root.dir,
-		place: place, keyed: keyed, cache: cache, gro: generalRegsOnly(s.cfg.Target, bin.cpu), script: bin.script, subsystem: bin.subsystem})
+		place: place, keyed: keyed, cache: cache, gro: generalRegsOnly(s.cfg.Target, bin.cpu), script: bin.script, subsystem: bin.subsystem, stored: stored})
 }
 
 // nativeJob is one executable to build: the tools, the bin's name and
@@ -484,6 +494,8 @@ type nativeJob struct {
 	// (libout.go): never stored under <cache>/bin, and its packs
 	// are native objects when it is static.
 	lib *libJob
+	// stored, when non-nil, receives the <cache>/bin paths for fastbuild.go.
+	stored *fastBinOut
 }
 
 // native runs stages 8 to 10 for one bin: collection over the build roots, the
@@ -716,6 +728,9 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 			default:
 				if copyOut(dest, job.Output) == nil && (storedPDB == "" || copyOut(storedPDB, pdbOf(job)) == nil) {
 					w.packs.noteAll(len(okeys), true)
+					if j.stored != nil {
+						j.stored.storedExe, j.stored.storedPDB = dest, storedPDB
+					}
 					return placeLinked(j, job, plan)
 				}
 				// The stored file went (GC) or cannot be read: link.
@@ -813,7 +828,9 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 			// PDB first, so that the executable's presence implies the
 			// PDB's; a failure costs the next build a link.
 			if storedPDB == "" || storeStaged(st, stagedPDB, storedPDB) {
-				storeStaged(st, stagedExe, dest)
+				if storeStaged(st, stagedExe, dest) && j.stored != nil {
+					j.stored.storedExe, j.stored.storedPDB = dest, storedPDB
+				}
 			}
 		}
 		return exe, ds

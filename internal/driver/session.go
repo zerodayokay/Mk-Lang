@@ -95,11 +95,15 @@ type Session struct {
 	// whether the last Check ran with fullStd.
 	fullStd     bool
 	lastFullStd bool
+	// customReadFile is true when the caller supplied a non-nil Config.ReadFile
+	// before normalize filled the os.ReadFile default (fastbuild.go).
+	customReadFile bool
 }
 
 // NewSession validates the config and finds the root. The error is a
 // *UsageError (exit 2), never a diagnostic.
 func NewSession(cfg Config) (*Session, error) {
+	customReadFile := cfg.ReadFile != nil
 	cfg, err := cfg.normalize()
 	if err != nil {
 		return nil, err
@@ -109,13 +113,13 @@ func NewSession(cfg Config) (*Session, error) {
 		if err != nil {
 			return nil, usagef("cannot use the working directory: %v", err)
 		}
-		return &Session{cfg: cfg, root: rootInfo{kind: rootNone, dir: wd, name: "mk-test"}}, nil
+		return &Session{cfg: cfg, root: rootInfo{kind: rootNone, dir: wd, name: "mk-test"}, customReadFile: customReadFile}, nil
 	}
 	root, err := findRoot(cfg.Root)
 	if err != nil {
 		return nil, err
 	}
-	return &Session{cfg: cfg, root: root}, nil
+	return &Session{cfg: cfg, root: root, customReadFile: customReadFile}, nil
 }
 
 // Result is a command's compile outcome.
