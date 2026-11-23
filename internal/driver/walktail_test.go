@@ -52,6 +52,14 @@ func TestPerfMemory_DeferredWalk(t *testing.T) {
 
 	gdir := writeTree(t, good)
 	for _, run := range []string{"cold", "warm"} {
+		if run == "warm" {
+			// A comment-only edit bypasses the whole-build fingerprint fast
+			// path while keeping every front-cache anchor and walk marker valid,
+			// so the warm deferred-walk path is genuinely exercised.
+			if err := os.WriteFile(filepath.Join(gdir, "m.mk"), []byte(good["m.mk"]+"// warm\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 		var tm bytes.Buffer
 		out := filepath.Join(t.TempDir(), "m.exe")
 		s, err := NewSession(Config{Root: gdir, CacheDir: cache, Timings: &tm})

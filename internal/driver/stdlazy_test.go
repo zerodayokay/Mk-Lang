@@ -74,3 +74,74 @@ func TestLazyStdPrunesUnimported(t *testing.T) {
 		}
 	}
 }
+
+func TestScanStdSourcePercent(t *testing.T) {
+	noRem := `// 50% faster with +% -% *%
+/* comment % */
+export F(x: u64): u64 {
+    var a := (x +% 1) *% 3 -% 2
+    a +%= 4
+    a -%= 1
+    a *%= 5
+    return a
+}
+`
+	if _, rem := scanStdSource([]byte(noRem)); rem {
+		t.Fatalf("wrapping ops and comment %% should not trigger hasRem")
+	}
+	for _, tc := range []string{
+		"export F(x: f64): f64 { return x % 2.0 }\n",
+		"export F(x: f64): f64 { var a := x\n a %= 2.0\n return a }\n",
+		"export F(): str { return \"x % y\" }\n",
+	} {
+		if _, rem := scanStdSource([]byte(tc)); !rem {
+			t.Fatalf("expected hasRem=true for %q", tc)
+		}
+	}
+}
+
+func TestLazyStdWrappingSkipsMath(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.mk")
+	src := "export Main(sys: &System): int {\n    var x: u64 = 7\n    x = (x +% 3) *% 5 -% 1\n    return 0\n}\n"
+	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSession(Config{Root: mainPath, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := s.Check()
+	if len(res.Report.Diags) > 0 {
+		t.Fatalf("unexpected diagnostics: %s", res.Report.Text(res.Sources))
+	}
+	for _, m := range s.stdB.mods {
+		if m.path == "std.math" {
+			t.Fatalf("std.math should not be loaded for wrapping arithmetic alone")
+		}
+	}
+
+	// Verify float % still loads std.math and checks cleanly.
+	remPath := filepath.Join(dir, "rem.mk")
+	remSrc := "export Main(sys: &System): int {\n    _ = 5.5 % 2.0\n    return 0\n}\n"
+	if err := os.WriteFile(remPath, []byte(remSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := NewSession(Config{Root: remPath, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2 := s2.Check()
+	if len(res2.Report.Diags) > 0 {
+		t.Fatalf("float %% unexpected diagnostics: %s", res2.Report.Text(res2.Sources))
+	}
+	hasMath := false
+	for _, m := range s2.stdB.mods {
+		if m.path == "std.math" {
+			hasMath = true
+		}
+	}
+	if !hasMath {
+		t.Fatalf("expected std.math to be loaded for float %%")
+	}
+}

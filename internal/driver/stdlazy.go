@@ -18,7 +18,6 @@
 package driver
 
 import (
-	"bytes"
 	"fmt"
 	"path"
 	"slices"
@@ -77,7 +76,25 @@ func (p *pipeline) lazyStdRoots(stdB *build, hasPercent bool, testing bool) []*m
 // raw Mk source bytes, skipping comments and string/char literals. It never
 // misses a syntactically valid `import [alias =] std.<path>` declaration.
 func scanStdImports(raw []byte) []string {
-	var out []string
+	imps, _ := scanStdSource(raw)
+	return imps
+}
+
+// isBarePercent reports whether raw[i] ('%') is not the second byte of one of
+// Mk's wrapping integer operators (+%, -%, *%, +%=, -%=, *%=).
+func isBarePercent(raw []byte, i int) bool {
+	if i == 0 {
+		return true
+	}
+	prev := raw[i-1]
+	return prev != '+' && prev != '-' && prev != '*'
+}
+
+// scanStdSource extracts every `std.<path>` import target and reports whether
+// raw contains a bare `%` (remainder operator, not wrapping `+%`, `-%`, `*%`)
+// outside comments. Bare `%` inside string literals is also treated as true so
+// compile-time generators emitting `%` text never miss std.math.
+func scanStdSource(raw []byte) (out []string, hasRem bool) {
 	n := len(raw)
 	isIdent := func(b byte) bool {
 		return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_'
@@ -126,11 +143,40 @@ func scanStdImports(raw []byte) []string {
 			i = skipWSAndComments(i)
 			continue
 		}
-		// Skip quoted strings and char literals.
+		// Skip raw strings r"..." (no backslash escapes, one line).
+		if b == 'r' && i+1 < n && raw[i+1] == '"' && (i == 0 || !isIdent(raw[i-1])) {
+			i += 2
+			for i < n && raw[i] != '"' && raw[i] != '\n' {
+				if !hasRem && raw[i] == '%' && isBarePercent(raw, i) {
+					hasRem = true
+				}
+				i++
+			}
+			if i < n && raw[i] == '"' {
+				i++
+			}
+			continue
+		}
+		// Skip multi-line strings """...""".
+		if b == '"' && i+2 < n && raw[i+1] == '"' && raw[i+2] == '"' {
+			i += 3
+			for i < n {
+				if raw[i] == '"' && i+2 < n && raw[i+1] == '"' && raw[i+2] == '"' {
+					i += 3
+					break
+				}
+				if !hasRem && raw[i] == '%' && isBarePercent(raw, i) {
+					hasRem = true
+				}
+				i++
+			}
+			continue
+		}
+		// Skip quoted strings and char literals (one line in Mk).
 		if b == '"' || b == '\'' {
 			q := b
 			i++
-			for i < n {
+			for i < n && raw[i] != '\n' {
 				if raw[i] == '\\' && i+1 < n {
 					i += 2
 					continue
@@ -139,8 +185,18 @@ func scanStdImports(raw []byte) []string {
 					i++
 					break
 				}
+				if !hasRem && raw[i] == '%' && isBarePercent(raw, i) {
+					hasRem = true
+				}
 				i++
 			}
+			continue
+		}
+		if b == '%' {
+			if !hasRem && isBarePercent(raw, i) {
+				hasRem = true
+			}
+			i++
 			continue
 		}
 		// Match keyword `import` at identifier boundary.
@@ -176,7 +232,7 @@ func scanStdImports(raw []byte) []string {
 		}
 		i++
 	}
-	return out
+	return out, hasRem
 }
 
 // isCBuild reports whether b is one of the pipeline's C-import binding builds.
@@ -244,10 +300,11 @@ func (p *pipeline) loadLazyStd(testing bool) (fails, tooLarge []*diag.Diagnostic
 		if j.err != nil {
 			continue
 		}
-		if !hasPercent && bytes.IndexByte(j.raw, '%') >= 0 {
+		imps, rem := scanStdSource(j.raw)
+		if rem {
 			hasPercent = true
 		}
-		for _, imp := range scanStdImports(j.raw) {
+		for _, imp := range imps {
 			enqueue(stdB.byName[imp])
 		}
 	}

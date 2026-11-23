@@ -547,6 +547,11 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	var ds []*diag.Diagnostic
 	var ie *source.InternalError
 	j.timed("instances", func() {
+		// Decode cached non-std bodies reachable from this bin's modules in
+		// parallel before mono.Collect runs single-threaded; otherwise edit
+		// builds decode every unchanged module's bodies sequentially on one
+		// goroutine.
+		w.prefetchBinBodies(j)
 		ie = source.Guard("instances of "+j.mainMod, source.Span{}, func() {
 			insts, ds = mono.Collect(env, w.fromCRoots(w.buildRoots(j.mainMod, j.pkg, j.allFuncs, j.gro), j.lib != nil), opt)
 		})
