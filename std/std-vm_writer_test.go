@@ -221,7 +221,7 @@ export Main(sys: &System) {
 				if status != 0 {
 					t.Fatalf("mk check: status %d\n%s", status, out)
 				}
-				for _, target := range []string{"x86_64-linux", "aarch64-linux", "aarch64-macos", "x86_64-macos"} {
+				for _, target := range []string{"x86_64-linux", "aarch64-linux", "aarch64-macos", "x86_64-macos", "x86_64-nutshell"} {
 					tout, tst := mkCmd(t, dir, stdDir, "check", "--target", target, ".")
 					if tst != 0 {
 						t.Errorf("mk check --target %s: status %d\n%s", target, tst, tout)

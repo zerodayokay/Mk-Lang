@@ -13,12 +13,12 @@
 // On Windows and Linux its writable and executable views are two mappings of
 // one memory (the writable view read-only outside Edit, the executable view
 // read-execute throughout); on arm64 macOS it is one MAP_JIT mapping whose
-// write-vs-execute mode switches per thread via pthread_jit_write_protect_np;
-// on x86_64 macOS it is one mapping toggled between read-write and
-// read-execute via mprotect. Built on std.sys's pages (Reserve, Commit,
-// Decommit, Release, PageSize, VmProtect, VmCodeNew, VmCodeCommit,
-// VmCodePerPage, VmCodeBeginWrite, VmCodeEndWrite, VmCodeProtect, VmCodeFree,
-// VmFlush). There is no large-page support.
+// write-vs-execute mode switches per thread via pthread_jit_write_protect_np
+// when the host supports it, else a private anonymous mapping toggled between
+// read-write and read-execute via mprotect (as on x86_64 macOS). Built on
+// std.sys's pages (Reserve, Commit, Decommit, Release, PageSize, VmProtect,
+// VmCodeNew, VmCodeCommit, VmCodePerPage, VmCodeBeginWrite, VmCodeEndWrite,
+// VmCodeProtect, VmCodeFree, VmFlush). There is no large-page support.
 
 import std.raw
 import std.sys
@@ -329,9 +329,9 @@ export enum Prot {
 /// kept read-only outside Edit, and a read-execute view untouched
 /// throughout); on Linux a memfd mapped twice the same way; on arm64 macOS a
 /// MAP_JIT mapping whose write-vs-execute mode switches per thread through
-/// pthread_jit_write_protect_np; on x86_64 macOS a private anonymous mapping
-/// whose committed pages switch between read-write during Edit and
-/// read-execute outside it.
+/// pthread_jit_write_protect_np when the host supports it, falling back to a
+/// private anonymous mapping toggled between read-write during Edit and
+/// read-execute outside it via mprotect (as on x86_64 macOS) when it does not.
 ///
 /// A region from New is committed whole; one from Reserve has no page
 /// committed until Commit takes it. Linear: end it with Release.
@@ -486,22 +486,23 @@ export CodeRegion.Commit(mut self, offset: int, len: int): Error!void {
 /// Opens an exclusive write window into the region, returning a linear
 /// CodeWriter borrowing self. On Windows and Linux every committed page of
 /// the writable view becomes read-write while the executable view stays
-/// read-execute; on arm64 macOS the calling thread switches to JIT write
-/// mode (pthread_jit_write_protect_np(0)) while other threads remain in
-/// execute mode; on x86_64 macOS every committed page switches from
-/// read-execute to read-write.
+/// read-execute; on arm64 macOS with per-thread JIT write protection the
+/// calling thread switches to JIT write mode (pthread_jit_write_protect_np(0))
+/// while other threads remain in execute mode; on x86_64 macOS and arm64 macOS
+/// fallback every committed page switches from read-execute to read-write.
 ///
 /// Fails with Os when the OS refuses; any pages already made writable before
 /// the refusal are sealed again as far as the OS allows and the region stays
-/// sealed. O(1) on arm64 macOS; on Windows, Linux and x86_64 macOS
-/// O(Size / (64 pages)) bitmap words plus one system call per run of
-/// committed pages (one in all for a region from New); allocates nothing.
+/// sealed. O(1) on arm64 macOS with MAP_JIT; on Windows, Linux, x86_64 macOS
+/// and arm64 macOS fallback O(Size / (64 pages)) bitmap words plus one system
+/// call per run of committed pages (one in all for a region from New);
+/// allocates nothing.
 export CodeRegion.Edit(mut self): Error!CodeWriter from self {
     e := sys.VmCodeBeginWrite(&self.c)
     if e != 0 {
         fail Os(code: e)
     }
-    if sys.VmCodePerPage() {
+    if sys.VmCodePerPage(&self.c) {
         CodeProtect(&*self, true) else err {
             CodeSealAll(&*self)
             sys.VmCodeEndWrite(&self.c)
@@ -590,19 +591,21 @@ export CodeWriter.Flush(&self, offset: int, len: int) {
 
 /// Closes the write window and seals the region again: every committed page
 /// of the writable view becomes read-only on Windows and Linux; on x86_64
-/// macOS every committed page returns to read-execute; on arm64 macOS the
-/// calling thread's JIT write protection is re-enabled
-/// (pthread_jit_write_protect_np(1) when no nested window remains).
+/// macOS and arm64 macOS fallback every committed page returns to
+/// read-execute; on arm64 macOS with MAP_JIT the calling thread's JIT write
+/// protection is re-enabled (pthread_jit_write_protect_np(1) when no nested
+/// window remains).
 ///
 /// Infallible so `defer w.Done()` works on every path; if the OS refuses a
 /// page protection change, Done still attempts every remaining committed
-/// run. O(1) on arm64 macOS; on Windows, Linux and x86_64 macOS
-/// O(Size / (64 pages)) bitmap words plus one system call per run of
-/// committed pages (one in all for a region from New); allocates nothing.
+/// run. O(1) on arm64 macOS with MAP_JIT; on Windows, Linux, x86_64 macOS
+/// and arm64 macOS fallback O(Size / (64 pages)) bitmap words plus one
+/// system call per run of committed pages (one in all for a region from New);
+/// allocates nothing.
 export CodeWriter.Done(self) {
     CodeWriter(r) := self
     unsafe "r is the live CodeRegion this linear CodeWriter borrowed exclusively until Done" {
-        if sys.VmCodePerPage() {
+        if sys.VmCodePerPage(&(*r).c) {
             CodeSealAll(&*r)
         }
         sys.VmCodeEndWrite(&(*r).c)

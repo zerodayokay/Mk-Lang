@@ -11,11 +11,15 @@
 // writability switches per thread through pthread_jit_write_protect_np (1
 // execute mode by default, 0 write mode inside an active CodeWriter, with a
 // per-thread nesting table so overlapping edits on one thread do not drop
-// write mode early); on x86_64 macOS a private anonymous mapping whose
-// committed pages toggle between PROT_READ|PROT_EXEC and PROT_READ|PROT_WRITE
-// via mprotect (never RWX). macOS has no stable system-call interface
-// (libSystem is the only one), so RawSyscall refuses. Each call returns the
-// errno (positive) or 0, so the caller can make vm.Error.Os(code).
+// write mode early) whenever the host supports per-thread JIT write
+// protection (bare-metal Apple Silicon) and allows MAP_JIT; on x86_64 macOS,
+// and on arm64 macOS guests (such as Virtualization.framework / VMAPPLE)
+// where pthread_jit_write_protect_supported_np is 0 or MAP_JIT is refused by
+// policy, a private anonymous mapping whose committed pages toggle between
+// PROT_READ|PROT_EXEC and PROT_READ|PROT_WRITE via mprotect (never RWX).
+// macOS has no stable system-call interface (libSystem is the only one), so
+// RawSyscall refuses. Each call returns the errno (positive) or 0, so the
+// caller can make vm.Error.Os(code).
 
 import std.raw
 
@@ -26,8 +30,10 @@ const VmProtRWX: i32 = 7
 // MAP_JIT (<sys/mman.h>): anonymous executable mapping on arm64 macOS whose
 // write-vs-execute mode switches per thread via pthread_jit_write_protect_np.
 const VmMapJit: i32 = 0x0800
-// VmEnosys is Darwin's ENOSYS.
-const VmEnosys: i64 = 78
+// Darwin errnos that indicate MAP_JIT policy refusal rather than exhaustion.
+const VmEperm: i64 = 1
+const VmEacces: i64 = 13
+const VmEinval: i64 = 22
 
 // JitWrites tracks how many nested CodeWriter windows each OS thread holds on
 // arm64 macOS, so an inner Done or a CodeRegion.New on the same thread does
@@ -81,11 +87,13 @@ JitWriteEnter() {
                 return
             }
         }
-        for k in 0..JitSlots {
-            if JitTidWord(k).Load() == 0 && JitTidWord(k).Cas(0, me) {
-                JitDepthWord(k).StoreOrd(1, 0)
-                pthread_jit_write_protect_np(0)
-                return
+        for _ in 0..4 {
+            for k in 0..JitSlots {
+                if JitTidWord(k).Load() == 0 && JitTidWord(k).Cas(0, me) {
+                    JitDepthWord(k).StoreOrd(1, 0)
+                    pthread_jit_write_protect_np(0)
+                    return
+                }
             }
         }
         pthread_jit_write_protect_np(0)
@@ -130,91 +138,101 @@ export VmProtect(p: *u8, size: int, prot: u32): i64 {
 
 /// VmCode is a code region's mapping: on macOS w and x name the same mapping
 /// of size bytes, sealed by default; err the errno when it could not be made
-/// (then both are null).
+/// (then both are null). jit records whether this region uses arm64's MAP_JIT
+/// per-thread write protection (true) or per-page mprotect toggling (false).
 export struct VmCode {
     export w: *u8
     export x: *u8
     export err: i64
+    jit: bool
 }
 
 /// VmCodeNew makes a code region of size bytes (a whole number of pages),
 /// sealed by default: on arm64 macOS an anonymous MAP_JIT mapping (RWX if
-/// commit, PROT_NONE otherwise, with pthread_jit_write_protect_np(1) active);
-/// on x86_64 macOS a private anonymous mapping (RX if commit, PROT_NONE
-/// otherwise). On failure both views are null and err holds the errno.
+/// commit, PROT_NONE otherwise, with pthread_jit_write_protect_np(1) active)
+/// when pthread_jit_write_protect_supported_np is non-zero and the OS allows
+/// MAP_JIT; on x86_64 macOS, and on arm64 macOS guests where per-thread JIT
+/// write protection is unavailable or MAP_JIT is refused by policy, a private
+/// anonymous mapping (RX if commit, PROT_NONE otherwise). On failure both
+/// views are null and err holds the errno.
 /// O(1) system calls; allocates nothing.
 export VmCodeNew(size: int, commit: bool): VmCode {
     if Target.arch == Arch.Arm64 {
         unsafe "libSystem: pthread_jit_write_protect_supported_np and mmap of a new anonymous MAP_JIT range" {
-            if pthread_jit_write_protect_supported_np() == 0 {
-                return VmCode(w: raw.Null[u8](), x: raw.Null[u8](), err: VmEnosys)
+            if pthread_jit_write_protect_supported_np() != 0 {
+                prot: i32 = if commit { VmProtRWX } else { ProtNone }
+                p := mmap(raw.Null[u8](), Trunc[uint](size), prot, MapPrivate | MapAnon | VmMapJit, -1, 0)
+                if raw.Addr(p) != MapFailed {
+                    JitEnsureExec()
+                    return VmCode(w: p, x: p, err: 0, jit: true)
+                }
+                e := Errno()
+                if e != VmEperm && e != VmEacces && e != VmEinval {
+                    return VmCode(w: raw.Null[u8](), x: raw.Null[u8](), err: e, jit: false)
+                }
             }
-            prot: i32 = if commit { VmProtRWX } else { ProtNone }
-            p := mmap(raw.Null[u8](), Trunc[uint](size), prot, MapPrivate | MapAnon | VmMapJit, -1, 0)
-            if raw.Addr(p) == MapFailed {
-                return VmCode(w: raw.Null[u8](), x: raw.Null[u8](), err: Errno())
-            }
-            JitEnsureExec()
-            return VmCode(w: p, x: p, err: 0)
         }
     }
     prot: i32 = if commit { VmProtRX } else { ProtNone }
     unsafe "libSystem: mmap of a new anonymous code range" {
         p := mmap(raw.Null[u8](), Trunc[uint](size), prot, MapPrivate | MapAnon, -1, 0)
         if raw.Addr(p) == MapFailed {
-            return VmCode(w: raw.Null[u8](), x: raw.Null[u8](), err: Errno())
+            return VmCode(w: raw.Null[u8](), x: raw.Null[u8](), err: Errno(), jit: false)
         }
-        return VmCode(w: p, x: p, err: 0)
+        return VmCode(w: p, x: p, err: 0, jit: false)
     }
 }
 
 /// VmCodeCommit commits [offset, offset + size) of a region VmCodeNew made
-/// with commit false, page-aligned and inside it, in the sealed state: on
-/// arm64 macOS PROT_READ|PROT_WRITE|PROT_EXEC under MAP_JIT (executable while
-/// write-protected); on x86_64 macOS PROT_READ|PROT_EXEC. 0, or the errno.
+/// with commit false, page-aligned and inside it, in the sealed state:
+/// PROT_READ|PROT_WRITE|PROT_EXEC under MAP_JIT (executable while
+/// write-protected), or PROT_READ|PROT_EXEC for a non-MAP_JIT mapping. 0, or
+/// the errno.
 /// O(1): one system call; allocates nothing.
 export VmCodeCommit(c: &VmCode, offset: int, size: int): i64 {
-    prot: i32 = if Target.arch == Arch.Arm64 { VmProtRWX } else { VmProtRX }
+    prot: i32 = if Target.arch == Arch.Arm64 && c.jit { VmProtRWX } else { VmProtRX }
     unsafe "mprotect of [x + offset, x + offset + size), which lies in the caller's code region" {
         p := raw.FromAddr[u8](raw.Addr(c.x) + Trunc[uint](offset))
         return if mprotect(p, Trunc[uint](size), prot) == 0 { 0 } else { Errno() }
     }
 }
 
-/// VmCodePerPage is whether entering and leaving a write window updates page
-/// protections over each committed run: false on arm64 macOS (handled once
-/// per thread by VmCodeBeginWrite and VmCodeEndWrite), true on x86_64 macOS.
+/// VmCodePerPage is whether entering and leaving a write window on c updates
+/// page protections over each committed run: false for an arm64 MAP_JIT
+/// region (handled once per thread by VmCodeBeginWrite and VmCodeEndWrite),
+/// true for an mprotect-toggled region.
 /// O(1); allocates nothing.
-export VmCodePerPage(): bool {
-    return Target.arch != Arch.Arm64
+export VmCodePerPage(c: &VmCode): bool {
+    return Target.arch != Arch.Arm64 || !c.jit
 }
 
-/// VmCodeBeginWrite opens a write window on c: on arm64 macOS switches the
-/// calling thread out of JIT write-protection (0); on x86_64 macOS no-op
-/// (VmCodeProtect toggles the committed pages). 0, or the errno.
+/// VmCodeBeginWrite opens a write window on c: for an arm64 MAP_JIT region
+/// switches the calling thread out of JIT write-protection (0); otherwise a
+/// no-op (VmCodeProtect toggles the committed pages). 0, or the errno.
 /// O(1); allocates nothing.
 export VmCodeBeginWrite(c: &VmCode): i64 {
-    if Target.arch == Arch.Arm64 {
+    if Target.arch == Arch.Arm64 && c.jit {
         JitWriteEnter()
     }
     return 0
 }
 
-/// VmCodeEndWrite closes a write window on c: on arm64 macOS restores the
-/// calling thread's JIT write-protection (1) when no nested window remains on
-/// this thread; on x86_64 macOS no-op. O(1); allocates nothing.
+/// VmCodeEndWrite closes a write window on c: for an arm64 MAP_JIT region
+/// restores the calling thread's JIT write-protection (1) when no nested
+/// window remains on this thread; otherwise a no-op. O(1); allocates nothing.
 export VmCodeEndWrite(c: &VmCode) {
-    if Target.arch == Arch.Arm64 {
+    if Target.arch == Arch.Arm64 && c.jit {
         JitWriteExit()
     }
 }
 
 /// VmCodeProtect switches the committed pages [offset, offset + size) of c
 /// between writable (PROT_READ|PROT_WRITE) and sealed (PROT_READ|PROT_EXEC)
-/// on x86_64 macOS; no-op on arm64 macOS. 0, or the errno.
-/// O(1): one system call on x86_64; allocates nothing.
+/// for an mprotect-toggled region; no-op for an arm64 MAP_JIT region. 0, or
+/// the errno.
+/// O(1): one system call when per-page; allocates nothing.
 export VmCodeProtect(c: &VmCode, offset: int, size: int, writable: bool): i64 {
-    if Target.arch == Arch.Arm64 {
+    if Target.arch == Arch.Arm64 && c.jit {
         return 0
     }
     prot: i32 = if writable { ProtRW } else { VmProtRX }

@@ -59,7 +59,7 @@ A `CodeRegion` is memory for code that the program generates, enforcing W^X on e
 - `CodeRegion.New(size)` commits every page in the sealed state. `CodeRegion.Reserve(size)` commits none, and `Commit(offset, len)` takes pages in the sealed state as code grows. A write to a page not committed faults, and so does a read or call into one (a call faults as a fault in a code region).
 - A fault in a code region goes to the fault filters of [std.runtime](runtime.md#fault-filters), never to Mk's report of a fault in Mk code. The runtime tracks code regions for this in a table of 64, so `New` and `Reserve` fail with `Unsupported` while 64 are live.
 - `Entry` panics with code 2 for an offset outside `[0, Size())`.
-- On Windows a code region is a pagefile-backed section mapped twice (the writable view read-only outside `Edit`, the executable view read-execute throughout); on Linux a memfd mapped twice the same way; on arm64 macOS a `MAP_JIT` mapping whose write-vs-execute mode switches per thread through `pthread_jit_write_protect_np` (other threads stay in execute mode while one thread edits); on x86_64 macOS a private anonymous mapping whose committed pages toggle between read-write during `Edit` and read-execute outside it.
+- On Windows a code region is a pagefile-backed section mapped twice (the writable view read-only outside `Edit`, the executable view read-execute throughout); on Linux a memfd mapped twice the same way; on arm64 macOS a `MAP_JIT` mapping whose write-vs-execute mode switches per thread through `pthread_jit_write_protect_np` when the host supports it (other threads stay in execute mode while one thread edits), falling back to a private anonymous mapping toggled between read-write during `Edit` and read-execute outside it via `mprotect` (as on x86_64 macOS) when per-thread JIT write protection is unavailable or `MAP_JIT` is refused by policy.
 
 ## Errors
 
@@ -78,7 +78,7 @@ A `Commit` that fails part way leaves the pages it committed before the failure 
 
 `std.vm` never allocates from a Mk allocator. A `Region` keeps one bit per page in a bitmap of its own, a second reservation rounded up to a page. That is one page for up to 128 MiB of 4 KiB pages, 1 MiB for 32 GiB. On Linux the reservation is made with `MAP_NORESERVE`, so even a 32 GiB reservation costs no commit charge, and the bitmap is not charged either. On Windows the bitmap is charged.
 
-`Reserve` and `Release` are a few system calls. `Commit`, `Decommit` and `Protect` cost one system call per run of pages they change, plus a scan of the bitmap at 64 pages per word. `CodeRegion.Edit` and `CodeWriter.Done` are O(1) on arm64 macOS (toggling per-thread JIT write protection); on Windows, Linux and x86_64 macOS they cost one system call per run of committed pages (one in all for `CodeRegion.New`) plus the bitmap scan.
+`Reserve` and `Release` are a few system calls. `Commit`, `Decommit` and `Protect` cost one system call per run of pages they change, plus a scan of the bitmap at 64 pages per word. `CodeRegion.Edit` and `CodeWriter.Done` are O(1) on arm64 macOS when `MAP_JIT` per-thread write protection is active; on Windows, Linux, x86_64 macOS and arm64 macOS fallback they cost one system call per run of committed pages (one in all for `CodeRegion.New`) plus the bitmap scan.
 
 ## Examples
 
@@ -256,9 +256,9 @@ On Windows it is a pagefile-backed section mapped twice (a writable view
 kept read-only outside Edit, and a read-execute view untouched
 throughout); on Linux a memfd mapped twice the same way; on arm64 macOS a
 MAP_JIT mapping whose write-vs-execute mode switches per thread through
-pthread_jit_write_protect_np; on x86_64 macOS a private anonymous mapping
-whose committed pages switch between read-write during Edit and
-read-execute outside it.
+pthread_jit_write_protect_np when the host supports it, falling back to a
+private anonymous mapping toggled between read-write during Edit and
+read-execute outside it via mprotect (as on x86_64 macOS) when it does not.
 
 A region from New is committed whole; one from Reserve has no page
 committed until Commit takes it. Linear: end it with Release.
@@ -295,16 +295,17 @@ export CodeRegion.Edit(mut self): Error!CodeWriter from self
 Opens an exclusive write window into the region, returning a linear
 CodeWriter borrowing self. On Windows and Linux every committed page of
 the writable view becomes read-write while the executable view stays
-read-execute; on arm64 macOS the calling thread switches to JIT write
-mode (pthread_jit_write_protect_np(0)) while other threads remain in
-execute mode; on x86_64 macOS every committed page switches from
-read-execute to read-write.
+read-execute; on arm64 macOS with per-thread JIT write protection the
+calling thread switches to JIT write mode (pthread_jit_write_protect_np(0))
+while other threads remain in execute mode; on x86_64 macOS and arm64 macOS
+fallback every committed page switches from read-execute to read-write.
 
 Fails with Os when the OS refuses; any pages already made writable before
 the refusal are sealed again as far as the OS allows and the region stays
-sealed. O(1) on arm64 macOS; on Windows, Linux and x86_64 macOS
-O(Size / (64 pages)) bitmap words plus one system call per run of
-committed pages (one in all for a region from New); allocates nothing.
+sealed. O(1) on arm64 macOS with MAP_JIT; on Windows, Linux, x86_64 macOS
+and arm64 macOS fallback O(Size / (64 pages)) bitmap words plus one system
+call per run of committed pages (one in all for a region from New);
+allocates nothing.
 
 ### `CodeRegion.Entry`
 
@@ -410,15 +411,17 @@ export CodeWriter.Done(self)
 
 Closes the write window and seals the region again: every committed page
 of the writable view becomes read-only on Windows and Linux; on x86_64
-macOS every committed page returns to read-execute; on arm64 macOS the
-calling thread's JIT write protection is re-enabled
-(pthread_jit_write_protect_np(1) when no nested window remains).
+macOS and arm64 macOS fallback every committed page returns to
+read-execute; on arm64 macOS with MAP_JIT the calling thread's JIT write
+protection is re-enabled (pthread_jit_write_protect_np(1) when no nested
+window remains).
 
 Infallible so `defer w.Done()` works on every path; if the OS refuses a
 page protection change, Done still attempts every remaining committed
-run. O(1) on arm64 macOS; on Windows, Linux and x86_64 macOS
-O(Size / (64 pages)) bitmap words plus one system call per run of
-committed pages (one in all for a region from New); allocates nothing.
+run. O(1) on arm64 macOS with MAP_JIT; on Windows, Linux, x86_64 macOS
+and arm64 macOS fallback O(Size / (64 pages)) bitmap words plus one
+system call per run of committed pages (one in all for a region from New);
+allocates nothing.
 
 ### `CodeWriter.Flush`
 

@@ -15,7 +15,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Platforms
 
-- `aarch64-macos` and `x86_64-macos` now implement `std.vm.CodeRegion`: arm64 macOS uses `MAP_JIT` with per-thread `pthread_jit_write_protect_np` switching (and `sys_icache_invalidate`), and x86_64 macOS toggles private anonymous pages between `PROT_READ|PROT_WRITE` and `PROT_READ|PROT_EXEC` via `mprotect`, both wired into `runtime.AddFaultFilter`.
+- `aarch64-macos` and `x86_64-macos` now implement `std.vm.CodeRegion`: arm64 macOS uses `MAP_JIT` with per-thread `pthread_jit_write_protect_np` switching (and `sys_icache_invalidate`) when the host supports it, falling back to private anonymous `mprotect` W^X toggling (`PROT_READ|PROT_WRITE` vs `PROT_READ|PROT_EXEC`, as on x86_64 macOS) when per-thread JIT write protection is unavailable or `MAP_JIT` is refused by policy; both are wired into `runtime.AddFaultFilter`.
 
 ### Performance
 

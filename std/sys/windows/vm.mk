@@ -112,7 +112,7 @@ export VmCodeCommit(c: &VmCode, offset: int, size: int): i64 {
 /// VmCodePerPage is true on Windows: entering and leaving a write window
 /// updates the writable view's committed runs through VmCodeProtect.
 /// O(1); allocates nothing.
-export VmCodePerPage(): bool {
+export VmCodePerPage(c: &VmCode): bool {
     return true
 }
 

@@ -183,16 +183,19 @@ func TestMacOSMachOCodeRegion(t *testing.T) {
 		target types.Target
 		cpu    macho.Cpu
 		want   []string
+		forbid []string
 	}{
 		{
 			types.Aarch64Macos,
 			macho.CpuArm64,
 			[]string{"_mmap", "_mprotect", "_munmap", "_pthread_jit_write_protect_np", "_pthread_jit_write_protect_supported_np", "_sys_icache_invalidate"},
+			nil,
 		},
 		{
 			types.X86_64Macos,
 			macho.CpuAmd64,
 			[]string{"_mmap", "_mprotect", "_munmap"},
+			[]string{"_pthread_jit_write_protect_np", "_pthread_jit_write_protect_supported_np", "_sys_icache_invalidate"},
 		},
 	} {
 		for _, prof := range []types.Profile{types.Dev, types.Release} {
@@ -233,6 +236,11 @@ func TestMacOSMachOCodeRegion(t *testing.T) {
 				for _, want := range tc.want {
 					if !slices.Contains(syms, want) {
 						t.Errorf("missing expected libSystem import %s (got %v)", want, syms)
+					}
+				}
+				for _, bad := range tc.forbid {
+					if slices.Contains(syms, bad) {
+						t.Errorf("unexpected arm64-only libSystem import %s on %s", bad, tc.target.Name)
 					}
 				}
 			})

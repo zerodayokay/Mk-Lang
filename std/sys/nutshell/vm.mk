@@ -38,7 +38,7 @@ export VmCodeCommit(c: &VmCode, offset: int, size: int): i64 {
 
 /// VmCodePerPage has std/sys/linux's contract.
 /// O(1); allocates nothing.
-export VmCodePerPage(): bool {
+export VmCodePerPage(c: &VmCode): bool {
     return true
 }
 
