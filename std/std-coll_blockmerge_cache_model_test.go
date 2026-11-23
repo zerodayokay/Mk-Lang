@@ -1,4 +1,4 @@
-// Why: SortStable's stack cache adds moves, compares and merges that the Go
+// Why: SortStableInPlace's stack cache adds moves, compares and merges that the Go
 // model of the block merge must follow statement for statement.
 // What: the model's cache half: moveSC, moveCS, moveSS, clt, ltSC, cacheIn,
 // cacheOut, mergeToCache, mergeFromCache, mergeExternal and cacheLevel2/4.

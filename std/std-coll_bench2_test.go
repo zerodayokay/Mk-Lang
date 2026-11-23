@@ -156,7 +156,7 @@ Stable(sys: &System, out: mut Writer, n: int, distinct: int): WriteError|OutOfMe
             xs[i] = Trunc[int](s >> 1) % distinct
         }
         t0 := collfix.Now(sys.io)
-        xs.SortStable(Less)
+        try xs.SortStable(sys.heap.Alloc(), Less)
         t1 := collfix.Now(sys.io)
         if t1 - t0 < best {
             best = t1 - t0

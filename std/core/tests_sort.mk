@@ -1,10 +1,10 @@
-// Why: Sort and SortStable move elements with raw moves guarded by one range
-// check each, so every length, size and threshold must keep the slice whole,
-// even under an order that is none.
+// Why: Sort, SortStable and SortStableInPlace move elements with raw moves
+// guarded by one range check each, so every length, size and threshold must
+// keep the slice whole, even under an order that is none.
 // What: boundary tests of core_sort.mk's raw moves (PdqSmall, PdqInsertion,
 // PdqPartitionLomuto, SymSwapRange, BlkMergeInternal), of mem_drift.mk's
 // (DriftSort's partition, merges and small sort) and of coll_sort.mk's
-// SortStableIn: lengths 0 to 70 and past each threshold (8, 9, 12, 13, 16, 17,
+// SortStable: lengths 0 to 70 and past each threshold (8, 9, 12, 13, 16, 17,
 // 20, 32, 64 and the block merge's buffer sizes), elements of 1, 2, 4, 8, 9,
 // 16 and 40 bytes, owned elements, and the same sorts at compile time.
 // How: sentinels that every less asserts it never sees and that must end as
@@ -254,9 +254,9 @@ TsCoin[T: TsElem](a: &T, b: &T): bool {
     return TlCoin(a.TsId(), b.TsId(), 0x2545F4914F6CDD1D)
 }
 
-// TsSortBy sorts s by way 0 Sort, 1 SortStable, 2 SortStableIn from h, 3
-// SortStable's in-place sort, 4 SortStable's body over a heap that is out
-// of memory, under rel 0 TsOrd, 1 TsTrue, 2 TsFalse, 3 TsCoin.
+// TsSortBy sorts s by way 0 Sort, 1 SortStable from h, 2 SortStable with
+// scratch capped at Len() / 2 elements (half-slice fallback), 3
+// SortStableInPlace, under rel 0 TsOrd, 1 TsTrue, 2 TsFalse, 3 TsCoin.
 TsSortBy[T: TsElem](s: mut []T, h: &Alloc, way: int, rel: int): OutOfMemory!void {
     if way == 0 {
         if rel == 0 {
@@ -270,37 +270,39 @@ TsSortBy[T: TsElem](s: mut []T, h: &Alloc, way: int, rel: int): OutOfMemory!void
         }
     } else if way == 1 {
         if rel == 0 {
-            s.SortStable(TsOrd[T])
+            try s.SortStable(h, TsOrd[T])
         } else if rel == 1 {
-            s.SortStable(TsTrue[T])
+            try s.SortStable(h, TsTrue[T])
         } else if rel == 2 {
-            s.SortStable(TsFalse[T])
+            try s.SortStable(h, TsFalse[T])
         } else {
-            s.SortStable(TsCoin[T])
+            try s.SortStable(h, TsCoin[T])
         }
     } else if way == 2 {
+        var c := TdCount(inner: raw.Of(h), allocs: 0, frees: 0, bytes: 0, refuse: false, limit: (s.Len() / 2) * SizeOfT[T]())
+        var ctx := raw.Null[u8]()
+        unsafe "a pointer cast: TdTable's entries cast it back to the TdCount" {
+            ctx = raw.PtrCast[TdCount, u8](raw.OfMut(mut c))
+        }
+        lim := MakeHeap(ctx, raw.Of(&TdTable))
         if rel == 0 {
-            try s.SortStableIn(h, TsOrd[T])
+            try s.SortStable(lim.Alloc(), TsOrd[T])
         } else if rel == 1 {
-            try s.SortStableIn(h, TsTrue[T])
+            try s.SortStable(lim.Alloc(), TsTrue[T])
         } else if rel == 2 {
-            try s.SortStableIn(h, TsFalse[T])
+            try s.SortStable(lim.Alloc(), TsFalse[T])
         } else {
-            try s.SortStableIn(h, TsCoin[T])
+            try s.SortStable(lim.Alloc(), TsCoin[T])
         }
     } else {
-        // 3: SortStable's in-place sort (DriftFrom with no heap); 4:
-        // SortStable's body over a heap that is out of memory.
-        nh := MakeHeap(raw.Null[u8](), raw.Of(&TlNoTable))
-        heap := if way == 3 { raw.Null[Alloc]() } else { raw.Of(nh.Alloc()) }
         if rel == 0 {
-            DriftFrom(s, heap, TsOrd[T])
+            s.SortStableInPlace(TsOrd[T])
         } else if rel == 1 {
-            DriftFrom(s, heap, TsTrue[T])
+            s.SortStableInPlace(TsTrue[T])
         } else if rel == 2 {
-            DriftFrom(s, heap, TsFalse[T])
+            s.SortStableInPlace(TsFalse[T])
         } else {
-            DriftFrom(s, heap, TsCoin[T])
+            s.SortStableInPlace(TsCoin[T])
         }
     }
 }
@@ -397,10 +399,10 @@ TsLengths(a: &Arena, big: bool): OutOfMemory!mut []int {
 
 // TsAll runs TsRun over every length, every pattern under the order and,
 // since the other relations ignore the keys, one pattern under each of them,
-// for the five ways; buf holds at least 5,008 elements.
+// for the four ways; buf holds at least 5,008 elements.
 TsAll[T: TsElem](a: &Arena, h: &Alloc, buf: mut []T, big: bool, kmax: int): OutOfMemory!void {
     for n in try TsLengths(a, big) {
-        for way in 0..5 {
+        for way in 0..4 {
             for pat in 0..7 {
                 try TsRun(a, h, buf, n, pat, way, 0, kmax)
             }
@@ -537,8 +539,8 @@ test "every sort of elements the stack cache holds one of or none of (aligned to
 
 // TsDeep recurses depth times with 128 bytes of locals and the 512 of xs
 // each (about 860 bytes a level in release and 1.3 KiB in dev, measured by
-// the deepest recursion a 64 KiB task survives), then sorts xs stably, so
-// SortStable runs with its cache on what stack is left.
+// the deepest recursion a 64 KiB task survives), then sorts xs stably in
+// place, so SortStableInPlace runs with its cache on what stack is left.
 TsDeep(depth: int, done: &raw.Atomic[i64]): u64 {
     var pad: [16]u64 = [0; 16]
     for i in 0..16 {
@@ -552,7 +554,7 @@ TsDeep(depth: int, done: &raw.Atomic[i64]): u64 {
     for i in 0..64 {
         xs[i] = Cast[u64](TlNext(mut s) % 1_000)
     }
-    xs.SortStable(TsLessU64)
+    xs.SortStableInPlace(TsLessU64)
     var ok := true
     for i in 1..64 {
         ok = ok && xs[i - 1] <= xs[i]
@@ -572,10 +574,10 @@ TsDeepTask(depth: int, done: &raw.Atomic[i64]) {
 }
 
 // On Windows a 64 KiB task keeps 4 KiB of guard and 16 KiB of guarantee,
-// so about 44 KiB is usable. SortStable's 4 KiB cache takes some levels of
-// recursion from that; SortStable of 64 u64 (the cache path) must still fit
-// under 15 levels in dev and in release.
-test "SortStable, with its 4,096-byte cache, runs on a task's smallest stack (64 KiB) under 15 levels of recursion" (sys: &System) {
+// so about 44 KiB is usable. SortStableInPlace's 4 KiB cache takes some
+// levels of recursion from that; SortStableInPlace of 64 u64 (the cache
+// path) must still fit under 15 levels in dev and in release.
+test "SortStableInPlace, with its 4,096-byte cache, runs on a task's smallest stack (64 KiB) under 15 levels of recursion" (sys: &System) {
     done := raw.Atomic[i64].New(0)
     scope s := sys.io.ScopeWith(Limits(tasks: 1, stack: StackSize.Bytes(n: 65_536))) {
         s.go TsDeepTask(15, &done)
@@ -691,37 +693,39 @@ TsOSortBy[T: TsOwned](s: mut []T, h: &Alloc, way: int, rel: int): OutOfMemory!vo
         }
     } else if way == 1 {
         if rel == 0 {
-            s.SortStable(TsOOrd[T])
+            try s.SortStable(h, TsOOrd[T])
         } else if rel == 1 {
-            s.SortStable(TsOTrue[T])
+            try s.SortStable(h, TsOTrue[T])
         } else if rel == 2 {
-            s.SortStable(TsOFalse[T])
+            try s.SortStable(h, TsOFalse[T])
         } else {
-            s.SortStable(TsOCoin[T])
+            try s.SortStable(h, TsOCoin[T])
         }
     } else if way == 2 {
+        var c := TdCount(inner: raw.Of(h), allocs: 0, frees: 0, bytes: 0, refuse: false, limit: (s.Len() / 2) * SizeOfT[T]())
+        var ctx := raw.Null[u8]()
+        unsafe "a pointer cast: TdTable's entries cast it back to the TdCount" {
+            ctx = raw.PtrCast[TdCount, u8](raw.OfMut(mut c))
+        }
+        lim := MakeHeap(ctx, raw.Of(&TdTable))
         if rel == 0 {
-            try s.SortStableIn(h, TsOOrd[T])
+            try s.SortStable(lim.Alloc(), TsOOrd[T])
         } else if rel == 1 {
-            try s.SortStableIn(h, TsOTrue[T])
+            try s.SortStable(lim.Alloc(), TsOTrue[T])
         } else if rel == 2 {
-            try s.SortStableIn(h, TsOFalse[T])
+            try s.SortStable(lim.Alloc(), TsOFalse[T])
         } else {
-            try s.SortStableIn(h, TsOCoin[T])
+            try s.SortStable(lim.Alloc(), TsOCoin[T])
         }
     } else {
-        // 3: SortStable's in-place sort (DriftFrom with no heap); 4:
-        // SortStable's body over a heap that is out of memory.
-        nh := MakeHeap(raw.Null[u8](), raw.Of(&TlNoTable))
-        heap := if way == 3 { raw.Null[Alloc]() } else { raw.Of(nh.Alloc()) }
         if rel == 0 {
-            DriftFrom(s, heap, TsOOrd[T])
+            s.SortStableInPlace(TsOOrd[T])
         } else if rel == 1 {
-            DriftFrom(s, heap, TsOTrue[T])
+            s.SortStableInPlace(TsOTrue[T])
         } else if rel == 2 {
-            DriftFrom(s, heap, TsOFalse[T])
+            s.SortStableInPlace(TsOFalse[T])
         } else {
-            DriftFrom(s, heap, TsOCoin[T])
+            s.SortStableInPlace(TsOCoin[T])
         }
     }
 }
@@ -753,7 +757,7 @@ test "every sort of owned elements of 8, 16 and 40 bytes, under an order and und
     h := sys.heap.Alloc()
     Assert(SizeOf[TsOwn8]() == 8 && SizeOf[TsOwn16]() == 16 && SizeOf[TsOwn40]() == 40)
     for n in [0, 1, 2, 3, 8, 9, 12, 13, 16, 17, 20, 21, 31, 32, 33, 63, 64, 65, 100, 300, 1_000] {
-        for way in 0..5 {
+        for way in 0..4 {
             for rel in 0..4 {
                 var l8 := List[TsOwn8].New(sys.arena)
                 var l16 := List[TsOwn16].New(sys.arena)
@@ -772,7 +776,7 @@ test "every sort of owned elements of 8, 16 and 40 bytes, under an order and und
 }
 
 // TsEvalDigest sorts fixed inputs of 1, 2, 4, 8 and 16 bytes with Sort and
-// SortStable, with no allocator, so it runs at compile time too: the
+// SortStableInPlace, with no allocator, so it runs at compile time too: the
 // networks, both Lomuto partitions, the spread pivot and the block merge's
 // raw swaps in the evaluator.
 TsEvalOne[T: TsElem](xs: mut []T, way: int, kmax: int): u64 {
@@ -783,7 +787,7 @@ TsEvalOne[T: TsElem](xs: mut []T, way: int, kmax: int): u64 {
     if way == 0 {
         xs.Sort(TsOrd[T])
     } else {
-        xs.SortStable(TsOrd[T])
+        xs.SortStableInPlace(TsOrd[T])
     }
     var h: u64 = 14695981039346656037
     for i in 0..xs.Len() {
@@ -811,7 +815,7 @@ TsEvalDigest(): u64 {
 
 const TsEvalC = TsEvalDigest() fuel 200_000_000
 
-test "Sort and SortStable of 1- to 16-byte elements at compile time give the native result" {
+test "Sort and SortStableInPlace of 1- to 16-byte elements at compile time give the native result" {
     Assert(TsEvalC == TsEvalDigest())
 }
 
@@ -826,8 +830,8 @@ TsWordLess(a: &TsWord, b: &TsWord): bool {
     return a.w.Len() < b.w.Len()
 }
 
-// TsEvalWords sorts 400 words of 1 to 9 letters stably by length, so at
-// compile time the cache holds values with pointers, and digests the ids.
+// TsEvalWords sorts 400 words of 1 to 9 letters stably in place by length,
+// so at compile time the cache holds values with pointers, and digests the ids.
 TsEvalWords(): u64 {
     letters := "abcdefghi"
     var xs: [400]TsWord = [TsWord(w: "", id: 0); 400]
@@ -836,7 +840,7 @@ TsEvalWords(): u64 {
         n := 1 + TlNext(mut s) % 9
         xs[i] = TsWord(w: letters[0..n], id: i)
     }
-    xs.SortStable(TsWordLess)
+    xs.SortStableInPlace(TsWordLess)
     var h: u64 = 14695981039346656037
     for i in 0..400 {
         h = (h ^ Trunc[u64](xs[i].id * 16 + xs[i].w.Len())) *% 1099511628211
@@ -846,6 +850,6 @@ TsEvalWords(): u64 {
 
 const TsEvalWordsC = TsEvalWords() fuel 200_000_000
 
-test "SortStable of elements holding pointers at compile time gives the native result" {
+test "SortStableInPlace of elements holding pointers at compile time gives the native result" {
     Assert(TsEvalWordsC == TsEvalWords())
 }

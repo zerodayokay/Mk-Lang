@@ -15,7 +15,6 @@ Most entries are lines that only freestanding code reaches (a freestanding progr
 ## prelude
 
 - `Io.Random(self, buf: mut []u8): Canceled!void` (reference): the dogfoods take randomness through std's typed sources (`HashKey.New` in kvd, `math.Rng.FromIo` in raft, `crypto.Random` in pack), as a program that needs a key, a seed or a nonce does, so no realistic call site names `Io.Random` itself. Covered instead: its execution, which `cover` finds in kvd's cases (COVERAGE.md lists them under this line).
-- `Slice[T].SortStableIn(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void` (both): no dogfood calls it. Covered instead: std/core/tests_list.mk's SortStableIn blocks, with the Go model's exact counts (std/std-coll_blockmerge_model_test.go).
 - `Arena.SliceAligned[T](&self, n: int, align: int): OutOfMemory!mut []T` (both): no dogfood calls it. Covered instead: std/core/tests_arena.mk's SliceAligned blocks and std/core_slicealigned_test.go.
 - `Reader.Of(b: []u8): Reader from b` (both): no dogfood calls it. Covered instead: std/core/tests_rw.mk's Reader.Of blocks and std/core_readerof_test.go.
 - `str.Replace(self, a: &Arena, old: str, new: str): OutOfMemory!str from a` (both): no dogfood calls it. Covered instead: std/core/tests_text.mk's D-833 blocks and std/core_replace_test.go, which compares it with Go's strings.ReplaceAll.

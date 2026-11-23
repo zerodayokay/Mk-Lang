@@ -49,8 +49,8 @@ Written by `go run ./tools/dogfood cover` on 2026-11-19, with mk 0.1.0 commit fc
 | `Slice[T].Get(&self, i: int): ?&T` | orderbook | cron, orderbook, raft | cron/bench (windows), cron/run-detach (windows), cron/run-interrupt (windows) and 51 more | covered (executed) |
 | `Slice[T].GetMut(mut self, i: int): ?mut T` | orderbook | cron, orderbook, raft | cron/bench (windows), cron/run-detach (windows), cron/run-interrupt (windows) and 47 more | covered (executed) |
 | `Slice[T].Sort(mut self, const less: fn(&T, &T): bool)` | lox, orderbook | bigcalc, fm, kvd and 6 more | bigcalc/run_script (windows), fetch/bench (windows), fetch/decoders (windows) and 94 more | covered (executed) |
-| `Slice[T].SortStable(mut self, const less: fn(&T, &T): bool)` | lox, orderbook, textkit | lox, orderbook, textkit | lox/arith (windows), lox/bench (windows), lox/compile-errors (windows) and 43 more | covered (executed) |
-| `Slice[T].SortStableIn(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void` | - | - | - | exempt (EXEMPT.md line 18) |
+| `Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void` | orderbook, textkit | orderbook, textkit | orderbook/basic (windows), textkit/sort-basic (windows) and more | covered (executed) |
+| `Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)` | lox, textkit | lox, textkit | lox/arith (windows), lox/bench (windows), lox/compile-errors (windows) and more | covered (executed) |
 | `Slice[T].Search[K](&self, key: &K, const less: fn(&T, &K): bool): int` | lox, orderbook, textkit | lox, orderbook, textkit | lox/arith (windows), lox/bench (windows), lox/compile-errors (windows) and 40 more | covered (executed) |
 | `Slice[T].Swap(mut self, i: int, j: int)` | orderbook | bigcalc, orderbook | bigcalc/calc_bits (windows), orderbook/account-missing (windows), orderbook/band (windows) and 17 more | covered (executed) |
 | `Slice[T].Reverse(mut self)` | orderbook | orderbook | orderbook/band-full (windows), orderbook/basic (windows), orderbook/compact (windows) and 3 more | covered (executed) |

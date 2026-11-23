@@ -1,6 +1,6 @@
 // Why: the Mk stable sorts are checked against models that count every less
 // call and move, so the models must be right themselves.
-// What: the Go model of StableSort (core_sort.mk), SortStable's in-place
+// What: the Go model of StableSort (core_sort.mk), SortStableInPlace's body
 // sort, TestStdColl_BlockMergeModel* and TestStdColl_BlockMergeCounts, which
 // also run the model of the sort through scratch (bufSort,
 // std-coll_drift_model_test.go).
@@ -724,7 +724,7 @@ func blkPairs(keys []int) []blkKey {
 }
 
 // blkRunModel sorts keys' pairs by key with StableSort's model, or with
-// SortStableIn's (DriftSort, 16-byte elements) when buf is set, and returns
+// DriftSort's half-slice model (16-byte elements) when buf is set, and returns
 // the model with its counts.
 func blkRunModel(keys []int, buf bool, cache int) *blkModel[blkKey] {
 	m := &blkModel[blkKey]{s: blkPairs(keys), less: func(a, b *blkKey) bool { return a.k < b.k }, cache: cache}
@@ -866,15 +866,15 @@ func TestStdColl_BlockMergeModelMatchesGo(t *testing.T) {
 // 40-, 16- and 8-byte elements (102, 256, 512).
 var blkModelCaches = []int{0, 3, 102, 256, 512}
 
-// blkModelRun is one run of a model test: SortStableIn's model (buf), or
-// StableSort's with a cache.
+// blkModelRun is one run of a model test: DriftSort's half-slice model (buf),
+// or StableSort's with a cache.
 type blkModelRun struct {
 	buf   bool
 	cache int
 }
 
-// blkModelRuns is SortStableIn's model, then StableSort's with each cache of
-// blkModelCaches.
+// blkModelRuns is DriftSort's half-slice model, then StableSort's with each
+// cache of blkModelCaches.
 func blkModelRuns() []blkModelRun {
 	runs := []blkModelRun{{buf: true}}
 	for _, c := range blkModelCaches {

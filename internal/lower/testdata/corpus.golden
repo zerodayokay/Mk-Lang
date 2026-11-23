@@ -4381,7 +4381,7 @@ body m.ByCount generics=0 params=2 {
     _3 = &_2
     _4 = (entries: &[]Entry)(copy _3)
     _5 = &_4
-    _6 = call std.core.Slice:SortStable[int](reborrow copy _1, const fn(&int, &int): bool fn(&int, &int): bool{align 8 0x0000000000000000, @0 fn m.ByCount#fn0}, copy _5) -> bb1
+    _6 = call std.core.Slice:SortStableInPlace[int](reborrow copy _1, const fn(&int, &int): bool fn(&int, &int): bool{align 8 0x0000000000000000, @0 fn m.ByCount#fn0}, copy _5) -> bb1
   bb1:
     scope_end _6
     scope_end _5

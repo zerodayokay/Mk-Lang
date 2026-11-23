@@ -6,7 +6,7 @@
 
 | Column | Sort |
 |---|---|
-| mk | `Slice[u64].SortStable(Less)` |
+| mk | `Slice[u64].SortStable(sys.heap.Alloc(), Less)` |
 | c | no std stable sort in C (`qsort` is the only std sort, and it is not stable) |
 | rust, rust-ovf | `sort` (driftsort) |
 | zig-fast, zig-safe | `std.sort.block` (block sort, in place) |

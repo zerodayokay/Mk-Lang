@@ -1,8 +1,8 @@
 // Why: the stable sorts have many size-dependent paths, and each must stay
 // stable and do exactly what the Go models do.
-// What: TestStdColl_BlockMergeMatchesGo over Slice[T].SortStable,
-// SortStableIn (mem_drift.mk, coll_sort.mk) and SortStable's in-place sort
-// (core_sort.mk's StableSort, through the sortFix fixture).
+// What: TestStdColl_BlockMergeMatchesGo over Slice[T].SortStable
+// (mem_drift.mk, coll_sort.mk) and Slice[T].SortStableInPlace
+// (core_sort.mk's StableSort).
 // How: a Mk program sorts every blkPattern around the block sizes; digests
 // must match slices.SortStableFunc and less counts the models'.
 
@@ -14,29 +14,7 @@ import (
 	"testing"
 )
 
-// sortFixCore and sortFixModule let a program call SortStable's in-place
-// sort, which it reaches otherwise only when the heap is out of memory:
-// sortfix.InPlace(s, less) is StableSort(s, less).
-const sortFixCore = `// Fixture of the stable sort tests: SortStable's in-place sort.
-
-export SortFixInPlace[T](s: mut []T, const less: fn(&T, &T): bool) {
-    StableSort(s, less)
-}
-`
-
-const sortFixModule = `import std.core
-
-export InPlace[T](s: mut []T, const less: fn(&T, &T): bool) {
-    core.SortFixInPlace(s, less)
-}
-`
-
-// sortFix is the extra files of a program that imports std.sortfix.
-var sortFix = map[string]string{"core/tests_sortfix.mk": sortFixCore, "sortfix/sortfix.mk": sortFixModule}
-
-const blockMergeHead = `import std.sortfix
-
-struct P {
+const blockMergeHead = `struct P {
     k: int
     id: int
 }
@@ -104,46 +82,34 @@ Digest(xs: []P): u64 {
     return h
 }
 
-// Run sorts case (pat, n) with SortStable, with SortStableIn and with the
-// in-place sort, each counting its calls of less, and prints the digests
-// and counts.
+// Run sorts case (pat, n) with SortStable and with SortStableInPlace, each
+// counting its calls of less, and prints the digests and counts.
 Run(out: mut Writer, a: &Alloc, pat: int, n: int): OutOfMemory|WriteError!void {
     var l := HeapList[P].New(a)
     defer l.Free(a)
     var l2 := HeapList[P].New(a)
     defer l2.Free(a)
-    var l3 := HeapList[P].New(a)
-    defer l3.Free(a)
     for _ in 0..n {
         try l.Push(a, P(k: 0, id: 0))
         try l2.Push(a, P(k: 0, id: 0))
-        try l3.Push(a, P(k: 0, id: 0))
     }
     Keys(pat, l.ItemsMut())
     Keys(pat, l2.ItemsMut())
-    Keys(pat, l3.ItemsMut())
     c := Cell[int].New(0)
-    l.SortStable(fn(x: &P, y: &P): bool {
+    try l.SortStable(a, fn(x: &P, y: &P): bool {
         c.Store(c.Load() + 1)
         return x.k < y.k
     })
     cmps := c.Load()
     h := Digest(l.Items())
     c.Store(0)
-    try l2.SortStableIn(a, fn(x: &P, y: &P): bool {
+    l2.SortStableInPlace(fn(x: &P, y: &P): bool {
         c.Store(c.Load() + 1)
         return x.k < y.k
     })
     cmps2 := c.Load()
     h2 := Digest(l2.Items())
-    c.Store(0)
-    sortfix.InPlace(l3.ItemsMut(), fn(x: &P, y: &P): bool {
-        c.Store(c.Load() + 1)
-        return x.k < y.k
-    })
-    cmps3 := c.Load()
-    h3 := Digest(l3.Items())
-    try Print(out, "{pat} {n} {h} {cmps} {h2} {cmps2} {h3} {cmps3}\n", (pat, n, h, cmps, h2, cmps2, h3, cmps3))
+    try Print(out, "{pat} {n} {h} {cmps} {h2} {cmps2}\n", (pat, n, h, cmps, h2, cmps2))
 }
 `
 
@@ -192,7 +158,7 @@ func blockMergeProgram(cases []blkCase) (src, want string) {
 			ids[i] = x.id
 		}
 		h := idDigest(ids)
-		fmt.Fprintf(&w, "%d %d %d %d %d %d %d %d\n", c.pat, c.n, h, driftRunModel(keys, false, 16).cmps, h, blkRunModel(keys, true, 0).cmps, h, blkRunModel(keys, false, blkCacheCap(16, 8)).cmps)
+		fmt.Fprintf(&w, "%d %d %d %d %d %d\n", c.pat, c.n, h, driftRunModel(keys, false, 16).cmps, h, blkRunModel(keys, false, blkCacheCap(16, 8)).cmps)
 	}
 	return b.String(), w.String()
 }
@@ -203,7 +169,7 @@ func blockMergeProgram(cases []blkCase) (src, want string) {
 // 37 equal keys ascending and descending, sorted with every 64th key random)
 // at every size around the sorts' block boundaries from 0 to 2^20 (blkSizes:
 // each n to 150, 2^k - 1, 2^k, 2^k + 1 and the squares around 2^k, which set
-// the block and buffer sizes), sorts it with the three sorts, and prints the digest
+// the block and buffer sizes), sorts it with both stable sorts, and prints the digest
 // of the ids in order and the calls of less. The digests must be
 // slices.SortStableFunc's (the stability and permutation oracle: a stable
 // order is unique) and the counts the Go models' exactly
@@ -236,7 +202,7 @@ func TestStdColl_BlockMergeMatchesGo(t *testing.T) {
 		src, want := blockMergeProgram(part.cases)
 		t.Run(part.name, func(t *testing.T) {
 			t.Parallel()
-			diffLines(t, collExec(t, collBuildWith(t, sortFix, src, part.flags...)), want)
+			diffLines(t, collExec(t, collBuildWith(t, nil, src, part.flags...)), want)
 		})
 	}
 }

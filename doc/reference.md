@@ -11333,8 +11333,8 @@ Slice[T].Len(&self): int
 Slice[T].Get(&self, i: int): ?&T
 Slice[T].GetMut(mut self, i: int): ?mut T
 Slice[T].Sort(mut self, const less: fn(&T, &T): bool)
-Slice[T].SortStable(mut self, const less: fn(&T, &T): bool)
-Slice[T].SortStableIn(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void
+Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void
+Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)
 Slice[T].Search[K](&self, key: &K, const less: fn(&T, &K): bool): int
 Slice[T].Swap(mut self, i: int, j: int)
 Slice[T].Reverse(mut self)

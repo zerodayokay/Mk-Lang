@@ -73,6 +73,4 @@ export HeapInit() {
             (*HS()).spare.Store(HugeSpareBudget)
         }
     }
-    // SortStable's scratch comes from the process heap.
-    core.SortHeapInit(ProcessHeap())
 }

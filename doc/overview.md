@@ -257,7 +257,7 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
 }
 ```
 
-Slices, arrays and lists share one set of operations, among them `Len`, `Get`, `Sort`, `SortStable`, `Search`, `Reverse`, `Swap`, `Has`, `Index`, `Chunks` and `SplitAt`. `mk query members List` prints the methods of any type.
+Slices, arrays and lists share one set of operations, among them `Len`, `Get`, `Sort`, `SortStable`, `SortStableInPlace`, `Search`, `Reverse`, `Swap`, `Has`, `Index`, `Chunks` and `SplitAt`. `mk query members List` prints the methods of any type.
 
 See also: [arrays](reference.md#arrays-nt), [slices](reference.md#slices-t-and-mut-t), [slices and lists](std/core.md#slices-and-lists).
 
@@ -837,7 +837,7 @@ See also: [errors](reference.md#9-errors), [`match` on a result](reference.md#ma
 
 ## Memory
 
-Mk has no garbage collector and no hidden allocation. Memory comes from an allocator you pass in. The one exception is `SortStable`, which takes scratch memory from the process heap and frees it before it returns ([sorting](std/core.md#sorting-and-searching)). The compiler checks that no reference outlives what it points at, and that nothing is released twice or forgotten. Most code needs no annotations for this. [The memory model](memory.md) has every rule.
+Mk has no garbage collector and no hidden allocation. Memory comes from an allocator you pass in. The compiler checks that no reference outlives what it points at, and that nothing is released twice or forgotten. Most code needs no annotations for this. [The memory model](memory.md) has every rule.
 
 ### Arenas
 

@@ -224,7 +224,7 @@ Accounts(a: &Arena, fills: []book.Fill): OutOfMemory!List[AccountRow] from a {
     }
     // Map order is unspecified: sort by account, then stably by volume.
     rows.Sort(fn(x: &AccountRow, y: &AccountRow): bool { return x.account < y.account })
-    rows.SortStable(fn(x: &AccountRow, y: &AccountRow): bool { return x.bought + x.sold > y.bought + y.sold })
+    try rows.SortStable(a.Alloc(), fn(x: &AccountRow, y: &AccountRow): bool { return x.bought + x.sold > y.bought + y.sold })
     return rows
 }
 

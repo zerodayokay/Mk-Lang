@@ -44,7 +44,7 @@ export Main(sys: &System): OutOfMemory|ParseError|WriteError!void {
             st = st +% 0x9e3779b97f4a7c15
             xs[i] = Rec(key: Trunc[u32](Mix(st) % 1000), id: Trunc[u32](Cast[u64](i)))
         }
-        xs.SortStable(fn(p: &Rec, q: &Rec): bool { return p.key < q.key })
+        try xs.SortStable(a, fn(p: &Rec, q: &Rec): bool { return p.key < q.key })
         total = total +% Fold(&xs)
     }
     xs.Free(a)

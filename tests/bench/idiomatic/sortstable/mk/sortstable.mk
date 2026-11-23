@@ -1,7 +1,7 @@
 // sortstable, Mk, idiomatic std: the task of ../README.md with std's
-// stable sort, Slice[u64].SortStable(Less) (std/core/core_sort.mk; the
-// comparator is a const fn argument, so the call is direct). Usage:
-// sortstable <n> <rounds> <seed>. Prints the checksum.
+// stable sort, Slice[u64].SortStable(sys.heap.Alloc(), Less)
+// (std/core/coll_sort.mk; the comparator is a const fn argument, so the call
+// is direct). Usage: sortstable <n> <rounds> <seed>. Prints the checksum.
 
 Mix(x: u64): u64 {
     var z := x
@@ -48,7 +48,7 @@ export Main(sys: &System): OutOfMemory|ParseError|WriteError!void {
                     xs[i] = Mix(st) >> 60
                 }
             }
-            xs.SortStable(Less)
+            try xs.SortStable(sys.heap.Alloc(), Less)
             total = total +% Check(xs[..])
         }
     }

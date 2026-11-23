@@ -101,7 +101,8 @@ Split.Next(mut self): ?str from self.text
 Lines.Next(mut self): ?str from self.text
 Words.Next(mut self): ?str from self.text
 Scalars.Next(mut self): ?char
-Slice[T].SortStable(mut self, const less: fn(&T, &T): bool)
+Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void
+Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)
 Slice[T].Search[K](&self, key: &K, const less: fn(&T, &K): bool): int
 List[T].New(a: &Arena): List[T]
 List[T].Push(mut self, x: T into self): OutOfMemory!void

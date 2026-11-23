@@ -104,9 +104,13 @@ SortWith(c: &input.Ctx, s: mut input.Streams, stdin: mut Reader, opts: &SortOpti
     if status == input.Ok {
         numeric := opts.numeric
         reverse := opts.reverse
-        st.entries.SortStable(fn(a: &Entry, b: &Entry): bool {
+        st.entries.SortStable(alloc, fn(a: &Entry, b: &Entry): bool {
             return if reverse { Before(b, a, numeric) } else { Before(a, b, numeric) }
-        })
+        }) else {
+            st.entries.SortStableInPlace(fn(a: &Entry, b: &Entry): bool {
+                return if reverse { Before(b, a, numeric) } else { Before(a, b, numeric) }
+            })
+        }
         Emit(mut s.out, &st.entries, opts.unique, opts.zero, numeric) else e {
             input.Report(s, "sort", &e)
             status = input.Failed

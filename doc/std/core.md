@@ -184,7 +184,7 @@ On Linux a drive letter and `\` are ordinary bytes: `C:`, `C:\` and `C:a` are ea
 |---|---|
 | Read and write elements | `Len`, `Get`, `GetMut`, `Swap`, `Reverse`, `Fill`, `CopyFrom` |
 | Look for a value | `Has`, `Index` |
-| Sort and search | `Sort`, `SortStable`, `SortStableIn`, `Search` |
+| Sort and search | `Sort`, `SortStable`, `SortStableInPlace`, `Search` |
 | Cut into views | `SplitAt`, `GetPair`, `Chunks`, `ChunksMut` |
 | Grow | `List[T].New(a)`, `HeapList[T].New(a)`, then `Push`, `Insert`, `Pop`, `Remove`, `Clear`; `List.Truncate` |
 | Exchange places | `Swap(a, b)`, `Replace(dst, x)` |
@@ -239,11 +239,11 @@ First(): int {
 
 ### Sorting and searching
 
-`Sort` and `Search` allocate nothing. `SortStable` takes scratch memory, from the stack or the process heap, and `SortStableIn` from the allocator it is given; both free it before they return.
+`Sort`, `SortStableInPlace` and `Search` allocate nothing. `SortStable` takes scratch memory from the stack or the allocator it is given, and frees it before it returns.
 
 - `Sort(less)` is unstable, O(n log n) in the worst case, and gives the same result on every run.
-- `SortStable(less)` keeps equal elements in their order, and makes O(n log n) calls of `less` and moves. Past 20 elements it merges through scratch of `Len() / 2` elements or more: the whole slice while that is at most 8,000,000 bytes. Scratch that fits in 4,096 bytes, for a `T` aligned to at most 8, is on the stack, and other scratch comes from the process heap. Through scratch, input that is already sorted or strictly descending costs O(n). When its scratch is larger than the stack's and the heap is out of memory, at compile time or in a freestanding program, it sorts in place instead, with the same result. It is Rust's driftsort.
-- `SortStableIn(a, less)` sorts as `SortStable` does, with `Len() / 2` elements of scratch from `a`. `OutOfMemory` comes before any element moves, so the slice is unchanged. Below 32 elements, or for a zero-size `T`, it allocates nothing.
+- `SortStable(a, less)` keeps equal elements in their order, and makes O(n log n) calls of `less` and moves. Past 20 elements it merges through scratch of `Len() / 2` elements or more: the whole slice while that is at most 8,000,000 bytes (at least 48 elements). Scratch that fits in 4,096 bytes, for a `T` aligned to at most 8, is on the stack, and other scratch comes from `a` (falling back to `Len() / 2` elements from `a` if `a` refuses the larger block) and is freed before it returns. Through scratch, input that is already sorted or strictly descending costs O(n). Below 21 elements, for a zero-size `T`, or when the scratch fits on the stack, it allocates nothing from `a`. `OutOfMemory` comes before any element moves, so the slice is unchanged. It is Rust's driftsort.
+- `SortStableInPlace(less)` keeps equal elements in their order with no allocator or heap allocation, using an in-place block merge sort with a fixed stack cache of at most 4,096 bytes for elements aligned to at most 8. O(n log n) calls of `less` and moves on every input. Works at compile time and in freestanding programs.
 - `Search(&key, less)` takes a slice where `less(element, key)` holds for a prefix and not after it. It returns that prefix's length: the first index whose element is not less than the key, or `Len()` when there is none. That is where the key goes to keep the slice sorted. It is O(log n). On any other slice it returns some index from 0 to `Len()`.
 - A `less` that needs context is a function literal that reads it, so there are no `With` forms ([Sort with a comparison that reads locals](../cookbook.md#sort-with-a-comparison-that-reads-locals)).
 - Sorting a slice that holds a float NaN leaves a permutation of its elements in an unspecified order, with no panic.
@@ -892,7 +892,7 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
     try sys.Print("has 7: {h}, index of 25: {i}\n", (h: xs.Has(&7), i: xs.Index(&25)))
 
     var words := ["pear", "fig", "apple", "kiwi", "plum"]
-    words.SortStable(fn(a: &str, b: &str): bool { return a.Len() < b.Len() })
+    try words.SortStable(sys.heap.Alloc(), fn(a: &str, b: &str): bool { return a.Len() < b.Len() })
     try sys.Print("by length {w}\n", (w: words[..])) // equal lengths keep their order
 
     for piece in xs.Chunks(4) { // the last piece is shorter
@@ -3730,38 +3730,38 @@ pattern-defeating quicksort.
 ### `Slice.SortStable`
 
 ```
-export Slice[T].SortStable(mut self, const less: fn(&T, &T): bool)
-```
-
-Sorts the elements by less, keeping equal elements in their order.
-O(n log n) calls of less and moves on every input. It allocates: past
-20 elements it merges through scratch memory of Len() / 2 elements or
-more (the whole slice while that is at most 8,000,000 bytes), on the
-stack when that fits in 4,096 bytes and T is aligned to at most 8, else
-from the process heap, freed before it returns; through scratch, input
-that is already sorted or strictly descending costs O(n). When its
-scratch is larger than the stack's and the heap is out of memory, at
-compile time or in a freestanding program, it sorts in place instead,
-with the same result. SortStableIn takes the scratch from an allocator
-it is given. The algorithm is Rust's driftsort, and in place a block
-merge sort.
-
-### `Slice.SortStableIn`
-
-```
-export Slice[T].SortStableIn(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void
+export Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void
 ```
 
 - Errors: OutOfMemory
 
-Sorts the elements by less, keeping equal elements in their order, as
-SortStable does, with its scratch memory from a instead of the process
-heap: Len() / 2 elements, freed before it returns. O(n log n) calls of less and
-moves, O(n) on input that is already sorted or strictly descending.
-Below 32 elements, and for a
-zero-size T, it sorts in place and allocates nothing. Fails with
-OutOfMemory when the scratch cannot be allocated, before any element
-moves, so the slice is unchanged.
+Sorts the elements by less, keeping equal elements in their order.
+O(n log n) calls of less and moves on every input, and O(n) on input
+that is already sorted or strictly descending. Past 20 elements it
+merges through scratch memory of Len() / 2 elements or more (the whole
+slice while that is at most 8,000,000 bytes, at least 48 elements): on
+the stack when that fits in 4,096 bytes and T is aligned to at most 8,
+and otherwise from a, falling back to Len() / 2 elements from a before
+failing, and freed before it returns. Below 21 elements, for a
+zero-size T, or when the scratch fits on the stack, it allocates
+nothing from a. Fails with OutOfMemory when a cannot give even
+Len() / 2 elements of scratch, before any element moves, so the slice
+is unchanged. The algorithm is Rust's driftsort. For a stable sort
+that takes no allocator, use SortStableInPlace.
+
+### `Slice.SortStableInPlace`
+
+```
+export Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)
+```
+
+Sorts the elements by less, keeping equal elements in their order,
+strictly in place with no allocator or heap allocation. O(n log n)
+calls of less and O(n log n) moves on every input, with a fixed
+stack cache of at most 4,096 bytes for elements aligned to at most 8.
+Works at compile time and in freestanding programs. The algorithm is
+a block merge sort. For faster sorting through scratch memory from
+an allocator, use SortStable.
 
 ### `Slice.SplitAt`
 

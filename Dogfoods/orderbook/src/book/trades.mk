@@ -179,7 +179,7 @@ export Trades.Busiest(&self, a: &Arena, n: int): OutOfMemory!List[Depth] from a 
     for (key, value) in self.volume.Iter() {
         try all.Push(Depth(price: *key, qty: *value, orders: 0))
     }
-    all.SortStable(fn(x: &Depth, y: &Depth): bool { return x.qty > y.qty })
+    try all.SortStable(a.Alloc(), fn(x: &Depth, y: &Depth): bool { return x.qty > y.qty })
     var out := List[Depth].New(a)
     for d in all {
         if out.Len() == n {

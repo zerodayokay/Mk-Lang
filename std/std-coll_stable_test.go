@@ -1,9 +1,10 @@
-// Why: SortStable, SortStableIn and Search are called from user code, so their
-// order and cost must hold through check's Slice routing too.
-// What: TestStdColl_StableSortMatchesGo over mem_drift.mk and coll_sort.mk.
-// How: less counts against the Go models (driftRunModel), order against
-// slices.SortStableFunc, Search against sort.Search and its loop's call
-// count (searchModel); also at compile time.
+// Why: SortStable, SortStableInPlace and Search are called from user code, so
+// their order and cost must hold through check's Slice routing too.
+// What: TestStdColl_StableSortMatchesGo over core_sort.mk, mem_drift.mk and
+// coll_sort.mk.
+// How: less counts against the Go models (driftRunModel, blkRunModel), order
+// against slices.SortStableFunc, Search against sort.Search and its loop's
+// call count (searchModel); also at compile time.
 
 package std
 
@@ -64,11 +65,11 @@ Run(out: mut Writer, a: &Arena, keys: []int, queries: []int): OutOfMemory|WriteE
         try l2.Push(P(k: keys[i], id: i, c: &*c))
         try l3.Push(P(k: keys[i], id: i, c: &*c))
     }
-    try l3.SortStableIn(a.Alloc(), ByKey)
-    cmpsin := c.Load()
+    l3.SortStableInPlace(ByKey)
+    cmpsip := c.Load()
     d3 := IdDigest(l3.Done())
     c.Store(0)
-    l2.SortStable(fn(x: &P, y: &P): bool {
+    try l2.SortStable(a.Alloc(), fn(x: &P, y: &P): bool {
         c.Store(c.Load() + 1)
         return x.k < y.k
     })
@@ -76,7 +77,7 @@ Run(out: mut Writer, a: &Arena, keys: []int, queries: []int): OutOfMemory|WriteE
     d2 := IdDigest(l2.Done())
     c.Store(0)
     xs := l.Done()
-    xs.SortStable(ByKey)
+    try xs.SortStable(a.Alloc(), ByKey)
     cmps := c.Load()
     d := IdDigest(xs)
     h := d.h
@@ -85,9 +86,9 @@ Run(out: mut Writer, a: &Arena, keys: []int, queries: []int): OutOfMemory|WriteE
         try Print(out, "SortStable by a literal differs: {cmpsw} {x} ", (cmpsw, x: d2.h))
     }
     if d3.h != h || d3.sorted != sorted {
-        try Print(out, "SortStableIn differs: {x} ", (x: d3.h))
+        try Print(out, "SortStableInPlace differs: {x} ", (x: d3.h))
     }
-    try Print(out, "{cmps} {cmpsin} {h} {sorted}", (cmps, cmpsin, h, sorted))
+    try Print(out, "{cmps} {cmpsip} {h} {sorted}", (cmps, cmpsip, h, sorted))
     c.Store(0)
     for q in queries {
         i := xs.Search(&q, KeyLess)
@@ -110,7 +111,7 @@ QKey(a: &Q, k: &int): bool {
     return a.k < *k
 }
 
-// The same sort and search, with no counter, so it runs at compile time.
+// The same sort and search, with no counter or allocator, so it runs at compile time.
 Digest(): u64 {
     var xs: [300]Q = [Q(k: 0, id: 0); 300]
     var s: u64 = 5
@@ -118,7 +119,7 @@ Digest(): u64 {
         s = s *% 6364136223846793005 +% 1442695040888963407
         xs[i] = Q(k: Trunc[int](s >> 33) % 23, id: i)
     }
-    xs.SortStable(QLess)
+    xs.SortStableInPlace(QLess)
     var h: u64 = 14695981039346656037
     for i in 0..300 {
         h = (h ^ Trunc[u64](xs[i].id)) *% 1099511628211
@@ -131,7 +132,7 @@ Digest(): u64 {
 
 const Compiled = Digest()
 
-// Digest's sort by SortStableIn, scratch from a, so it runs at compile
+// Digest's sort by SortStable, scratch from a, so it runs at compile
 // time over EvalArena's allocator; 0 if a fails.
 DigestIn(a: &Arena): u64 {
     var xs: [300]Q = [Q(k: 0, id: 0); 300]
@@ -140,7 +141,7 @@ DigestIn(a: &Arena): u64 {
         s = s *% 6364136223846793005 +% 1442695040888963407
         xs[i] = Q(k: Trunc[int](s >> 33) % 23, id: i)
     }
-    xs.SortStableIn(a.Alloc(), QLess) else {
+    xs.SortStable(a.Alloc(), QLess) else {
         return 0
     }
     var h: u64 = 14695981039346656037
@@ -157,23 +158,23 @@ const CompiledIn = DigestIn(EvalArena())
 `
 
 // goStable sorts (key, id) pairs by key with the Go models of SortStable
-// and SortStableIn, for their less calls, and with slices.SortStableFunc,
+// and SortStableInPlace, for their less calls, and with slices.SortStableFunc,
 // for the order, which both models must give; then for each query
 // Search's index over the sorted keys by searchModel (which must agree with
 // sort.Search), counting less calls.
 func goStable(t *testing.T, keys, queries []int) string {
 	xs := blkWant(keys)
-	// P is 24 bytes (two ints and a reference), which sets the scratch.
-	m, mi := driftRunModel(keys, false, 24), driftRunModel(keys, true, 24)
+	// P is 24 bytes (two ints and a reference), which sets the scratch and cache.
+	m, mip := driftRunModel(keys, false, 24), blkRunModel(keys, false, blkCacheCap(24, 8))
 	ids := make([]int, len(xs))
 	for i, x := range xs {
 		ids[i] = x.id
-		if m.s[i] != x || mi.s[i] != x {
+		if m.s[i] != x || mip.s[i] != x {
 			t.Fatalf("the models and slices.SortStableFunc differ at %d", i)
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d %d %d true", m.cmps, mi.cmps, idDigest(ids))
+	fmt.Fprintf(&b, "%d %d %d true", m.cmps, mip.cmps, idDigest(ids))
 	sc := 0
 	for _, q := range queries {
 		i := searchModel(len(xs), func(h int) bool { sc++; return xs[h].k < q })
@@ -228,18 +229,19 @@ func stableQueries(keys []int) []int {
 }
 
 // TestStdColl_StableSortMatchesGo: Slice[T].SortStable (by a named comparator
-// and by a capturing literal) and Slice[T].SortStableIn, called from user
+// and by a capturing literal) and Slice[T].SortStableInPlace, called from user
 // code. Over every pattern of sortCases (and every length 0 to 70) the number
-// of less calls of SortStable and of SortStableIn equals their Go models'
-// (driftRunModel, std-coll_drift_model_test.go) on the same input, and the
+// of less calls of SortStable and of SortStableInPlace equals their Go models'
+// (driftRunModel, blkRunModel) on the same input, and the
 // order of the ids equals slices.SortStableFunc's (a stable order is unique,
 // so this is also the stability check). SortStable on a List with a capturing
 // literal gives the same count and order. Search, with an int key over P
 // elements (K differs from T), gives sort.Search's index with searchModel's
 // number of less calls for keys present, absent, below the first and above
 // the last.
-// The same sorts and search run at compile time (a const, SortStableIn over
-// EvalArena's allocator) give the native result.
+// The same sorts and search run at compile time (a const with
+// SortStableInPlace, and SortStable over EvalArena's allocator) give the
+// native result.
 func TestStdColl_StableSortMatchesGo(t *testing.T) {
 	t.Parallel()
 	var src, calls, want strings.Builder

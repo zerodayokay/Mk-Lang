@@ -1,6 +1,6 @@
 # Why Mk looks like this
 
-Mk is a memory-safe systems language with no garbage collector, no hidden control flow and no hidden allocation (one exception: `SortStable` takes scratch memory from the process heap). It is deliberately small and explicit. Each thing has one way to be written, and Mk leaves out abstractions whose main purpose is convenience. The aim is code that a person can review quickly and an AI agent can write correctly, in a language small enough to fit whole in an agent's context.
+Mk is a memory-safe systems language with no garbage collector, no hidden control flow and no hidden allocation. It is deliberately small and explicit. Each thing has one way to be written, and Mk leaves out abstractions whose main purpose is convenience. The aim is code that a person can review quickly and an AI agent can write correctly, in a language small enough to fit whole in an agent's context.
 
 Most answers below come back to that aim: a feature that saves typing but hides what the code does, or adds a second way to say the same thing, stays out. This page answers the questions people ask most about what Mk includes, what it leaves out, and why.
 
@@ -40,7 +40,7 @@ Most data in a request, a query or a short program dies together. `List`, `Map` 
 
 ### Why pass allocators explicitly?
 
-So a signature shows whether a function can allocate. A function can allocate only if a parameter can reach an allocator: an `&Arena`, an `&Alloc`, an `&Heap`, or a value holding one. Odin's implicit `context` allocator and Rust's global allocator are state a signature does not show. `Main` receives the program's arena and heap in `sys`; there is no global allocator. The one exception is `SortStable`: it takes scratch memory from the process heap and frees it before it returns.
+So a signature shows whether a function can allocate. A function can allocate only if a parameter can reach an allocator: an `&Arena`, an `&Alloc`, an `&Heap`, or a value holding one. Odin's implicit `context` allocator and Rust's global allocator are state a signature does not show. `Main` receives the program's arena and heap in `sys`; there is no global allocator.
 
 ### Why no null, and no zero values?
 
@@ -143,7 +143,7 @@ So `len - 1` on an empty slice gives -1, which you can see, rather than wrapping
 
 ### Why is `str` always UTF-8, with no `+`?
 
-A `str` is a view that is always valid UTF-8, so text functions never re-check it. Indexing is by byte offset. There is no `+` on strings because nothing allocates implicitly (`SortStable`'s scratch aside): build text with `Text` or `arena.Fmt`. A `Path` holds the bytes the OS gives, which may not be UTF-8.
+A `str` is a view that is always valid UTF-8, so text functions never re-check it. Indexing is by byte offset. There is no `+` on strings because nothing allocates implicitly: build text with `Text` or `arena.Fmt`. A `Path` holds the bytes the OS gives, which may not be UTF-8.
 
 ## Compile time
 

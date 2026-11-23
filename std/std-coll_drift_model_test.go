@@ -1,6 +1,6 @@
-// Why: SortStable and SortStableIn sort through scratch memory by a port
-// of Rust's driftsort, whose many size-dependent paths the Mk tests check
-// against a model that must follow the Mk body exactly.
+// Why: SortStable sorts through scratch memory by a port of Rust's driftsort,
+// whose many size-dependent paths the Mk tests check against a model that
+// must follow the Mk body exactly.
 // What: the Go model of mem_drift.mk's DriftStable, DriftIn and DriftSort
 // (driftStable, bufSort, drift and its helpers, on blkModel) and
 // TestStdColl_DriftModelMatchesGo.
@@ -51,9 +51,9 @@ func (m *blkModel[T]) elemSize() int {
 	return 16
 }
 
-// driftStable is SortStable's body (DriftStable at run time): StableSort up
-// to driftInsertMax, else DriftSort through DriftScratchLen slots, on the
-// stack or from the heap alike.
+// driftStable is SortStable's body (DriftStable): StableSort up to
+// driftInsertMax, else DriftSort through DriftScratchLen slots, on the
+// stack or from its allocator alike.
 func (m *blkModel[T]) driftStable() {
 	n := len(m.s)
 	if n <= driftInsertMax {
@@ -63,8 +63,7 @@ func (m *blkModel[T]) driftStable() {
 	m.driftWith(n, driftScratchLen(n, m.elemSize()))
 }
 
-// bufSort is SortStableIn's body: StableSort below 2 * blkRun, else
-// DriftSort through n / 2 slots.
+// bufSort models DriftSort through half-slice (n / 2) scratch slots.
 func (m *blkModel[T]) bufSort() {
 	n := len(m.s)
 	if n < 2*blkRun {
@@ -734,8 +733,9 @@ func (m *blkModel[T]) mergeUp(x place, nx int, y place, ny int, dst place) {
 	}
 }
 
-// driftRunModel sorts keys' pairs by key with SortStable's model (stable)
-// or SortStableIn's, for elements of size bytes.
+// driftRunModel sorts keys' pairs by key with SortStable's full-scratch model
+// (in == false) or its half-slice fallback model (in == true), for elements
+// of size bytes.
 func driftRunModel(keys []int, in bool, size int) *blkModel[blkKey] {
 	m := &blkModel[blkKey]{s: blkPairs(keys), less: func(a, b *blkKey) bool { return a.k < b.k }, size: size}
 	if in {

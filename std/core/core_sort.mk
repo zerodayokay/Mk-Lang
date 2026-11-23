@@ -1,13 +1,11 @@
-// Why: sorting must be fast on every input shape; the prelude gives an
-// unstable sort, a stable one and binary search with no allocator in sight,
-// and the stable sort needs one that allocates nothing for when it has no
-// scratch memory.
+// Why: sorting must be fast on every input shape; layer 0 gives an
+// unstable sort, an in-place stable sort and binary search with no
+// allocator in sight, usable at compile time and in freestanding builds.
 //
-// What: Slice[T].Sort (pdqsort), Slice[T].Search and StableSort (a block
-// merge sort), with their partition, network, insertion, heap and merge
-// helpers. StableSort is SortStable's in-place sort, for when it has no
-// scratch memory; SortStable and SortStableIn, which allocate, are in
-// coll_sort.mk.
+// What: Slice[T].Sort (pdqsort), Slice[T].SortStableInPlace (a block merge
+// sort), Slice[T].Search and StableSort, with their partition, network,
+// insertion, heap and merge helpers. Slice[T].SortStable, which takes an
+// allocator for scratch memory, is in coll_sort.mk.
 //
 // How: Sort is Go's pdqsort_func (Go 1.27, zsortfunc.go): ninther pivots,
 // pattern breaking with a xorshift seeded by the length, heapsort after too
@@ -107,6 +105,22 @@ export Slice[T].Sort(mut self, const less: fn(&T, &T): bool) {
         return
     }
     Pdq(s, 0, n, BitLen(n), less)
+}
+
+/// Sorts the elements by less, keeping equal elements in their order,
+/// strictly in place with no allocator or heap allocation. O(n log n)
+/// calls of less and O(n log n) moves on every input, with a fixed
+/// stack cache of at most 4,096 bytes for elements aligned to at most 8.
+/// Works at compile time and in freestanding programs. The algorithm is
+/// a block merge sort. For faster sorting through scratch memory from
+/// an allocator, use SortStable.
+export Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool) {
+    s := self.ItemsMut()
+    if s.Len() < 2 * BlkRun {
+        PdqInsertion(s, 0, s.Len(), less)
+        return
+    }
+    StableSort(s, less)
 }
 
 // BitLen is Go's bits.Len(uint(n)) for n >= 0.

@@ -1,8 +1,7 @@
 // Why: under an order the clamps of core_sort.mk never run, so the order
 // oracle cannot test them; relations that are no order can.
 // What: TestStdColl_BlockMergeIter, TestStdColl_BlockMergeModelTargeted and
-// TestStdColl_BlockMergeMkNoOrder, over SortStable, SortStableIn and the
-// in-place sort (sortfix.InPlace).
+// TestStdColl_BlockMergeMkNoOrder, over SortStable and SortStableInPlace.
 // How: the Mk sorts must give the models' exact order and less count under
 // seven non-order relations; targeted inputs reach each buffer path.
 
@@ -22,7 +21,7 @@ import (
 // 64 to 2^k + 64 for k = 15 to 20, and 3000 sizes between, each level of
 // BlkIter tiles 0..n in whole pairs whose runs are dstep or dstep + 1 long,
 // the base runs are blkRun to 2 blkRun long, and the shorter run of a pair
-// is at most n / 2, the scratch SortStableIn takes.
+// is at most n / 2, the minimum scratch SortStable takes.
 func TestStdColl_BlockMergeIter(t *testing.T) {
 	t.Parallel()
 	var ns []int
@@ -222,9 +221,7 @@ func blkNoOrderRel(rel int, a, b *blkKey) bool {
 
 const blkNoOrderRels = 8
 
-const blockNoOrderHead = `import std.sortfix
-
-struct P {
+const blockNoOrderHead = `struct P {
     k: int
     id: int
 }
@@ -303,38 +300,27 @@ Run(out: mut Writer, a: &Alloc, rel: int, pat: int, n: int, d: int): OutOfMemory
     defer l.Free(a)
     var l2 := HeapList[P].New(a)
     defer l2.Free(a)
-    var l3 := HeapList[P].New(a)
-    defer l3.Free(a)
     for _ in 0..n {
         try l.Push(a, P(k: 0, id: 0))
         try l2.Push(a, P(k: 0, id: 0))
-        try l3.Push(a, P(k: 0, id: 0))
     }
     Keys(pat, d, l.ItemsMut())
     Keys(pat, d, l2.ItemsMut())
-    Keys(pat, d, l3.ItemsMut())
     c := Cell[int].New(0)
-    l.SortStable(fn(x: &P, y: &P): bool {
+    try l.SortStable(a, fn(x: &P, y: &P): bool {
         c.Store(c.Load() + 1)
         return Rel(rel, x, y)
     })
     cmps := c.Load()
     h := Digest(l.Items())
     c.Store(0)
-    try l2.SortStableIn(a, fn(x: &P, y: &P): bool {
+    l2.SortStableInPlace(fn(x: &P, y: &P): bool {
         c.Store(c.Load() + 1)
         return Rel(rel, x, y)
     })
     cmps2 := c.Load()
     h2 := Digest(l2.Items())
-    c.Store(0)
-    sortfix.InPlace(l3.ItemsMut(), fn(x: &P, y: &P): bool {
-        c.Store(c.Load() + 1)
-        return Rel(rel, x, y)
-    })
-    cmps3 := c.Load()
-    h3 := Digest(l3.Items())
-    try Print(out, "{rel} {pat} {n} {d} {h} {cmps} {h2} {cmps2} {h3} {cmps3}\n", (rel, pat, n, d, h, cmps, h2, cmps2, h3, cmps3))
+    try Print(out, "{rel} {pat} {n} {d} {h} {cmps} {h2} {cmps2}\n", (rel, pat, n, d, h, cmps, h2, cmps2))
 }
 `
 
@@ -371,8 +357,8 @@ func blkNoOrderKeys(pat, d, n int) []int {
 
 type blkNoOrderCase struct{ rel, pat, n, d int }
 
-// The models blkNoOrderModel runs: the in-place sort (StableSort), and
-// SortStable's and SortStableIn's bodies (DriftSort).
+// The models blkNoOrderModel runs: SortStableInPlace (StableSort), and
+// SortStable's full-scratch and half-scratch bodies (DriftSort).
 const (
 	noOrderInPlace = iota
 	noOrderStable
@@ -449,7 +435,7 @@ func blockNoOrderProgram(cases []blkNoOrderCase) (src, want string, clamped int)
 	fmt.Fprintf(&b, "    for i in 0..%d {\n        a := if i %% 2 == 0 { h } else { ar }\n        try Run(mut out, a, Cases[4 * i], Cases[4 * i + 1], Cases[4 * i + 2], Cases[4 * i + 3])\n    }\n}\n", len(cases))
 	for _, c := range cases {
 		fmt.Fprintf(&w, "%d %d %d %d", c.rel, c.pat, c.n, c.d)
-		for _, kind := range []int{noOrderStable, noOrderIn, noOrderInPlace} {
+		for _, kind := range []int{noOrderStable, noOrderInPlace} {
 			m := blkNoOrderModel(c, kind)
 			if m.clamps > 0 {
 				clamped++
@@ -472,9 +458,8 @@ func blockNoOrderProgram(cases []blkNoOrderCase) (src, want string, clamped int)
 	return b.String(), w.String(), clamped
 }
 
-// TestStdColl_BlockMergeMkNoOrder: the Mk SortStable, SortStableIn and
-// in-place sort give the models' order (the digest of the ids) and less
-// count exactly, under
+// TestStdColl_BlockMergeMkNoOrder: the Mk SortStable and SortStableInPlace
+// give the models' order (the digest of the ids) and less count exactly, under
 // the order and the seven relations of blkNoOrderRel, in dev and release:
 // the check that the clamps, BlkRotate's guard and every path a relation
 // that is no order reaches are the models' too. The cases go in programs
@@ -498,7 +483,7 @@ func TestStdColl_BlockMergeMkNoOrder(t *testing.T) {
 		src, want, clamped := blockNoOrderProgram(ch)
 		total += clamped
 		for _, flags := range [][]string{nil, {"--release"}} {
-			diffLines(t, collExec(t, collBuildWith(t, sortFix, src, flags...)), want)
+			diffLines(t, collExec(t, collBuildWith(t, nil, src, flags...)), want)
 		}
 	}
 	if total == 0 {

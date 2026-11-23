@@ -1,10 +1,9 @@
 // Why: an in-place stable sort makes several times the moves and calls of
-// less that a merge through scratch memory makes, so SortStable and
-// SortStableIn sort through scratch whenever they can have it.
+// less that a merge through scratch memory makes, so SortStable sorts
+// through scratch memory from the caller's allocator.
 //
-// What: DriftStable (SortStable's body), DriftIn (SortStableIn's), DriftSort
-// and its run, merge, quicksort and partition helpers, and SortHeapInit,
-// which gives SortStable the process heap.
+// What: DriftStable (SortStable's body), DriftIn, DriftSort and its run,
+// merge, quicksort and partition helpers.
 //
 // How: Rust's driftsort (core::slice::sort::stable, Orson Peters and Lukas
 // Bergdoll): runs found in the input (non-descending, or strictly descending
@@ -15,11 +14,10 @@
 // makes k distinct keys cost O(n log k); merges are branch-free, the
 // shorter run moved out. The scratch is n / 2 elements or more: n while
 // that is at most DriftFullBytes, as Rust's; a slice whose scratch fits in
-// 4,096 bytes uses the stack, as Rust's does. SortStable takes larger
-// scratch from the process heap, which rt.HeapInit registers at start
-// (SortHeapInit); before then (at compile time, in a freestanding program)
-// and when the heap is out of memory it sorts in place (core_sort.mk's
-// StableSort). The order is the same either way: a stable order is unique.
+// 4,096 bytes uses the stack, as Rust's does. Larger scratch comes from the
+// allocator passed to SortStable, falling back to n / 2 elements if the
+// larger block is refused, and returning false (OutOfMemory) before any
+// element moves if even n / 2 elements cannot be allocated.
 //
 // Every move is a slot helper's (mem_slots.mk), from a slot that holds a
 // value into one that holds none, so each element has exactly one live home
@@ -32,19 +30,6 @@
 // so a panicking less drops or doubles nothing.
 
 import std.raw
-
-// SortHeap is the address of the Alloc SortStable takes its scratch from,
-// the process heap's, or 0 until rt.HeapInit registers it.
-var SortHeap: raw.Atomic[u64] = raw.Atomic[u64].New(0)
-
-/// Internal to std: registers h as the heap SortStable takes scratch
-/// memory from. rt.HeapInit calls it once, at start, before any task runs. O(1);
-/// it allocates nothing.
-export SortHeapInit(h: &Heap) {
-    // Edge: stored before any task exists, as NativeInit's store, so every
-    // later load on a task reads it.
-    SortHeap.Store(u64(raw.Addr(raw.Of(h.Alloc()))))
-}
 
 // DriftInsertMax is the longest slice sorted by insertion alone, with no
 // scratch (Rust's MAX_LEN_ALWAYS_INSERTION_SORT).
@@ -88,31 +73,31 @@ DriftStackCap[T](): int {
 }
 
 // DriftStable sorts s stably (SortStable's body): by insertion up to
-// DriftInsertMax; else by DriftOnStack when the scratch fits the stack
-// scratch, else by DriftFrom through the registered heap, which sorts in
-// place when there is none or it is out of memory. The stack scratch is in
-// DriftOnStack's frame, so a short slice pays for none.
-DriftStable[T](s: mut []T, const less: fn(&T, &T): bool) {
+// DriftInsertMax, in place for a zero-size T, by DriftOnStack when the
+// scratch fits the stack scratch, else by DriftIn through a (requesting
+// DriftScratchLen slots, falling back to n / 2 slots if a refuses the
+// larger block). Returns false, with s unchanged, when a cannot give even
+// n / 2 slots. The stack scratch is in DriftOnStack's frame, so a short
+// slice pays for none.
+DriftStable[T](s: mut []T, a: &Alloc, const less: fn(&T, &T): bool): bool {
     n := s.Len()
     if n <= DriftInsertMax || SizeOfT[T]() == 0 {
         StableSort(s, less)
-        return
+        return true
     }
     cap := DriftScratchLen[T](n)
     if cap <= DriftStackCap[T]() {
         DriftOnStack(s, cap, less)
-        return
+        return true
     }
-    if Evaluating() {
-        // A compile-time evaluation reads no global: it sorts in place.
-        StableSort(s, less)
-        return
+    if DriftIn(s, a, cap, less) {
+        return true
     }
-    // Edge: SortHeapInit's store happens before any task runs; 0 before it.
-    t := SortHeap.Load()
-    unsafe "t is 0 or the address of the process heap's Alloc, which SortHeapInit registered: static memory that lives until exit" {
-        DriftFrom(s, raw.FromAddr[Alloc](uint(t)), less)
+    half := n / 2
+    if cap > half && DriftIn(s, a, half, less) {
+        return true
     }
+    return false
 }
 
 // DriftOnStack sorts s by DriftSort through cap <= DriftStackCap slots of
@@ -137,21 +122,6 @@ DriftOnStack64[T](s: mut []T, cap: int, const less: fn(&T, &T): bool) {
     unsafe "small is 512 bytes aligned to 8, and DriftStackCap / 8 is at least cap only for a T of 1 to 512 bytes aligned to at most 8: cap slots of T, each aligned, lie in small, and hold no value until a move puts one there" {
         DriftSort(s, raw.PtrCast[[64]u64, T](raw.OfMut(mut small)), cap, s.Len() <= 2 * DriftSmall, less)
     }
-}
-
-// DriftFrom sorts s stably by DriftSort through scratch from the Alloc at
-// a, or in place by StableSort when a is null or out of memory. The caller
-// vouches a is null or a live Alloc.
-DriftFrom[T](s: mut []T, a: *Alloc, const less: fn(&T, &T): bool) {
-    n := s.Len()
-    if n > DriftInsertMax && SizeOfT[T]() != 0 && !raw.IsNull(a) {
-        unsafe "the caller vouches a, not null, is a live Alloc" {
-            if DriftIn(s, &*a, DriftScratchLen[T](n), less) {
-                return
-            }
-        }
-    }
-    StableSort(s, less)
 }
 
 // DriftIn sorts s, longer than DriftInsertMax, by DriftSort through cap
@@ -353,9 +323,9 @@ DriftQuick[T](s: mut []T, a0: int, b0: int, buf: *T, cap: int, limit0: int, anc0
 // first 8 (from 16 elements) or 4 sorted into buf, by DriftSort8 or
 // DriftSort4, the rest of each half moved after them one by one and
 // inserted, and the halves merged back into s by DriftBidi. That takes
-// len + 16 slots of buf, which SortStable always has (DriftScratchLen is
-// at least DriftSmallScratch) and SortStableIn from 96 elements (cap =
-// n / 2 >= 48). With fewer, DriftSmallNarrow sorts the range. Every value
+// len + 16 slots of buf, which SortStable's DriftScratchLen always has (at
+// least DriftSmallScratch) and its half-slice fallback has from 96 elements
+// (cap = n / 2 >= 48). With fewer, DriftSmallNarrow sorts the range. Every value
 // stays in one slot of s or buf at every call of less.
 DriftSmallSort[T](s: mut []T, a: int, b: int, buf: *T, cap: int, const less: fn(&T, &T): bool) {
     len := b - a
@@ -404,7 +374,7 @@ DriftExtend[T](src: *T, dst: *T, k: int, n: int, const less: fn(&T, &T): bool) {
 }
 
 // DriftSmallNarrow is DriftSmallSort with fewer than len + 16 slots of
-// scratch (SortStableIn's half of a slice under 96 elements):
+// scratch (SortStable's half-slice fallback on a slice under 96 elements):
 // each half sorted in place, its first 8 or 4 through buf, then the left
 // half moved out and DriftMerge's merge of the two.
 DriftSmallNarrow[T](s: mut []T, a: int, b: int, buf: *T, cap: int, const less: fn(&T, &T): bool) {
@@ -612,8 +582,8 @@ DriftPartition[T](s: mut []T, a: int, b: int, pivot: int, const left: bool, buf:
         e := if k == k1 { k2 } else { b }
         DriftSpan(p, k + 1, e, pv, left, buf, mut nl, mut r, less)
     }
-    SlotCopy(SlotAt(buf, pslot), SlotAt(p, pivot), 1) // the pivot to its reserved slot
-    SlotCopy(SlotAt(p, a), buf, nl) // s[a..b] are all holes now
+    SlotCopy(SlotAt(buf, pslot), SlotAt(p, pivot), 1)          // the pivot to its reserved slot
+    SlotCopy(SlotAt(p, a), buf, nl)                            // s[a..b] are all holes now
     DriftCopyRev(SlotAt(p, a + nl), SlotAt(buf, nl), len - nl) // the right side, reversed
     // buf[d] went to s[a + d] for d < nl, else to s[b - 1 - d + nl].
     if t == pivot {

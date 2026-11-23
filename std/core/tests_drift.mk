@@ -1,11 +1,12 @@
-// Why: SortStable takes scratch memory from the process heap and falls back
-// to sorting in place, so where its memory comes from, how much it takes,
-// that it gives it back, and that the fallback sorts, all need a test, as do
-// the lengths around the scratch's limits.
-// What: tests of mem_drift.mk: the registered heap, the scratch's block
-// and its free through a counting allocator, the fallback when that fails,
-// every length to 1,100 and on to 5,000, lengths whose scratch is only half
-// the slice, and a less that panics mid-sort.
+// Why: SortStable takes scratch memory from the stack or from its explicit
+// allocator and fails cleanly on OutOfMemory, so where its memory comes
+// from, how much it takes, that it gives it back, and its half-slice
+// fallback and OOM behavior all need tests, as do the lengths around the
+// scratch's limits.
+// What: tests of mem_drift.mk: the scratch's block and its free through a
+// counting allocator, the half-slice fallback and OutOfMemory before any
+// move, every length to 1,100 and on to 5,000, lengths whose scratch is
+// only half the slice, and a less that panics mid-sort.
 // How: TdCount wraps the process heap and counts; the sorts are checked by
 // tests_sort.mk's TsRun (order, stability, permutation, sentinels). Helper
 // names start with Td, because every file of std/core is one module.
@@ -74,62 +75,65 @@ TdStable(xs: []TsP16): bool {
     return true
 }
 
-test "at run time SortStable takes its scratch from the process heap" (sys: &System) {
-    Assert(SortHeap.Load() == u64(raw.Addr(raw.Of(sys.heap.Alloc()))))
-}
-
-test "SortStable's body takes one block of DriftScratchLen elements, frees it before it returns, and sorts in place when the block is refused" (sys: &System) {
+test "SortStable uses stack scratch up to 4,096 bytes, takes one block of DriftScratchLen elements from its allocator beyond that, falls back to Len() / 2, and fails OutOfMemory before moving anything" (sys: &System) {
     var c := TdCount(inner: raw.Of(sys.heap.Alloc()), allocs: 0, frees: 0, bytes: 0, refuse: false, limit: 0)
     var ctx := raw.Null[u8]()
     unsafe "a pointer cast: TdTable's entries cast it back to the TdCount" {
         ctx = raw.PtrCast[TdCount, u8](raw.OfMut(mut c))
     }
     h := MakeHeap(ctx, raw.Of(&TdTable))
-    a := raw.Of(h.Alloc())
+    a := h.Alloc()
     xs := try sys.arena.Slice[TsP16](3_000)
-    for n in [20, 21, 1_000, 3_000] {
+    for n in [20, 21, 256, 257, 1_000, 3_000] {
         c.allocs = 0
         c.frees = 0
         c.bytes = 0
         TdFill(mut xs[0..n])
-        DriftFrom(mut xs[0..n], a, TdLess)
+        try (mut xs[0..n]).SortStable(a, TdLess)
         Assert(TdStable(xs[0..n]))
-        if n <= DriftInsertMax {
+        if n <= DriftInsertMax || DriftScratchLen[TsP16](n) <= DriftStackCap[TsP16]() {
             Assert(c.allocs == 0 && c.frees == 0)
         } else {
             Assert(c.allocs == 1 && c.frees == 1 && c.bytes == DriftScratchLen[TsP16](n) * 16)
         }
     }
-    // SortStableIn takes half the slice from the allocator it is given.
+    // When the allocator refuses DriftScratchLen, SortStable falls back to
+    // Len() / 2 elements (rounded down) and frees that block before returning.
     c.allocs = 0
     c.frees = 0
-    TdFill(mut xs[..])
-    try xs.SortStableIn(h.Alloc(), TdLess)
-    Assert(TdStable(xs[..]) && c.allocs == 1 && c.frees == 1 && c.bytes == 1_500 * 16)
-    // An odd length needs no more than Len() / 2, rounded down.
     c.limit = 1_499 * 16
     TdFill(mut xs[0..2_999])
-    try (mut xs[0..2_999]).SortStableIn(h.Alloc(), TdLess)
-    Assert(TdStable(xs[0..2_999]) && c.bytes == 1_499 * 16)
+    try (mut xs[0..2_999]).SortStable(a, TdLess)
+    Assert(TdStable(xs[0..2_999]) && c.frees == 1 && c.bytes == 1_499 * 16)
+    // Below Len() / 2 elements, SortStable fails with OutOfMemory before
+    // moving any element, leaving the slice unchanged.
     c.limit = 1_498 * 16
+    c.frees = 0
     TdFill(mut xs[0..2_999])
     var refused := false
-    (mut xs[0..2_999]).SortStableIn(h.Alloc(), TdLess) else {
+    (mut xs[0..2_999]).SortStable(a, TdLess) else {
         refused = true
     }
     var unchanged := true
     for i in 0..2_999 {
         unchanged = unchanged && xs[i].id == i
     }
-    Assert(refused && unchanged)
+    Assert(refused && unchanged && c.frees == 0)
     c.limit = 0
-    // Refused, the body sorts in place: one request, nothing to free.
+    // Refused altogether: fails OutOfMemory, nothing to free, slice unchanged.
     c.refuse = true
     c.allocs = 0
     c.frees = 0
     TdFill(mut xs[..])
-    DriftFrom(mut xs[..], a, TdLess)
-    Assert(TdStable(xs[..]) && c.allocs == 1 && c.frees == 0)
+    var oom := false
+    xs.SortStable(a, TdLess) else {
+        oom = true
+    }
+    var still := true
+    for i in 0..3_000 {
+        still = still && xs[i].id == i
+    }
+    Assert(oom && still && c.frees == 0)
 }
 
 test "the scratch is the whole slice up to 8,000,000 bytes and half of it beyond, 48 elements at least, and the stack holds 4,096 bytes of it" {
@@ -151,7 +155,7 @@ test "SortStable at every length to 1,100 and every 7th to 5,000, on runs and re
     }
 }
 
-test "SortStable and SortStableIn of 450,000 40-byte elements, whose scratch is half the slice, are stable and a permutation" (sys: &System) {
+test "SortStable of 450,000 40-byte elements, whose scratch is half the slice, is stable and a permutation" (sys: &System) {
     h := sys.heap.Alloc()
     n := 450_000
     Assert(DriftScratchLen[TsP40](n) == n - n / 2)
@@ -170,7 +174,7 @@ test "a less that panics in the middle of SortStable ends the program with its p
         xs[i] = Cast[u64](TlNext(mut s))
     }
     calls := Cell[int].New(0)
-    xs.SortStable(fn(a: &u64, b: &u64): bool {
+    try xs.SortStable(sys.heap.Alloc(), fn(a: &u64, b: &u64): bool {
         calls.Store(calls.Load() + 1)
         if calls.Load() == 5_000 {
             Panic("less panics at its 5,000th call")
@@ -182,7 +186,7 @@ test "a less that panics in the middle of SortStable ends the program with its p
 // TdEvalWords sorts 150 TsWord (3,600 bytes, so the scratch is on the
 // stack) stably by length, so at compile time the stack scratch holds
 // values with pointers, and digests the ids.
-TdEvalWords(): u64 {
+TdEvalWords(a: &Arena): u64 {
     letters := "abcdefghi"
     var xs: [150]TsWord = [TsWord(w: "", id: 0); 150]
     var s: u64 = 13
@@ -190,7 +194,9 @@ TdEvalWords(): u64 {
         n := 1 + TlNext(mut s) % 9
         xs[i] = TsWord(w: letters[0..n], id: i)
     }
-    xs.SortStable(TsWordLess)
+    xs.SortStable(a.Alloc(), TsWordLess) else {
+        return 0
+    }
     var h: u64 = 14695981039346656037
     for i in 0..150 {
         h = (h ^ Trunc[u64](xs[i].id * 16 + xs[i].w.Len())) *% 1099511628211
@@ -198,20 +204,22 @@ TdEvalWords(): u64 {
     return h
 }
 
-const TdEvalWordsC = TdEvalWords() fuel 200_000_000
+const TdEvalWordsC = TdEvalWords(EvalArena()) fuel 200_000_000
 
-test "SortStable through the stack scratch of elements holding pointers at compile time gives the native result" {
+test "SortStable through the stack scratch of elements holding pointers at compile time gives the native result" (sys: &System) {
     Assert(DriftScratchLen[TsWord](150) * SizeOf[TsWord]() <= DriftStackCap[TsWord]() * SizeOf[TsWord]())
-    Assert(TdEvalWordsC == TdEvalWords())
+    Assert(TdEvalWordsC == TdEvalWords(sys.arena))
 }
 
-TdBigTask(done: &raw.Atomic[i64]) {
+TdBigTask(h: &Heap, done: &raw.Atomic[i64]) {
     var xs: [2_000]u64 = [0; 2_000]
     var s: u64 = 9
     for i in 0..2_000 {
         xs[i] = Cast[u64](TlNext(mut s))
     }
-    xs.SortStable(TsLessU64)
+    xs.SortStable(h.Alloc(), TsLessU64) else {
+        return
+    }
     var ok := true
     for i in 1..2_000 {
         ok = ok && xs[i - 1] <= xs[i]
@@ -226,7 +234,7 @@ TdBigTask(done: &raw.Atomic[i64]) {
 test "SortStable of 2,000 elements, through the heap's scratch, runs on a task's smallest stack (64 KiB)" (sys: &System) {
     done := raw.Atomic[i64].New(0)
     scope s := sys.io.ScopeWith(Limits(tasks: 1, stack: StackSize.Bytes(n: 65_536))) {
-        s.go TdBigTask(&done)
+        s.go TdBigTask(sys.heap, &done)
     }
     Assert(done.Load() == 1)
 }

@@ -3,7 +3,7 @@
 // What: test blocks for List, HeapList and every Slice[T] function on []T,
 // [N]T, List and HeapList: sorts, search, Extend, Truncate and the views.
 // How: run by `mk test --std=std.core` with the counting heap (a leak fails
-// with exit 102, so SortStableIn's scratch is checked freed). Helper names
+// with exit 102, so SortStable's scratch is checked freed). Helper names
 // start with Tl, because every file of std/core is one module. The rows that
 // panic are whole programs in std/std-coll_bounds_test.go,
 // std-coll_linear_test.go and std-coll_slice_test.go.
@@ -70,9 +70,9 @@ TlFalse(a: &TlPair, b: &TlPair): bool {
 }
 
 // TlSortBy sorts s with one of the six sorts (way 0 Sort, 1 Sort with a
-// capturing literal, 2 SortStable, 3 SortStable with a capturing literal,
-// 4 SortStableIn from h, 5 SortStableIn with a capturing literal; the
-// literals replace the old With forms) under one relation (rel 0
+// capturing literal, 2 SortStable from h, 3 SortStable with a capturing
+// literal, 4 SortStableInPlace, 5 SortStableInPlace with a capturing literal;
+// the literals replace the old With forms) under one relation (rel 0
 // TlChaos, 1 TlTrue, 2 TlFalse; the literals read seed, so they capture).
 TlSortBy(s: mut []TlPair, h: &Alloc, way: int, rel: int, seed: &u64): OutOfMemory!void {
     if rel == 0 {
@@ -81,13 +81,13 @@ TlSortBy(s: mut []TlPair, h: &Alloc, way: int, rel: int, seed: &u64): OutOfMemor
         } else if way == 1 {
             s.Sort(fn(a: &TlPair, b: &TlPair): bool { return TlCoin(a.id, b.id, *seed) })
         } else if way == 2 {
-            s.SortStable(TlChaos)
+            try s.SortStable(h, TlChaos)
         } else if way == 3 {
-            s.SortStable(fn(a: &TlPair, b: &TlPair): bool { return TlCoin(a.id, b.id, *seed) })
+            try s.SortStable(h, fn(a: &TlPair, b: &TlPair): bool { return TlCoin(a.id, b.id, *seed) })
         } else if way == 4 {
-            try s.SortStableIn(h, TlChaos)
+            s.SortStableInPlace(TlChaos)
         } else {
-            try s.SortStableIn(h, fn(a: &TlPair, b: &TlPair): bool { return TlCoin(a.id, b.id, *seed) })
+            s.SortStableInPlace(fn(a: &TlPair, b: &TlPair): bool { return TlCoin(a.id, b.id, *seed) })
         }
     } else if rel == 1 {
         if way == 0 {
@@ -95,13 +95,13 @@ TlSortBy(s: mut []TlPair, h: &Alloc, way: int, rel: int, seed: &u64): OutOfMemor
         } else if way == 1 {
             s.Sort(fn(a: &TlPair, b: &TlPair): bool { return *seed == *seed })
         } else if way == 2 {
-            s.SortStable(TlTrue)
+            try s.SortStable(h, TlTrue)
         } else if way == 3 {
-            s.SortStable(fn(a: &TlPair, b: &TlPair): bool { return *seed == *seed })
+            try s.SortStable(h, fn(a: &TlPair, b: &TlPair): bool { return *seed == *seed })
         } else if way == 4 {
-            try s.SortStableIn(h, TlTrue)
+            s.SortStableInPlace(TlTrue)
         } else {
-            try s.SortStableIn(h, fn(a: &TlPair, b: &TlPair): bool { return *seed == *seed })
+            s.SortStableInPlace(fn(a: &TlPair, b: &TlPair): bool { return *seed == *seed })
         }
     } else {
         if way == 0 {
@@ -109,13 +109,13 @@ TlSortBy(s: mut []TlPair, h: &Alloc, way: int, rel: int, seed: &u64): OutOfMemor
         } else if way == 1 {
             s.Sort(fn(a: &TlPair, b: &TlPair): bool { return *seed != *seed })
         } else if way == 2 {
-            s.SortStable(TlFalse)
+            try s.SortStable(h, TlFalse)
         } else if way == 3 {
-            s.SortStable(fn(a: &TlPair, b: &TlPair): bool { return *seed != *seed })
+            try s.SortStable(h, fn(a: &TlPair, b: &TlPair): bool { return *seed != *seed })
         } else if way == 4 {
-            try s.SortStableIn(h, TlFalse)
+            s.SortStableInPlace(TlFalse)
         } else {
-            try s.SortStableIn(h, fn(a: &TlPair, b: &TlPair): bool { return *seed != *seed })
+            s.SortStableInPlace(fn(a: &TlPair, b: &TlPair): bool { return *seed != *seed })
         }
     }
 }
@@ -304,49 +304,9 @@ test "Sort, and Sort with a capturing literal, order 1,000 seeded pairs" (sys: &
     }
 }
 
-test "SortStable keeps equal elements in their order" (sys: &System) {
-    var s: u64 = 11
-    for n in [0, 1, 2, 19, 20, 21, 40, 41, 1_000, 5_000] {
-        var l := List[TlPair].New(sys.arena)
-        for i in 0..n {
-            try l.Push(TlPair(k: TlNext(mut s) % 10, id: i))
-        }
-        l.SortStable(TlByK)
-        for i in 1..n {
-            Assert(l[i - 1].k < l[i].k || (l[i - 1].k == l[i].k && l[i - 1].id < l[i].id))
-        }
-        // A second key, stably: by k % 3, ties stay in k order then id order.
-        m := 3
-        l.SortStable(fn(a: &TlPair, b: &TlPair): bool { return a.k % m < b.k % m })
-        for i in 1..n {
-            x := l[i - 1]
-            y := l[i]
-            Assert(x.k % 3 < y.k % 3 || (x.k % 3 == y.k % 3 && (x.k < y.k || (x.k == y.k && x.id < y.id))))
-        }
-    }
-}
-
-test "SortStable on an array, a sub-slice and a HeapList" (sys: &System) {
-    a := sys.heap.Alloc()
-    var arr: [8]TlPair = [TlPair(k: 0, id: 0); 8]
-    for i in 0..8 {
-        arr[i] = TlPair(k: (8 - i) / 3, id: i)
-    }
-    arr.SortStable(TlByK)
-    Assert(arr[0].id == 6 && arr[1].id == 7 && arr[2].id == 3 && arr[4].id == 5 && arr[5].id == 0 && arr[7].id == 2)
-    var h := HeapList[int].New(a)
-    defer h.Free(a)
-    for i in 0..50 {
-        try h.Push(a, (i * 37) % 50)
-    }
-    sub := mut h.ItemsMut()[10..40]
-    sub.SortStable(TlLess)
-    Assert(TlSorted(h.Items()[10..40]) && h[0] == 0 && h[49] == (49 * 37) % 50)
-}
-
-test "SortStableIn keeps equal elements in their order, from a heap or an arena" (sys: &System) {
+test "SortStable and SortStableInPlace keep equal elements in their order, from a heap, an arena, or in place" (sys: &System) {
     var s: u64 = 13
-    for n in [0, 1, 2, 31, 32, 33, 64, 65, 1_000, 5_000] {
+    for n in [0, 1, 2, 19, 20, 21, 31, 32, 33, 64, 65, 256, 257, 1_000, 5_000] {
         var l := List[TlPair].New(sys.arena)
         var l2 := List[TlPair].New(sys.arena)
         for i in 0..n {
@@ -354,44 +314,68 @@ test "SortStableIn keeps equal elements in their order, from a heap or an arena"
             try l.Push(TlPair(k: k, id: i))
             try l2.Push(TlPair(k: k, id: i))
         }
-        try l.SortStableIn(sys.heap.Alloc(), TlByK)
-        l2.SortStable(TlByK)
+        try l.SortStable(sys.heap.Alloc(), TlByK)
+        l2.SortStableInPlace(TlByK)
         for i in 0..n {
             Assert(l[i].id == l2[i].id)
             if i > 0 {
                 Assert(l[i - 1].k < l[i].k || (l[i - 1].k == l[i].k && l[i - 1].id < l[i].id))
             }
         }
-        // A second key, stably, with scratch from the arena.
+        // A second key, stably, with scratch from the arena vs in place.
         m := 3
-        try l.SortStableIn(sys.arena.Alloc(), fn(a: &TlPair, b: &TlPair): bool { return a.k % m < b.k % m })
-        l2.SortStable(fn(a: &TlPair, b: &TlPair): bool { return a.k % m < b.k % m })
+        try l.SortStable(sys.arena.Alloc(), fn(a: &TlPair, b: &TlPair): bool { return a.k % m < b.k % m })
+        l2.SortStableInPlace(fn(a: &TlPair, b: &TlPair): bool { return a.k % m < b.k % m })
         for i in 0..n {
             Assert(l[i].id == l2[i].id)
+            if i > 0 {
+                x := l[i - 1]
+                y := l[i]
+                Assert(x.k % 3 < y.k % 3 || (x.k % 3 == y.k % 3 && (x.k < y.k || (x.k == y.k && x.id < y.id))))
+            }
         }
     }
 }
 
-test "SortStableIn on an array, a sub-slice and a HeapList" (sys: &System) {
+test "SortStable and SortStableInPlace on an array, a sub-slice and a HeapList" (sys: &System) {
     a := sys.heap.Alloc()
     var arr: [40]TlPair = [TlPair(k: 0, id: 0); 40]
+    var arr2: [40]TlPair = [TlPair(k: 0, id: 0); 40]
     for i in 0..40 {
-        arr[i] = TlPair(k: (40 - i) / 3, id: i)
+        p := TlPair(k: (40 - i) / 3, id: i)
+        arr[i] = p
+        arr2[i] = p
     }
-    try arr.SortStableIn(a, TlByK)
+    try arr.SortStable(a, TlByK)
+    arr2.SortStableInPlace(TlByK)
     // Keys 0 (ids 38, 39), 1 (35 to 37), ..., 13 (ids 0, 1).
     Assert(arr[0].id == 38 && arr[1].id == 39 && arr[2].id == 35 && arr[38].id == 0 && arr[39].id == 1)
+    for i in 0..40 {
+        Assert(arr[i].id == arr2[i].id)
+    }
     var h := HeapList[int].New(a)
     defer h.Free(a)
     for i in 0..100 {
         try h.Push(a, (i * 37) % 100)
     }
     sub := mut h.ItemsMut()[10..90]
-    try sub.SortStableIn(a, TlLess)
+    try sub.SortStable(a, TlLess)
     Assert(TlSorted(h.Items()[10..90]) && h[0] == 0 && h[9] == (9 * 37) % 100 && h[90] == (90 * 37) % 100)
-    try h.SortStableIn(a, TlLess)
+    try h.SortStable(a, TlLess)
     for i in 0..100 {
         Assert(h[i] == i)
+    }
+    var h2 := HeapList[int].New(a)
+    defer h2.Free(a)
+    for i in 0..50 {
+        try h2.Push(a, (i * 37) % 50)
+    }
+    sub2 := mut h2.ItemsMut()[10..40]
+    sub2.SortStableInPlace(TlLess)
+    Assert(TlSorted(h2.Items()[10..40]) && h2[0] == 0 && h2[49] == (49 * 37) % 50)
+    h2.SortStableInPlace(TlLess)
+    for i in 0..50 {
+        Assert(h2[i] == i)
     }
 }
 
@@ -409,32 +393,35 @@ TlNoFree(ctx: *u8, p: *u8, size: int, align: int) {
 
 const TlNoTable = AllocTable(alloc: TlNoAlloc, resize: TlNoResize, free: TlNoFree)
 
-test "SortStableIn out of memory fails before any element moves" (sys: &System) {
+test "SortStable out of memory fails before any element moves" (sys: &System) {
     h := MakeHeap(raw.Null[u8](), raw.Of(&TlNoTable))
     none_left := h.Alloc()
+    // 300 16-byte elements exceed the 4,096-byte stack scratch (256 slots),
+    // so SortStable asks none_left and fails before moving any element.
     var l := List[TlPair].New(sys.arena)
-    for i in 0..100 {
-        try l.Push(TlPair(k: 99 - i, id: i))
+    for i in 0..300 {
+        try l.Push(TlPair(k: 299 - i, id: i))
     }
     var failed := false
-    l.SortStableIn(none_left, TlByK) else {
+    l.SortStable(none_left, TlByK) else {
         failed = true
     }
     Assert(failed)
-    for i in 0..100 {
+    for i in 0..300 {
         Assert(l[i].id == i)
     }
-    // Below 32 elements it needs no scratch, so it sorts.
-    sub := mut l.ItemsMut()[0..31]
-    try sub.SortStableIn(none_left, TlByK)
-    Assert(l[0].id == 30 && l[30].id == 0 && l[31].id == 31)
-    // Nor for a zero-size element.
+    // Up to 256 16-byte elements fit in the 4,096-byte stack scratch, so
+    // SortStable allocates nothing from none_left and sorts them.
+    sub := mut l.ItemsMut()[0..256]
+    try sub.SortStable(none_left, TlByK)
+    Assert(l[0].id == 255 && l[255].id == 0 && l[256].id == 256)
+    // A zero-size element allocates nothing either.
     var z := List[TlZ].New(sys.arena)
-    for _ in 0..100 {
+    for _ in 0..300 {
         try z.Push(TlZ())
     }
-    try z.SortStableIn(none_left, TlZLess)
-    Assert(z.Len() == 100)
+    try z.SortStable(none_left, TlZLess)
+    Assert(z.Len() == 300)
 }
 
 test "Search returns the insertion point" (sys: &System) {
@@ -549,11 +536,11 @@ test "a List of a zero-size type grows, shifts, sorts and searches with no memor
     _ = l.Pop().Must()
     Assert(l.Len() == 1_998 && h.Len() == 1_999)
     l.Sort(TlZLess)
-    l.SortStable(TlZLess)
+    try l.SortStable(a, TlZLess)
+    l.SortStableInPlace(TlZLess)
     h.Sort(TlZLess)
-    h.SortStable(TlZLess)
-    try l.SortStableIn(a, TlZLess)
-    try h.SortStableIn(a, TlZLess)
+    try h.SortStable(a, TlZLess)
+    h.SortStableInPlace(TlZLess)
     l.Reverse()
     h.Swap(0, 1_998)
     z := TlZ()

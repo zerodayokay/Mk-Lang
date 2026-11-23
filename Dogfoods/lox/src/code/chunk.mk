@@ -91,7 +91,7 @@ export Program.Disassemble(&self, w: mut Writer, index: int): WriteError!void {
         order[i] = i
     }
     consts := self.consts.Items()[f.consts..f.consts + f.count]
-    (mut order[..n]).SortStable(fn(x: &int, y: &int): bool { return KeyLess(&consts[*x].key, &consts[*y].key) })
+    (mut order[..n]).SortStableInPlace(fn(x: &int, y: &int): bool { return KeyLess(&consts[*x].key, &consts[*y].key) })
     for i in order[..n] {
         if bits := NumBits(&consts[i].key) {
             try Print(w, "  const {i:>3} Num({n})\n", (i, n: f64.FromBits(bits)))

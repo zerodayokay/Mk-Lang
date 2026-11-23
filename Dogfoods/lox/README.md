@@ -78,7 +78,7 @@ f64.Bits(self): u64
 f64.FromBits(b: u64): f64
 Scalars.Next(mut self): ?char
 Slice[T].Sort(mut self, const less: fn(&T, &T): bool)
-Slice[T].SortStable(mut self, const less: fn(&T, &T): bool)
+Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)
 Slice[T].Search[K](&self, key: &K, const less: fn(&T, &K): bool): int
 List[T].New(a: &Arena): List[T]
 List[T].Push(mut self, x: T into self): OutOfMemory!void

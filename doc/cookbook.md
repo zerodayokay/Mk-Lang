@@ -810,7 +810,7 @@ struct Entry {
 }
 
 ByCount(order: mut []int, entries: []Entry) {
-    order.SortStable(fn(a: &int, b: &int): bool {
+    order.SortStableInPlace(fn(a: &int, b: &int): bool {
         return entries[*a].count > entries[*b].count
     })
 }

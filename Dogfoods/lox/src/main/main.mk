@@ -245,7 +245,7 @@ Session.Run(mut self, t: mut Term): WriteError!Outcome *self into self {
     self.prog = prog
     // Nested functions are compiled after their enclosing one: report in line order.
     var found := errors
-    found.SortStable(code.ByLine)
+    found.SortStableInPlace(code.ByLine)
     if script < 0 {
         try t.err.Str("lox: out of memory\n")
         return Outcome.RuntimeFailed

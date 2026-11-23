@@ -4,6 +4,11 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
+### Changed
+
+- `Slice[T].SortStable` now takes an explicit allocator (`Slice[T].SortStable(mut self, a: &Alloc, const less: fn(&T, &T): bool): OutOfMemory!void`), removing the hidden process-heap allocation hook (`SortHeap` / `SortHeapInit`) and eliminating the sole exception to Mk's zero-hidden-allocation invariant. Scratch memory up to 4,096 bytes (for types aligned to at most 8) stays on the stack; larger scratch comes from `a` (falling back to `Len() / 2` elements before failing with `OutOfMemory`, with the slice unchanged) and is freed before returning. `Slice[T].SortStableIn` is removed, superseded by `SortStable`.
+- Added `Slice[T].SortStableInPlace(mut self, const less: fn(&T, &T): bool)` in layer 0 (`std.core`): a strictly zero-heap-allocation stable block merge sort that works at compile time and in freestanding programs.
+
 ### Performance
 
 - `aarch64-linux` and `aarch64-macos`: non-`var` slice parameters (`mut []T`, `str`, and `[]T` of a `Freeze` element type) now emit scoped alias metadata (`!alias.scope`, `!noalias`, and entry-block `llvm.experimental.noalias.scope.decl`) whenever a function takes at least two qualifying slice parameters including a `mut []T` (alongside Win64 C ABI `Indirect` slices and System V `byval` stack-spilled slices). Because AAPCS64 passes 16-byte slices as `[2 x i64]` aggregates where parameter-level `noalias` cannot attach, this lets LLVM eliminate runtime alias checks and vectorize hot slice loops on AArch64.
