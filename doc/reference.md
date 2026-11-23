@@ -6876,12 +6876,12 @@ The argument of a `const` parameter is one of:
 
 Anything else is E0705: a variable, a call, `/` or another operator over a `const` parameter (`k / 2`), an index such as `Sizes[1]`, or a field of a named const such as `Default.width` or of an element such as `Rows[0].width`. An array length follows the same rule.
 
-**`const` parameters of `fn` type.** `Sort`'s `const less: fn(&T, &T): bool` takes a function literal that may read the caller's locals ([function literals](#function-literals)). In exchange, the body may use such a parameter in two ways only:
+**`const` parameters of `fn` type.** `Sort`'s `const less: fn(&T, &T): bool` takes a function literal that may read or mutate the caller's locals ([function literals](#function-literals)). In exchange, the body may use such a parameter in two ways only:
 
 - call it;
-- pass it on as the argument of another `const` `fn` parameter, in a call that is not `s.go`.
+- pass it on as the argument of another `const` `fn` parameter, in a call that is not `s.go`, at most once per call.
 
-Any other use is E0705: binding it, storing it, returning it, or using it inside a `fn` literal or a contract. A type's const parameter cannot be of `fn` type (E0705 at the type).
+Any other use is E0705: binding it, storing it, returning it, passing the same `const` `fn` parameter to two parameters of one call, or using it inside a `fn` literal or a contract. A type's const parameter cannot be of `fn` type (E0705 at the type).
 
 ```mk
 // verdict: ok

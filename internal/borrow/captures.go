@@ -31,6 +31,11 @@ func (c *checker) hiddenParam(p types.ParamIndex) bool {
 	return c.env.Sig != nil && p != types.NoParam && int(p) > len(c.env.Sig.Params) && int(p) <= int(c.body.ParamCount)
 }
 
+// hasHiddenParam reports whether the body has any hidden environment parameter.
+func (c *checker) hasHiddenParam() bool {
+	return c.env.Sig != nil && int(c.body.ParamCount) > len(c.env.Sig.Params)
+}
+
 // envFields are the environment record's fields of hidden parameter p.
 func (c *checker) envFields(p types.ParamIndex) []types.RecordField {
 	if c.tab == nil || int(p) >= len(c.body.Locals) {
@@ -101,26 +106,37 @@ func (c *checker) captureTargetName(p types.ParamIndex, t rootID) string {
 	return c.captureName(p, 0, false)
 }
 
+// loanCapField returns the environment field index through which loan l (or
+// its parent hop's field prev) reaches hidden-parameter abstract root t, or
+// -1 when unknown.
+func (c *checker) loanCapField(t rootID, l loanID, prev int) int {
+	ri := &c.roots[t]
+	if ri.kind != rkAbstract || !c.hiddenParam(ri.param) {
+		return -1
+	}
+	if lo := &c.loans[l]; lo.abstract && lo.param == ri.param {
+		if lo.inner && len(lo.tag) > 0 {
+			return int(lo.tag[0])
+		}
+		if prev >= 0 {
+			return prev
+		}
+	}
+	return -1
+}
+
 // noteCapField records which environment field of a hidden parameter loan l
 // reaches abstract root t through, or -1 when unknown or more than one field
 // reaches t.
 func (c *checker) noteCapField(t rootID, l loanID) {
-	if !c.report || c.capField == nil {
+	if c.capField == nil {
 		return
 	}
-	ri := &c.roots[t]
-	if ri.kind != rkAbstract || !c.hiddenParam(ri.param) {
-		return
-	}
-	f := -1
-	if lo := &c.loans[l]; lo.abstract && lo.param == ri.param && lo.inner && len(lo.tag) > 0 {
-		f = int(lo.tag[0])
-	}
-	c.setCapField(t, f)
+	c.setCapField(t, c.loanCapField(t, l, -1))
 }
 
 func (c *checker) setCapField(t rootID, f int) {
-	if !c.report || c.capField == nil {
+	if c.capField == nil {
 		return
 	}
 	ri := &c.roots[t]

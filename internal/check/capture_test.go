@@ -363,6 +363,31 @@ func TestMutCaptureEnvs(t *testing.T) {
 		src := capDecls + "F(xs: mut []i32, p: &i32) {\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\t*p = 1\n\t\treturn *a < *b\n\t})\n}\n"
 		checkEnv(t, src, "m.F", "m.F#fn0", "&(p: &&i32)", []CaptureMode{CapShared})
 	})
+	t.Run("capturing literal inside non-capturing literal", func(t *testing.T) {
+		src := capDecls + "F(xs: mut []i32): i32 {\n\tg := fn(ys: mut []i32): i32 {\n\t\tvar cmps: i32 = 0\n\t\tSort(ys, fn(a: &i32, b: &i32): bool {\n\t\t\tcmps += 1\n\t\t\treturn *a < *b\n\t\t})\n\t\treturn cmps\n\t}\n\treturn g(xs)\n}\n"
+		checkEnv(t, src, "m.F#fn0", "m.F#fn0#fn0", "mut (cmps: mut i32)", []CaptureMode{CapMut})
+	})
+	t.Run("plain by-value self method and plain iterator behind mut", func(t *testing.T) {
+		src := capDecls + "struct Pt {\n\tx: i32\n}\n\nPt.Get(self): i32 {\n\treturn self.x\n}\n\nstruct It {\n\tn: i32\n}\n\nIt.Next(mut self): ?i32 {\n\tif self.n <= 0 {\n\t\treturn none\n\t}\n\tself.n -= 1\n\treturn some(self.n)\n}\n\nF(xs: mut []i32, p: mut Pt, it: mut It) {\n\tvar sum: i32 = 0\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\tsum += p.Get()\n\t\tfor v in it {\n\t\t\tsum += v\n\t\t}\n\t\treturn *a < *b\n\t})\n\t_ = sum\n}\n"
+		checkEnv(t, src, "m.F", "m.F#fn0", "mut (it: &mut It, p: &mut Pt, sum: mut i32)", []CaptureMode{CapShared, CapShared, CapMut})
+	})
+	t.Run("by-value interface method on captured non-plain generic is E0609", func(t *testing.T) {
+		src := capDecls + "interface Closer {\n\tClose(self)\n}\n\nF[T: Closer](xs: mut []i32, c: T) {\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\tc.Close()\n\t\treturn *a < *b\n\t})\n\tc.Close()\n}\n"
+		w, ds := capDiags(t, src)
+		if len(ds) != 1 || ds[0].Code != diag.E0609 || fact(ds[0], "reason") != "move" {
+			t.Fatalf("want E0609 move, got %s", dump(w, ds))
+		}
+	})
+	t.Run("mutating const parameter emits E0508 with no proven fix", func(t *testing.T) {
+		src := capDecls + "F(xs: mut []i32, const k: int) {\n\tSort(xs, fn(a: &i32, b: &i32): bool {\n\t\tk += 1\n\t\treturn *a < *b\n\t})\n}\n"
+		w, ds := capDiags(t, src)
+		if len(ds) != 1 || ds[0].Code != diag.E0508 {
+			t.Fatalf("want E0508, got %s", dump(w, ds))
+		}
+		if len(ds[0].Fixes) != 0 {
+			t.Fatalf("const parameter must not receive a var fix, got %+v", ds[0].Fixes)
+		}
+	})
 }
 
 // constFnDecls has functions with a const fn parameter; G starts on line 15.
@@ -390,6 +415,8 @@ func TestE0705_ConstFnUses(t *testing.T) {
 		{"captured", head + "\treturn Fwd(x, fn(y: &int): bool { return less(y) })\n}\n", "E0705@16:43"},
 		{"s.go call", head + "\ts.go less(x)\n\treturn true\n}\n", "E0301@16:7 E0705@16:7"},
 		{"s.go forward", head + "\ts.go Run(x, less)\n\treturn true\n}\n\nRun(x: &int, const f: fn(&int): bool) {\n\t_ = f(x)\n}\n", "E0705@16:14"},
+		{"duplicate forward", head + "\treturn Both(x, less, less)\n}\n\nBoth(x: &int, const a: fn(&int): bool, const b: fn(&int): bool): bool {\n\treturn a(x) && b(x)\n}\n", "E0705@16:23"},
+		{"nested distinct calls forward ok", head + "\treturn Pick(x, less, Fwd(x, less))\n}\n\nPick(x: &int, const a: fn(&int): bool, prev: bool): bool {\n\treturn prev && a(x)\n}\n", ""},
 		{"requires", constFnDecls + "H(x: &int, const less: fn(&int): bool): bool requires less(x) {\n\treturn less(x)\n}\n", "E0705@15:55"},
 	})
 	// The use facts.
@@ -397,6 +424,7 @@ func TestE0705_ConstFnUses(t *testing.T) {
 		{head + "\tg := less\n\treturn g(x)\n}\n", "bound"},
 		{head + "\treturn Loose(less)\n}\n", "argument"},
 		{head + "\treturn Fwd(x, fn(y: &int): bool { return less(y) })\n}\n", "captured"},
+		{head + "\treturn Both(x, less, less)\n}\n\nBoth(x: &int, const a: fn(&int): bool, const b: fn(&int): bool): bool {\n\treturn a(x) && b(x)\n}\n", "duplicate"},
 	} {
 		w, ds := capDiags(t, tc.src)
 		if len(ds) != 1 || ds[0].Code != diag.E0705 || fact(ds[0], "use") != tc.use || fact(ds[0], "param") != "less" {

@@ -586,4 +586,58 @@ func TestE0609_StoreIntoCapture(t *testing.T) {
 			t.Fatalf("E0609 facts: reason %q captured %q", factText(d, "reason"), factText(d, "captured"))
 		}
 	})
+	t.Run("reborrow-beside-mut-env-move-is-E0501", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		mi := k.tab.Mut(types.Int)
+		f0 := k.tab.Fn(types.FnType{Result: types.Void})
+		callMut := k.fn("CallMut", []types.Param{
+			k.param("r", mi),
+			{Name: k.in.Intern("f"), Type: f0, Const: true},
+		}, types.Void, types.EmptyErrors)
+		m := k.body(k.sig("G", []types.Param{k.param("p", mi)}, types.Void, types.EmptyErrors))
+		rec, rf := k.mutEnv([]string{"p"}, []types.TypeID{types.Int}, []bool{true})
+		// Reborrow *p into the mut environment, passed by ArgMove alongside ArgReborrow p.
+		envArg, temps := k.buildMutEnv(m, rec, rf, m.pl(1, deref(types.Int)))
+		next := m.block()
+		m.call(callMut.Item, nil, []mir.Arg{
+			argReborrow(m.local(1)),
+			{Operand: k.fnConst(f0, callMut.Item), Mode: mir.ArgCopy},
+			envArg,
+		}, m.local(0), next)
+		m.at(next)
+		m.end(temps[2], temps[1], temps[0])
+		m.ret(mir.ExitNormal)
+		r := m.check(t)
+		if len(r.Diags) != 1 || r.Diags[0].Code != diag.E0501 {
+			t.Fatalf("want one E0501, got %v", r.Diags)
+		}
+	})
+	t.Run("capture-loan-into-captured-arena-is-E0609", func(t *testing.T) {
+		k := capKit{newKit(t)}
+		ra := k.tab.Ref(k.Arena)
+		storeA := k.fn("StoreA", []types.Param{
+			k.param("a", ra),
+			{Name: k.in.Intern("x"), Type: ri(k), Into: 1},
+		}, types.Void, types.EmptyErrors)
+		rec := k.tab.Record([]types.RecordField{
+			{Name: k.in.Intern("a"), Type: k.tab.Ref(ra)},
+			{Name: k.in.Intern("short"), Type: ri(k)},
+		})
+		rf := k.tab.Ref(rec)
+		m, env := k.literalBody("L", nil, types.Void, rf)
+		aVal := m.temp(ra)
+		m.set(aVal, use(cp(m.pl(env, deref(rec), fld(0, k.tab.Ref(ra)), deref(ra)))))
+		sVal := m.temp(ri(k))
+		m.set(sVal, use(cp(m.pl(env, deref(rec), fld(1, ri(k))))))
+		next := m.block()
+		at := m.call(storeA.Item, nil, []mir.Arg{argCopy(m.local(aVal)), argCopy(m.local(sVal))}, m.local(0), next)
+		m.at(next)
+		m.end(sVal, aVal)
+		m.ret(mir.ExitNormal)
+		r := m.check(t)
+		m.expect(t, r, diag.E0609, at)
+		if d := r.Diags[0]; factText(d, "reason") != "store" || factText(d, "captured") != "[a]" {
+			t.Fatalf("E0609 facts: reason %q captured %q", factText(d, "reason"), factText(d, "captured"))
+		}
+	})
 }

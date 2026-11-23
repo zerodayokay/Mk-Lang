@@ -6,7 +6,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Language
 
-- Non-escaping `fn` literals passed directly to a `const` `fn` parameter (outside `s.go`) may now mutably capture enclosing `var` locals and reborrow `mut T` / `mut []T` bindings with no new syntax: assignments, `mut` borrows, and `mut self` calls on a capture form an exclusive borrow at the call site alongside its other operands (R13) that ends with the statement (R14), so R5 catches conflicting borrows (`E0501`/`E0502`/`E0504`). Mutating a non-`var` capture is `E0508`; writing through a captured `&T`/`[]T` stays `E0507`; escaping, moving out of a capture, mutating in a contract or invariant, returning or storing a capture loan, and storing a non-static loan into a captured carrier remain `E0609` (and storing a literal-local loan is `E0505`).
+- Non-escaping `fn` literals passed directly to a `const` `fn` parameter (outside `s.go`) may now mutably capture enclosing `var` locals and reborrow `mut T` / `mut []T` bindings with no new syntax: assignments, `mut` borrows, and `mut self` calls on a capture form an exclusive borrow at the call site alongside its other operands (R13) that ends with the statement (R14), so R5 catches conflicting borrows (`E0501`/`E0502`/`E0504`). Mutating a non-`var` capture is `E0508`; writing through a captured `&T`/`[]T` stays `E0507`; escaping, moving out of a capture, mutating in a contract or invariant, returning or storing a capture loan, and storing a non-static loan into a captured carrier remain `E0609` (and storing a literal-local loan is `E0505`). Passing the same `const` `fn` parameter to two `const` parameters of the same call is `E0705`, preventing aliased mutable capture environments.
 
 ### Changed
 
@@ -28,6 +28,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Fixed
 
+- The borrow checker now keeps the loans of moved call arguments live in argument slots across the remaining arguments (including reborrows) of the same call, catching aliasing exclusive borrows such as `F(p, mut *p)`, `xs.Sort(fn(a, b) { xs[0] = 1; ... })`, and `LineConnRead(l, io, mut l.rb[..])` (`E0501`), and scopes `allocSelf` on hidden capture environments per capture field so storing a shorter-lived capture loan into a captured `Arena` is rejected (`E0609`).
 - The borrow checker now counts a non-generic free constructor in a view's defining module when its result borrows from memory that can take stores, as it counted a constructor in the view's namespace. It applies the same rule to private constructors and to optional or error results. This rejects, with E0605 or E0602, programs 0.5.0 accepted: a local stored through such a view into global memory, which then read a dead frame.
 
 ## 0.5.0 (2026-11-23)

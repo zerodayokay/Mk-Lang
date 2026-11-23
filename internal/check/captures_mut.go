@@ -391,8 +391,15 @@ climb:
 				recordMut("mut-borrow")
 				return
 			}
-			// `for x in it` over an iterator evaluates `it` by value (copy or move).
+			// `for x in it` over an iterator evaluates `it` by value (copy or move)
+			// after peeling any auto-deref layers recorded on the RefSource node.
 			if iu := v.useOf(x.ID()); iu.Kind == UseMethod || iu.Kind == UseIfaceMethod {
+				if d := v.adjustOf(x.ID()).Deref; d > 0 {
+					t = u.peelDerefs(t, d, &crossedShared, &crossedMut, &crossedRaw)
+					if crossedRaw {
+						return
+					}
+				}
 				break
 			}
 			return
@@ -422,7 +429,15 @@ climb:
 				case types.ByShared:
 					return
 				}
-				// a by-value self: a value position, below
+				// a by-value self: a value position, below; peel any
+				// auto-deref layers (AdjCopyThrough) so the copied/moved
+				// referent type is judged for Plain.
+				if adj := v.adjustOf(p.ID()); adj.Kind == AdjCopyThrough && adj.Deref > 0 {
+					t = u.peelDerefs(t, adj.Deref, &crossedShared, &crossedMut, &crossedRaw)
+					if crossedRaw {
+						return
+					}
+				}
 			} else {
 				return // a method named without a call (E0609 already) or a member read
 			}
@@ -546,8 +561,15 @@ func (u *unit) receiverModeIn(v capView, c *ast.CallExpr, p ast.Expr) types.Rece
 	if use.Item == types.NoItem {
 		return types.ByShared
 	}
-	if d, ok := u.c.cfg.Items.Get(use.Item).Decl.(*types.FuncDecl); ok && d.Sig.Receiver != types.NoReceiver {
-		return d.Sig.Receiver
+	switch d := u.c.cfg.Items.Get(use.Item).Decl.(type) {
+	case *types.FuncDecl:
+		if d.Sig.Receiver != types.NoReceiver {
+			return d.Sig.Receiver
+		}
+	case *types.InterfaceDecl:
+		if int(use.Index) < len(d.Methods) && d.Methods[use.Index].Receiver != types.NoReceiver {
+			return d.Methods[use.Index].Receiver
+		}
 	}
 	return types.ByShared
 }

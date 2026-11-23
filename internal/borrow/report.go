@@ -54,6 +54,12 @@ func (c *checker) rootName(r rootID) string {
 		}
 		return "global"
 	case rkSlot:
+		if ri.local != mir.NoLocal && int(ri.local) < len(c.body.Locals) {
+			if c.body.Locals[ri.local].Kind == mir.LocalTemp {
+				return "this temporary"
+			}
+			return c.rootName(rootID(ri.local))
+		}
 		return "the reborrowed argument"
 	case rkReturn:
 		return "the result"

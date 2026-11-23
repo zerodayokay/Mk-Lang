@@ -223,10 +223,12 @@ func (c *checker) setup() {
 		if isCall(&blk.Term) {
 			args := b.Args[blk.Term.Args.Start:blk.Term.Args.End()]
 			for ai, a := range args {
-				if a.Mode != mir.ArgReborrow {
-					continue
+				switch {
+				case a.Mode == mir.ArgReborrow:
+					c.addSlot(mir.BlockID(bi), uint32(ai), a.Operand.Place, blk.Term.Span)
+				case a.Operand.Kind == mir.OpMove:
+					c.addMoveSlot(mir.BlockID(bi), uint32(ai), a.Operand.Place)
 				}
-				c.addSlot(mir.BlockID(bi), uint32(ai), a.Operand.Place, blk.Term.Span)
 			}
 			c.markEndsForms(mir.BlockID(bi))
 		}
@@ -539,6 +541,21 @@ func (c *checker) addSlot(b mir.BlockID, ai uint32, x mir.Place, span mir.SpanID
 	c.slots[siteKey{b, argBase + ai}] = slotInfo{root: r, loan: l, path: dp}
 }
 
+// addMoveSlot makes the argument slot for an OpMove argument of a carrier
+// type: moving the operand in step 1 empties the source local, so the slot
+// keeps its loans live for every later argument (including reborrows) of the
+// same call until endSlots clears it.
+func (c *checker) addMoveSlot(b mir.BlockID, ai uint32, x mir.Place) {
+	ty := c.body.PlaceType(x)
+	if !c.w.carrier(ty) {
+		return
+	}
+	ri := rootInfo{kind: rkSlot, local: x.Local, typ: ty}
+	c.typeFlags(&ri)
+	r := c.addRoot(ri)
+	c.slots[siteKey{b, argBase + ai}] = slotInfo{root: r, loan: noLoan}
+}
+
 type slotInfo struct {
 	root rootID
 	loan loanID
@@ -546,18 +563,20 @@ type slotInfo struct {
 }
 
 // tagged returns the tagged inner loan of parameter p for a field path,
-// interned: finite, one per (parameter, path, alloc). With
+// interned: finite, one per (parameter, path, alloc, shared). With
 // alloc (the path ends at a field whose references all refer to allocators,
 // allocRefs) the loan targets p#A, not p#2: a loan read from an allocator
-// field stays with the allocator's node. It is otherwise the tagged
+// field stays with the allocator's node. With shared (a read-only &T field
+// of a mut R hidden environment), the loan is non-exclusive even when another
+// capture in the same environment is mutable. It is otherwise the tagged
 // p.inner it always was (base, tag, flows), so every rule that reads a
 // tagged inner loan reads it unchanged.
-func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc bool) loanID {
+func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared bool) loanID {
 	if len(path) == 0 {
 		return c.params[p].inner
 	}
 	alloc = alloc && c.params[p].nA != noRoot
-	key := tagKey{p: p, path: pathKey(path), alloc: alloc}
+	key := tagKey{p: p, path: pathKey(path), alloc: alloc, shared: shared}
 	if l, ok := c.tags[key]; ok {
 		return l
 	}
@@ -567,16 +586,18 @@ func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc bool) loanID {
 	if alloc {
 		target = c.params[p].nA
 	}
-	l := c.addLoan(loan{excl: bl.excl, place: noPath, target: target, param: p, abstract: true, inner: true,
+	excl := bl.excl && !shared
+	l := c.addLoan(loan{excl: excl, place: noPath, target: target, param: p, abstract: true, inner: true,
 		tag: append([]uint32(nil), path...), base: base, loop: mir.NoLoop})
 	c.tags[key] = l
 	return l
 }
 
 type tagKey struct {
-	p     types.ParamIndex
-	path  string
-	alloc bool
+	p      types.ParamIndex
+	path   string
+	alloc  bool
+	shared bool
 }
 
 func pathKey(xs []uint32) string {

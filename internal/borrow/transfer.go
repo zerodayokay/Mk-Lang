@@ -510,12 +510,21 @@ func (c *checker) tag(s setID, p pathID) setID {
 		return s
 	}
 	alloc := last != types.NoType && c.w.allocRefs(last)
+	shared := false
+	if ri := &c.roots[pi.root]; ri.kind == rkParam && c.hiddenParam(ri.param) && last != types.NoType && c.tab.Kind(last) == types.KRef {
+		// A read-only capture in a mut R environment holds &T (CapShared);
+		// its inner loan is non-exclusive and, when T itself only references
+		// allocators (such as captured a: &Arena stored as &(&Arena)), stays
+		// with p#A.
+		shared = true
+		alloc = alloc || c.w.allocRefs(c.tab.Get(last).Elem)
+	}
 	var out []uint32
 	changed := false
 	for _, l := range c.sets.get(s) {
 		lo := &c.loans[l]
 		if lo.abstract && lo.inner && lo.tag == nil {
-			out = append(out, uint32(c.tagged(lo.param, fields, alloc)))
+			out = append(out, uint32(c.tagged(lo.param, fields, alloc, shared)))
 			changed = true
 			continue
 		}

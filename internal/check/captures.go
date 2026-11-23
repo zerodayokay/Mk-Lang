@@ -137,11 +137,9 @@ func (u *unit) closeDescendants(owner types.ItemID, reads *types.ReadSet, diags 
 	}
 	for _, lit := range ii.Literals {
 		li := u.m.byItem[lit]
-		if li == nil {
-			continue
-		}
-		if len(li.Captures) == 0 {
-			u.closeDescendants(lit, reads, diags)
+		if li == nil || len(li.Captures) == 0 {
+			// A non-capturing literal runs its own non-eager unit in Check and
+			// closes its own nested capturing literals when it finishes.
 			continue
 		}
 		r := u.m.captureRecOf(lit)
@@ -165,13 +163,15 @@ func (u *unit) closeDescendants(owner types.ItemID, reads *types.ReadSet, diags 
 				}
 			}
 		}
-		// Close nested literals of lit using lit's combined reads/diags when
-		// lit was checked eagerly, else the parent's.
-		nextReads, nextDiags := reads, diags
+		// Only recurse into literals that were checked eagerly (r.body != nil
+		// or r.ice != nil): a literal with r.body == nil && r.ice == nil runs
+		// its own fallback non-eager unit in Check and closes its own nested
+		// capturing literals when it finishes.
 		if r.body != nil {
-			nextReads, nextDiags = &r.body.Reads, r.body.Diags
+			u.closeDescendants(lit, &r.body.Reads, r.body.Diags)
+		} else if r.ice != nil {
+			u.closeDescendants(lit, reads, diags)
 		}
-		u.closeDescendants(lit, nextReads, nextDiags)
 		r.close()
 	}
 }
@@ -350,7 +350,9 @@ func (u *unit) captureSource(of resolve.Ref, e *ast.FnLit) (captureOrigin, Use) 
 			}
 			isRecv := u.sig != nil && u.sig.Receiver != types.NoReceiver && id == 1
 			isValSelf := isRecv && u.sig.Receiver == types.ByValue
-			canAddVar := !isRecv && loc.Span.File != source.NoFile
+			isConstParam := u.sig != nil && int(id) <= len(u.sig.Params) && u.sig.Params[id-1].Const
+			_, isTest := u.b.Node.(*ast.TestItem)
+			canAddVar := !isRecv && !isConstParam && !isTest && loc.Span.File != source.NoFile
 			return captureOrigin{
 				typ:       loc.Type,
 				isVar:     loc.Var,
@@ -578,16 +580,24 @@ func (u *unit) constFnParams(sig *types.Signature) map[LocalID]source.Symbol {
 	return out
 }
 
+// constFnCallKey identifies one const fn parameter passed in one call so a
+// parameter cannot be forwarded to two const parameters of the same call.
+type constFnCallKey struct {
+	call  ast.NodeID
+	param LocalID
+}
+
 // judgeConstFnUses checks the uses of const fn parameters over a body: a
 // const parameter of fn type may only be called (not by s.go) or passed on
-// as the whole argument of a const parameter of a call that is not s.go's;
-// every other use is E0705 with the use's kind. A use inside a literal is
-// a capture, E0705 captured (literalCaptures).
+// as the whole argument of a const parameter of a call that is not s.go's,
+// at most once per call; every other use is E0705 with the use's kind. A
+// use inside a literal is a capture, E0705 captured (literalCaptures).
 func (u *unit) judgeConstFnUses() {
 	params := u.constFnParams(u.b.Sig)
 	if len(params) == 0 {
 		return
 	}
+	seenInCall := map[constFnCallKey]bool{}
 	var stack []ast.Node
 	ast.Inspect(u.b.Node, func(n ast.Node) bool {
 		if n == nil {
@@ -600,7 +610,7 @@ func (u *unit) judgeConstFnUses() {
 		if id, ok := n.(*ast.Ident); ok {
 			if use := u.useOf(id.ID()); use.Kind == UseLocal {
 				if name, ok := params[use.Local]; ok {
-					u.judgeConstFnUse(id, name, stack)
+					u.judgeConstFnUse(id, use.Local, name, stack, seenInCall)
 				}
 			}
 		}
@@ -611,7 +621,7 @@ func (u *unit) judgeConstFnUses() {
 
 // judgeConstFnUse judges one use id of const fn parameter name, whose
 // ancestors are chain.
-func (u *unit) judgeConstFnUse(id *ast.Ident, name source.Symbol, chain []ast.Node) {
+func (u *unit) judgeConstFnUse(id *ast.Ident, param LocalID, name source.Symbol, chain []ast.Node, seenInCall map[constFnCallKey]bool) {
 	var child ast.Node = id
 	i := len(chain) - 1
 	for ; i >= 0; i-- {
@@ -637,6 +647,16 @@ func (u *unit) judgeConstFnUse(id *ast.Ident, name source.Symbol, chain []ast.No
 			}
 		case *ast.Arg:
 			if u.constLit.Has(id.ID(), u.b.Base) {
+				if c, ok := grand.(*ast.CallExpr); ok {
+					k := constFnCallKey{c.ID(), param}
+					if seenInCall[k] {
+						n := u.c.cfg.Interner.Str(name)
+						u.err(diag.E0705, id.Span(), "`"+n+"` is a `const` parameter of `fn` type: its argument may capture `var` locals exclusively, so it cannot be passed to two `const` parameters of the same call").
+							Text("param", n).Text("use", "duplicate")
+						return
+					}
+					seenInCall[k] = true
+				}
 				return // passed on as a const argument
 			}
 			use = "argument"

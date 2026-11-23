@@ -224,11 +224,13 @@ TakeConn(m: &Mutex[Line], io: Io, keep: bool): ?net.Conn {
     return own
 }
 
-// LineConnRead reads from the Line's connection, in its slot or its own,
-// into dst; 0 at its end. A byte read marks the Line touched.
-LineConnRead(l: mut Line, io: Io, dst: mut []u8): Error!int {
+// LineConnReadFrom reads from a Line's slot or direct connection into dst;
+// 0 at its end. A byte read marks the Line touched. Taking the disjoint
+// fields instead of mut Line keeps dst (which may slice l.rb) disjoint from
+// the other arguments under R5.
+LineConnReadFrom(slot: &raw.Atomic[*Slot], conn: &?net.Conn, fresh: mut bool, io: Io, dst: mut []u8): Error!int {
     var n := 0
-    sp := l.slot.Load()
+    sp := slot.Load()
     if !raw.IsNull(sp) {
         g := try SlotOf(sp).st.Lock(io)
         if c := &g.Ref().conn {
@@ -241,15 +243,21 @@ LineConnRead(l: mut Line, io: Io, dst: mut []u8): Error!int {
             g.Unlock()
             fail Closed
         }
-    } else if c := &l.conn {
+    } else if c := &*conn {
         n = try c.Read(io, dst)
     } else {
         fail Closed
     }
     if n > 0 {
-        l.fresh = false
+        *fresh = false
     }
     return n
+}
+
+// LineConnRead reads from the Line's connection, in its slot or its own,
+// into dst; 0 at its end. A byte read marks the Line touched.
+LineConnRead(l: mut Line, io: Io, dst: mut []u8): Error!int {
+    return try LineConnReadFrom(&l.slot, &l.conn, mut l.fresh, io, dst)
 }
 
 // CloseBounded closes conn, its peer-facing part bounded by limit: Canceled
@@ -398,7 +406,7 @@ LineTake(l: mut Line, io: Io, dst: mut []u8): Error!int {
 LineFillBuf(l: mut Line, io: Io): Error!void {
     l.s = 0
     l.e = 0
-    n := try LineConnRead(l, io, mut l.rb[..])
+    n := try LineConnReadFrom(&l.slot, &l.conn, mut l.fresh, io, mut l.rb[..])
     if n == 0 {
         fail BadRequest(offset: l.ck.off)
     }

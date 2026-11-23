@@ -215,6 +215,7 @@ func (c *checker) call(st *state, ctx *stmtCtx, t *mir.Terminator) []out {
 		}
 	}
 	// Step 1: copies and moves in order, then reborrows left to right.
+	ctx.slots = emptySet
 	argH := make([]setID, len(args))
 	for i, a := range args {
 		if a.Mode == mir.ArgReborrow {
@@ -223,11 +224,14 @@ func (c *checker) call(st *state, ctx *stmtCtx, t *mir.Terminator) []out {
 		ctx.exempt = c.exemptFor(st, ctx, endsRoots, a)
 		argH[i] = c.operand(st, ctx, a.Operand)
 		ctx.exempt = nil
+		if sl, ok := c.slots[siteKey{ctx.b, argBase + uint32(i)}]; ok && argH[i] != emptySet {
+			c.setHeld(st, sl.root, argH[i])
+			ctx.slots = c.sets.add(ctx.slots, uint32(sl.root))
+		}
 		if i == 0 && fv != nil && fv.recvMut {
 			c.sharedMutReceiver(ctx, a)
 		}
 	}
-	ctx.slots = emptySet
 	for i, a := range args {
 		if a.Mode != mir.ArgReborrow {
 			continue

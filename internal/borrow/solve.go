@@ -90,9 +90,10 @@ type checker struct {
 	// root it found on a later hop: the root that held the loan, and the
 	// loan. E0604 and E0505 name it (DF-lox-06, DF-mgrep-02).
 	via map[rootID]viaHop
-	// capField is, during the replay, the environment field index through
-	// which the last writable walk or direct write reached a hidden
-	// parameter's abstract root, or -1 when unknown or more than one field.
+	// capField is, for a body with a hidden environment parameter, the
+	// environment field index through which the last writable walk or direct
+	// write reached a hidden parameter's abstract root, or -1 when unknown or
+	// more than one field.
 	capField map[rootID]int
 	// laterAlloc are the allocator roots the last writable walk reached on
 	// a later hop: the call rule stores into them through

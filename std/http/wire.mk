@@ -74,7 +74,7 @@ WriteAllOf(w: mut Writer, head: str, body: []u8): WriteError!void {
 
 // LineRecv reads into l.rb[l.e..]; 0 at the connection's end.
 LineRecv(l: mut Line, io: Io): Error!int {
-    return try LineConnRead(l, io, mut l.rb[l.e..LineBuf])
+    return try LineConnReadFrom(&l.slot, &l.conn, mut l.fresh, io, mut l.rb[l.e..LineBuf])
 }
 
 // ReadReplyHead reads one head from the Line, up to and with its CRLF CRLF,

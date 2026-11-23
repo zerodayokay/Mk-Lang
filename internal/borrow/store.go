@@ -28,6 +28,9 @@ type hop struct {
 	// fromAlloc: the allocator root that holds the loan (a sub-arena holds
 	// its parent's loan, an arena its heap's), noRoot when none does.
 	fromAlloc rootID
+	// capFld: the hidden environment parameter's field index carried along
+	// the walk (0-based, or -1 when none/unknown).
+	capFld int
 }
 
 // writable is writable(L0): walking from the loans of L0, an exclusive step
@@ -96,7 +99,7 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 	var work []hop
 	for _, l := range c.sets.get(l0) {
 		reach(noRoot, loanID(l))
-		work = append(work, hop{l: loanID(l), excl: true, first: true, fromAlloc: noRoot})
+		work = append(work, hop{l: loanID(l), excl: true, first: true, fromAlloc: noRoot, capFld: -1})
 	}
 	defer func() {
 		for tg := range c.allocMem {
@@ -105,12 +108,16 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 			}
 		}
 	}()
+	if c.hasHiddenParam() {
+		c.capField = map[rootID]int{}
+	} else {
+		c.capField = nil
+	}
 	// During the replay, the holder of each loan met on a later hop, so a
 	// diagnostic at a root reached through it can name the holder.
 	var heldBy map[loanID]rootID
 	if c.report {
 		c.via = map[rootID]viaHop{}
-		c.capField = map[rootID]int{}
 		heldBy = map[loanID]rootID{}
 		if arg != noRoot {
 			for _, l := range c.sets.get(l0) {
@@ -138,13 +145,17 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 		if ti.allocator && !h.first && h.fromAlloc != noRoot && !c.allocContent(h.fromAlloc, h.l) {
 			continue // an allocator its holder holds by provenance
 		}
+		cf := -1
+		if c.capField != nil {
+			cf = c.loanCapField(t, h.l, h.capFld)
+		}
 		if ti.allocator && !h.first {
 			// A later hop onto an allocator stores into the allocator itself
 			// (its contents have no node of their own), and the walk does not
 			// pass it, except into what was stored into its contents
 			// (allocStored): a holder in its memory leads on to that loan's
 			// target.
-			c.noteCapField(t, h.l)
+			c.setCapField(t, cf)
 			if !seenRoot[t] {
 				seenRoot[t] = true
 				at[t] = len(out)
@@ -166,12 +177,12 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 					heldBy[loanID(m)] = t
 				}
 				reach(t, loanID(m))
-				work = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: t})
+				work = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: t, capFld: cf})
 			}
 			continue
 		}
 		if ti.carrier && (e || ti.writable) {
-			c.noteCapField(t, h.l)
+			c.setCapField(t, cf)
 			if !seenRoot[t] {
 				seenRoot[t] = true
 				at[t] = len(out)
@@ -190,7 +201,7 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 		// as one merged node would.
 		if a := c.allocOf(t); h.first && a != noRoot {
 			if ai := &c.roots[a]; ai.carrier && (e || ai.writable) {
-				c.noteCapField(a, h.l)
+				c.setCapField(a, cf)
 				if !seenRoot[a] {
 					if other != nil {
 						other[a] = true
@@ -217,7 +228,7 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 				fa = t
 			}
 			reach(t, loanID(m))
-			work = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: fa})
+			work = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: fa, capFld: cf})
 		}
 	}
 	return out, fld
@@ -556,7 +567,7 @@ func (c *checker) directWrite(st *state, ctx *stmtCtx, p pathID, S setID) {
 	c.via = nil // no walk: no holder to name
 	pi := c.paths.get(p)
 	directCap := -1
-	if c.report {
+	if c.hasHiddenParam() {
 		c.capField = map[rootID]int{}
 		if ri := &c.roots[pi.root]; (ri.kind == rkParam || ri.kind == rkAbstract) && c.hiddenParam(ri.param) {
 			for _, stp := range pi.steps {
@@ -566,6 +577,8 @@ func (c *checker) directWrite(st *state, ctx *stmtCtx, p pathID, S setID) {
 				}
 			}
 		}
+	} else {
+		c.capField = nil
 	}
 	roots := []rootID{pi.root}
 	// fld is, per final root, the field it is reached at: a split frame
@@ -774,7 +787,11 @@ func (c *checker) viaOutlives(t rootID) string {
 
 // allocSelf is S without the loans that allocator root t holds already by
 // being itself (the allocator self filter): a loan whose target is t, and for
-// a parameter's allocator node, an abstract loan of that parameter. The
+// a parameter's allocator node, an abstract loan of that parameter. For a
+// hidden environment parameter's allocator node, distinct environment fields
+// are independent captures with independent scopes, so only a tagged loan
+// targeting t from the exact same single capture field that reached t is
+// dropped (never another capture's loan or a shorter-lived arena). The
 // call rule stores into an allocator through it, so a loan of an arena
 // stored into that arena (or a value of it into its own contents) is no
 // store of the arena into itself. What it drops comes back on the read
@@ -782,10 +799,24 @@ func (c *checker) viaOutlives(t rootID) string {
 func (c *checker) allocSelf(t rootID, S setID) setID {
 	ti := &c.roots[t]
 	var drop []uint32
-	for _, l := range c.sets.get(S) {
-		lo := &c.loans[l]
-		if lo.target == t || ti.kind == rkAbstract && lo.abstract && lo.param == ti.param {
-			drop = append(drop, l)
+	if ti.kind == rkAbstract && c.hiddenParam(ti.param) {
+		f, ok := c.capField[t]
+		if !ok || f < 0 {
+			return S
+		}
+		for _, l := range c.sets.get(S) {
+			lo := &c.loans[l]
+			sameField := lo.abstract && lo.param == ti.param && lo.inner && len(lo.tag) > 0 && int(lo.tag[0]) == f
+			if sameField && (lo.target == t || c.csrConst) {
+				drop = append(drop, l)
+			}
+		}
+	} else {
+		for _, l := range c.sets.get(S) {
+			lo := &c.loans[l]
+			if lo.target == t || ti.kind == rkAbstract && lo.abstract && lo.param == ti.param {
+				drop = append(drop, l)
+			}
 		}
 	}
 	if len(drop) == 0 {

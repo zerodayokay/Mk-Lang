@@ -280,6 +280,7 @@ func (bl *builder) threadEnvs(b *mir.Body, pl *envPlan) {
 		}
 		written := args[n:]
 		var envs []mir.Arg
+		var mutUsed map[mir.LocalID]bool
 		wi, changed := 0, false
 		for i, p := range fd.Sig.Params {
 			if !p.Const {
@@ -288,6 +289,16 @@ func (bl *builder) threadEnvs(b *mir.Body, pl *envPlan) {
 			if pl != nil {
 				if q, ok := pl.fwd[t.Args.Start+uint32(i)]; ok {
 					if e, ok := pl.envOf[q]; ok {
+						if bl.tab.Kind(b.Locals[e].Type) == types.KMut {
+							if mutUsed[e] {
+								ice("instance %s: call of %s passes mut environment %d more than once (E0705 is check's)",
+									nameOf(bl.env, bl.item, bl.args), bl.env.Items().Get(t.Callee.Fn.Item).Key, e)
+							}
+							if mutUsed == nil {
+								mutUsed = map[mir.LocalID]bool{}
+							}
+							mutUsed[e] = true
+						}
 						envs = append(envs, bl.envArg(b, e))
 						changed = true
 						continue

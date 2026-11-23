@@ -102,8 +102,23 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
     var order_x := 7
     before := After(fn() { order_x += 10 }, order_x)
 
+    // 6. Same-arena Put + local List[&i32].New(a) beside a mut capture.
+    a := sys.arena
+    var arena_val: i32 = 0
+    Each(nums[0..1], fn(x: &i32) {
+        _ = x
+        v := a.Put(i32(21)) else {
+            return
+        }
+        var tmp := List[&i32].New(a)
+        tmp.Push(&*v) else {
+            return
+        }
+        arena_val = *tmp[0] * 2
+    })
+
     try sys.Print(
-        "sorted={a},{b},{c},{d},{e} cmps_ok={ok} sum={sum} out={o0},{o1},{o2} acc={acc} dbl={d0},{d1} nested={nested} order={before},{after} const={ct}\n",
+        "sorted={a},{b},{c},{d},{e} cmps_ok={ok} sum={sum} out={o0},{o1},{o2} acc={acc} dbl={d0},{d1} nested={nested} order={before},{after} const={ct} arena={av}\n",
         (
             a: nums[0], b: nums[1], c: nums[2], d: nums[3], e: nums[4],
             ok: cmps > 0,
@@ -114,6 +129,7 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
             nested: nested,
             before: before, after: order_x,
             ct: ConstTotal,
+            av: arena_val,
         ),
     )
 }
@@ -127,7 +143,7 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
 	if runtime.GOOS == "linux" {
 		target = types.X86_64Linux
 	}
-	want := "sorted=1,2,3,4,5 cmps_ok=true sum=120 out=3,4,5 acc=15 dbl=4,2 nested=21 order=7,17 const=10\n"
+	want := "sorted=1,2,3,4,5 cmps_ok=true sum=120 out=3,4,5 acc=15 dbl=4,2 nested=21 order=7,17 const=10 arena=42\n"
 	for _, prof := range []types.Profile{types.Dev, types.Release} {
 		t.Run(prof.String(), func(t *testing.T) {
 			exe := buildProgram(t, file, target, prof, t.TempDir())
@@ -235,6 +251,56 @@ Token.Close(self) {
 			src:  helpers + "F(xs: []i32, ys: []i32) {\n    Each(xs, fn(x: &i32) {\n        _ = x\n        ys[0] = 1\n    })\n}\n",
 			want: diag.E0507,
 		},
+		{
+			name: "Sort mut slice reborrow conflicts with mut capture of same slice",
+			src:  helpers + "F(xs: mut []i32) {\n    xs.Sort(fn(a: &i32, b: &i32): bool {\n        xs[0] = 99\n        return *a < *b\n    })\n}\n",
+			want: diag.E0501,
+		},
+		{
+			name: "mut ref reborrow conflicts with mut capture of same ref",
+			src:  helpers + "UseMut(r: mut i32, const f: fn()) {\n    *r = 10\n    f()\n}\n\nF(p: mut i32) {\n    UseMut(p, fn() {\n        *p += 100\n    })\n}\n",
+			want: diag.E0501,
+		},
+		{
+			name: "ArgReborrow conflicts with moved mut borrow of same ref",
+			src:  helpers + "TwoMut(a: mut i32, b: mut i32) {\n    *a = 10\n    *b = 20\n}\n\nF(p: mut i32) {\n    TwoMut(p, mut *p)\n}\n",
+			want: diag.E0501,
+		},
+		{
+			name: "store shorter-lived capture loan into captured arena via Put",
+			src:  helpers + "Call(const f: fn()) {\n    f()\n}\n\nF(a: &Arena) {\n    if true {\n        short: i32 = 42\n        Call(fn() {\n            _ = a.Put(&short) else {\n                return\n            }\n        })\n    }\n}\n",
+			want: diag.E0609,
+		},
+		{
+			name: "store inner sub-arena into outer captured arena",
+			src:  helpers + "Call(const f: fn()) {\n    f()\n}\n\nStoreA(a1: &Arena, a2: &Arena into a1) {\n    _ = a1\n    _ = a2\n}\n\nF(a: &Arena) {\n    if true {\n        sub := Arena.Sub(a) else {\n            return\n        }\n        defer sub.Free()\n        Call(fn() {\n            StoreA(a, &sub)\n        })\n    }\n}\n",
+			want: diag.E0609,
+		},
+		{
+			name: "forwarding same const fn parameter twice in one call is E0705",
+			src:  helpers + "Forward(const f: fn()) {\n    Two(f, f)\n}\n",
+			want: diag.E0705,
+		},
+		{
+			name: "store param through helper into captured var ref",
+			src:  helpers + "Stash(dst: mut &i32, v: &i32 into dst) {\n    *dst = v\n}\n\nF() {\n    long: i32 = 1\n    var r: &i32 = &long\n    VisitRef(fn(x: &i32) {\n        Stash(mut r, x)\n    })\n    _ = r\n}\n",
+			want: diag.E0609,
+		},
+		{
+			name: "store inner capture loan into outer captured var ref",
+			src:  helpers + "Call(const f: fn()) {\n    f()\n}\n\nF() {\n    long: i32 = 1\n    var r: &i32 = &long\n    if true {\n        short: i32 = 2\n        Call(fn() {\n            r = &short\n        })\n    }\n    _ = r\n}\n",
+			want: diag.E0609,
+		},
+		{
+			name: "store param into captured Cell",
+			src:  helpers + "F() {\n    long: i32 = 1\n    c := Cell[&i32].New(&long)\n    VisitRef(fn(x: &i32) {\n        c.Store(x)\n    })\n    _ = c.Load()\n}\n",
+			want: diag.E0609,
+		},
+		{
+			name: "overwrite captured var linear local is E0402",
+			src:  helpers + "Call(const f: fn()) {\n    f()\n}\n\nF() {\n    var tok := Token(id: 1)\n    Call(fn() {\n        tok = Token(id: 2)\n    })\n    tok.Close()\n}\n",
+			want: diag.E0402,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,5 +320,109 @@ Token.Close(self) {
 				t.Fatalf("want %v, got:\n%s", tc.want, r.Report.Text(r.Sources))
 			}
 		})
+	}
+}
+
+// TestMutCaptureTaggedEval runs mutable captures, forwarding, recursion,
+// reborrows of mut T and mut []T, a capturing literal inside a non-capturing
+// literal, and plain self/iterator behind mut under eval's tagged
+// borrow-tracking mode to prove zero aliasing or tag violations.
+func TestMutCaptureTaggedEval(t *testing.T) {
+	src := `Each(xs: []i32, const f: fn(&i32)) {
+    for x in xs {
+        f(&x)
+    }
+}
+
+Forward(xs: []i32, const f: fn(&i32)) {
+    Each(xs, f)
+    Each(xs, f)
+}
+
+Rec(n: int, const f: fn()) {
+    if n > 0 {
+        f()
+        Rec(n - 1, f)
+    }
+}
+
+ReborrowMut(xs: []i32, dst: mut i32, buf: mut []i32) {
+    var idx := 0
+    Each(xs, fn(x: &i32) {
+        *dst += *x
+        if idx < buf.Len() {
+            buf[idx] = *x * 2
+        }
+        idx += 1
+    })
+}
+
+struct Pt {
+    x: i32
+}
+
+Pt.Get(self): i32 {
+    return self.x
+}
+
+struct It {
+    n: i32
+}
+
+It.Next(mut self): ?i32 {
+    if self.n <= 0 {
+        return none
+    }
+    self.n -= 1
+    return some(self.n)
+}
+
+Run(): i32 {
+    var xs: [3]i32 = [1, 2, 3]
+    var sum: i32 = 0
+    Forward(xs[..], fn(x: &i32) {
+        sum += *x
+    })
+    // sum = 12
+    Rec(4, fn() {
+        sum += 1
+    })
+    // sum = 16
+    g := fn(ys: []i32): i32 {
+        var acc: i32 = 0
+        Each(ys, fn(x: &i32) {
+            acc += *x
+        })
+        return acc
+    }
+    sum += g(xs[..])
+    // sum = 22
+    var pt := Pt(x: 5)
+    p := mut pt
+    var it := It(n: 3)
+    mit := mut it
+    Each(xs[0..1], fn(x: &i32) {
+        _ = x
+        sum += p.Get()
+        for v in mit {
+            sum += v
+        }
+    })
+    // sum = 22 + 5 + (2 + 1 + 0) = 30
+    var acc: i32 = 0
+    var buf: [3]i32 = [0; 3]
+    ReborrowMut(xs[..], mut acc, mut buf[..])
+    // acc = 6, buf = [2, 4, 6] -> acc + buf[2] = 12 -> total = 42
+    sum += acc + buf[2]
+    return sum
+}
+`
+	c := soundSession(t)
+	if o := soundCheck(t, c, "sound/mutcap", src); len(o.Report.Diags) != 0 {
+		t.Fatalf("diagnostics:\n%s", o.Report.Text(o.Sources))
+	}
+	res := c.RunUnit(RunSpec{Unit: "sound/mutcap", Fn: "Run", Tag: &TagOptions{Seed: 11}})
+	if res.Err != nil || res.Skipped != "" || len(res.Violations) != 0 || res.Value != 42 {
+		t.Fatalf("tagged run: %+v", res)
 	}
 }
