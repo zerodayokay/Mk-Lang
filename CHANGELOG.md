@@ -4,6 +4,10 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
+### Performance
+
+- `aarch64-linux` and `aarch64-macos`: non-`var` slice parameters (`mut []T`, `str`, and `[]T` of a `Freeze` element type) now emit scoped alias metadata (`!alias.scope`, `!noalias`, and entry-block `llvm.experimental.noalias.scope.decl`) whenever a function takes at least two qualifying slice parameters including a `mut []T` (alongside Win64 C ABI `Indirect` slices and System V `byval` stack-spilled slices). Because AAPCS64 passes 16-byte slices as `[2 x i64]` aggregates where parameter-level `noalias` cannot attach, this lets LLVM eliminate runtime alias checks and vectorize hot slice loops on AArch64.
+
 ### Fixed
 
 - The borrow checker now counts a non-generic free constructor in a view's defining module when its result borrows from memory that can take stores, as it counted a constructor in the view's namespace. It applies the same rule to private constructors and to optional or error results. This rejects, with E0605 or E0602, programs 0.5.0 accepted: a local stored through such a view into global memory, which then read a dead frame.
