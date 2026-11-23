@@ -499,14 +499,14 @@ test "Remove keeps a probe chain" (sys: &System) {
     a := sys.heap.Alloc()
     var t := EmptyTable[int, int]()
     Assert(TableResize(mut t, a, true, 32))
-    for k in 0..8 {
+    for k in 0..16 {
         Assert(TmClaim(mut t, TmChosen(5, k + 1), k) == 5 + k)
     }
     kh := TmChosen(5, 100)
-    Assert(TmClaim(mut t, kh, 99) == 13)
+    Assert(TmClaim(mut t, kh, 99) == 21)
     TableErase(mut t, 6)
     Assert(CtrlAt(t.ctrl, 6) == CtrlDeleted)
-    Assert(TableFind(&t, kh, &99) == 13)
+    Assert(TableFind(&t, kh, &99) == 21)
     TableFreeArrays(&t, a)
 }
 

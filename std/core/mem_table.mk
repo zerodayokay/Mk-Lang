@@ -6,35 +6,42 @@
 // TextKeyInlineOf, TextKeyWord0 and TextKeyInlineStr, the raw access of a
 // TextMap's inline keys (coll_heap.mk).
 //
-// How: the control array has cap + 8 bytes, the first 8 mirrored at the end,
-// and CtrlPut writes both copies, so a group read at any slot never wraps.
-// GroupAt is one align 1 load of a little-endian word.
+// How: the control array has cap + 16 bytes, the first 16 mirrored at the end
+// (for cap == 8, slots 0..7 mirrored at 8..15 and 16..23 stay CtrlEmpty), so a
+// 16-byte group read at any pos never wraps.
 
 import std.raw
+import std.simd
 
 // CtrlAt is ctrl[i].
 CtrlAt(ctrl: *u8, i: int): u8 {
-    unsafe "the caller keeps i below cap + 8, the length of ctrl" {
+    unsafe "the caller keeps i below cap + 16, the length of ctrl" {
         return raw.Read(raw.Offset(ctrl, i))
     }
 }
 
-// CtrlPut writes ctrl[i] = b and, when i < 8, its mirror ctrl[cap + i], so
-// a group read never wraps and the mirror is always exact.
+// CtrlPut writes ctrl[i] = b and, when i < 16, its mirror ctrl[cap + i], so
+// a 16-byte group read never wraps and the mirror is always exact.
 CtrlPut(ctrl: *u8, cap: int, i: int, b: u8) {
-    unsafe "the caller keeps i below cap; ctrl holds cap + 8 bytes" {
+    unsafe "the caller keeps i below cap; ctrl holds cap + 16 bytes" {
         raw.Write(raw.Offset(ctrl, i), b)
-        if i < 8 {
-            raw.Write(raw.Offset(ctrl, cap + i), b)
+        if i < 16 {
+            raw.Write(raw.Offset(ctrl, cap +% i), b)
         }
     }
 }
 
-// GroupAt is the 8 control bytes at pos, byte j of the word being ctrl[pos
-// + j]: an align 1 load, since pos is any slot.
+// GroupAt is the 8 control bytes at pos (freestanding scalar fallback).
 GroupAt(ctrl: *u8, pos: int): u64 {
-    unsafe "pos < cap, and ctrl holds cap + 8 bytes" {
+    unsafe "pos < cap + 8, and ctrl holds cap + 16 bytes" {
         return raw.ReadUnaligned(raw.PtrCast[u8, u64](raw.Offset(ctrl, pos)))
+    }
+}
+
+// GroupAt16 is the 16 control bytes at pos as a vector (one unaligned 128-bit load).
+GroupAt16(ctrl: *u8, pos: int): simd.Vec[u8, 16] {
+    unsafe "pos < cap, and ctrl holds cap + 16 bytes" {
+        return simd.Vec[u8, 16].FromSlice(raw.Slice(raw.Offset(ctrl, pos), 16), 0)
     }
 }
 
@@ -51,15 +58,15 @@ ValueAt[K, V](slots: *Slot[K, V], i: int): *V {
     }
 }
 
-// NewCtrl allocates cap + 8 control bytes, every one empty; null when a is
+// NewCtrl allocates cap + 16 control bytes, every one empty; null when a is
 // out of memory.
 NewCtrl(a: &Alloc, cap: int): *u8 {
-    p := AllocBytes(a, cap + 8, 8)
+    p := AllocBytes(a, cap + 16, 16)
     if raw.IsNull(p) {
         return p
     }
-    unsafe "p is fresh memory for cap + 8 bytes" {
-        raw.Fill(p, 0xFF, cap + 8)
+    unsafe "p is fresh memory for cap + 16 bytes" {
+        raw.Fill(p, 0xFF, cap + 16)
     }
     return p
 }

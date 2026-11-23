@@ -8,15 +8,14 @@
 package std
 
 import (
-	"encoding/binary"
 	"fmt"
 	"strings"
 	"testing"
 )
 
-// swissModel is 4.8's table over int keys with values.
+// swissModel is 4.8's table over int keys with values (16-byte groups).
 type swissModel struct {
-	ctrl              []byte // cap + 8 bytes, the first 8 mirrored at the end
+	ctrl              []byte // cap + 16 bytes, the first 16 mirrored at the end
 	key, val          []int
 	used, cap, growth int
 	inPlace, resizes  int              // rule 6's two outcomes, counted for coverage
@@ -26,8 +25,6 @@ type swissModel struct {
 const (
 	mEmpty   = 0xFF
 	mDeleted = 0x80
-	mLsb     = 0x0101010101010101
-	mMsb     = 0x8080808080808080
 )
 
 // modelHash is New's hash of an int key: the fold hash.
@@ -35,39 +32,65 @@ func modelHash(k int) uint64 {
 	return foldHashInt(k)
 }
 
-func (t *swissModel) group(pos int) uint64 { return binary.LittleEndian.Uint64(t.ctrl[pos : pos+8]) }
-
 func (t *swissModel) set(i int, b byte) {
 	t.ctrl[i] = b
-	if i < 8 {
+	if i < 16 {
 		t.ctrl[t.cap+i] = b
 	}
 }
 
-func emptyMaskG(g uint64) uint64 { return g & (g << 1) & mMsb }
-func freeMaskG(g uint64) uint64  { return g & mMsb }
-func matchMaskG(g uint64, h2 byte) uint64 {
-	x := g ^ (uint64(h2) * mLsb)
-	return (x - mLsb) & ^x & mMsb
+func (t *swissModel) matchMask16(pos int, h2 byte) uint16 {
+	var m uint16
+	for k := 0; k < 16; k++ {
+		if t.ctrl[pos+k] == h2 {
+			m |= 1 << k
+		}
+	}
+	return m
 }
-func ctz8(m uint64) int {
+
+func (t *swissModel) emptyMask16(pos int) uint16 {
+	var m uint16
+	for k := 0; k < 16; k++ {
+		if t.ctrl[pos+k] == mEmpty {
+			m |= 1 << k
+		}
+	}
+	return m
+}
+
+func (t *swissModel) freeMask16(pos int) uint16 {
+	var m uint16
+	for k := 0; k < 16; k++ {
+		if t.ctrl[pos+k] >= mDeleted {
+			m |= 1 << k
+		}
+	}
+	return m
+}
+
+func ctz16(m uint16) int {
+	if m == 0 {
+		return 16
+	}
 	n := 0
 	for m&1 == 0 {
 		m >>= 1
 		n++
 	}
-	return n / 8
+	return n
 }
-func clz8(m uint64) int {
+
+func clz16(m uint16) int {
 	if m == 0 {
-		return 8
+		return 16
 	}
 	n := 0
-	for m&(1<<63) == 0 {
+	for m&(1<<15) == 0 {
 		m <<= 1
 		n++
 	}
-	return n / 8
+	return n
 }
 
 // lookup is TableLookup: the slot of k, else the first free slot on its path.
@@ -80,22 +103,21 @@ func (t *swissModel) lookup(hash uint64, k int) (at, free int) {
 	pos := int(hash>>7) & mask
 	free = -1
 	for stride := 0; ; {
-		g := t.group(pos)
-		for m := matchMaskG(g, h2); m != 0; m &= m - 1 {
-			i := (pos + ctz8(m)) & mask
+		for m := t.matchMask16(pos, h2); m != 0; m &= m - 1 {
+			i := (pos + ctz16(m)) & mask
 			if t.key[i] == k && t.ctrl[i] < mDeleted {
 				return i, -1
 			}
 		}
 		if free < 0 {
-			if f := freeMaskG(g); f != 0 {
-				free = (pos + ctz8(f)) & mask
+			if f := t.freeMask16(pos); f != 0 {
+				free = (pos + ctz16(f)) & mask
 			}
 		}
-		if emptyMaskG(g) != 0 {
+		if t.emptyMask16(pos) != 0 {
 			return -1, free
 		}
-		stride += 8
+		stride += 16
 		pos = (pos + stride) & mask
 	}
 }
@@ -104,10 +126,10 @@ func (t *swissModel) firstFree(hash uint64) int {
 	mask := t.cap - 1
 	pos := int(hash>>7) & mask
 	for stride := 0; ; {
-		if m := freeMaskG(t.group(pos)); m != 0 {
-			return (pos + ctz8(m)) & mask
+		if m := t.freeMask16(pos); m != 0 {
+			return (pos + ctz16(m)) & mask
 		}
-		stride += 8
+		stride += 16
 		pos = (pos + stride) & mask
 	}
 }
@@ -148,7 +170,7 @@ func (t *swissModel) reserve(hash uint64) {
 }
 
 func (t *swissModel) resize(newcap int) {
-	nt := &swissModel{ctrl: make([]byte, newcap+8), key: make([]int, newcap), val: make([]int, newcap),
+	nt := &swissModel{ctrl: make([]byte, newcap+16), key: make([]int, newcap), val: make([]int, newcap),
 		used: t.used, cap: newcap, growth: newcap*7/8 - t.used, inPlace: t.inPlace, resizes: t.resizes, hashFn: t.hashFn}
 	for i := range nt.ctrl {
 		nt.ctrl[i] = mEmpty
@@ -181,7 +203,7 @@ func (t *swissModel) rehashInPlace() {
 		hash := t.hash(t.key[i])
 		p := int(hash>>7) & mask
 		j := t.firstFree(hash)
-		if ((i-p)&mask)/8 == ((j-p)&mask)/8 {
+		if ((i-p)&mask)/16 == ((j-p)&mask)/16 {
 			t.set(i, byte(hash>>57))
 			i++
 			continue
@@ -207,23 +229,16 @@ func (t *swissModel) find(hash uint64, k int) int {
 
 func (t *swissModel) erase(i int) {
 	mask := t.cap - 1
-	before := (i - 8) & mask
-	after := ctz8or8(emptyMaskG(t.group(i)))
-	prior := clz8(emptyMaskG(t.group(before)))
-	if after+prior < 8 {
+	before := (i - 16) & mask
+	after := ctz16(t.emptyMask16(i))
+	prior := clz16(t.emptyMask16(before))
+	if after+prior < 16 {
 		t.set(i, mEmpty)
 		t.growth++
 	} else {
 		t.set(i, mDeleted)
 	}
 	t.used--
-}
-
-func ctz8or8(m uint64) int {
-	if m == 0 {
-		return 8
-	}
-	return ctz8(m)
 }
 
 func (t *swissModel) digest() (uint64, uint64) {

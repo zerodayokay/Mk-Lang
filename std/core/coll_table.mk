@@ -17,6 +17,7 @@
 // is mem_table.mk's; this file needs no unsafe block.
 
 import std.raw
+import std.simd
 
 struct Slot[K, V] {
     key: K
@@ -309,87 +310,190 @@ StrEq[K](a: str, b: str): bool {
 }
 
 // TableFind is the slot of the key equal to k, whose hash is hash, or -1.
-// Groups at pos, pos + 8, pos + 24, ... modulo cap (triangular, so every
-// slot is covered); candidates lowest byte first; an empty byte in a group
-// ends the probe.
+// 16-byte groups at pos, pos + 16, pos + 48, ... modulo cap (triangular);
+// an empty byte in a group ends the probe.
 TableFind[K: Hash + Eq, V](t: &Table[K, V], hash: u64, k: &K): int {
     if t.cap == 0 {
         return -1
     }
-    mask := t.cap - 1
+    if Target.os != Os.Freestanding {
+        return TableFindSimd(t, hash, k)
+    }
+    mask := t.cap -% 1
     h2 := H2(hash)
     var pos := H1(hash) & mask
     var stride := 0
     for {
-        g := GroupAt(t.ctrl, pos)
-        var m := MatchMask(g, h2)
+        lo := GroupAt(t.ctrl, pos)
+        var m := MatchMask(lo, h2)
         for m != 0 {
-            i := (pos + raw.Ctz64(m) / 8) & mask
+            i := (pos +% (raw.Ctz64(m) >> 3)) & mask
             if KeyEq(SlotRef(KeyAt(t.slots, i), 0), k) {
                 return i
             }
             m = m & (m -% 1)
         }
-        if EmptyMask(g) != 0 {
+        hi := GroupAt(t.ctrl, pos +% 8)
+        m = MatchMask(hi, h2)
+        for m != 0 {
+            i := (pos +% 8 +% (raw.Ctz64(m) >> 3)) & mask
+            if KeyEq(SlotRef(KeyAt(t.slots, i), 0), k) {
+                return i
+            }
+            m = m & (m -% 1)
+        }
+        if (EmptyMask(lo) | EmptyMask(hi)) != 0 {
             return -1
         }
-        stride += 8
-        pos = (pos + stride) & mask
+        stride = stride +% 16
+        pos = (pos +% stride) & mask
+    }
+}
+
+TableFindSimd[K: Hash + Eq, V](t: &Table[K, V], hash: u64, k: &K): int {
+    mask := t.cap -% 1
+    vh2 := simd.Vec[u8, 16].Splat(H2(hash))
+    vemp := simd.Vec[u8, 16].Splat(CtrlEmpty)
+    var pos := H1(hash) & mask
+    var stride := 0
+    for {
+        g := GroupAt16(t.ctrl, pos)
+        var m := (g == vh2).Bits()
+        for m != 0 {
+            i := (pos +% raw.Ctz64(m)) & mask
+            if KeyEq(SlotRef(KeyAt(t.slots, i), 0), k) {
+                return i
+            }
+            m = m & (m -% 1)
+        }
+        if (g == vemp).Bits() != 0 {
+            return -1
+        }
+        stride = stride +% 16
+        pos = (pos +% stride) & mask
     }
 }
 
 // FirstFree is the first empty or deleted slot on hash's probe path; the
 // table has capacity and, by the growth rule, at least one empty slot.
 FirstFree[K, V](t: &Table[K, V], hash: u64): int {
-    mask := t.cap - 1
+    if Target.os != Os.Freestanding {
+        return FirstFreeSimd(t, hash)
+    }
+    mask := t.cap -% 1
     var pos := H1(hash) & mask
     var stride := 0
     for {
         m := FreeMask(GroupAt(t.ctrl, pos))
         if m != 0 {
-            return (pos + raw.Ctz64(m) / 8) & mask
+            return (pos +% (raw.Ctz64(m) >> 3)) & mask
         }
-        stride += 8
-        pos = (pos + stride) & mask
+        m2 := FreeMask(GroupAt(t.ctrl, pos +% 8))
+        if m2 != 0 {
+            return (pos +% 8 +% (raw.Ctz64(m2) >> 3)) & mask
+        }
+        stride = stride +% 16
+        pos = (pos +% stride) & mask
+    }
+}
+
+FirstFreeSimd[K, V](t: &Table[K, V], hash: u64): int {
+    mask := t.cap -% 1
+    vdel := simd.Vec[u8, 16].Splat(CtrlDeleted)
+    var pos := H1(hash) & mask
+    var stride := 0
+    for {
+        m := (GroupAt16(t.ctrl, pos) >= vdel).Bits()
+        if m != 0 {
+            return (pos +% raw.Ctz64(m)) & mask
+        }
+        stride = stride +% 16
+        pos = (pos +% stride) & mask
     }
 }
 
 // TableLookup is TableFind for an insert: at is the slot of the key equal
 // to k, or -1; when the key is absent, free is the first empty or deleted
-// slot on its probe path (the slot FirstFree would give), or -1 at
-// capacity 0. One probe sequence serves both, so an insert of an absent key
-// that needs no rehash probes once (TablePlace with this free), where
-// TableFind then TableReserve then TableClaim probed three times.
+// slot on its probe path, or -1 at capacity 0.
 TableLookup[K: Hash + Eq, V](t: &Table[K, V], hash: u64, k: &K): (at: int, free: int) {
     if t.cap == 0 {
         return (at: -1, free: -1)
     }
-    mask := t.cap - 1
+    if Target.os != Os.Freestanding {
+        return TableLookupSimd(t, hash, k)
+    }
+    mask := t.cap -% 1
     h2 := H2(hash)
     var pos := H1(hash) & mask
     var stride := 0
     var free := -1
     for {
-        g := GroupAt(t.ctrl, pos)
-        var m := MatchMask(g, h2)
+        lo := GroupAt(t.ctrl, pos)
+        var m := MatchMask(lo, h2)
         for m != 0 {
-            i := (pos + raw.Ctz64(m) / 8) & mask
+            i := (pos +% (raw.Ctz64(m) >> 3)) & mask
+            if KeyEq(SlotRef(KeyAt(t.slots, i), 0), k) {
+                return (at: i, free: -1)
+            }
+            m = m & (m -% 1)
+        }
+        hi := GroupAt(t.ctrl, pos +% 8)
+        m = MatchMask(hi, h2)
+        for m != 0 {
+            i := (pos +% 8 +% (raw.Ctz64(m) >> 3)) & mask
             if KeyEq(SlotRef(KeyAt(t.slots, i), 0), k) {
                 return (at: i, free: -1)
             }
             m = m & (m -% 1)
         }
         if free < 0 {
-            f := FreeMask(g)
+            f := FreeMask(lo)
             if f != 0 {
-                free = (pos + raw.Ctz64(f) / 8) & mask
+                free = (pos +% (raw.Ctz64(f) >> 3)) & mask
+            } else {
+                f2 := FreeMask(hi)
+                if f2 != 0 {
+                    free = (pos +% 8 +% (raw.Ctz64(f2) >> 3)) & mask
+                }
             }
         }
-        if EmptyMask(g) != 0 {
+        if (EmptyMask(lo) | EmptyMask(hi)) != 0 {
             return (at: -1, free: free)
         }
-        stride += 8
-        pos = (pos + stride) & mask
+        stride = stride +% 16
+        pos = (pos +% stride) & mask
+    }
+}
+
+TableLookupSimd[K: Hash + Eq, V](t: &Table[K, V], hash: u64, k: &K): (at: int, free: int) {
+    mask := t.cap -% 1
+    vh2 := simd.Vec[u8, 16].Splat(H2(hash))
+    vemp := simd.Vec[u8, 16].Splat(CtrlEmpty)
+    vdel := simd.Vec[u8, 16].Splat(CtrlDeleted)
+    var pos := H1(hash) & mask
+    var stride := 0
+    var free := -1
+    for {
+        g := GroupAt16(t.ctrl, pos)
+        var m := (g == vh2).Bits()
+        for m != 0 {
+            i := (pos +% raw.Ctz64(m)) & mask
+            if KeyEq(SlotRef(KeyAt(t.slots, i), 0), k) {
+                return (at: i, free: -1)
+            }
+            m = m & (m -% 1)
+        }
+        if free < 0 {
+            f := (g >= vdel).Bits()
+            if f != 0 {
+                free = (pos +% raw.Ctz64(f)) & mask
+            }
+        }
+        if (g == vemp).Bits() != 0 {
+            return (at: -1, free: free)
+        }
+        stride = stride +% 16
+        pos = (pos +% stride) & mask
     }
 }
 
@@ -480,20 +584,34 @@ TableClaim[K, V](t: mut Table[K, V], hash: u64): int {
 
 // TableErase marks slot i, whose key and value the caller has moved out,
 // as no longer full (Abseil's EraseMetaOnly): empty when the run of
-// non-empty bytes through i is shorter than 8, so no probe can have passed
+// non-empty bytes through i is shorter than 16, so no probe can have passed
 // through it, which gives one of growth back; else deleted.
 TableErase[K, V](t: mut Table[K, V], i: int) {
-    mask := t.cap - 1
-    before := (i - 8) & mask
-    after := raw.Ctz64(EmptyMask(GroupAt(t.ctrl, i))) / 8
-    prior := raw.Clz64(EmptyMask(GroupAt(t.ctrl, before))) / 8
-    if after + prior < 8 {
+    mask := t.cap -% 1
+    before := (i -% 16) & mask
+    empty := if Target.os != Os.Freestanding {
+        TableEraseShortSimd(t.ctrl, i, before)
+    } else {
+        lo_a := EmptyMask(GroupAt(t.ctrl, i))
+        after := if lo_a != 0 { raw.Ctz64(lo_a) >> 3 } else { 8 +% (raw.Ctz64(EmptyMask(GroupAt(t.ctrl, i +% 8))) >> 3) }
+        hi_b := EmptyMask(GroupAt(t.ctrl, before +% 8))
+        prior := if hi_b != 0 { raw.Clz64(hi_b) >> 3 } else { 8 +% (raw.Clz64(EmptyMask(GroupAt(t.ctrl, before))) >> 3) }
+        after +% prior < 16
+    }
+    if empty {
         CtrlPut(t.ctrl, t.cap, i, CtrlEmpty)
         t.growth += 1
     } else {
         CtrlPut(t.ctrl, t.cap, i, CtrlDeleted)
     }
     t.used -= 1
+}
+
+TableEraseShortSimd(ctrl: *u8, i: int, before: int): bool {
+    vemp := simd.Vec[u8, 16].Splat(CtrlEmpty)
+    after := raw.Ctz64((GroupAt16(ctrl, i) == vemp).Bits())
+    prior := raw.Clz64((GroupAt16(ctrl, before) == vemp).Bits() << 48)
+    return after +% prior < 16
 }
 
 // TableResize moves every key to new arrays of newcap slots: the
@@ -503,7 +621,7 @@ TableResize[K: Hash + Eq, V](t: mut Table[K, V], a: &Alloc, free: bool, newcap: 
     align := AlignOfT[Slot[K, V]]()
     // A slot array whose byte count would overflow int is out of memory, as
     // in GrowSlots, never a wrapped size.
-    if newcap > GrowLimit - 8 || (size > 0 && newcap > GrowLimit / size) {
+    if newcap > GrowLimit - 16 || (size > 0 && newcap > GrowLimit / size) {
         return false
     }
     ctrl := NewCtrl(a, newcap)
@@ -514,7 +632,7 @@ TableResize[K: Hash + Eq, V](t: mut Table[K, V], a: &Alloc, free: bool, newcap: 
     if size > 0 {
         p := AllocBytes(a, newcap * size, align)
         if raw.IsNull(p) {
-            FreeBytes(a, ctrl, newcap + 8, 8)
+            FreeBytes(a, ctrl, newcap + 16, 16)
             return false
         }
         slots = BytesAs[Slot[K, V]](p)
@@ -562,7 +680,7 @@ TableRehashInPlace[K: Hash + Eq, V](t: mut Table[K, V]) {
         hash := TableHash(&*t, SlotRef(KeyAt(t.slots, i), 0))
         p := H1(hash) & mask
         j := FirstFree(&*t, hash)
-        if ((i - p) & mask) / 8 == ((j - p) & mask) / 8 {
+        if ((i - p) & mask) >> 4 == ((j - p) & mask) >> 4 {
             CtrlPut(t.ctrl, cap, i, H2(hash))
             i += 1
             continue
@@ -580,25 +698,21 @@ TableRehashInPlace[K: Hash + Eq, V](t: mut Table[K, V]) {
     t.growth = cap * 7 / 8 - t.used
 }
 
-// TableNext is the first full slot at or after i, or -1 (index
-// order, a function of the insertion and removal sequence only). Eight
-// control bytes at a time while a whole group lies below cap (a group read
-// past cap - 8 would see the mirror of slots 0 to 7), so iterating a table
-// that removals left sparse costs cap / 8 group reads, not cap byte reads.
+// TableNext is the first full slot at or after i, or -1 (index order).
 TableNext[K, V](t: &Table[K, V], i: int): int {
     var j := i
     for t.cap - j >= 8 {
         full := ~GroupAt(t.ctrl, j) & GroupMsb
         if full != 0 {
-            return j + raw.Ctz64(full) / 8
+            return j +% (raw.Ctz64(full) >> 3)
         }
-        j += 8
+        j = j +% 8
     }
     for j < t.cap {
         if CtrlAt(t.ctrl, j) < CtrlDeleted {
             return j
         }
-        j += 1
+        j = j +% 1
     }
     return -1
 }
@@ -609,6 +723,6 @@ TableFreeArrays[K, V](t: &Table[K, V], a: &Alloc) {
     if t.cap == 0 {
         return
     }
-    FreeBytes(a, t.ctrl, t.cap + 8, 8)
+    FreeBytes(a, t.ctrl, t.cap + 16, 16)
     FreeSlots(a, t.slots, t.cap)
 }

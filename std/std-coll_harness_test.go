@@ -70,7 +70,7 @@ CollFixDigest(t: &Table[int, int]): (ctrl: u64, slots: u64) {
     var c: u64 = 14695981039346656037
     var k: u64 = 14695981039346656037
     if t.cap > 0 {
-        for i in 0..t.cap + 8 {
+        for i in 0..t.cap + 16 {
             c = (c ^ u64(CtrlAt(t.ctrl, i))) *% 1099511628211
         }
         for i in 0..t.cap {
