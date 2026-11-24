@@ -175,6 +175,11 @@ func (w *world) packJob(cfg codegen.Config, in, out string, i, n int) toolchain.
 		// takes one.
 		job.Tune = w.cfg.Tune
 	}
+	if i == n {
+		// The support pack is a single compile with its own -O3 non-LTO options;
+		// probing clang -### for one file costs more than invoking the driver.
+		job.DirectDriver = true
+	}
 	return job
 }
 

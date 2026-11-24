@@ -49,6 +49,10 @@ type Options struct {
 	// nil means os.Executable with symbolic links and junctions resolved
 	// (RealPath); tests inject it.
 	Executable func() (string, error)
+	// CC1Get and CC1Put optionally persist probed `clang -cc1` argv templates
+	// across processes (e.g. in the driver's KindLayout store).
+	CC1Get func(key source.Hash) ([]byte, bool)
+	CC1Put func(key source.Hash, data []byte)
 }
 
 // Source is the discovery rule that chose Tools.Dir.
@@ -101,6 +105,7 @@ type Tools struct {
 	Version Version // clang's, parsed from `clang --version`
 
 	sizes [5]int64 // file sizes of Clang, LLDLink, LDLLD, LLVMLib, LLD; -1 when absent
+	cc1   *cc1Cache
 }
 
 // MissingError names what was searched and what was missing: the
@@ -310,7 +315,7 @@ func (o resolved) complete(d string) bool {
 }
 
 func (o resolved) tools(d string, src Source) *Tools {
-	t := &Tools{Dir: d, Found: src}
+	t := &Tools{Dir: d, Found: src, cc1: newCC1Cache(o.CC1Get, o.CC1Put)}
 	ptrs := []*string{&t.Clang, &t.LLDLink, &t.LDLLD, &t.LLVMLib, &t.LLD}
 	for i, name := range []string{NameClang, NameLLDLink, NameLDLLD, NameLLVMLib, NameLLD} {
 		t.sizes[i] = -1

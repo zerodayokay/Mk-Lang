@@ -230,10 +230,26 @@ func (w *world) buildCPU(ctx context.Context, tools *toolchain.Tools, st *cache.
 	return name, nil
 }
 
-// startNativePrep overlaps clang target-layout probing and explicit --cpu
-// resolution with runCheck on mk build, once startTools finishes. Both results
-// are memoized on w under probeMu/cpuMu so world.native reuses them without
-// running clang again.
+// cc1StoreHooks returns optional KindLayout get/put callbacks for persisting
+// probed `clang -cc1` argv templates across processes.
+func cc1StoreHooks(st *cache.Store) (func(source.Hash) ([]byte, bool), func(source.Hash, []byte)) {
+	if st == nil {
+		return nil, nil
+	}
+	get := func(k source.Hash) ([]byte, bool) {
+		b, ok, _ := st.Get(cache.KindLayout, k)
+		return b, ok
+	}
+	put := func(k source.Hash, b []byte) {
+		_ = st.Put(cache.KindLayout, k, b)
+	}
+	return get, put
+}
+
+// startNativePrep overlaps clang target-layout probing, explicit --cpu
+// resolution, and -cc1 template probing with runCheck on mk build, once
+// startTools finishes. All results are memoized so world.native reuses them
+// without running extra driver probes on the critical path.
 func (s *Session) startNativePrep(w *world) {
 	if s.prepDone != nil {
 		return
@@ -266,25 +282,61 @@ func (s *Session) startNativePrep(w *world) {
 				return
 			}
 			ctx := context.Background()
-			if !hasCPU {
-				_, _ = w.probe(ctx, t, st, triple)
-				return
+			opt, lto := compileOpts(w.cfg.Profile, 0, 1)
+			opt, lto = w.profileCompile(opt, lto)
+			var tune toolchain.Tuning
+			if lto {
+				tune = w.cfg.Tune
 			}
+			warmTemplates := func(probedTriple, cpuName string) {
+				var twg sync.WaitGroup
+				twg.Add(1)
+				go func() {
+					defer twg.Done()
+					_ = source.Guard("warm cc1 pack", source.Span{}, func() {
+						t.WarmCC1(ctx, toolchain.CompileJob{Triple: probedTriple, Opt: opt, LTO: lto, CPU: cpuName, Tune: tune})
+					})
+				}()
+				if lto && toolchain.FormatOf(probedTriple) == toolchain.COFF && !w.cfg.Tune.FatLTO {
+					twg.Add(1)
+					go func() {
+						defer twg.Done()
+						_ = source.Guard("warm cc1 thin", source.Span{}, func() {
+							t.WarmThinCC1(ctx, w.cfg.Tune)
+						})
+					}()
+				}
+				twg.Wait()
+			}
+			var probedTriple string
+			var cpuName string
+			var probeErr error
+			var cpuDiag *diag.Diagnostic
 			var wg sync.WaitGroup
-			wg.Add(2)
+			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				_ = source.Guard("probe", source.Span{}, func() {
-					_, _ = w.probe(ctx, t, st, triple)
+					var f toolchain.TargetFacts
+					f, probeErr = w.probe(ctx, t, st, triple)
+					probedTriple = f.Triple
 				})
 			}()
-			go func() {
-				defer wg.Done()
-				_ = source.Guard("build cpu", source.Span{}, func() {
-					_, _ = w.buildCPU(ctx, t, st, triple)
-				})
-			}()
+			if hasCPU {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_ = source.Guard("build cpu", source.Span{}, func() {
+						cpuName, cpuDiag = w.buildCPU(ctx, t, st, triple)
+					})
+				}()
+			} else {
+				cpuName = w.cpu()
+			}
 			wg.Wait()
+			if probeErr == nil && cpuDiag == nil && probedTriple != "" {
+				warmTemplates(probedTriple, cpuName)
+			}
 		})
 	}()
 }

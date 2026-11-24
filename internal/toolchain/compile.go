@@ -64,6 +64,10 @@ type CompileJob struct {
 	// the one option of an experiment that changes its bitcode. With the zero
 	// Tuning, or unroll=llvm, the compile has no LLVM option.
 	Tune Tuning
+	// DirectDriver skips -cc1 template probing (used for one-off compiles like
+	// the single support pack where probing clang -### costs more than running
+	// the driver once).
+	DirectDriver bool
 }
 
 // fullLTO reports whether j compiles to full-LTO bitcode (fatlto).
@@ -77,7 +81,11 @@ func (t *Tools) Compile(ctx context.Context, j CompileJob) error {
 	if err != nil {
 		return err
 	}
-	_, err = run(ctx, NameClang, t.Clang, args, filepath.Dir(j.Output))
+	runArgs := args
+	if !j.DirectDriver {
+		runArgs = t.compileCC1Args(ctx, j, args)
+	}
+	_, err = run(ctx, NameClang, t.Clang, runArgs, filepath.Dir(j.Output))
 	return err
 }
 

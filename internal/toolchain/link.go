@@ -862,7 +862,8 @@ func (t *Tools) thinBackend(ctx context.Context, j LinkJob, work, name string, r
 			}
 		}
 	}
-	_, runErr := run(ctx, NameClang, t.Clang, args, work)
+	runArgs := t.thinCC1Args(ctx, j.Tune, name, name+".thinlto.bc", out, args)
+	_, runErr := run(ctx, NameClang, t.Clang, runArgs, work)
 	if keyDone != nil {
 		<-keyDone
 	}

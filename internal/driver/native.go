@@ -292,8 +292,10 @@ func (s *Session) startTools() {
 				if !s.cfg.NoCache && !s.cfg.CacheVerify {
 					st, _ = cache.Open(s.cacheDir(), cache.Options{Budget: s.cfg.CacheBudget, Now: s.cfg.TestHooks.CacheNow})
 				}
+				cc1Get, cc1Put := cc1StoreHooks(st)
 				s.disc.t, s.disc.err = toolchain.Discover(toolchain.Options{LLVMDir: s.cfg.LLVMDir,
-					VersionLine: func(clang string) (string, error) { return versionLine(st, clang, run) }})
+					VersionLine: func(clang string) (string, error) { return versionLine(st, clang, run) },
+					CC1Get:      cc1Get, CC1Put: cc1Put})
 			}); ie != nil {
 				s.disc.err = fmt.Errorf("%s", ie.What)
 			}
