@@ -1,13 +1,16 @@
-// Why: a hosted program may define MkPanicHook to see a panic before the
-// runtime reports it, and the hook's call order and arguments are part of
+// Why: a hosted program or library may define MkPanicHook to see a panic before
+// the runtime reports it, and the hook's call order and arguments are part of
 // the runtime's contract.
-// What: hookProgram and TestPanicHook_Hosted.
-// How: builds a Windows program whose hook writes the PanicInfo through
-// Win32, runs it, and matches stderr and the exit status 101.
+// What: TestPanicHook_Hosted, TestPanicHook_SuspendInCallback and
+// TestPanicHook_LibAfterStop, with their sample programs and C hosts.
+// How: builds Windows programs and a library whose hook writes the PanicInfo
+// through Win32, runs them in dev and release, and matches stderr and the exit
+// status 101.
 
 package driver
 
 import (
+	"context"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -169,5 +172,77 @@ func TestPanicHook_SuspendInCallback(t *testing.T) {
 		if code != 101 || !want.MatchString(dropBacktrace(errOut)) || strings.Count(errOut, "hook ") != 1 {
 			t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
 		}
+	}
+}
+
+const libAfterStopProgram = `import std.raw
+import std.runtime
+
+extern GetStdHandle(n: u32): *u8
+extern WriteFile(h: *u8, buf: *u8, n: u32, done: *u32, ov: *u8): i32
+
+Say(s: str) {
+    var done: u32 = 0
+    unsafe "a console write of s's bytes" {
+        _ = WriteFile(GetStdHandle(0xFFFFFFF4), raw.StrData(s), Trunc[u32](s.Len()), raw.Of(&done), raw.Null[u8]())
+    }
+}
+
+export extern MkPanicHook(info: &runtime.PanicInfo) {
+    Say("hook ")
+    Say(info.message)
+    if info.code == 16 {
+        Say(" code 16")
+    }
+    Say("\n")
+}
+
+export extern Ping(): i32 {
+    return 1
+}
+`
+
+const libAfterStopC = `#include "libhook16.h"
+__declspec(dllimport) void __stdcall ExitProcess(unsigned code);
+void start(void) {
+    if (libhook16_mk_start(0) != 0) ExitProcess(10);
+    if (Ping() != 1) ExitProcess(11);
+    if (libhook16_mk_stop() != 0) ExitProcess(12);
+    Ping();
+    ExitProcess(0);
+}
+`
+
+// TestPanicHook_LibAfterStop: a call into a library after its stop passes
+// PanicSuspendInCallback (16) and the formatted post-stop message to
+// MkPanicHook in dev and release.
+func TestPanicHook_LibAfterStop(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("SKIP: the hook writes through Win32")
+	}
+	tools := needTools(t)
+	root := writeTree(t, map[string]string{
+		"pkg.mk": manifest(map[string]string{
+			"name":           `"libhook16"`,
+			"bins":           `[` + libBin("libhook16", ".", "dynamic", "") + `]`,
+			"unsafe_modules": `["."]`,
+		}),
+		"lib.mk": libAfterStopProgram,
+	})
+	for _, prof := range []types.Profile{types.Dev, types.Release} {
+		t.Run(prof.String(), func(t *testing.T) {
+			k32 := filepath.Join(t.TempDir(), "k32.lib")
+			if err := tools.ImportLib(context.Background(), "kernel32.dll", []string{"ExitProcess"}, "x64", k32); err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			buildLib(t, root, types.X86_64Windows, prof, dir)
+			exe := clangHost(t, tools, dir, "afterstop", libAfterStopC, filepath.Join(dir, "libhook16.lib"), k32)
+			_, errOut, code := runExe(t, types.X86_64Windows, exe, "")
+			want := regexp.MustCompile(`^hook suspend in callback: a call after the library's stop code 16\npanic: suspend in callback: a call after the library's stop\n$`)
+			if code != 101 || !want.MatchString(dropBacktrace(errOut)) || strings.Count(errOut, "hook ") != 1 {
+				t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
+			}
+		})
 	}
 }

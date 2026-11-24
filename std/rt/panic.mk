@@ -1,8 +1,8 @@
 // Why: every panic, from any thread, must end the process with one readable
 // report and exit status 101, even when the report itself panics.
 //
-// What: the panic hooks PanicAt, PanicMsg and PanicErr, PanicText, Reporting
-// and the report writer, with the Digits and Put formatting helpers.
+// What: the panic hooks PanicAt, PanicMsg and PanicErr, PanicText, Report,
+// Reporting and the report writer, with the Digits and Put formatting helpers.
 //
 // How: the first panicking thread wins a compare-and-swap on Panics and
 // reports; other threads park for good, and a nested panic on the winner's
