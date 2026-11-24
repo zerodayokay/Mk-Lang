@@ -44,6 +44,6 @@ func fpSizeFacts(cfg Config, h *source.Hasher) {
 		h.String("minsize")
 	}
 	if cfg.Cover {
-		h.String("cover") // cover.go's counters
+		h.String("cover.v2") // cover.go's counters and live CoverCmp
 	}
 }

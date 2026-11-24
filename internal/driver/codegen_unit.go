@@ -84,6 +84,11 @@ func (w *world) buildRoots(mainMod string, pkg []*modNode, allFuncs, gro bool) [
 			roots = append(roots, mono.Root{Kind: mono.RootRuntime, Item: id})
 		}
 	}
+	if w.cfg.Cover && !isFree(w.cfg.Target) {
+		if id, ok := w.items.ByKey(types.ItemKey("std.rt", "CoverCmp")); ok {
+			roots = append(roots, mono.Root{Kind: mono.RootRuntime, Item: id})
+		}
+	}
 	return roots
 }
 

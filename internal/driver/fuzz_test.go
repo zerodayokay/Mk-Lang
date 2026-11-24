@@ -374,3 +374,114 @@ func TestMkTestFuzzLateHang(t *testing.T) {
 		t.Error("no hang saved")
 	}
 }
+
+// TestFuzzHitCountLoopDepth verifies AFL 8-bit hit-count bucket guidance by
+// requiring a loop body (matching XOR-obfuscated bytes so fuzzDictionary cannot
+// guess the constant) to iterate 8 times before panicking.
+func TestFuzzHitCountLoopDepth(t *testing.T) {
+	const src = `import std.testing
+
+LoopDepth(b: []u8) {
+    var n := 0
+    for x in b {
+        if (x ^ 0x5A) == 0x1B {
+            n += 1
+        } else {
+            break
+        }
+    }
+    if n == 8 {
+        Panic("depth 8")
+    }
+}
+
+test "loop_depth" {
+    testing.Fuzz(LoopDepth)
+}
+`
+	root := testPkg(t, map[string]string{"main.mk": src})
+	rep := mkTest(t, Config{Root: root, TestTimeout: 2 * time.Minute}, TestOptions{Fuzz: "loop_depth", FuzzTime: 45 * time.Second})
+	if len(rep.Tests) != 1 || rep.Tests[0].Result != "fail" || !strings.Contains(rep.Tests[0].Output, "saved testdata/fuzz/loop_depth/") {
+		t.Fatalf("--fuzz loop_depth failed to reach n == 8: %+v", rep.Tests)
+	}
+	files := corpusFiles(filepath.Join(root, "testdata", "fuzz", "loop_depth"))
+	if len(files) == 0 {
+		t.Fatal("nothing saved in loop_depth")
+	}
+	in, err := os.ReadFile(filepath.Join(root, "testdata", "fuzz", "loop_depth", files[0]))
+	if err != nil || len(in) < 8 || string(in[:8]) != "AAAAAAAA" {
+		t.Errorf("saved loop_depth input = %x (%v), want 8 leading 'A' bytes", in, err)
+	}
+}
+
+// TestFuzzCoverCmpMagic4And8 verifies that live 64-entry CoverCmp tracking and
+// Redqueen/splice mutation solve runtime-computed 4-byte and 8-byte comparisons
+// whose values do not appear literally in the fuzz dictionary.
+func TestFuzzCoverCmpMagic4And8(t *testing.T) {
+	const src = `import std.testing
+
+ReadU32LE(b: []u8, at: int): u32 {
+    return u32(b[at]) | (u32(b[at + 1]) << 8) | (u32(b[at + 2]) << 16) | (u32(b[at + 3]) << 24)
+}
+
+ReadU64LE(b: []u8, at: int): u64 {
+    lo := u64(ReadU32LE(b, at))
+    hi := u64(ReadU32LE(b, at + 4))
+    return lo | (hi << 32)
+}
+
+Check4(b: []u8) {
+    if b.Len() >= 4 {
+        want := (u32(0x1357) << 16) | u32(0x9BDF)
+        if ReadU32LE(b, 0) == want {
+            Panic("magic4")
+        }
+    }
+}
+
+Check8(b: []u8) {
+    if b.Len() >= 8 {
+        lo := (u64(0x2468) << 16) | u64(0xACE0)
+        hi := (u64(0x1357) << 16) | u64(0x9BDF)
+        want := (hi << 32) | lo
+        if ReadU64LE(b, 0) == want {
+            Panic("magic8")
+        }
+    }
+}
+
+test "magic4" {
+    testing.Fuzz(Check4)
+}
+
+test "magic8" {
+    testing.Fuzz(Check8)
+}
+`
+	root := testPkg(t, map[string]string{"main.mk": src})
+	rep4 := mkTest(t, Config{Root: root, TestTimeout: 2 * time.Minute}, TestOptions{Fuzz: "magic4", FuzzTime: 45 * time.Second})
+	if len(rep4.Tests) != 1 || rep4.Tests[0].Result != "fail" || !strings.Contains(rep4.Tests[0].Output, "saved testdata/fuzz/magic4/") {
+		t.Fatalf("--fuzz magic4 failed: %+v", rep4.Tests)
+	}
+	f4 := corpusFiles(filepath.Join(root, "testdata", "fuzz", "magic4"))
+	if len(f4) == 0 {
+		t.Fatal("nothing saved in magic4")
+	}
+	in4, err := os.ReadFile(filepath.Join(root, "testdata", "fuzz", "magic4", f4[0]))
+	if err != nil || !bytes.Equal(in4[:min(len(in4), 4)], []byte{0xDF, 0x9B, 0x57, 0x13}) {
+		t.Errorf("saved magic4 input = %x (%v), want df9b5713...", in4, err)
+	}
+
+	rep8 := mkTest(t, Config{Root: root, TestTimeout: 2 * time.Minute}, TestOptions{Fuzz: "magic8", FuzzTime: 45 * time.Second})
+	if len(rep8.Tests) != 1 || rep8.Tests[0].Result != "fail" || !strings.Contains(rep8.Tests[0].Output, "saved testdata/fuzz/magic8/") {
+		t.Fatalf("--fuzz magic8 failed: %+v", rep8.Tests)
+	}
+	f8 := corpusFiles(filepath.Join(root, "testdata", "fuzz", "magic8"))
+	if len(f8) == 0 {
+		t.Fatal("nothing saved in magic8")
+	}
+	in8, err := os.ReadFile(filepath.Join(root, "testdata", "fuzz", "magic8", f8[0]))
+	if err != nil || !bytes.Equal(in8[:min(len(in8), 8)], []byte{0xE0, 0xAC, 0x68, 0x24, 0xDF, 0x9B, 0x57, 0x13}) {
+		t.Errorf("saved magic8 input = %x (%v), want e0ac6824df9b5713...", in8, err)
+	}
+}

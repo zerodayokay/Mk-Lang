@@ -126,6 +126,13 @@ func (fg *fnGen) switchTerm(t *mir.Terminator) {
 		return
 	}
 	var lc []llvm.Case
+	bits := on.v.Ty.Bits()
+	if fg.covered() && (bits == 16 || bits == 32 || bits == 64) && len(cases) > 0 && len(cases) <= 32 {
+		wBytes := uint8(bits / 8)
+		for _, c := range cases {
+			fg.coverCmp(on.v, m.ConstInt(on.v.Ty, c.Value), wBytes)
+		}
+	}
 	for j, c := range cases {
 		lc = append(lc, llvm.Case{Val: m.ConstInt(on.v.Ty, c.Value), Target: fg.edge(j, fg.blocks[c.Target])})
 	}

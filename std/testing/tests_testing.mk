@@ -54,3 +54,21 @@ test "Testing Mutate keeps the input within MaxLen and its bounds" {
     }
     a.Free()
 }
+
+test "Testing Bucket classes and rt CoverCmp ring buffer" {
+    Assert(Bucket(1) == 1 && Bucket(2) == 2 && Bucket(3) == 4)
+    Assert(Bucket(4) == 8 && Bucket(7) == 8 && Bucket(8) == 16 && Bucket(15) == 16)
+    Assert(Bucket(16) == 32 && Bucket(31) == 32 && Bucket(32) == 64 && Bucket(127) == 64 && Bucket(128) == 128)
+
+    rt.CoverCmpReset()
+    rt.CoverCmpEnable(true)
+    rt.CoverCmp(0x1111, 0x1111, 2) // equal operands ignored
+    Assert(rt.CoverCmpCount() == 0)
+    rt.CoverCmp(0x11223344, 0xCAFEBABE, 4)
+    Assert(rt.CoverCmpCount() == 1)
+    pair := rt.CoverCmpAt(0)
+    Assert(pair.a == 0x11223344 && pair.b == 0xCAFEBABE && rt.CoverCmpWidthAt(0) == 4)
+    rt.CoverCmpReset()
+    Assert(rt.CoverCmpCount() == 0)
+    rt.CoverCmpEnable(false)
+}

@@ -48,6 +48,9 @@ const MaxLen: int = 4096
 // PoolSlots is how many inputs Guided may add to the loop's pool.
 const PoolSlots: int = 64
 
+// CmpCap is how many live comparison pairs from std.rt.CoverCmp Loop retains.
+const CmpCap: int = 128
+
 // MaxBenchN is the largest n the calibration grows to (2^30): a body
 // that ignores n never takes 20 ms, and n must stay a decimal the driver's
 // spec and Decimal carry.
@@ -229,18 +232,51 @@ Below(r: u64, n: int): int {
     return Trunc[int](r >> 33) % n
 }
 
-// Guided is the guidance hook: whether the input just run reached a block
-// no earlier input reached, read live from the package's counters
-// (std.rt's CoverLive), so the loop keeps
-// it in its pool. seen holds one byte per counter, 1 once it was above 0.
-// Without counters (a build without them: n is 0) it keeps nothing and
-// the loop is unguided. O(n counters) per call; allocates nothing.
-Guided(base: uint, seen: mut []u8): bool {
+// Bucket maps a non-zero per-run block hit delta to an AFL-style 8-bit
+// hit-count class bit (1, 2, 3, 4-7, 8-15, 16-31, 32-127, 128+).
+Bucket(d: u64): u8 {
+    if d == 1 {
+        return 1
+    }
+    if d == 2 {
+        return 2
+    }
+    if d == 3 {
+        return 4
+    }
+    if d <= 7 {
+        return 8
+    }
+    if d <= 15 {
+        return 16
+    }
+    if d <= 31 {
+        return 32
+    }
+    if d <= 127 {
+        return 64
+    }
+    return 128
+}
+
+// Guided is the guidance hook: whether the input just run reached a block or
+// AFL hit-count bucket no earlier input reached, computed from per-run deltas
+// against live process counters (std.rt.CoverLive/CoverLoad), so the loop
+// keeps it in its pool. seen holds an 8-bit bucket bitmask per counter, and
+// prev holds the cumulative counter snapshots across calls. O(n counters);
+// allocates nothing.
+Guided(base: uint, seen: mut []u8, prev: mut []u64): bool {
     var fresh := false
     for i in 0..seen.Len() {
-        if seen[i] == 0 && rt.CoverLoad(base, i) != 0 {
-            seen[i] = 1
-            fresh = true
+        cur := rt.CoverLoad(base, i)
+        delta := cur -% prev[i]
+        prev[i] = cur
+        if delta != 0 {
+            bit := Bucket(delta)
+            if (seen[i] & bit) == 0 {
+                seen[i] = seen[i] | bit
+                fresh = true
+            }
         }
     }
     return fresh
@@ -278,11 +314,19 @@ Loop(a: &Arena, io: Io, b: []u8, f: fn([]u8)) {
     pool_len := a.Slice[int](PoolSlots).Must()
     live := rt.CoverLive()
     seen := a.Slice[u8](live.n).Must()
+    prev := a.Slice[u64](live.n).Must()
     for k in 0..live.n {
         seen[k] = 0
+        prev[k] = 0
     }
-    // The counters the seeds and the setup already reached are not new.
-    _ = Guided(live.base, seen)
+    cmp_a := a.Slice[u64](CmpCap).Must()
+    cmp_b := a.Slice[u64](CmpCap).Must()
+    cmp_w := a.Slice[u8](CmpCap).Must()
+    var cmp_n := 0
+    var cmp_next := 0
+    rt.CoverCmpEnable(true)
+    // The counters and hit-count buckets setup already reached are baseline.
+    _ = Guided(live.base, seen, prev)
     var pooled := 0
     var state := fs.OpenWith(io, state_path, fs.ReadWrite).Must()
     var r := Step(seed *% 0x9E3779B97F4A7C15 | 1)
@@ -309,14 +353,41 @@ Loop(a: &Arena, io: Io, b: []u8, f: fn([]u8)) {
         rounds := 1 + Below(r, 4)
         for _ in 0..rounds {
             r = Step(r)
-            n = Mutate(r, mut frame[16..], n, b, seeds, dicts)
+            n = MutateGuided(r, mut frame[16..], n, b, seeds, dicts, pool[..], pool_len[..], pooled, cmp_a[..], cmp_b[..], cmp_w[..], cmp_n)
         }
         count += 1
         PutU64(mut frame[..], 0, Trunc[u64](count))
         PutU64(mut frame[..], 8, Trunc[u64](n))
         _ = state.WriteAt(io, 0, frame[0..16 + n]).Must()
+        rt.CoverCmpReset()
         f(frame[16..16 + n])
-        if Guided(live.base, seen) && n > 0 {
+        cnt := rt.CoverCmpCount()
+        for ci in 0..cnt {
+            w := rt.CoverCmpWidthAt(ci)
+            if w != 2 && w != 4 && w != 8 {
+                continue
+            }
+            pair := rt.CoverCmpAt(ci)
+            var dup := false
+            for j in 0..cmp_n {
+                if cmp_w[j] == w && cmp_a[j] == pair.a && cmp_b[j] == pair.b {
+                    dup = true
+                    break
+                }
+            }
+            if !dup {
+                slot := if cmp_n < CmpCap { cmp_n } else { cmp_next }
+                cmp_a[slot] = pair.a
+                cmp_b[slot] = pair.b
+                cmp_w[slot] = w
+                if cmp_n < CmpCap {
+                    cmp_n += 1
+                } else {
+                    cmp_next = (cmp_next + 1) & (CmpCap - 1)
+                }
+            }
+        }
+        if Guided(live.base, seen, prev) && n > 0 {
             k := if pooled < PoolSlots { pooled } else { Below(r, PoolSlots) }
             for j in 0..n {
                 pool[k * MaxLen + j] = frame[16 + j]
@@ -327,6 +398,7 @@ Loop(a: &Arena, io: Io, b: []u8, f: fn([]u8)) {
             }
         }
     }
+    rt.CoverCmpEnable(false)
     state.Close(io).Must()
 }
 
@@ -377,10 +449,42 @@ CopySeed(b: []u8, k: int, dst: mut []u8): int {
     return n
 }
 
-// Mutate applies one mutation chosen by r to the input buf[0..n] (buf
-// holds MaxLen bytes) and returns the new length.
+// ByteOf returns byte k of w-byte integer v in big-endian or little-endian order.
+ByteOf(v: u64, w: int, k: int, big: bool): u8 {
+    shift := if big { w - 1 - k } else { k }
+    return Trunc[u8](v >> Trunc[u64](8 * shift))
+}
+
+// MatchesVal reports whether buf[pos..pos+w] encodes w-byte integer v.
+MatchesVal(buf: []u8, pos: int, v: u64, w: int, big: bool): bool {
+    for k in 0..w {
+        if buf[pos + k] != ByteOf(v, w, k, big) {
+            return false
+        }
+    }
+    return true
+}
+
+// WriteVal overwrites buf[pos..pos+w] with w-byte integer v.
+WriteVal(buf: mut []u8, pos: int, v: u64, w: int, big: bool) {
+    for k in 0..w {
+        buf[pos + k] = ByteOf(v, w, k, big)
+    }
+}
+
+// Mutate applies one unguided mutation chosen by r to buf[0..n].
 Mutate(r: u64, buf: mut []u8, n: int, b: []u8, seeds: int, dicts: int): int {
-    op := Below(r, 6)
+    var empty_u8: [0]u8 = []
+    var empty_int: [0]int = []
+    var empty_u64: [0]u64 = []
+    return MutateGuided(r, buf, n, b, seeds, dicts, empty_u8[..], empty_int[..], 0, empty_u64[..], empty_u64[..], empty_u8[..], 0)
+}
+
+// MutateGuided applies one mutation chosen by r to the input buf[0..n] (buf
+// holds MaxLen bytes), including pool splicing, Redqueen comparison operand
+// replacement, and live CoverCmp constant splicing, returning the new length.
+MutateGuided(r: u64, buf: mut []u8, n: int, b: []u8, seeds: int, dicts: int, pool: []u8, pool_len: []int, pooled: int, cmp_a: []u64, cmp_b: []u64, cmp_w: []u8, cmp_n: int): int {
+    op := Below(r, 8)
     at := Below(Step(r), n + 1)
     v := Trunc[u8](Step(Step(r)) >> 13)
     if op == 0 && n > 0 && at < n {
@@ -406,8 +510,23 @@ Mutate(r: u64, buf: mut []u8, n: int, b: []u8, seeds: int, dicts: int): int {
         }
         return n - 1
     }
-    if op == 4 && seeds > 0 {
-        // Splice: overwrite from at with a piece of a seed.
+    if op == 4 && (seeds > 0 || pooled > 0) {
+        // Splice: overwrite from at with a piece of a seed or pooled input.
+        use_pool := pooled > 0 && (seeds == 0 || (Step(Step(r)) & 1) == 0)
+        if use_pool {
+            pk := Below(Step(r), pooled)
+            sn := pool_len[pk]
+            if sn == 0 {
+                return n
+            }
+            from := Below(Step(Step(r)), sn)
+            var k := 0
+            for from + k < sn && at + k < MaxLen && k < 64 {
+                buf[at + k] = pool[pk * MaxLen + from + k]
+                k += 1
+            }
+            return if at + k > n { at + k } else { n }
+        }
         s := Nth(b, b's', Below(Step(r), seeds))
         d := DataAt(b, s)
         sn := RecordEnd(b, s) - d
@@ -439,6 +558,47 @@ Mutate(r: u64, buf: mut []u8, n: int, b: []u8, seeds: int, dicts: int): int {
             buf[at + k] = b[d + k]
         }
         return n + tn
+    }
+    if (op == 6 || op == 7) && cmp_n > 0 {
+        ci := Below(Step(r), cmp_n)
+        ca := cmp_a[ci]
+        cb := cmp_b[ci]
+        cw := int(cmp_w[ci])
+        if cw == 2 || cw == 4 || cw == 8 {
+            if op == 6 && n >= cw {
+                for pos in 0..n - cw + 1 {
+                    if MatchesVal(buf[..], pos, ca, cw, false) {
+                        WriteVal(buf, pos, cb, cw, false)
+                        return n
+                    }
+                    if MatchesVal(buf[..], pos, cb, cw, false) {
+                        WriteVal(buf, pos, ca, cw, false)
+                        return n
+                    }
+                    if MatchesVal(buf[..], pos, ca, cw, true) {
+                        WriteVal(buf, pos, cb, cw, true)
+                        return n
+                    }
+                    if MatchesVal(buf[..], pos, cb, cw, true) {
+                        WriteVal(buf, pos, ca, cw, true)
+                        return n
+                    }
+                }
+            }
+            r2 := Step(r)
+            r3 := Step(r2)
+            val := if (r2 & 1) == 0 { cb } else { ca }
+            big := (r2 & 6) == 6
+            if n >= cw && (r3 & 1) == 0 {
+                pos := Below(Step(r3), n - cw + 1)
+                WriteVal(buf, pos, val, cw, big)
+                return n
+            }
+            if at + cw <= MaxLen {
+                WriteVal(buf, at, val, cw, big)
+                return if at + cw > n { at + cw } else { n }
+            }
+        }
     }
     // The chosen mutation does not apply: set a byte, or grow by one.
     if n > 0 && at < n {

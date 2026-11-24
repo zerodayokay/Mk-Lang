@@ -217,6 +217,21 @@ func PackFacts(u *Unit, p int, env Env, cfg Config, h *source.Hasher) bool {
 	})
 	// The preserve_nonecc tail-dispatch split and table bindings (pnone.go).
 	pnonePackFacts(ag, p, h)
+	if cfg.Cover {
+		hasCmp := false
+		if id, ok := items.ByKey(keyCoverCmp); ok {
+			if cmpFI, ok := ag.findFunc(id, nil); ok {
+				hasCmp = true
+				h.Bool(true)
+				h.String(u.Funcs[cmpFI].Symbol)
+				h.Bool(ag.internalABI(cmpFI))
+				h.Uvarint(tailForwards(u.Funcs[cmpFI].Body))
+			}
+		}
+		if !hasCmp {
+			h.Bool(false)
+		}
+	}
 	h.Uvarint(uint64(len(u.Globals)))
 	for _, gl := range u.Globals {
 		h.String(items.Get(gl.Item).Key.String())

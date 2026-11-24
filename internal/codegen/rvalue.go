@@ -251,6 +251,11 @@ func (fg *fnGen) binary(rv *mir.Rvalue, a, b value) llvm.Value {
 		return fg.floatBinary(op, a, b, ar)
 	}
 	if op.IsCompare() {
+		if (op == mir.Eq || op == mir.Ne) && fg.covered() && ar.class == sInt &&
+			(ar.size == 2 || ar.size == 4 || ar.size == 8) &&
+			(rv.A.Kind != mir.OpImm || rv.B.Kind != mir.OpImm) {
+			fg.coverCmp(a.v, b.v, uint8(ar.size))
+		}
 		return fg.cur.ICmp(intPred(op, ar.signed && ar.class == sInt), a.v, b.v)
 	}
 	x, y := a.v, b.v

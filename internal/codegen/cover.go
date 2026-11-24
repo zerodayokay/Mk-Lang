@@ -63,6 +63,8 @@ func (fg *fnGen) covered() bool {
 	return mod != nil && !mod.Std
 }
 
+var keyCoverCmp = types.ItemKey("std.rt", "CoverCmp")
+
 // coverBlock increments block i's counter, defining the function's
 // counters and its row on the first block.
 func (fg *fnGen) coverBlock(i int) {
@@ -77,6 +79,37 @@ func (fg *fnGen) coverBlock(i int) {
 	p := fg.gep(fg.cover, uint64(i)*8)
 	n := fg.cur.AtomicLoad(i64, p, llvm.Monotonic, 8)
 	fg.cur.AtomicStore(fg.cur.Bin(llvm.Add, n, m.ConstInt(i64, 1), 0), p, llvm.Monotonic, 8)
+}
+
+// coverCmp emits a call to std.rt.CoverCmp(a, b, widthBytes) when live
+// coverage is active and std.rt.CoverCmp is compiled in the unit.
+func (fg *fnGen) coverCmp(a, b llvm.Value, widthBytes uint8) {
+	if !fg.covered() || (widthBytes != 2 && widthBytes != 4 && widthBytes != 8) {
+		return
+	}
+	g, m := fg.g, fg.g.m
+	id, ok := g.items.ByKey(keyCoverCmp)
+	if !ok {
+		return
+	}
+	fi, ok := g.findFunc(id, nil)
+	if !ok {
+		return
+	}
+	ext := func(v llvm.Value) llvm.Value {
+		if v.Ty.Bits() < 64 {
+			return fg.cur.Cast(llvm.ZExt, v, m.I(64))
+		}
+		return v
+	}
+	fn := g.funcDecl(fi)
+	ls := g.funcSigOf(fi)
+	args := []value{
+		{t: types.U64, kind: rScalar, v: ext(a)},
+		{t: types.U64, kind: rScalar, v: ext(b)},
+		{t: types.U8, kind: rScalar, v: m.ConstInt(m.I(8), uint64(widthBytes))},
+	}
+	fg.callLowered(fn.Ref(), fn.Type(), ls, args, nil, llvm.Attrs{}.Flag("nounwind"))
 }
 
 // defineCover defines fg's counter array and descriptor row in their

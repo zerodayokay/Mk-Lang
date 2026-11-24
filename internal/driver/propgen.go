@@ -14,6 +14,7 @@
 package driver
 
 import (
+	"fmt"
 	"math"
 	"math/bits"
 	"strconv"
@@ -29,19 +30,60 @@ import (
 // (bool), c (char), s (str), q (slice), a (array), S (struct), r (record),
 // o (some), n (none), e (enum variant), & (shared reference).
 type pv struct {
-	K    string   `json:"k"`
-	I    int64    `json:"i,omitempty"`
-	U    uint64   `json:"u,omitempty"`
-	Bits uint8    `json:"bits,omitempty"`
-	F    float64  `json:"f,omitempty"`
-	B    bool     `json:"b,omitempty"`
-	S    string   `json:"s,omitempty"` // str and char text; struct, enum and variant names
-	N    []string `json:"n,omitempty"` // field names of S, r and a payload variant
-	E    []pv     `json:"e,omitempty"` // elements, fields, the some or & operand
+	K        string   `json:"k"`
+	I        int64    `json:"i,omitempty"`
+	U        uint64   `json:"u,omitempty"`
+	Bits     uint8    `json:"bits,omitempty"`
+	F        float64  `json:"f,omitempty"`
+	FBits    uint64   `json:"fbits,omitempty"`
+	HasFBits bool     `json:"has_fbits,omitempty"`
+	B        bool     `json:"b,omitempty"`
+	S        string   `json:"s,omitempty"` // str and char text; struct, enum and variant names
+	N        []string `json:"n,omitempty"` // field names of S, r and a payload variant
+	E        []pv     `json:"e,omitempty"` // elements, fields, the some or & operand
 	// Alt are an enum's earlier variants without payload, simplest first,
 	// for shrinking. A payload variant keeps its field names in N and its
 	// field values in E, rendered Type.Variant(f: v, ...).
 	Alt []string `json:"alt,omitempty"`
+}
+
+// pvFloatBits constructs a float pv carrying an exact IEEE-754 bit pattern.
+// Non-finite floats leave F as 0 because encoding/json refuses NaN and ±Inf.
+func pvFloatBits(bits uint8, raw uint64) pv {
+	if bits == 32 {
+		b32 := uint32(raw)
+		f := float64(math.Float32frombits(b32))
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			f = 0
+		}
+		return pv{K: "f", Bits: 32, F: f, FBits: uint64(b32), HasFBits: true}
+	}
+	f := math.Float64frombits(raw)
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		f = 0
+	}
+	return pv{K: "f", Bits: 64, F: f, FBits: raw, HasFBits: true}
+}
+
+func (v pv) floatBits() uint64 {
+	if v.HasFBits {
+		if v.Bits == 32 {
+			return uint64(uint32(v.FBits))
+		}
+		return v.FBits
+	}
+	if v.Bits == 32 {
+		return uint64(math.Float32bits(float32(v.F)))
+	}
+	return math.Float64bits(v.F)
+}
+
+func (v pv) floatVal() float64 {
+	b := v.floatBits()
+	if v.Bits == 32 {
+		return float64(math.Float32frombits(uint32(b)))
+	}
+	return math.Float64frombits(b)
 }
 
 // render spells v as a Mk expression.
@@ -58,7 +100,7 @@ func (v pv) write(b *strings.Builder) {
 	case "u":
 		b.WriteString(strconv.FormatUint(v.U, 10))
 	case "f":
-		b.WriteString(floatText(v.F))
+		b.WriteString(floatRender(v))
 	case "b":
 		b.WriteString(strconv.FormatBool(v.B))
 	case "c":
@@ -117,14 +159,33 @@ func (v pv) write(b *strings.Builder) {
 	}
 }
 
-// floatText is a float literal Mk reads back exactly: digits with a point,
-// never an exponent.
-func floatText(f float64) string {
-	t := strconv.FormatFloat(f, 'f', -1, 64)
+// floatText is a float literal Mk reads back: digits with a point, never an
+// exponent.
+func floatText(f float64, bitSize int) string {
+	t := strconv.FormatFloat(f, 'f', -1, bitSize)
 	if !strings.Contains(t, ".") {
 		t += ".0"
 	}
 	return t
+}
+
+// floatRender spells a generated float pv: NaN, ±Inf, -0.0, and subnormals
+// render via f64.FromBits / f32.FromBits to preserve exact IEEE-754 bit patterns.
+func floatRender(v pv) string {
+	raw := v.floatBits()
+	if v.Bits == 32 {
+		b32 := uint32(raw)
+		exp := (b32 >> 23) & 0xff
+		if exp == 0xff || b32 == 0x80000000 || (exp == 0 && (b32&0x7fffff) != 0) {
+			return fmt.Sprintf("f32.FromBits(0x%08X)", b32)
+		}
+		return floatText(float64(math.Float32frombits(b32)), 32)
+	}
+	exp := (raw >> 52) & 0x7ff
+	if exp == 0x7ff || raw == 0x8000000000000000 || (exp == 0 && (raw&0xfffffffffffff) != 0) {
+		return fmt.Sprintf("f64.FromBits(0x%016X)", raw)
+	}
+	return floatText(math.Float64frombits(raw), 64)
 }
 
 // runeEscape spells one rune inside a quoted literal: printable ASCII as
@@ -153,7 +214,21 @@ func (v pv) size() uint64 {
 	case "u":
 		n = v.U
 	case "f":
-		n = uint64(math.Min(math.Abs(v.F), 1<<62))
+		f := v.floatVal()
+		raw := v.floatBits()
+		switch {
+		case math.IsNaN(f):
+			n = (1 << 62) + 3
+		case math.IsInf(f, 0):
+			n = (1 << 62) + 2
+		case raw == 0x8000000000000000 || (v.Bits == 32 && raw == 0x80000000):
+			n = 1
+		case f != 0:
+			n = uint64(math.Min(math.Abs(f), 1<<62))
+			if n == 0 {
+				n = 1
+			}
+		}
 	case "b":
 		if v.B {
 			n = 1
@@ -259,19 +334,23 @@ type propGen struct {
 	top   bool
 }
 
+const propFloatEdges = 17
+
 // propEdgeCount is how many edge values a top-level parameter of sh takes
-// in the enumeration, 0 for a parameter that is no integer.
+// in the enumeration, 0 for a parameter that is no integer or float.
 func propEdgeCount(sh *propShape) int {
 	switch sh.k {
 	case "i":
 		return 7
 	case "u":
 		return 5
+	case "f":
+		return propFloatEdges
 	}
 	return 0
 }
 
-const propEdgeCases = 64
+const propEdgeCases = 256
 
 // edge is the case's edge index for the current integer parameter of n
 // edges, or -1 past the enumeration.
@@ -294,7 +373,7 @@ func (g *propGen) draw(sh *propShape, depth int) pv {
 	case "u":
 		return pv{K: "u", Bits: sh.bits, U: g.unsigned(sh.bits)}
 	case "f":
-		return pv{K: "f", Bits: sh.bits, F: g.float(sh.bits)}
+		return g.float(sh.bits)
 	case "b":
 		return pv{K: "b", B: g.r.next()&1 == 1}
 	case "c":
@@ -425,15 +504,214 @@ func (g *propGen) unsigned(w uint8) uint64 {
 	return g.r.next() & top
 }
 
-func (g *propGen) float(w uint8) float64 {
-	edges := []float64{0, math.Copysign(0, -1), 1, -1, 0.5, -2.5, 1000000, 0.0000001}
-	if w == 64 {
-		edges = append(edges, 1e300, -1e300)
+var propFloat64Edges = []uint64{
+	0x0000000000000000, // +0.0
+	0x8000000000000000, // -0.0
+	0x3ff0000000000000, // 1.0
+	0xbff0000000000000, // -1.0
+	0x7ff0000000000000, // +Inf
+	0xfff0000000000000, // -Inf
+	0x7ff8000000000000, // canonical qNaN
+	0x7ff8000000001234, // non-canonical payload qNaN
+	0xfff8000000000001, // negative payload qNaN
+	0x0000000000000001, // +SmallestNonzeroFloat64
+	0x8000000000000001, // -SmallestNonzeroFloat64
+	0x0010000000000000, // +MinNormal f64
+	0x8010000000000000, // -MinNormal f64
+	0x7fefffffffffffff, // +MaxFloat64
+	0xffefffffffffffff, // -MaxFloat64
+	0x3fe0000000000000, // 0.5
+	0xc004000000000000, // -2.5
+}
+
+var propFloat32Edges = []uint64{
+	0x00000000, // +0.0
+	0x80000000, // -0.0
+	0x3f800000, // 1.0
+	0xbf800000, // -1.0
+	0x7f800000, // +Inf
+	0xff800000, // -Inf
+	0x7fc00000, // canonical qNaN
+	0x7fc01234, // non-canonical payload qNaN
+	0xffc00001, // negative payload qNaN
+	0x00000001, // +SmallestNonzeroFloat32
+	0x80000001, // -SmallestNonzeroFloat32
+	0x00800000, // +MinNormal f32
+	0x80800000, // -MinNormal f32
+	0x7f7fffff, // +MaxFloat32
+	0xff7fffff, // -MaxFloat32
+	0x3f000000, // 0.5
+	0xc0200000, // -2.5
+}
+
+func (g *propGen) float(w uint8) pv {
+	edges := propFloat64Edges
+	if w == 32 {
+		edges = propFloat32Edges
 	}
-	if g.r.below(2) == 0 {
-		return edges[g.r.below(uint64(len(edges)))]
+	if e := g.edge(len(edges)); e >= 0 {
+		return pvFloatBits(w, edges[e])
 	}
-	return float64(int64(g.r.below(2000001))-1000000) / 1000
+	pick := g.r.below(10)
+	if g.i < len(edges) && g.r.below(2) == 0 {
+		pick = 0
+	}
+	switch {
+	case pick < 3:
+		return pvFloatBits(w, edges[g.r.below(uint64(len(edges)))])
+	case pick < 7:
+		f := float64(int64(g.r.below(2000001))-1000000) / 1000
+		if w == 32 {
+			return pvFloatBits(32, uint64(math.Float32bits(float32(f))))
+		}
+		return pvFloatBits(64, math.Float64bits(f))
+	}
+	return pvFloatBits(w, g.r.next())
+}
+
+// floatRank orders IEEE-754 floats by simplicity so shrinks always terminate.
+func floatRank(w uint8, raw uint64) (class int, mag uint64, sign uint64) {
+	if w == 32 {
+		b32 := uint32(raw)
+		sign = uint64(b32 >> 31)
+		mag = uint64(b32 & 0x7fffffff)
+		f := float64(math.Float32frombits(b32))
+		switch {
+		case math.IsNaN(f):
+			if b32 == 0x7fc00000 {
+				return 5, mag, sign
+			}
+			return 6, mag, sign
+		case math.IsInf(f, 1):
+			return 3, mag, sign
+		case math.IsInf(f, -1):
+			return 4, mag, sign
+		case b32 == 0:
+			return 0, 0, 0
+		case mag == 0:
+			return 1, 0, 1
+		}
+		return 2, mag, sign
+	}
+	sign = raw >> 63
+	mag = raw & 0x7fffffffffffffff
+	f := math.Float64frombits(raw)
+	switch {
+	case math.IsNaN(f):
+		if raw == 0x7ff8000000000000 {
+			return 5, mag, sign
+		}
+		return 6, mag, sign
+	case math.IsInf(f, 1):
+		return 3, mag, sign
+	case math.IsInf(f, -1):
+		return 4, mag, sign
+	case raw == 0:
+		return 0, 0, 0
+	case mag == 0:
+		return 1, 0, 1
+	}
+	return 2, mag, sign
+}
+
+func floatLess(w uint8, a, b uint64) bool {
+	ac, am, as := floatRank(w, a)
+	bc, bm, bs := floatRank(w, b)
+	if ac != bc {
+		return ac < bc
+	}
+	if am != bm {
+		return am < bm
+	}
+	return as < bs
+}
+
+func floatShrinks(w uint8, raw uint64) []pv {
+	if w != 32 {
+		w = 64
+	} else {
+		raw = uint64(uint32(raw))
+	}
+	curClass, curMag, curSign := floatRank(w, raw)
+	if curClass == 0 {
+		return nil
+	}
+	var out []pv
+	seen := map[uint64]bool{raw: true}
+	addBits := func(b uint64) {
+		if w == 32 {
+			b = uint64(uint32(b))
+		}
+		if seen[b] || !floatLess(w, b, raw) {
+			return
+		}
+		seen[b] = true
+		out = append(out, pvFloatBits(w, b))
+	}
+	addFloat := func(f float64) {
+		if w == 32 {
+			addBits(uint64(math.Float32bits(float32(f))))
+		} else {
+			addBits(math.Float64bits(f))
+		}
+	}
+	addBits(0) // +0.0 is simplest for every non-(+0.0) float
+	switch curClass {
+	case 1: // -0.0
+		return out
+	case 6: // non-canonical / negative NaN -> +0.0, canonical qNaN
+		if w == 32 {
+			addBits(0x7fc00000)
+		} else {
+			addBits(0x7ff8000000000000)
+		}
+		return out
+	case 5: // canonical qNaN -> +0.0
+		return out
+	case 3: // +Inf -> +0.0, 1.0, MaxFloat
+		addFloat(1.0)
+		if w == 32 {
+			addBits(0x7f7fffff)
+		} else {
+			addBits(0x7fefffffffffffff)
+		}
+		return out
+	case 4: // -Inf -> +0.0, +Inf, -1.0, -MaxFloat
+		if w == 32 {
+			addBits(0x7f800000)
+			addFloat(-1.0)
+			addBits(0xff7fffff)
+		} else {
+			addBits(0x7ff0000000000000)
+			addFloat(-1.0)
+			addBits(0xffefffffffffffff)
+		}
+		return out
+	}
+	// Finite non-zero.
+	signMask := uint64(1) << 63
+	expMask := uint64(0x7ff0000000000000)
+	if w == 32 {
+		signMask = 1 << 31
+		expMask = 0x7f800000
+	}
+	if curSign == 1 {
+		addBits(curMag)
+	}
+	f := pvFloatBits(w, raw).floatVal()
+	addFloat(1.0)
+	if curSign == 1 {
+		addFloat(-1.0)
+	}
+	if (curMag&expMask) == 0 && curMag > 1 {
+		addBits(1)
+		if curSign == 1 {
+			addBits(signMask | 1)
+		}
+	}
+	addFloat(math.Trunc(f))
+	addFloat(f / 2.0)
+	return out
 }
 
 // shrinks are the candidates simpler than v, simplest first.
@@ -449,11 +727,7 @@ func (v pv) shrinks() []pv {
 			out = append(out, pv{K: "u", Bits: v.Bits, U: x})
 		}
 	case "f":
-		for _, x := range []float64{0, math.Trunc(v.F), v.F / 2} {
-			if x != v.F && !math.IsNaN(x) {
-				out = append(out, pv{K: "f", Bits: v.Bits, F: x})
-			}
-		}
+		return floatShrinks(v.Bits, v.floatBits())
 	case "b":
 		if v.B {
 			out = append(out, pv{K: "b"})
