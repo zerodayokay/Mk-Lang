@@ -110,6 +110,7 @@ func TestStdHash_VectorsMatchModel(t *testing.T) {
 }
 
 var hashKeyedCore = `import std.raw
+import std.simd
 
 // HkPt is a two-field key; its Hash absorbs both fields, 16 bytes.
 struct HkPt {
@@ -140,21 +141,21 @@ HkEqCalls(t: &Table[HkPt, int], k: &HkPt): int {
     var stride := 0
     var calls := 0
     for {
-        g := GroupAt(t.ctrl, pos)
-        var m := MatchMask(g, h2)
+        g := GroupAt16(t.ctrl, pos)
+        var m := (g == simd.Vec[u8, 16].Splat(h2)).Bits()
         for m != 0 {
-            i := (pos + raw.Ctz64(m) / 8) & mask
+            i := (pos +% raw.Ctz64(m)) & mask
             calls += 1
             if SlotRef(KeyAt(t.slots, i), 0).Eq(k) {
                 return calls
             }
             m = m & (m -% 1)
         }
-        if EmptyMask(g) != 0 {
+        if (g >= simd.Vec[u8, 16].Splat(CtrlEmpty)).Bits() != 0 {
             return -1
         }
-        stride += 8
-        pos = (pos + stride) & mask
+        stride +%= 16
+        pos = (pos +% stride) & mask
     }
 }
 

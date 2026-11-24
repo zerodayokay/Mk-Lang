@@ -45,26 +45,26 @@ ChainLife(): int {
         if !TableResize(mut t, a, false, 32) {
             return 90
         }
-        for k in 0..8 {
+        for k in 0..16 {
             if Claim(mut t, ChosenHash(5, k + 1), k) != 5 + k {
                 bad += 1
             }
         }
         kh := ChosenHash(5, 100)
-        if Claim(mut t, kh, 99) != 13 {
+        if Claim(mut t, kh, 99) != 21 {
             bad += 1
         }
         TableErase(mut t, 6)
         if CtrlAt(t.ctrl, 6) != CtrlDeleted {
             bad += 1
         }
-        if TableFind(&t, kh, &99) != 13 {
+        if TableFind(&t, kh, &99) != 21 {
             bad += 1
         }
         if TableFind(&t, ChosenHash(5, 2), &1) != -1 {
             bad += 1
         }
-        for k in 2..8 {
+        for k in 2..16 {
             if TableFind(&t, ChosenHash(5, k + 1), &k) != 5 + k {
                 bad += 1
             }

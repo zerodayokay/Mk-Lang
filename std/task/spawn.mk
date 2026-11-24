@@ -85,7 +85,9 @@ NewSlot(class: u8, need: int): *rt.SlotHeader {
         if !raw.IsNull(cur) {
             unsafe "cur is the running task; its carrier's slot_free is owner-only" {
                 c := (*cur).carrier
-                if !raw.IsNull(c) {
+                // Restrict per-carrier slot cache to shared carriers (pinned carriers
+                // never enter Idle/TrimSpare and would leak cached slots).
+                if !raw.IsNull(c) && raw.IsNull((*c).home) {
                     var h := (*c).slot_free
                     if !raw.IsNull(h) {
                         (*c).slot_free = (*h).next_free
@@ -95,7 +97,11 @@ NewSlot(class: u8, need: int): *rt.SlotHeader {
                             return h
                         }
                         rt.FreeSlot(h)
-                    } else if (*TS()).slot_cache {
+                        SlotFreed(c, class)
+                        if (*c).slot_count > 0 {
+                            FlushSlots(c, int((*c).slot_count))
+                        }
+                    } else if (*TS()).slot_cache && (*TS()).slot_waiters.Load() == 0 && rt.TrimGateGet() == 0 {
                         var got := 0
                         h = rt.TakeSlotBatch(class, 64, mut got)
                         if !raw.IsNull(h) {
@@ -106,6 +112,10 @@ NewSlot(class: u8, need: int): *rt.SlotHeader {
                                 return h
                             }
                             rt.FreeSlot(h)
+                            SlotFreed(c, class)
+                            if (*c).slot_count > 0 {
+                                FlushSlots(c, int((*c).slot_count))
+                            }
                         }
                     }
                 }
@@ -126,9 +136,18 @@ NewSlot(class: u8, need: int): *rt.SlotHeader {
                 }
                 rt.FreeSlot(h)
             }
-            // Edge: the count is raised before WaitWord's compare of the
-            // generation (the argument above).
+            // Edge: the count is raised before re-trying TakeSlot and before
+            // WaitWord's compare of the generation, closing the Dekker window
+            // with carriers caching freed slots when slot_waiters == 0.
             _ = (*waiters).Add(1)
+            h2 := rt.TakeSlot(class)
+            if !raw.IsNull(h2) {
+                if rt.GrowTop(h2, need) {
+                    _ = (*waiters).Add(0xFFFF_FFFF)
+                    return h2
+                }
+                rt.FreeSlot(h2)
+            }
             _ = WaitWord(raw.PtrCast[raw.Atomic[u32], u32](word), g, false)
             _ = (*waiters).Add(0xFFFF_FFFF)
             // Edge: none; a test counter.
@@ -141,13 +160,20 @@ NewSlot(class: u8, need: int): *rt.SlotHeader {
 // bump the class's generation and wake one waiting spawn, taking the bucket
 // lock only when one waits.
 SlotFreed(c: *Carrier, class: u8) {
+    SlotFreedBatch(c, class, 1)
+}
+
+// SlotFreedBatch wakes waiting spawners after returning n slots to class: one
+// waiter when n == 1, or all waiters when a batch (n > 1) is returned so no
+// waiter stays parked while returned slots sit free in the region.
+SlotFreedBatch(c: *Carrier, class: u8, n: int) {
     word := SlotGen(class)
     unsafe "the TaskState page Start mapped, which lives until exit; the slot words are atomics" {
-        // Edge: the bump follows FreeSlot (so a waiter that sees it finds
-        // the slot) and precedes the count load (NewSlot's argument).
+        // Edge: the bump follows FreeSlot/FreeSlotBatch (so a waiter that sees
+        // it finds the slot) and precedes the count load (NewSlot's argument).
         _ = (*word).Add(1)
         if (*SlotWaiters(class)).Load() != 0 {
-            WakeWordOn(c, raw.PtrCast[raw.Atomic[u32], u32](word), false)
+            WakeWordOn(c, raw.PtrCast[raw.Atomic[u32], u32](word), n > 1)
         }
     }
 }

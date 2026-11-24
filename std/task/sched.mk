@@ -456,12 +456,10 @@ SwitchOut(t: *Task, kind: u32, word: *raw.Atomic[u32]) {
                 if next_addr != 0 {
                     (*c).tick = tick
                     next := TaskAt(next_addr)
-                    // Edge: runnext.Swap above synchronized with ReadyPut's Swap.
-                    if (*next).state.LoadOrd(0) != TaskRunnable {
+                    // Edge: atomic Swap enforces one-resume even under double-dequeue bugs.
+                    if (*next).state.Swap(TaskRunning) != TaskRunnable {
                         rt.Fatal("scheduler: switched to a task that is not runnable")
                     }
-                    // Edge: c exclusively owns next until next parks or yields.
-                    (*next).state.StoreOrd(TaskRunning, 0)
                     (*HeaderOf(t)).carrier = rt.NoCarrier
                     (*c).current = next
                     (*next).carrier = c
@@ -602,14 +600,17 @@ RunAfter(c: *Carrier) {
             }
             class := (*h).class
             st := TS()
-            // Edge: none needed beyond the hint; when a waiter exists or the
-            // region cap is small (MK_TEST_SLOTS), slots go straight back.
-            if class == rt.ClassDefault && (*st).slot_cache && (*st).slot_waiters.Load() == 0 {
+            // Edge: cache only when no waiter exists, TrimGate is unarmed, and
+            // the region cap is large; recheck slot_waiters after caching to
+            // close the Dekker window with NewSlot.
+            if class == rt.ClassDefault && (*st).slot_cache && (*st).slot_waiters.Load() == 0 && rt.TrimGateGet() == 0 {
                 (*h).state = 1
                 (*h).next_free = (*c).slot_free
                 (*c).slot_free = h
                 (*c).slot_count += 1
-                if (*c).slot_count >= 128 {
+                if (*st).slot_waiters.Load() != 0 || rt.TrimGateGet() != 0 {
+                    FlushSlots(c, int((*c).slot_count))
+                } else if (*c).slot_count >= 128 {
                     FlushSlots(c, 64)
                 }
             } else {
@@ -939,6 +940,11 @@ FindRunnable(c: *Carrier): *Task {
             }
         }
         if due {
+            unsafe "c is the calling thread's carrier; flush cached slots if any spawner waits" {
+                if (*c).slot_count > 0 && ((*TS()).slot_waiters.Load() != 0 || rt.TrimGateGet() != 0) {
+                    FlushSlots(c, int((*c).slot_count))
+                }
+            }
             _ = FireTimersOn(c)
             // One other carrier's heap, in turn, so a carrier that
             // runs a task that never suspends has its timers fired by a
@@ -1126,7 +1132,7 @@ FlushSlots(c: *Carrier, want: int) {
         (*tail).next_free = raw.Null[rt.SlotHeader]()
         (*c).slot_count -= Trunc[u32](n)
         rt.FreeSlotBatch(rt.ClassDefault, head, tail, n)
-        SlotFreed(c, rt.ClassDefault)
+        SlotFreedBatch(c, rt.ClassDefault, n)
     }
 }
 
@@ -1216,13 +1222,10 @@ Run(c: *Carrier) {
             (*t).carrier = c
             // Invariant (one resume): only a runnable task is resumed;
             // a task resumed twice (two carriers holding it) stops here.
-            // Edge: FindRunnable's atomic dequeue synchronized with ReadyPut's
-            // publication, and c exclusively owns t until t parks or yields.
-            if (*t).state.LoadOrd(0) != TaskRunnable {
+            // Edge: atomic Swap enforces one-resume across carriers.
+            if (*t).state.Swap(TaskRunning) != TaskRunnable {
                 rt.Fatal("scheduler: switched to a task that is not runnable")
             }
-            // Edge: c exclusively owns t until t parks or yields.
-            (*t).state.StoreOrd(TaskRunning, 0)
             (*h).carrier = Trunc[u16]((*c).index)
             Switch(raw.Of(&(*c).sys_ctx), raw.Of(&(*t).ctx))
             cur := (*c).current

@@ -427,6 +427,10 @@ export FreeSlot(h: *SlotHeader) {
 /// lock acquisition, returning the linked list head (or null) and writing the
 /// count to got. Never prepares fresh slots or touches cold.
 export TakeSlotBatch(class: u8, max: int, got: mut int): *SlotHeader {
+    if max <= 0 {
+        *got = 0
+        return raw.Null[SlotHeader]()
+    }
     r := RegionOf(class)
     unsafe "r is a region record; slots are inside its reservation" {
         Lock(&(*r).lock)
