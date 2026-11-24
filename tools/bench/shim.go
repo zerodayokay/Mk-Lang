@@ -63,6 +63,11 @@ type shimConfig struct {
 func shimStep(tool string, args []string) (string, string) {
 	switch tool {
 	case "clang":
+		// mk's -### probe (internal/toolchain cc1.go) prints the backend's
+		// -cc1 line and runs nothing: not a step.
+		if slices.Contains(args, "-###") {
+			return "", ""
+		}
 		mod := ""
 		backend := false
 		for i, a := range args {
@@ -85,18 +90,31 @@ func shimStep(tool string, args []string) (string, string) {
 }
 
 // backendIRArgs is a backend's command line with its object output
-// replaced by textual IR at out.
+// replaced by textual IR at out. A -cc1 line (mk runs the probed -cc1
+// form, internal/toolchain cc1.go) swaps -emit-obj for -emit-llvm; a
+// driver line drops -c and adds -S -emit-llvm.
 func backendIRArgs(full []string, out string) []string {
+	cc1 := slices.Contains(full, "-cc1")
 	var r []string
 	for i := 0; i < len(full); i++ {
 		switch full[i] {
 		case "-c":
-			continue
+			if !cc1 {
+				continue
+			}
+		case "-emit-obj":
+			if cc1 {
+				r = append(r, "-emit-llvm")
+				continue
+			}
 		case "-o":
 			i++
 			continue
 		}
 		r = append(r, full[i])
+	}
+	if cc1 {
+		return append(r, "-o", out)
 	}
 	return append(r, "-S", "-emit-llvm", "-o", out)
 }
