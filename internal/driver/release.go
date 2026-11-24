@@ -67,9 +67,6 @@ func (b *build) release(m *modNode) {
 	if m.cmod != nil {
 		m.cmod.Release()
 	}
-	if m.info != nil {
-		m.genKnown, m.genLines = true, len(m.info.Gens)
-	}
 	for _, f := range m.files {
 		f.ast = nil
 	}

@@ -137,9 +137,17 @@ func (b *build) closest(m *modNode, p string) []string {
 		}
 	}
 	if b.std != nil {
-		for _, x := range b.std.mods {
-			if !isStdInternal(x.name) || m.std {
-				names = append(names, x.name)
+		if len(b.std.allNames) > 0 {
+			for _, name := range b.std.allNames {
+				if !isStdInternal(name) || m.std {
+					names = append(names, name)
+				}
+			}
+		} else {
+			for _, x := range b.std.mods {
+				if !isStdInternal(x.name) || m.std {
+					names = append(names, x.name)
+				}
 			}
 		}
 	}

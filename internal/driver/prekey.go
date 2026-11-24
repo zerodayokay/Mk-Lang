@@ -80,7 +80,7 @@ func (w *world) unitDigestInto(u *codegen.Unit, decls map[types.ItemID]source.Ha
 		parIsStd = make([]bool, len(u.Funcs))
 		const chunk = 64
 		chunks := (len(u.Funcs) + chunk - 1) / chunk
-		w.parallel(chunks, func(int) string { return "unit decls" }, func(c int) {
+		if faults := w.parallel(chunks, func(int) string { return "unit decls" }, func(c int) {
 			lo := c * chunk
 			hi := min(lo+chunk, len(u.Funcs))
 			for i := lo; i < hi; i++ {
@@ -91,7 +91,9 @@ func (w *world) unitDigestInto(u *codegen.Unit, decls map[types.ItemID]source.Ha
 				}
 				parDecls[i] = hs.Decl(it)
 			}
-		})
+		}); len(faults) > 0 {
+			source.ICEf(source.Span{}, "prekey unitDigestInto: %s", faults[0].Message)
+		}
 	}
 	h := source.NewHasher("mk.driver.prekey.unit.v1")
 	h.Uvarint(uint64(len(u.Funcs)))

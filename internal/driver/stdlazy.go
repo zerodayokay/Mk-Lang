@@ -157,15 +157,37 @@ func scanStdSource(raw []byte) (out []string, hasRem bool) {
 			}
 			continue
 		}
-		// Skip multi-line strings """...""".
+		// Skip multi-line strings """...""" (respecting backslash escapes and
+		// line-start closing quotes per internal/syntax/lexlit.go).
 		if b == '"' && i+2 < n && raw[i+1] == '"' && raw[i+2] == '"' {
 			i += 3
+			lineStart := false
 			for i < n {
-				if raw[i] == '"' && i+2 < n && raw[i+1] == '"' && raw[i+2] == '"' {
+				c := raw[i]
+				if c == '\\' && i+1 < n {
+					if raw[i+1] == '\n' {
+						lineStart = true
+					} else {
+						lineStart = false
+					}
+					i += 2
+					continue
+				}
+				if c == '\n' {
+					lineStart = true
+					i++
+					continue
+				}
+				if lineStart && (c == ' ' || c == '\t' || c == '\r') {
+					i++
+					continue
+				}
+				if lineStart && c == '"' && i+2 < n && raw[i+1] == '"' && raw[i+2] == '"' {
 					i += 3
 					break
 				}
-				if !hasRem && raw[i] == '%' && isBarePercent(raw, i) {
+				lineStart = false
+				if !hasRem && c == '%' && isBarePercent(raw, i) {
 					hasRem = true
 				}
 				i++
@@ -214,18 +236,32 @@ func scanStdSource(raw []byte) (out []string, hasRem bool) {
 					j = skipWSAndComments(k2 + 1)
 				}
 			}
-			// Check for `std.<segment>(.<segment>)*`.
-			if j+4 <= n && string(raw[j:j+4]) == "std." {
-				end := j + 4
-				for end < n && (isIdent(raw[end]) || raw[end] == '.') {
-					end++
+			// Check for `std` followed by `.<segment>` (allowing whitespace/comments
+			// around `.` just like syntax.parsePath).
+			if j+3 <= n && string(raw[j:j+3]) == "std" && (j+3 == n || !isIdent(raw[j+3])) {
+				cur := skipWSAndComments(j + 3)
+				if cur < n && raw[cur] == '.' {
+					var sb strings.Builder
+					sb.WriteString("std")
+					for cur < n && raw[cur] == '.' {
+						segStart := skipWSAndComments(cur + 1)
+						segEnd := segStart
+						for segEnd < n && isIdent(raw[segEnd]) {
+							segEnd++
+						}
+						if segEnd == segStart {
+							break
+						}
+						sb.WriteByte('.')
+						sb.Write(raw[segStart:segEnd])
+						cur = skipWSAndComments(segEnd)
+					}
+					if sb.Len() > 3 {
+						out = append(out, sb.String())
+					}
+					i = cur
+					continue
 				}
-				p := strings.TrimRight(string(raw[j:end]), ".")
-				if len(p) > 4 {
-					out = append(out, p)
-				}
-				i = end
-				continue
 			}
 			i += 6
 			continue
@@ -323,17 +359,27 @@ func (p *pipeline) loadLazyStd(testing bool) (fails, tooLarge []*diag.Diagnostic
 			if j.err != nil {
 				continue
 			}
-			for _, imp := range scanStdImports(j.raw) {
+			imps, rem := scanStdSource(j.raw)
+			if p.w.cfg.StdDir != "" && rem && !hasPercent {
+				hasPercent = true
+				enqueue(stdB.byName["std.math"])
+			}
+			for _, imp := range imps {
 				enqueue(stdB.byName[imp])
 			}
 		}
 	}
-	// Prune stdB.mods to reached modules, keeping deterministic listing order,
-	// and filter caseDups/dupPaths so caseDupDiags never touches a pruned module.
+	// Preserve all listed std module names for E0202 suggestions before
+	// pruning stdB.mods and deleting unreached entries from stdB.byName (so
+	// lookupImport can never resolve an uninitialized pruned *modNode).
+	stdB.allNames = make([]string, 0, len(stdB.mods))
 	kept := stdB.mods[:0:0]
 	for _, m := range stdB.mods {
+		stdB.allNames = append(stdB.allNames, m.name)
 		if need[m] {
 			kept = append(kept, m)
+		} else if stdB.byName[m.name] == m {
+			delete(stdB.byName, m.name)
 		}
 	}
 	stdB.mods = kept

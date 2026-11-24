@@ -145,3 +145,11 @@ func TestLazyStdWrappingSkipsMath(t *testing.T) {
 		t.Fatalf("expected std.math to be loaded for float %%")
 	}
 }
+
+func TestScanStdImports_SpacedAndEscapedMultiline(t *testing.T) {
+	src := "const S = \"\"\"\n    quote: \\\"\"\"\n    \"\"\"\nimport std . fs\nimport t = std.time.\n    tzdata\n"
+	got := scanStdImports([]byte(src))
+	if !slices.Equal(got, []string{"std.fs", "std.time.tzdata"}) {
+		t.Fatalf("got %v, want [std.fs std.time.tzdata]", got)
+	}
+}

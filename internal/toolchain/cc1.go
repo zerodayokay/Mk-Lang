@@ -209,6 +209,15 @@ func (t *Tools) getCC1Template(ctx context.Context, canonicalDriver []string, ha
 		}
 	}
 	tmpl := t.probeCC1(ctx, canonicalDriver, hasIdx)
+	if tmpl == nil && ctx.Err() != nil {
+		// Do not poison the cache when cancelled by a sibling pack error.
+		c.mu.Lock()
+		if c.m[key] == slot {
+			delete(c.m, key)
+		}
+		c.mu.Unlock()
+		return nil
+	}
 	slot.tmpl = tmpl
 	if tmpl != nil && c.put != nil {
 		c.put(key, encodeCC1Template(tmpl))
@@ -257,16 +266,27 @@ func (t *Tools) probeCC1(ctx context.Context, canonicalDriver []string, hasIdx b
 }
 
 // parseCC1Probe extracts a single -cc1 command line from `clang -###` stderr
-// and verifies that every sentinel appears in an expected slot.
+// and verifies that every sentinel appears in an expected slot and no second
+// driver job was emitted.
 func parseCC1Probe(stderr, sentIn, sentOut, sentIdx string) *cc1Template {
 	var cc1Tokens []string
+	totalJobs := 0
 	found := 0
-	for _, line := range strings.Split(stderr, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.Contains(line, "-cc1") {
+	for _, rawLine := range strings.Split(stderr, "\n") {
+		rawLine = strings.TrimRight(rawLine, "\r")
+		trimmed := strings.TrimSpace(rawLine)
+		if trimmed == "" {
 			continue
 		}
-		toks, ok := splitClangDryRun(line)
+		// `clang -###` prints every subprocess command indented with a leading
+		// space and starting with a quoted executable path (skipping "(in-process)").
+		if strings.HasPrefix(rawLine, " \"") && !strings.HasPrefix(trimmed, "(in-process)") {
+			totalJobs++
+		}
+		if !strings.Contains(trimmed, "-cc1") {
+			continue
+		}
+		toks, ok := splitClangDryRun(trimmed)
 		if !ok || len(toks) < 2 || toks[1] != "-cc1" {
 			continue
 		}
@@ -276,7 +296,7 @@ func parseCC1Probe(stderr, sentIn, sentOut, sentIdx string) *cc1Template {
 		}
 		cc1Tokens = toks[1:] // drop clang binary path
 	}
-	if found != 1 {
+	if found != 1 || totalJobs != 1 {
 		return nil
 	}
 	return buildCC1Template(cc1Tokens, sentIn, sentOut, sentIdx)
@@ -287,6 +307,7 @@ func buildCC1Template(raw []string, sentIn, sentOut, sentIdx string) *cc1Templat
 		return nil
 	}
 	inBase := filepath.Base(sentIn)
+	probeDir := filepath.Dir(sentIn)
 	wantIdx := ""
 	if sentIdx != "" {
 		wantIdx = "-fthinlto-index=" + sentIdx
@@ -332,7 +353,7 @@ func buildCC1Template(raw []string, sentIn, sentOut, sentIdx string) *cc1Templat
 			tmpl.idxSlot = pos
 			a = "-fthinlto-index=" + cc1SentIdx
 		default:
-			if strings.Contains(a, cc1SentPrefix) {
+			if strings.Contains(a, cc1SentPrefix) || (probeDir != "" && probeDir != "." && strings.Contains(a, probeDir)) {
 				return nil
 			}
 		}
@@ -345,7 +366,7 @@ func buildCC1Template(raw []string, sentIn, sentOut, sentIdx string) *cc1Templat
 }
 
 // splitClangDryRun tokenizes one command line printed by `clang -###`, where
-// arguments may be double-quoted with `\\` and `\"` escapes.
+// arguments may be double-quoted with `\\`, `\"`, `\$`, and “ \` “ escapes.
 func splitClangDryRun(line string) ([]string, bool) {
 	var out []string
 	i, n := 0, len(line)
@@ -369,7 +390,7 @@ func splitClangDryRun(line string) ([]string, bool) {
 				}
 				if c == '\\' && i < n {
 					next := line[i]
-					if next == '\\' || next == '"' {
+					if next == '\\' || next == '"' || next == '$' || next == '`' {
 						b.WriteByte(next)
 						i++
 						continue

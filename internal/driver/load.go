@@ -36,6 +36,9 @@ type build struct {
 	mods []*modNode // in listing order until the import step, then by (depth, path)
 	// byName finds this build's own modules by import name.
 	byName map[string]*modNode
+	// allNames keeps every listed module name of std even after lazy pruning
+	// so E0202 case-mismatch suggestions stay identical to a full load.
+	allNames []string
 	// selDirs maps the import path of a target-selected directory to the
 	// selection's name (E0202 target-selected).
 	selDirs map[string]string

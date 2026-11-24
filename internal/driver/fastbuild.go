@@ -44,6 +44,7 @@ import (
 	"mk/internal/iface"
 	"mk/internal/source"
 	"mk/internal/toolchain"
+	"mk/internal/types"
 )
 
 const (
@@ -139,7 +140,7 @@ func (s *Session) fastBuildEligible() bool {
 	if s.root.kind == rootNone || s.testing || s.prop || s.fullStd {
 		return false
 	}
-	if len(c.Overlay) > 0 || c.StdTests != "" || c.KeepSyntax || c.KeepSyntaxFor != nil || c.BrowseStd || c.Cover {
+	if len(c.Overlay) > 0 || c.StdDir != "" || c.StdTests != "" || c.KeepSyntax || c.KeepSyntaxFor != nil || c.BrowseStd || c.Cover {
 		return false
 	}
 	if s.customReadFile {
@@ -191,10 +192,26 @@ func (s *Session) fastBuildKey(buildID source.Hash, tools *toolchain.Tools, reso
 	h.Bool(c.Size)
 	h.Bool(c.Symbols)
 	h.Bool(c.FramePointers)
+	h.Bool(c.GenView)
 	h.Uvarint(uint64(c.PGO))
-	h.String(c.PGOFile)
+	pgoFile := c.PGOFile
+	if pgoFile != "" {
+		if abs, err := filepath.Abs(pgoFile); err == nil {
+			pgoFile = abs
+		}
+	}
+	h.String(pgoFile)
 	h.String(c.StdDir)
 	h.String(c.Tune.String())
+	if c.Target.OS == types.OSMacos {
+		ld := tools.LD64()
+		h.String(ld)
+		var sz int64 = -1
+		if fi, err := os.Stat(ld); err == nil {
+			sz = fi.Size()
+		}
+		h.Varint(sz)
+	}
 	h.Bool(c.TestHooks.NoBoundsChecks)
 	h.Bool(c.TestHooks.NoOverflowChecks)
 	h.Bool(c.TestHooks.NoTrapForm)
@@ -359,16 +376,22 @@ func fastFileMatches(dst, stored string, wantSize int64, wantHash source.Hash) b
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() != wantSize {
 		return false
 	}
-	if sfi, err := os.Stat(stored); err != nil || os.SameFile(fi, sfi) {
+	sfi, err := os.Stat(stored)
+	if err != nil || os.SameFile(fi, sfi) || fi.Mode().Perm() != sfi.Mode().Perm() {
 		return false
 	}
 	h, _, err := hashFileSHA256(dst)
 	return err == nil && h == wantHash
 }
 
-// copyStoredTo copies stored into a unique temp file beside dst and moves it
-// into place, never sharing an inode with the store entry.
+// copyStoredTo copies stored into a unique temp file beside dst, preserves
+// stored's permission bits (including +x on POSIX), and moves it into place,
+// never sharing an inode with the store entry.
 func copyStoredTo(stored, dst string) bool {
+	sfi, err := os.Stat(stored)
+	if err != nil {
+		return false
+	}
 	tf, err := os.CreateTemp(filepath.Dir(dst), ".mk-fast-*.tmp")
 	if err != nil {
 		return false
@@ -376,6 +399,10 @@ func copyStoredTo(stored, dst string) bool {
 	tmp := tf.Name()
 	_ = tf.Close()
 	if err := copyOut(stored, tmp); err != nil {
+		os.Remove(tmp)
+		return false
+	}
+	if err := os.Chmod(tmp, sfi.Mode().Perm()); err != nil {
 		os.Remove(tmp)
 		return false
 	}
@@ -524,7 +551,7 @@ func (s *Session) startFastSnapshot(bins []binTarget) func() {
 		return func() {}
 	}
 	for _, m := range s.pkgB.mods {
-		if m.gen != nil || len(m.genRuns) > 0 || m.genLines > 0 {
+		if m.gen != nil || len(m.genRuns) > 0 || m.genLines > 0 || (m.hit != nil && !m.hit.ifc.GenText.IsZero()) {
 			return func() {}
 		}
 	}
@@ -533,15 +560,22 @@ func (s *Session) startFastSnapshot(bins []binTarget) func() {
 			return func() {}
 		}
 	}
+	if s.pkgMan != nil && (len(s.pkgMan.Members) > 0 || len(s.pkgMan.Replace) > 0 ||
+		len(s.pkgMan.TestDeps) > 0 || len(s.pkgMan.Targets) > 0 || len(s.pkgMan.UnsafeModules) > 0) {
+		return func() {}
+	}
 	st := s.w.store.st
 	if st == nil {
 		return func() {}
 	}
 
-	// Capture all immutable inputs on the main goroutine before spawning.
+	// Capture all immutable inputs on the main goroutine before spawning,
+	// including the exact compiled source texts so mid-build edits cannot
+	// poison the fast-build fingerprint (TOCTOU).
 	rkind, rdir, rfile := s.root.kind, s.root.dir, s.root.file
 	jobs := max(1, s.cfg.Jobs)
 	fileSet := map[string]bool{}
+	compiledText := map[string]string{}
 	var filePaths []string
 	addFile := func(abs string) {
 		if abs != "" && !fileSet[abs] {
@@ -549,24 +583,14 @@ func (s *Session) startFastSnapshot(bins []binTarget) func() {
 			filePaths = append(filePaths, abs)
 		}
 	}
-	var skipped []string
-	var targetDirs []string
 	switch rkind {
 	case rootFile:
 		addFile(filepath.Join(rdir, filepath.FromSlash(rfile)))
 	case rootPackage:
-		addFile(filepath.Join(rdir, "pkg.mk"))
-		if s.pkgMan != nil {
-			skipped = s.pkgMan.walkSkipped()
-			osName := targetOS(s.cfg.Target)
-			for _, sel := range s.pkgMan.Targets {
-				if sel.OS != osName {
-					continue
-				}
-				for _, ms := range sel.Modules {
-					targetDirs = append(targetDirs, filepath.Join(rdir, filepath.FromSlash(ms.Dir)))
-				}
-			}
+		pkgPath := filepath.Join(rdir, "pkg.mk")
+		addFile(pkgPath)
+		if sf, ok := s.w.sm.ByPath("pkg.mk"); ok && sf != nil {
+			compiledText[pkgPath] = sf.Text
 		}
 	}
 	for _, m := range s.pkgB.mods {
@@ -574,24 +598,10 @@ func (s *Session) startFastSnapshot(bins []binTarget) func() {
 			return func() {}
 		}
 		for _, f := range m.files {
-			addFile(filepath.Join(m.tree.osRoot, filepath.FromSlash(f.rel)))
-		}
-	}
-	var stdModDirs []string
-	if s.cfg.StdDir != "" && s.stdB != nil {
-		addFile(filepath.Join(s.cfg.StdDir, "pkg.mk"))
-		seenStd := map[string]bool{}
-		for _, m := range s.stdB.mods {
-			if m.tree == nil || m.tree.osRoot == "" {
-				return func() {}
-			}
-			dir := filepath.Join(m.tree.osRoot, filepath.FromSlash(m.dir))
-			if !seenStd[dir] {
-				seenStd[dir] = true
-				stdModDirs = append(stdModDirs, dir)
-			}
-			for _, f := range m.files {
-				addFile(filepath.Join(m.tree.osRoot, filepath.FromSlash(f.rel)))
+			abs := filepath.Join(m.tree.osRoot, filepath.FromSlash(f.rel))
+			addFile(abs)
+			if f.src != nil {
+				compiledText[abs] = f.src.Text
 			}
 		}
 	}
@@ -601,6 +611,11 @@ func (s *Session) startFastSnapshot(bins []binTarget) func() {
 	optProfile := s.cfg.Profile.Optimized()
 	pgoMode := s.cfg.PGO
 	pgoFile := s.cfg.PGOFile
+	if pgoFile != "" {
+		if abs, err := filepath.Abs(pgoFile); err == nil {
+			pgoFile = abs
+		}
+	}
 
 	snap := &fastSnapshot{done: make(chan struct{})}
 	s.fastSnap = snap
@@ -611,29 +626,15 @@ func (s *Session) startFastSnapshot(bins []binTarget) func() {
 			var absent []string
 			switch rkind {
 			case rootDir:
-				sig, ok := computeDirSig(rdir, false, nil, nil)
+				sig, ok := computeDirSigChecked(rdir, false, nil, fileSet)
 				if !ok {
 					return
 				}
 				dirs = append(dirs, fastDirEntry{path: rdir, recursive: false, sig: sig})
 			case rootPackage:
-				if !collectPackageDirSigsParallel(rdir, skipped, jobs, &dirs) {
+				if !collectPackageDirSigsParallel(rdir, nil, jobs, fileSet, &dirs) {
 					return
 				}
-				for _, dir := range targetDirs {
-					sig, ok := computeDirSig(dir, false, nil, nil)
-					if !ok {
-						return
-					}
-					dirs = append(dirs, fastDirEntry{path: dir, recursive: false, sig: sig})
-				}
-			}
-			for _, dir := range stdModDirs {
-				sig, ok := computeDirSig(dir, false, nil, nil)
-				if !ok {
-					return
-				}
-				dirs = append(dirs, fastDirEntry{path: dir, recursive: false, sig: sig})
 			}
 			if optProfile {
 				switch pgoMode {
@@ -676,23 +677,31 @@ func (s *Session) startFastSnapshot(bins []binTarget) func() {
 								failed.Store(true)
 								return
 							}
+							var h source.Hash
+							var got bool
 							if fi.Mode().IsRegular() {
-								if h, ok := hints.Lookup(p, fi); ok {
-									files[i] = fastFileEntry{path: p, hash: h}
-									continue
+								h, got = hints.Lookup(p, fi)
+							}
+							if !got {
+								b, err := os.ReadFile(p)
+								if err != nil {
+									failed.Store(true)
+									return
+								}
+								h = source.HashBytes(fastBuildFileDom, b)
+								if fi.Mode().IsRegular() {
+									hints.Record(p, fi, statAt, h)
+									hintsDirty.Store(true)
 								}
 							}
-							b, err := os.ReadFile(p)
-							if err != nil {
-								failed.Store(true)
-								return
+							// Reject TOCTOU mid-build edits: disk bytes must match compiled bytes.
+							if srcText, hasSrc := compiledText[p]; hasSrc {
+								if h != source.HashBytes(fastBuildFileDom, []byte(srcText)) {
+									failed.Store(true)
+									return
+								}
 							}
-							h := source.HashBytes(fastBuildFileDom, b)
 							files[i] = fastFileEntry{path: p, hash: h}
-							if fi.Mode().IsRegular() {
-								hints.Record(p, fi, statAt, h)
-								hintsDirty.Store(true)
-							}
 						}
 					}); ie != nil {
 						failed.Store(true)
@@ -721,7 +730,7 @@ func (s *Session) startFastSnapshot(bins []binTarget) func() {
 // Errors are silently ignored (the cache is purely an optimization).
 func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Result) {
 	snap := s.fastSnap
-	if snap == nil || s.w == nil || len(bins) == 0 || len(bins) != len(outs) {
+	if snap == nil || s.w == nil || len(bins) == 0 || len(bins) != len(outs) || len(res.PGOStale) > 0 {
 		return
 	}
 	st := s.w.store.st
@@ -793,7 +802,7 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 // collectPackageDirSigsParallel walks root and snapshots every non-skipped
 // directory, fanning out top-level subdirectories across up to jobs guarded
 // workers so large multi-module packages don't scan directories serially.
-func collectPackageDirSigsParallel(root string, skipped []string, jobs int, out *[]fastDirEntry) bool {
+func collectPackageDirSigsParallel(root string, skipped []string, jobs int, allowedMk map[string]bool, out *[]fastDirEntry) bool {
 	localSkips := func(relDir string) []string {
 		var childSkips []string
 		for _, sk := range skipped {
@@ -813,7 +822,7 @@ func collectPackageDirSigsParallel(root string, skipped []string, jobs int, out 
 	if err != nil {
 		return false
 	}
-	sig, ok := hashDirEntries(root, ents, true, rootSkips, nil)
+	sig, ok := hashDirEntries(root, ents, true, rootSkips, nil, allowedMk)
 	if !ok {
 		return false
 	}
@@ -846,10 +855,12 @@ func collectPackageDirSigsParallel(root string, skipped []string, jobs int, out 
 			}
 			for _, e := range ents {
 				if !e.IsDir() && e.Name() == "pkg.mk" {
-					return true
+					// Nested package boundary: skip fastbuild so deleting sub/pkg.mk
+					// cannot slip past the root directory signature.
+					return false
 				}
 			}
-			sig, ok := hashDirEntries(absDir, ents, true, childSkips, nil)
+			sig, ok := hashDirEntries(absDir, ents, true, childSkips, nil, allowedMk)
 			if !ok {
 				return false
 			}
@@ -921,10 +932,18 @@ func computeDirSig(dir string, recursive bool, skipDirs []string, infos map[stri
 	if err != nil {
 		return source.Hash{}, false
 	}
-	return hashDirEntries(dir, ents, recursive, skipDirs, infos)
+	return hashDirEntries(dir, ents, recursive, skipDirs, infos, nil)
 }
 
-func hashDirEntries(dir string, ents []os.DirEntry, recursive bool, skipDirs []string, infos map[string]os.FileInfo) (source.Hash, bool) {
+func computeDirSigChecked(dir string, recursive bool, skipDirs []string, allowedMk map[string]bool) (source.Hash, bool) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return source.Hash{}, false
+	}
+	return hashDirEntries(dir, ents, recursive, skipDirs, nil, allowedMk)
+}
+
+func hashDirEntries(dir string, ents []os.DirEntry, recursive bool, skipDirs []string, infos map[string]os.FileInfo, allowedMk map[string]bool) (source.Hash, bool) {
 	h := source.NewHasher(fastBuildDirDomain)
 	h.Bool(recursive)
 	for _, e := range ents {
@@ -940,13 +959,18 @@ func hashDirEntries(dir string, ents []os.DirEntry, recursive bool, skipDirs []s
 		if !strings.HasSuffix(name, ".mk") {
 			continue
 		}
+		full := filepath.Join(dir, name)
+		if allowedMk != nil && !allowedMk[full] {
+			// A new .mk file appeared mid-build; abort snapshot to avoid TOCTOU poisoning.
+			return source.Hash{}, false
+		}
 		typ := e.Type()
 		h.String("F")
 		h.String(name)
 		h.Bool(typ.IsRegular())
 		if infos != nil && typ.IsRegular() {
 			if fi, err := e.Info(); err == nil {
-				infos[filepath.Join(dir, name)] = fi
+				infos[full] = fi
 			}
 		}
 	}

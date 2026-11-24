@@ -295,6 +295,9 @@ func canCacheBodyHash(w *world, it *types.Item, e *bodyEntry) bool {
 		return false
 	}
 	b := e.mir
+	if len(b.Asms) > 0 {
+		return false
+	}
 	items := w.items
 	consts := w.tab.Consts()
 	hasReloc := func(c types.ConstID) bool {
@@ -324,6 +327,9 @@ func canCacheBodyHash(w *world, it *types.Item, e *bodyEntry) bool {
 		for j := range bl.Stmts {
 			rv := &bl.Stmts[j].Rvalue
 			if hasReloc(rv.A.Const) || hasReloc(rv.B.Const) || isLit(rv.Fn.Item) {
+				return false
+			}
+			if rv.Len.Kind == types.CAValue && hasReloc(rv.Len.Value) {
 				return false
 			}
 		}
