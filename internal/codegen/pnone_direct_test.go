@@ -218,3 +218,43 @@ func TestPnoneDirectPackFacts(t *testing.T) {
 	clangC(t, types.X86_64Windows, tmp, "dp0", ll0.String(), "-O2")
 	clangC(t, types.X86_64Windows, tmp, "dp1", ll1.String(), "-O2")
 }
+
+func TestPnoneDirectCycleSysVGPCap(t *testing.T) {
+	run := func(nParams int) string {
+		e := newTestEnv()
+		params := make([]types.TypeID, nParams)
+		for i := range params {
+			params[i] = types.U64
+		}
+		fnItem := e.fn("Loop", params, types.U64, 0)
+		f := e.body(fnItem)
+		sp := f.at(10, 3)
+		cond := f.local(types.Bool)
+		f.assign(place(cond), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.Eq, A: mir.Copy(place(1)), B: mir.Imm(types.U64, 0), Type: types.Bool}, sp)
+		doneB, loopB := f.newBlock(), f.newBlock()
+		f.term(mir.Terminator{Kind: mir.TermSwitch, On: mir.Copy(place(cond)),
+			Cases: f.b.AddCases(mir.SwitchCase{Value: 1, Target: doneB}), Default: loopB, Span: sp})
+		f.cur = doneB
+		f.assign(place(0), use(mir.Copy(place(2))), sp)
+		f.ret(sp)
+
+		f.cur = loopB
+		n1 := f.local(types.U64)
+		f.assign(place(n1), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.SubWrap, A: mir.Copy(place(1)), B: mir.Imm(types.U64, 1), Type: types.U64}, sp)
+		args := make([]mir.Arg, nParams)
+		args[0] = mir.Arg{Operand: mir.Copy(place(n1))}
+		for i := 1; i < nParams; i++ {
+			args[i] = mir.Arg{Operand: mir.Copy(place(mir.LocalID(i + 1)))}
+		}
+		f.term(mir.Terminator{Kind: mir.TermTailCall, Callee: direct(fnItem),
+			Args: f.b.AddArgs(args...), Dest: place(0), Spawn: mir.NoLocal, Span: sp})
+		u := unitOf(e, []*mir.Body{f.b})
+		return emit(t, e, u, types.X86_64Linux, types.Release)
+	}
+	if ll10 := run(10); !strings.Contains(ll10, `preserve_nonecc noundef i64 @mk.main.Loop$pnone(`) {
+		t.Errorf("10-GP-arg SysV direct cycle did not promote to preserve_nonecc:\n%s", ll10)
+	}
+	if ll11 := run(11); strings.Contains(ll11, `$pnone`) {
+		t.Errorf("11-GP-arg SysV direct cycle exceeded 10-GP-arg cap and promoted to preserve_nonecc:\n%s", ll11)
+	}
+}
