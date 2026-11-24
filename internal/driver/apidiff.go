@@ -191,6 +191,13 @@ func apiFacts(cfg Config, std bool) (map[string][]apiFact, map[string]apiMeta, R
 	if s.w == nil || s.w.sem5 == nil || s.stdB == nil || !checkedToTypes(res) {
 		return nil, nil, res, nil
 	}
+	out, meta := sessionAPIFacts(s, std)
+	return out, meta, res, nil
+}
+
+// sessionAPIFacts spells the public facts of every exported item in an
+// already-checked Session s (the package's items, or with std std's).
+func sessionAPIFacts(s *Session, std bool) (map[string][]apiFact, map[string]apiMeta) {
 	qx := newQueryIndex(s)
 	out := map[string][]apiFact{}
 	meta := map[string]apiMeta{}
@@ -293,7 +300,7 @@ func apiFacts(cfg Config, std bool) (map[string][]apiFact, map[string]apiMeta, R
 		stdPkgFacts(s, out, meta)
 	}
 	resolveRefs(meta)
-	return out, meta, res, nil
+	return out, meta
 }
 
 // stdAliasTarget is the declaration a std alias re-exports: for an

@@ -9133,7 +9133,7 @@ built for windows
 - A selection's `os` is the last part of a target's name: `windows`, `linux`, `freestanding`, `nutshell` or `macos`.
 - A directory that a selection names is a module only on its own target, and only under the selection's name.
 - On a target that no selection covers, the import is E0202, `reason: not-found`. A package that builds for a target must select a directory for it.
-- Each target is checked separately. Run `mk check --target x86_64-linux` to find a use the Linux module does not supply (E0201). Keep the alternatives' exported items the same.
+- Each target is checked separately. Run `mk check --target x86_64-linux` to inspect a specific target, or `mk check --all-targets` to check every declared OS and verify exported `pkg.Select` API parity (E0213). Private helpers, private fields, type sizes, and constant values may differ per OS.
 - In `unsafe_modules`, name the selected directory, `"src/os/windows"`, not the import name ([packages](packages.md#2-the-manifest)).
 
 ### Freestanding
@@ -10136,7 +10136,7 @@ const Boot: u32 = 1 section "boot data" // <- E0706
 | E0001 | toolchain | A C source that does not compile, an `extern` no library defines, a `--cpu` below the baseline ([`extern`](#calling-c-extern), [CPU features](#cpu-features)) |
 | E0101 | syntax | `unsafe` with no reason or an empty one, a `cpu` clause before `requires` or after `section` ([`unsafe` blocks](#unsafe-blocks), [CPU features](#cpu-features)) |
 | E0202 | unknown-module | `std.raw` imported outside `unsafe_modules`, a fault in a `pkg.Link` ([who may](#who-may-write-unsafe-code), [linking](#linking-libraries)) |
-| E0213 | target-api-mismatch | With `--all-targets`, a used C item that differs between targets, or a target with no sysroot (`reason: no-sysroot`) ([C imports](#c-imports)) |
+| E0213 | target-api-mismatch | With `--all-targets`, a used C item or `pkg.Select` module differs between targets, an unselected OS fails to check or lacks `pkg.Select`, or a C target has no sysroot (`reason: no-sysroot`) ([per-target modules](#per-target-modules), [C imports](#c-imports)) |
 | E0215 | grant-missing | A fetched package's unsafe code without `unsafe_deps` ([who may](#who-may-write-unsafe-code)) |
 | E0301 | type-mismatch | Arithmetic on a raw pointer ([raw pointers](#raw-pointers)) |
 | E0404 | assign-immutable | Assigning to an `extern var` ([sections](#sections-linker-symbols-and-device-registers)) |

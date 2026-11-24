@@ -44,7 +44,7 @@ var explainTable = []explainRow{
 	{code: "E0209", trigger: "A result that is not `void` is dropped. A dropped `E!T` is E0802, and a dropped linear value is E0402",
 		reject: ExplainExample{At: "doc/reference.md:342", Text: "// verdict: reject E0209\nDiff(a: int, b: int): int {\n    x := a\n        - b // <- E0209\n    return x\n}\n"},
 		accept: ExplainExample{At: "doc/reference.md:295", Text: "// verdict: ok\nLonger(a: str, b: str): str\n    from a, b // the result borrows from a or b\n{\n    if a.Len() >= b.Len() {\n        return a\n    }\n    return b\n}\n\nMean(xs: []int): int\n    requires xs.Len() > 0\n{\n    var sum := 0\n    for x in xs {\n        sum += x\n    }\n    return sum / xs.Len()\n}\n\nexport Main(sys: &System): WriteError!void {\n    l := Longer(\"pear\", \"fig\")\n    m := Mean([2, 4, 9][..])\n    try sys.Print(\"{l} {m}\\n\", (l, m))\n}\n"}},
-	{code: "E0213", trigger: "`mk check --all-targets`: a C import differs between targets in an item the package uses, or a target has no sysroot. The report gives the difference",
+	{code: "E0213", trigger: "`mk check --all-targets`: a C import or `pkg.Select` module differs between targets, an unselected target fails to check, a declared OS lacks a `pkg.Select` entry, or a target has no sysroot",
 		reject: ExplainExample{},
 		accept: ExplainExample{}},
 	{code: "E0214", trigger: "An import of a module with an `internal` segment in its path, from another package. Workspace members count as separate packages. The report names the package and the nearest public module",

@@ -75,11 +75,9 @@ type Config struct {
 	// it in a session that answers no syntax query after its check (lspapi's
 	// UsesOf and TypeAt); GenView implies it, KeepSyntax overrides it.
 	ReleaseFront bool
-	// AllTargets is mk check --all-targets for the C imports: the package's
-	// C imports are also translated for every other target of cTargets, from
-	// its sysroot or a vendored view, and an item the package's files use
-	// whose API differs between targets is E0213. A target with neither is
-	// E0213 too (skipping one is an error).
+	// AllTargets is mk check --all-targets: translates C imports across
+	// cTargets and verifies declared pkg.Select modules compile and export
+	// matching Breaking APIs across every declared target OS (E0213).
 	AllTargets bool
 	// CacheVerify is MK_CACHE_VERIFY=1: every cache hit is also recomputed
 	// and compared byte for byte with the stored entry; a difference is

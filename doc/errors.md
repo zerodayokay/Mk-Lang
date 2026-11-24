@@ -81,7 +81,7 @@ For the borrow and flow codes, [the memory model](memory.md) explains the rules 
 | E0207 | naming | A name written in a different case from its declaration. Also `.Or(x)` on a `?T` or `E!T`, which Mk writes `e else { x }` | Proven: recase, and `e else { x }` for a literal, name or field default; compiles otherwise |
 | E0208 | unused | An unused local or import | Proven: remove |
 | E0209 | unused-result | A result that is not `void` is dropped. A dropped `E!T` is E0802, and a dropped linear value is E0402 | Proven: `_ =` |
-| E0213 | target-api-mismatch | `mk check --all-targets`: a C import differs between targets in an item the package uses, or a target has no sysroot. The report gives the difference | Alternatives |
+| E0213 | target-api-mismatch | `mk check --all-targets`: a C import or `pkg.Select` module differs between targets, an unselected target fails to check, a declared OS lacks a `pkg.Select` entry, or a target has no sysroot | Alternatives |
 | E0214 | internal-module | An import of a module with an `internal` segment in its path, from another package. Workspace members count as separate packages. The report names the package and the nearest public module | Alternatives |
 | E0215 | grant-missing | A fetched package declares `unsafe_modules`, `asm_sources`, `c_sources`, `c_imports` or `links`, and the root manifest's `unsafe_deps` does not name it. Reported at the `Dep` that brings it in, with what it asks for and the line to add | Alternatives: the grant line the message gives |
 | E0216 | mk-too-old | A package in the build sets `mk` in its manifest to a version newer than the running mk. The report gives the version needed | Alternatives: `mk upgrade` |

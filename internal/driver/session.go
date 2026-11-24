@@ -522,6 +522,11 @@ func (s *Session) run(p *pipeline, stdT, pkgT *srcTree, stdMan, pkgMan *Manifest
 	p.gro = s.groJobs()
 	p.modules(false, true, p.builds...)
 	p.diags = append(p.diags, s.genViews()...)
+	if len(p.diags) == 0 && s.cfg.AllTargets && s.pkgMan != nil && len(s.pkgMan.Targets) > 0 {
+		p.timed("all-targets", func() {
+			p.diags = append(p.diags, s.checkAllTargetsSelect()...)
+		})
+	}
 }
 
 // modules runs the per-module pipeline over the builds, in order

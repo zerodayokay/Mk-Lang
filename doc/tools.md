@@ -92,7 +92,7 @@ mk check
 mk check --all-targets
 ```
 
-`--all-targets` also translates the C imports for every other target, and reports where the package uses an API that differs between them (E0213).
+`--all-targets` also translates C imports and checks `pkg.Select` modules across every declared target, reporting any failing target or exported API mismatch (E0213).
 
 ### `mk test`
 

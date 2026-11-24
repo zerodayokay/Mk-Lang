@@ -290,7 +290,7 @@ func (cf *compileFlags) config(path string, stderr io.Writer) (driver.Config, bo
 func runCheck(args []string, stdout, stderr io.Writer) int {
 	var cf compileFlags
 	fs := newFlagSet("check", stderr, &cf)
-	allTargets := fs.Bool("all-targets", false, "also translate the C imports for every other target and compare what the package uses (E0213)")
+	allTargets := fs.Bool("all-targets", false, "also translate C imports and check pkg.Select modules across every declared target (E0213)")
 	path, _, err := parseArgs(fs, args, false)
 	if err != nil {
 		return usageErr(stderr, fs, err)
