@@ -29,7 +29,7 @@ import std.vm
 | Make pages read-only or inaccessible | `Region.Protect` with a `Prot` |
 | Give the space back | `Region.Release` |
 | Memory for generated code | `CodeRegion.New` (committed) or `CodeRegion.Reserve` (committed by the page) |
-| Write code, then run it | `CodeRegion.Edit` -> `CodeWriter` (`Bytes`, `Flush`, `Done`), then `CodeRegion.Entry` |
+| Write code, then run it | `CodeRegion.Edit`, `CodeRegion.EditRange` -> `CodeWriter` (`Bytes`, `Flush`, `Done`), then `CodeRegion.Entry` |
 
 ## Regions
 
@@ -48,7 +48,7 @@ Two tasks that commit overlapping ranges at once must exclude each other themsel
 
 A `CodeRegion` is memory for code that the program generates, enforcing W^X on every target: no page is writable and executable at once, and the region stays sealed (not writable) outside an active `CodeWriter` returned by `Edit`.
 
-1. Open an exclusive write window with `var w := try c.Edit()`.
+1. Open an exclusive write window with `var w := try c.Edit()` (or `try c.EditRange(offset, len)` for a single page-aligned range).
 2. Write the bytes into `w.Bytes()`.
 3. Call `w.Flush(offset, len)`, the instruction-cache flush.
 4. Close the window with `w.Done()` (or `defer w.Done()`), re-sealing the region.
@@ -307,6 +307,33 @@ and arm64 macOS fallback O(Size / (64 pages)) bitmap words plus one system
 call per run of committed pages (one in all for a region from New);
 allocates nothing.
 
+### `CodeRegion.EditRange`
+
+```
+export CodeRegion.EditRange(mut self, offset: int, len: int): Error!CodeWriter from self
+```
+
+- Flows: The result borrows from self.
+- Errors: Error (OutOfMemory, Misaligned, Os(code: i64), Unsupported)
+
+Opens an exclusive write window covering only `[offset, offset + len)`,
+returning a linear CodeWriter borrowing self. Both offset and len must be
+whole multiples of PageSize() within `[0, Size()]`, and every page in
+`[offset, offset + len)` must already be committed. `len == 0` at a valid
+page-aligned offset is a clean no-op that touches no page protections.
+
+Unlike Edit, only the pages in `[offset, offset + len)` become writable on
+targets with per-page mappings, and Done seals only that range;
+`CodeWriter.Bytes()` returns a `len`-byte slice whose index 0 maps to
+`offset` in the region, and `CodeWriter.Flush(rel_off, rel_len)` flushes
+relative to `offset`. On arm64 macOS with per-thread MAP_JIT write
+protection, JIT write mode is still per calling thread.
+
+Fails with Misaligned when offset or len is negative, not a multiple of
+PageSize(), or outside the region; fails with Os(487) when any page in
+`[offset, offset + len)` of a reserved region is uncommitted; fails with Os
+when the OS refuses protection. O(1) system calls; allocates nothing.
+
 ### `CodeRegion.Entry`
 
 ```
@@ -410,18 +437,18 @@ export CodeWriter.Done(self)
 ```
 
 Closes the write window and seals the region again: every committed page
-of the writable view becomes read-only on Windows and Linux; on x86_64
-macOS and arm64 macOS fallback every committed page returns to
-read-execute; on arm64 macOS with MAP_JIT the calling thread's JIT write
-protection is re-enabled (pthread_jit_write_protect_np(1) when no nested
-window remains).
+of the writable view (or only `[off, off + len)` for a writer opened by
+EditRange with `len > 0`) becomes read-only on Windows and Linux; on
+x86_64 macOS and arm64 macOS fallback the affected committed pages return
+to read-execute; on arm64 macOS with MAP_JIT the calling thread's JIT
+write protection is re-enabled (pthread_jit_write_protect_np(1) when no
+nested window remains).
 
 Infallible so `defer w.Done()` works on every path; if the OS refuses a
 page protection change, Done still attempts every remaining committed
 run. O(1) on arm64 macOS with MAP_JIT; on Windows, Linux, x86_64 macOS
-and arm64 macOS fallback O(Size / (64 pages)) bitmap words plus one
-system call per run of committed pages (one in all for a region from New);
-allocates nothing.
+and arm64 macOS fallback O(Size / (64 pages)) bitmap words for Edit or
+O(1) system call for EditRange; allocates nothing.
 
 ### `CodeWriter.Flush`
 
@@ -433,9 +460,10 @@ Makes the bytes written at [offset, offset + len) visible to execution:
 FlushInstructionCache on Windows, sys_icache_invalidate on arm64 macOS,
 data-cache clean and instruction-cache invalidate on arm64 Linux, and a
 fence on x86_64 Linux and macOS, whose caches are coherent. Call it after
-writing code and before Done. A range outside the region is clipped to
-it; on arm64 only committed pages may be flushed. O(len / cache line) on
-arm64, O(1) on x86_64; allocates nothing.
+writing code and before Done. For an EditRange writer, offset is relative
+to the edited range. A range outside the writer window is clipped to it;
+on arm64 only committed pages may be flushed. O(len / cache line) on arm64,
+O(1) on x86_64; allocates nothing.
 
 ### `Error`
 

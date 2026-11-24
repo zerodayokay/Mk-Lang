@@ -546,3 +546,106 @@ test "VM a read through the executable view of a page a reserved code region has
     }
     c.Release()
 }
+
+// EditRangeErr tries EditRange and returns its error, or none after closing the writer.
+EditRangeErr(r: mut CodeRegion, offset: int, len: int): ?Error {
+    var w := r.EditRange(offset, len) else e {
+        return some(e)
+    }
+    w.Done()
+    return none
+}
+
+test "VM CodeRegion.EditRange rejects partial pages, out-of-bounds, and uncommitted pages; len == 0 is a no-op" {
+    ps := PageSize()
+    var r := CodeRegion.Reserve(4 * ps) else {
+        Assert(false)
+        return
+    }
+    r.Commit(0, ps) else {
+        Assert(false)
+    }
+
+    var mis := 0
+    for i in 0..5 {
+        off := if i == 0 { 1 } else if i == 2 { -ps } else if i == 4 { 3 * ps } else { 0 }
+        ln := if i == 1 { ps + 1 } else if i == 3 { -ps } else if i == 4 { 2 * ps } else { ps }
+        match EditRangeErr(mut r, off, ln) {
+            some(e) {
+                if IsMisaligned(e) {
+                    mis += 1
+                }
+            }
+            none {}
+        }
+    }
+    Assert(mis == 5)
+
+    // Uncommitted page in Reserve -> Os(code: 487).
+    var uncomm := false
+    match EditRangeErr(mut r, ps, ps) {
+        some(e) {
+            match e {
+                Os(code) { uncomm = code == 487 }
+                _ {}
+            }
+        }
+        none {}
+    }
+    Assert(uncomm)
+
+    // Aligned zero-length window on committed or uncommitted aligned offset is a clean no-op.
+    var w0 := r.EditRange(ps, 0) else {
+        Assert(false)
+        r.Release()
+        return
+    }
+    Assert(w0.Bytes().Len() == 0)
+    w0.Flush(0, 0)
+    w0.Done()
+
+    var w1 := r.EditRange(4 * ps, 0) else {
+        Assert(false)
+        r.Release()
+        return
+    }
+    Assert(w1.Bytes().Len() == 0)
+    w1.Done()
+    r.Release()
+}
+
+test "VM CodeRegion.EditRange edits page 0 and page 1 independently" {
+    ps := PageSize()
+    var c := CodeRegion.New(2 * ps) else {
+        Assert(false)
+        return
+    }
+
+    // Seal page 0 after emitting return 111.
+    var w0 := c.EditRange(0, ps) else {
+        Assert(false)
+        c.Release()
+        return
+    }
+    var b0 := w0.Bytes()
+    Assert(b0.Len() == ps)
+    WriteRet(b0, 0, 111)
+    w0.Flush(0, RetLen())
+    w0.Done()
+    Assert(CallAt(c.Entry(0)) == 111)
+
+    // Edit and seal page 1 independently; page 0 remains intact and executable.
+    var w1 := c.EditRange(ps, ps) else {
+        Assert(false)
+        c.Release()
+        return
+    }
+    var b1 := w1.Bytes()
+    Assert(b1.Len() == ps)
+    WriteRet(b1, 0, 222)
+    w1.Flush(0, RetLen())
+    w1.Done()
+    Assert(CallAt(c.Entry(0)) == 111)
+    Assert(CallAt(c.Entry(ps)) == 222)
+    c.Release()
+}

@@ -4,6 +4,7 @@
 package lsp
 
 var surfaceDocs2 = map[string]surfaceDoc{
+	"ZstdDecoder.Cause":                 {Module: "std.compress", Lines: []string{"ZstdDecoder.Cause(&self): ?compress.Error"}},
 	"ZstdDecoder.New":                   {Module: "std.compress", Lines: []string{"ZstdDecoder.New(a: &Arena, window_limit: int): ZstdDecoder"}},
 	"ZstdDecoder.NewLazy":               {Module: "std.compress", Lines: []string{"ZstdDecoder.NewLazy(a: &Arena, window_limit: int): ZstdDecoder"}},
 	"ZstdDecoder.Read":                  {Module: "std.compress", Lines: []string{"ZstdDecoder.Read(mut self, r: mut Reader, buf: mut []u8): compress.Error|ReadError!int"}},
@@ -903,5 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"sqlite.Stmt.Int":                   {Module: "std.db.sqlite", Lines: []string{"Stmt.Int(&self, col: int): i64"}},
 	"sqlite.Stmt.Reset":                 {Module: "std.db.sqlite", Lines: []string{"Stmt.Reset(mut self)"}},
 	"sqlite.Stmt.Step":                  {Module: "std.db.sqlite", Lines: []string{"Stmt.Step(mut self, io: Io): sqlite.Error!bool"}},
-	"sqlite.Stmt.Str":                   {Module: "std.db.sqlite", Lines: []string{"Stmt.Str(&self, col: int): str from self"}},
 }

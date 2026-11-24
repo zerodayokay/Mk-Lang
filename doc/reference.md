@@ -13278,6 +13278,7 @@ CodeRegion.Size(&self): int
 CodeRegion.Entry(&self, offset: int): uint
 CodeRegion.Commit(mut self, offset: int, len: int): vm.Error!void
 CodeRegion.Edit(mut self): vm.Error!CodeWriter from self
+CodeRegion.EditRange(mut self, offset: int, len: int): vm.Error!CodeWriter from self
 CodeRegion.Release(self)
 CodeWriter.Bytes(mut self): mut []u8 from self
 CodeWriter.Flush(&self, offset: int, len: int)

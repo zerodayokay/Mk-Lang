@@ -140,6 +140,7 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Clusters.Next":              {Module: "std.text", Lines: []string{"Clusters.Next(mut self): ?str from self.text"}},
 	"CodeRegion.Commit":          {Module: "std.vm", Lines: []string{"CodeRegion.Commit(mut self, offset: int, len: int): vm.Error!void"}},
 	"CodeRegion.Edit":            {Module: "std.vm", Lines: []string{"CodeRegion.Edit(mut self): vm.Error!CodeWriter from self"}},
+	"CodeRegion.EditRange":       {Module: "std.vm", Lines: []string{"CodeRegion.EditRange(mut self, offset: int, len: int): vm.Error!CodeWriter from self"}},
 	"CodeRegion.Entry":           {Module: "std.vm", Lines: []string{"CodeRegion.Entry(&self, offset: int): uint"}},
 	"CodeRegion.New":             {Module: "std.vm", Lines: []string{"CodeRegion.New(size: int): vm.Error!CodeRegion"}},
 	"CodeRegion.Release":         {Module: "std.vm", Lines: []string{"CodeRegion.Release(self)"}},
@@ -903,5 +904,4 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Zone.Load":                  {Module: "std.time", Lines: []string{"Zone.Load(a: &Arena, io: Io, name: str, embedded: ?Database): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Local":                 {Module: "std.time", Lines: []string{"Zone.Local(a: &Arena, io: Io): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Utc":                   {Module: "std.time", Lines: []string{"Zone.Utc(): Zone"}},
-	"ZstdDecoder.Cause":          {Module: "std.compress", Lines: []string{"ZstdDecoder.Cause(&self): ?compress.Error"}},
 }

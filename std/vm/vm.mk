@@ -3,7 +3,8 @@
 //
 // What: Reserve, and Region with Base, Size, Commit, Decommit, Protect and
 // Release; Prot; CodeRegion (New, Reserve, Size, Entry, Commit, Edit,
-// Release) and CodeWriter (Bytes, Flush, Done); PageSize; and the Error set.
+// EditRange, Release) and CodeWriter (Bytes, Flush, Done); PageSize; and the
+// Error set.
 //
 // How: every function and method is callable only in `unsafe` (E1101),
 // as fs.Map is: a Region hands out raw
@@ -357,6 +358,9 @@ export linear struct CodeRegion {
 /// another carrier would leave the original carrier write-enabled.
 export linear view struct CodeWriter {
     r: *CodeRegion
+    off: int
+    len: int
+    ranged: bool
 }
 
 /// A code region of size bytes, rounded up to whole pages, committed whole
@@ -509,7 +513,51 @@ export CodeRegion.Edit(mut self): Error!CodeWriter from self {
             fail err
         }
     }
-    return CodeWriter(r: raw.OfMut(self))
+    return CodeWriter(r: raw.OfMut(self), off: 0, len: self.n, ranged: false)
+}
+
+/// Opens an exclusive write window covering only `[offset, offset + len)`,
+/// returning a linear CodeWriter borrowing self. Both offset and len must be
+/// whole multiples of PageSize() within `[0, Size()]`, and every page in
+/// `[offset, offset + len)` must already be committed. `len == 0` at a valid
+/// page-aligned offset is a clean no-op that touches no page protections.
+///
+/// Unlike Edit, only the pages in `[offset, offset + len)` become writable on
+/// targets with per-page mappings, and Done seals only that range;
+/// `CodeWriter.Bytes()` returns a `len`-byte slice whose index 0 maps to
+/// `offset` in the region, and `CodeWriter.Flush(rel_off, rel_len)` flushes
+/// relative to `offset`. On arm64 macOS with per-thread MAP_JIT write
+/// protection, JIT write mode is still per calling thread.
+///
+/// Fails with Misaligned when offset or len is negative, not a multiple of
+/// PageSize(), or outside the region; fails with Os(487) when any page in
+/// `[offset, offset + len)` of a reserved region is uncommitted; fails with Os
+/// when the OS refuses protection. O(1) system calls; allocates nothing.
+export CodeRegion.EditRange(mut self, offset: int, len: int): Error!CodeWriter from self {
+    if offset < 0 || len < 0 || !Pages(offset) || !Pages(len) || offset > self.n || len > self.n - offset {
+        fail Misaligned
+    }
+    if len == 0 {
+        return CodeWriter(r: raw.OfMut(self), off: offset, len: 0, ranged: true)
+    }
+    if self.bits != 0 {
+        ps := sys.PageSize()
+        if !AllCommitted(self.bits, offset / ps, len / ps) {
+            fail Os(code: 487)
+        }
+    }
+    e := sys.VmCodeBeginWrite(&self.c)
+    if e != 0 {
+        fail Os(code: e)
+    }
+    if sys.VmCodePerPage(&self.c) {
+        ep := sys.VmCodeProtect(&self.c, offset, len, true)
+        if ep != 0 {
+            sys.VmCodeEndWrite(&self.c)
+            fail Os(code: ep)
+        }
+    }
+    return CodeWriter(r: raw.OfMut(self), off: offset, len: len, ranged: true)
 }
 
 // CodeProtect sets the committed pages of r to writable (true) or sealed
@@ -559,8 +607,11 @@ CodeSealAll(r: &CodeRegion) {
 /// page that a region from Reserve has not committed faults. O(1); allocates
 /// nothing.
 export CodeWriter.Bytes(mut self): mut []u8 from self {
-    unsafe "r is the live CodeRegion this CodeWriter borrowed exclusively until Done; w is its writable mapping of n bytes" {
-        return raw.SliceMut((*self.r).c.w, (*self.r).n)
+    unsafe "r is the live CodeRegion this CodeWriter borrowed exclusively until Done; w + off spans len writable bytes" {
+        if self.len == 0 {
+            return raw.SliceMut((*self.r).c.w, 0)
+        }
+        return raw.SliceMut(raw.FromAddr[u8](raw.Addr((*self.r).c.w) + Trunc[uint](self.off)), self.len)
     }
 }
 
@@ -568,45 +619,59 @@ export CodeWriter.Bytes(mut self): mut []u8 from self {
 /// FlushInstructionCache on Windows, sys_icache_invalidate on arm64 macOS,
 /// data-cache clean and instruction-cache invalidate on arm64 Linux, and a
 /// fence on x86_64 Linux and macOS, whose caches are coherent. Call it after
-/// writing code and before Done. A range outside the region is clipped to
-/// it; on arm64 only committed pages may be flushed. O(len / cache line) on
-/// arm64, O(1) on x86_64; allocates nothing.
+/// writing code and before Done. For an EditRange writer, offset is relative
+/// to the edited range. A range outside the writer window is clipped to it;
+/// on arm64 only committed pages may be flushed. O(len / cache line) on arm64,
+/// O(1) on x86_64; allocates nothing.
 export CodeWriter.Flush(&self, offset: int, len: int) {
-    unsafe "r is the live CodeRegion this CodeWriter borrowed exclusively until Done; the address lies inside its executable view, clipped below" {
-        rn := (*self.r).n
+    unsafe "r is the live CodeRegion this CodeWriter borrowed exclusively until Done; the address lies inside its executable view [off, off + len), clipped below" {
+        wn := self.len
+        if wn == 0 {
+            return
+        }
         var o := offset
         var n := len
         if o < 0 {
             o = 0
         }
-        if o > rn {
-            o = rn
+        if o > wn {
+            o = wn
         }
-        if n < 0 || n > rn - o {
-            n = rn - o
+        if n < 0 || n > wn - o {
+            n = wn - o
         }
-        sys.VmFlush(raw.FromAddr[u8](raw.Addr((*self.r).c.x) + Trunc[uint](o)), n)
+        if n == 0 {
+            return
+        }
+        sys.VmFlush(raw.FromAddr[u8](raw.Addr((*self.r).c.x) + Trunc[uint](self.off + o)), n)
     }
 }
 
 /// Closes the write window and seals the region again: every committed page
-/// of the writable view becomes read-only on Windows and Linux; on x86_64
-/// macOS and arm64 macOS fallback every committed page returns to
-/// read-execute; on arm64 macOS with MAP_JIT the calling thread's JIT write
-/// protection is re-enabled (pthread_jit_write_protect_np(1) when no nested
-/// window remains).
+/// of the writable view (or only `[off, off + len)` for a writer opened by
+/// EditRange with `len > 0`) becomes read-only on Windows and Linux; on
+/// x86_64 macOS and arm64 macOS fallback the affected committed pages return
+/// to read-execute; on arm64 macOS with MAP_JIT the calling thread's JIT
+/// write protection is re-enabled (pthread_jit_write_protect_np(1) when no
+/// nested window remains).
 ///
 /// Infallible so `defer w.Done()` works on every path; if the OS refuses a
 /// page protection change, Done still attempts every remaining committed
 /// run. O(1) on arm64 macOS with MAP_JIT; on Windows, Linux, x86_64 macOS
-/// and arm64 macOS fallback O(Size / (64 pages)) bitmap words plus one
-/// system call per run of committed pages (one in all for a region from New);
-/// allocates nothing.
+/// and arm64 macOS fallback O(Size / (64 pages)) bitmap words for Edit or
+/// O(1) system call for EditRange; allocates nothing.
 export CodeWriter.Done(self) {
-    CodeWriter(r) := self
+    CodeWriter(r, off, len, ranged) := self
+    if ranged && len == 0 {
+        return
+    }
     unsafe "r is the live CodeRegion this linear CodeWriter borrowed exclusively until Done" {
         if sys.VmCodePerPage(&(*r).c) {
-            CodeSealAll(&*r)
+            if !ranged {
+                CodeSealAll(&*r)
+            } else {
+                _ = sys.VmCodeProtect(&(*r).c, off, len, false)
+            }
         }
         sys.VmCodeEndWrite(&(*r).c)
     }

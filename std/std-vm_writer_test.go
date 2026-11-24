@@ -202,6 +202,84 @@ export Main(sys: &System) {
 `,
 			want: "E1101",
 		},
+		{
+			name: "valid_edit_range_defer_done",
+			src: `import std.vm
+
+EmitRange(c: mut vm.CodeRegion, ps: int): vm.Error!void {
+    unsafe "write inside EditRange window" {
+        var w := try c.EditRange(ps, ps)
+        defer w.Done()
+        w.Bytes()[0] = 0xC3
+        w.Flush(0, 1)
+    }
+}
+
+export Main(sys: &System): vm.Error!void {
+    unsafe "make, edit range, query and release" {
+        ps := vm.PageSize()
+        var c := try vm.CodeRegion.New(2 * ps)
+        onerr c.Release()
+        try EmitRange(mut c, ps)
+        _ = c.Entry(ps)
+        c.Release()
+    }
+}
+`,
+			want: "",
+		},
+		{
+			name: "double_edit_range_rejected",
+			src: `import std.vm
+
+export Main(sys: &System): vm.Error!void {
+    unsafe "second EditRange while first CodeWriter is live" {
+        ps := vm.PageSize()
+        var c := try vm.CodeRegion.New(2 * ps)
+        onerr c.Release()
+        var w1 := try c.EditRange(0, ps)
+        var w2 := try c.EditRange(ps, ps)
+        w2.Done()
+        w1.Done()
+        c.Release()
+    }
+}
+`,
+			want: "E0501",
+		},
+		{
+			name: "edit_range_bytes_after_done_rejected",
+			src: `import std.vm
+
+export Main(sys: &System): vm.Error!void {
+    unsafe "use EditRange Bytes slice after Done" {
+        ps := vm.PageSize()
+        var c := try vm.CodeRegion.New(2 * ps)
+        onerr c.Release()
+        var w := try c.EditRange(0, ps)
+        var b := w.Bytes()
+        w.Done()
+        b[0] = 0xC3
+        c.Release()
+    }
+}
+`,
+			want: "E0503",
+		},
+		{
+			name: "edit_range_needs_unsafe",
+			src: `import std.vm
+
+BadRange(c: mut vm.CodeRegion): vm.Error!void {
+    var w := try c.EditRange(0, 4096)
+    w.Done()
+}
+
+export Main(sys: &System) {
+}
+`,
+			want: "E1101",
+		},
 	}
 
 	for _, tc := range cases {
