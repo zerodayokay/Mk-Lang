@@ -414,8 +414,8 @@ var pcFacts = []struct {
 	// PdqPartitionLomuto's guard, a || chain of three: past it a >= 0, b <=
 	// s.Len() and so r < b and a < r prove s[r] and s[a]; with b <=
 	// s.Len() + 1 s[r] stays.
-	{"split/or-guard-proved", "F(s: []i64, a: int, b: int): i64 {\n\tif a < 0 || b > s.Len() || b - a < 2 {\n\t\treturn 0\n\t}\n\tvar t: i64 = 0\n\tfor r in (a + 2)..b {\n\t\tt = t +% s[r] +% s[a]\n\t}\n\treturn t\n}\n", "add=1 sub=1 mul=0 nowrap=0 casts=0 bounds=0/2"},
-	{"split/or-guard-kept", "F(s: []i64, a: int, b: int): i64 {\n\tif a < 0 || b > s.Len() + 1 || b - a < 2 {\n\t\treturn 0\n\t}\n\tvar t: i64 = 0\n\tfor r in (a + 2)..b {\n\t\tt = t +% s[r] +% s[a]\n\t}\n\treturn t\n}\n", "add=1 sub=1 mul=0 nowrap=1 casts=0 bounds=1/2"},
+	{"split/or-guard-proved", "F(s: []i64, a: int, b: int): i64 {\n\tif a < 0 || b > s.Len() || b - a < 2 {\n\t\treturn 0\n\t}\n\tvar t: i64 = 0\n\tfor r in (a + 2)..b {\n\t\tt = t +% s[r] +% s[a]\n\t}\n\treturn t\n}\n", "add=0 sub=1 mul=0 nowrap=1 casts=0 bounds=0/2"},
+	{"split/or-guard-kept", "F(s: []i64, a: int, b: int): i64 {\n\tif a < 0 || b > s.Len() + 1 || b - a < 2 {\n\t\treturn 0\n\t}\n\tvar t: i64 = 0\n\tfor r in (a + 2)..b {\n\t\tt = t +% s[r] +% s[a]\n\t}\n\treturn t\n}\n", "add=0 sub=1 mul=0 nowrap=2 casts=0 bounds=1/2"},
 	// A chain of three &&, a negation, and a condition stored in a
 	// variable: refined when nothing runs between the join and the switch
 	// but copies and negations, not when the index changes in between.
