@@ -29,9 +29,10 @@ import (
 // literals instead would need every literal's body hash before collection
 // starts.
 type literals struct {
-	env  Env
-	kept map[string]types.ItemID
-	memo map[types.ConstID]types.ConstID
+	env        Env
+	kept       map[string]types.ItemID
+	memo       map[types.ConstID]types.ConstID
+	sizeOfMemo []uint8 // dense per-TypeID cache for mentionsSizeOf: 0=unseen, 1=no, 2=yes
 }
 
 func newLiterals(env Env) *literals {
@@ -62,10 +63,13 @@ func (l *literals) constID(c types.ConstID) types.ConstID {
 	if l == nil || c == types.NoConst {
 		return c
 	}
+	ct := l.env.Consts()
+	if len(ct.Get(c).Relocs) == 0 {
+		return c
+	}
 	if r, ok := l.memo[c]; ok {
 		return r
 	}
-	ct := l.env.Consts()
 	type frame struct {
 		c    types.ConstID
 		next int
@@ -472,7 +476,11 @@ func fnConst(ct *types.ConstTable, t types.TypeID, f types.FnRef) types.ConstID 
 // Len. Such a body is rewritten so the SizeOf fold reaches it, as it
 // reaches the request key.
 func (bl *builder) mentionsSizeOf(b *mir.Body) bool {
-	memo := map[types.TypeID]bool{}
+	var localMemo map[types.TypeID]bool
+	var shared *[]uint8
+	if bl.lits != nil {
+		shared = &bl.lits.sizeOfMemo
+	}
 	var typ func(t types.TypeID) bool
 	var garg func(a types.GenericArg) bool
 	carg := func(a types.ConstArg) bool { return a.Kind == types.CASizeOf }
@@ -486,10 +494,31 @@ func (bl *builder) mentionsSizeOf(b *mir.Body) bool {
 		if t == types.NoType {
 			return false
 		}
-		if r, ok := memo[t]; ok {
-			return r
+		if shared != nil {
+			idx := int(t)
+			if idx < len(*shared) {
+				if v := (*shared)[idx]; v != 0 {
+					return v == 2
+				}
+			} else {
+				n := max(idx+1, len(*shared)*2)
+				if n < 256 {
+					n = 256
+				}
+				buf := make([]uint8, n)
+				copy(buf, *shared)
+				*shared = buf
+			}
+			(*shared)[idx] = 1 // cycle break
+		} else {
+			if r, ok := localMemo[t]; ok {
+				return r
+			}
+			if localMemo == nil {
+				localMemo = map[types.TypeID]bool{}
+			}
+			localMemo[t] = false
 		}
-		memo[t] = false
 		ty := bl.tab.Get(t)
 		r := false
 		switch ty.Kind {
@@ -511,7 +540,13 @@ func (bl *builder) mentionsSizeOf(b *mir.Body) bool {
 			}
 			r = r || typ(ty.Fn.Result)
 		}
-		memo[t] = r
+		if shared != nil {
+			if r {
+				(*shared)[int(t)] = 2
+			}
+		} else {
+			localMemo[t] = r
+		}
 		return r
 	}
 	for _, a := range b.GenericArgs {

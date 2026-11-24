@@ -71,6 +71,28 @@ func (w *world) unitDigest(u *codegen.Unit) source.Hash {
 
 func (w *world) unitDigestInto(u *codegen.Unit, decls map[types.ItemID]source.Hash) source.Hash {
 	hs := w.sem5.hash
+	// Precompute Decl hashes for non-std functions in parallel on large units
+	// so unitDigestInto does not serialize thousands of SHA-256 calls on 1 core.
+	var parDecls []source.Hash
+	var parIsStd []bool
+	if len(u.Funcs) >= 128 && w.cfg.Jobs > 1 {
+		parDecls = make([]source.Hash, len(u.Funcs))
+		parIsStd = make([]bool, len(u.Funcs))
+		const chunk = 64
+		chunks := (len(u.Funcs) + chunk - 1) / chunk
+		w.parallel(chunks, func(int) string { return "unit decls" }, func(c int) {
+			lo := c * chunk
+			hi := min(lo+chunk, len(u.Funcs))
+			for i := lo; i < hi; i++ {
+				it := w.items.Get(u.Funcs[i].Item)
+				if isStdPath(w.items.Module(it.Module).Path) {
+					parIsStd[i] = true
+					continue
+				}
+				parDecls[i] = hs.Decl(it)
+			}
+		})
+	}
 	h := source.NewHasher("mk.driver.prekey.unit.v1")
 	h.Uvarint(uint64(len(u.Funcs)))
 	for i := range u.Funcs {
@@ -83,6 +105,17 @@ func (w *world) unitDigestInto(u *codegen.Unit, decls map[types.ItemID]source.Ha
 		h.Bool(f.AddrTaken)
 		h.Bool(f.Spawned)
 		h.Bool(f.Local)
+		if parDecls != nil {
+			if parIsStd[i] {
+				h.Bool(false)
+				continue
+			}
+			d := parDecls[i]
+			decls[f.Item] = d
+			h.Bool(true)
+			h.Hash(d)
+			continue
+		}
 		if isStdPath(w.items.Module(it.Module).Path) {
 			h.Bool(false)
 			continue

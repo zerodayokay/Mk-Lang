@@ -524,6 +524,10 @@ type relocFn struct {
 }
 
 func (c *collector) relocFns(v types.ConstID) []relocFn {
+	cv := c.env.Consts().Get(v)
+	if len(cv.Relocs) == 0 {
+		return nil
+	}
 	if fs, ok := c.relocMemo[v]; ok {
 		return fs
 	}
@@ -532,7 +536,6 @@ func (c *collector) relocFns(v types.ConstID) []relocFn {
 	}
 	c.relocMemo[v] = nil // a cycle of data relocations ends here
 	var fs []relocFn
-	cv := c.env.Consts().Get(v)
 	for _, r := range cv.Relocs {
 		switch r.Kind {
 		case types.RelocFn:
