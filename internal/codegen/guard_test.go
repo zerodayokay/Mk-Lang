@@ -94,3 +94,53 @@ func TestFindColdGuardsNestedOnly(t *testing.T) {
 		t.Fatalf("nested loop guard missing !prof:\n%s", fnText(ll2, "mk.main.F"))
 	}
 }
+
+func TestBitmaskSwitch(t *testing.T) {
+	makeSwitch := func(vals []uint64, sameTarget bool) string {
+		e := newTestEnv()
+		fn := e.fn("S", []types.TypeID{types.U8}, types.Bool, 0)
+		f := e.body(fn)
+		b := f.b
+		sp := f.at(2, 1)
+		yes := b.AddBlock(mir.OriginBody, mir.NoDefer)
+		no := b.AddBlock(mir.OriginBody, mir.NoDefer)
+		alt := b.AddBlock(mir.OriginBody, mir.NoDefer)
+		var cs []mir.SwitchCase
+		for i, v := range vals {
+			tgt := yes
+			if !sameTarget && i == len(vals)-1 {
+				tgt = alt
+			}
+			cs = append(cs, mir.SwitchCase{Value: v, Target: tgt})
+		}
+		b.Blocks[0].Term = mir.Terminator{Kind: mir.TermSwitch, On: mir.Copy(mir.LocalPlace(1)), Cases: b.AddCases(cs...), Default: no, Span: sp}
+		b.Blocks[yes].Stmts = []mir.Statement{{Kind: mir.StAssign, Place: mir.LocalPlace(0), Rvalue: use(mir.Imm(types.Bool, 1)), Span: sp}}
+		b.Blocks[yes].Term = mir.Terminator{Kind: mir.TermReturn, Span: sp}
+		b.Blocks[no].Stmts = []mir.Statement{{Kind: mir.StAssign, Place: mir.LocalPlace(0), Rvalue: use(mir.Imm(types.Bool, 0)), Span: sp}}
+		b.Blocks[no].Term = mir.Terminator{Kind: mir.TermReturn, Span: sp}
+		b.Blocks[alt].Stmts = []mir.Statement{{Kind: mir.StAssign, Place: mir.LocalPlace(0), Rvalue: use(mir.Imm(types.Bool, 1)), Span: sp}}
+		b.Blocks[alt].Term = mir.Terminator{Kind: mir.TermReturn, Span: sp}
+		return fnText(emit(t, e, unitOf(e, []*mir.Body{b}), types.X86_64Linux, types.Release), "mk.main.S")
+	}
+
+	// Span < 64: 1-word bitmask (lshr, no switch, no select).
+	s1 := makeSwitch([]uint64{10, 12, 15, 20}, true)
+	if strings.Contains(s1, "switch ") || !strings.Contains(s1, "lshr ") || strings.Contains(s1, "select ") {
+		t.Fatalf("span < 64 should emit 1-word bitmask:\n%s", s1)
+	}
+	// Span 64..127 (RFC 9112 tchar punctuation 33..126): 2-word bitmask (select + lshr, no switch).
+	s2 := makeSwitch([]uint64{33, 35, 45, 95, 126}, true)
+	if strings.Contains(s2, "switch ") || !strings.Contains(s2, "lshr ") || !strings.Contains(s2, "select ") {
+		t.Fatalf("span 64..127 should emit 2-word bitmask:\n%s", s2)
+	}
+	// Span >= 128: falls back to LLVM switch.
+	s3 := makeSwitch([]uint64{1, 10, 50, 200}, true)
+	if !strings.Contains(s3, "switch ") {
+		t.Fatalf("span >= 128 should stay switch:\n%s", s3)
+	}
+	// Multiple distinct case targets: falls back to LLVM switch.
+	s4 := makeSwitch([]uint64{10, 12, 15, 20}, false)
+	if !strings.Contains(s4, "switch ") {
+		t.Fatalf("multi-target switch should stay switch:\n%s", s4)
+	}
+}

@@ -118,6 +118,8 @@ func (fg *fnGen) switchTerm(t *mir.Terminator) {
 		def.Unreachable()
 	} else if counts != nil {
 		dc = counts[len(cases)]
+	} else if fg.tryBitmaskSwitch(on.v, cases, t.Default, def) {
+		return
 	}
 	var lc []llvm.Case
 	for j, c := range cases {
@@ -147,6 +149,83 @@ func (fg *fnGen) ret() {
 		}
 	}
 	fg.cur.Ret(&v)
+}
+
+// tryBitmaskSwitch lowers a 2-target integer switch (all >= 4 cases branching
+// to one target, default to another) spanning at most 128 values to a 1- or
+// 2-word constant bitmask test. This eliminates indirect jump tables on
+// character-class matches and keeps small predicates inlineable by LLVM.
+func (fg *fnGen) tryBitmaskSwitch(on llvm.Value, cases []mir.SwitchCase, defID mir.BlockID, def *llvm.Block) bool {
+	if fg.pgo != nil || fg.g.cfg.Cover || fg.g.cfg.Debug || fg.g.ctModule(fg.fi) {
+		return false
+	}
+	if def == nil || len(cases) < 4 {
+		return false
+	}
+	bits := on.Ty.Bits()
+	if bits < 8 || bits > 64 {
+		return false
+	}
+	yesID := cases[0].Target
+	if yesID == defID {
+		return false
+	}
+	for _, c := range cases[1:] {
+		if c.Target != yesID {
+			return false
+		}
+	}
+	valMask := ^uint64(0)
+	if bits < 64 {
+		valMask = (uint64(1) << bits) - 1
+	}
+	minV := cases[0].Value & valMask
+	maxV := minV
+	for _, c := range cases[1:] {
+		v := c.Value & valMask
+		if v < minV {
+			minV = v
+		}
+		if v > maxV {
+			maxV = v
+		}
+	}
+	span := maxV - minV
+	if span >= 128 {
+		return false
+	}
+	var loMask, hiMask uint64
+	for _, c := range cases {
+		d := (c.Value & valMask) - minV
+		if d < 64 {
+			loMask |= uint64(1) << d
+		} else {
+			hiMask |= uint64(1) << (d - 64)
+		}
+	}
+	m := fg.g.m
+	i64 := m.I(64)
+	x := on
+	if bits < 64 {
+		x = fg.cur.Cast(llvm.ZExt, x, i64)
+	}
+	off := x
+	if minV != 0 {
+		off = fg.cur.Bin(llvm.Sub, x, m.ConstInt(i64, minV), 0)
+	}
+	inRange := fg.cur.ICmp(llvm.IULE, off, m.ConstInt(i64, span))
+	var mask llvm.Value
+	if span < 64 {
+		mask = m.ConstInt(i64, loMask)
+	} else {
+		isHi := fg.cur.ICmp(llvm.IUGE, off, m.ConstInt(i64, 64))
+		mask = fg.cur.Select(isHi, m.ConstInt(i64, hiMask), m.ConstInt(i64, loMask))
+	}
+	shft := fg.cur.Bin(llvm.And, off, m.ConstInt(i64, 63), 0)
+	bit := fg.cur.Cast(llvm.Trunc, fg.cur.Bin(llvm.LShr, mask, shft, 0), m.I(1))
+	hit := fg.cur.Bin(llvm.And, inRange, bit, 0)
+	fg.cur.CondBr(hit, fg.blocks[yesID], def)
+	return true
 }
 
 // findColdGuards identifies nested-loop versioning guard chains (from lower's
