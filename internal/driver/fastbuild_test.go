@@ -4,6 +4,10 @@
 // contents, or output file invalidates cleanly.
 //
 // What: TestFastBuild_WarmHitAndInvalidation and TestFastBuild_OutputRepairAndVerify.
+//
+// How: builds a small package, rebuilds it warm and after each kind of
+// change, and reads the stage timings for whether the fast path was taken.
+// Both skip under MK_CACHE_VERIFY=1, which bypasses the fast path by design.
 
 package driver
 
@@ -20,6 +24,7 @@ import (
 )
 
 func TestFastBuild_WarmHitAndInvalidation(t *testing.T) {
+	skipUnderCacheVerify(t)
 	tools := needTools(t)
 	dir := writeTree(t, incPkg("x + 1"))
 	cacheDir := filepath.Join(t.TempDir(), "cache")
@@ -180,6 +185,7 @@ func TestFastBuild_WarmHitAndInvalidation(t *testing.T) {
 }
 
 func TestFastBuild_OutputRepairAndVerify(t *testing.T) {
+	skipUnderCacheVerify(t)
 	tools := needTools(t)
 	dir := writeTree(t, incPkg("x + 1"))
 	cacheDir := filepath.Join(t.TempDir(), "cache")
@@ -247,5 +253,13 @@ func TestFastBuild_OutputRepairAndVerify(t *testing.T) {
 	}
 	if !bytes.Equal(relinkExe, coldExe) {
 		t.Fatal("relinked bytes differ from cold build")
+	}
+}
+
+// skipUnderCacheVerify skips a test that needs the fast path, which
+// MK_CACHE_VERIFY=1 (Config.CacheVerify) always bypasses.
+func skipUnderCacheVerify(t *testing.T) {
+	if os.Getenv("MK_CACHE_VERIFY") == "1" {
+		t.Skip("MK_CACHE_VERIFY=1 bypasses the fast-build path")
 	}
 }
