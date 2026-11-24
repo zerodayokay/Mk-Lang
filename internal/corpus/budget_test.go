@@ -1,5 +1,5 @@
-// Why: the borrow checker and the standard library have size budgets, and the
-// numbers should be visible on every test run.
+// Why: the borrow checker has a size budget, and its numbers and the standard
+// library's size should be visible on every test run.
 // What: TestBudgetSourceSizes, which logs Go and Mk source sizes, and
 // TestCodeLinesOf.
 // How: counts token-bearing lines with go/scanner and finds diagnostic code
@@ -21,13 +21,11 @@ import (
 )
 
 // Budgets that TestBudgetSourceSizes logs: the borrow and linear checker at
-// most 8,000 lines of Go with at most 40% diagnostics, and the standard
-// library at most 150,000 lines. The test never fails on them; it only
-// records the numbers.
+// most 8,000 lines of Go with at most 40% diagnostics. The test never fails
+// on them; it only records the numbers.
 const (
 	budgetBorrowLines = 8000
 	budgetBorrowDiag  = 0.40
-	budgetStdLines    = 150000
 )
 
 // goSize is the measure of one package's non-test Go files: code lines are the
@@ -64,7 +62,7 @@ func TestBudgetSourceSizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("std: %d .mk files, %d lines, %d of them not blank (budget %d lines: %s)", files, lines, code, budgetStdLines, within(lines <= budgetStdLines))
+	t.Logf("std: %d .mk files, %d lines, %d of them not blank", files, lines, code)
 }
 
 func within(ok bool) string {
