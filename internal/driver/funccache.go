@@ -514,7 +514,7 @@ func (b *build) encodeFunc(m *modNode, it *types.Item, e *bodyEntry, rec *unitRe
 		return source.Hash{}, source.Hash{}, nil, nil, false
 	}
 	key := iface.FuncKey(p, reads)
-	fr := &iface.FuncResult{Item: it.Key, Accept: e.state == eval.BodyReady, Body: e.mir, Borrow: encodeFlow(e)}
+	fr := &iface.FuncResult{Item: it.Key, Accept: e.state == eval.BodyReady, Body: e.mir, Borrow: encodeFlow(b.w, it, e)}
 	for _, rs := range reads {
 		fr.Reads.Add(rs)
 	}

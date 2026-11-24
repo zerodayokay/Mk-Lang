@@ -58,6 +58,11 @@ type bodyEntry struct {
 	onerr []bool
 	// flowed: stage 7 ran on the body and accepted it.
 	flowed bool
+	// bodyHash is the precomputed iface.Hasher.Body hash of mir when cached
+	// in a FuncResult's flow payload (hasBodyHash true), reused by
+	// InstanceContentHash via packWorld.BodyHash on warm builds.
+	bodyHash    source.Hash
+	hasBodyHash bool
 	// lazy, when not nil, fills the fields above on first use: a module
 	// hit's function result, decoded on demand or by the prefetch
 	// (lazybody.go). Read the fields only after force (semantics.body

@@ -828,7 +828,7 @@ func (b *build) storeEntries(m *modNode, items []types.ItemID, shapes []iface.Sh
 					continue
 				}
 			}
-			r := &iface.FuncResult{Item: it.Key, Accept: e.state == eval.BodyReady, Body: e.mir, Borrow: encodeFlow(e)}
+			r := &iface.FuncResult{Item: it.Key, Accept: e.state == eval.BodyReady, Body: e.mir, Borrow: encodeFlow(w, it, e)}
 			fb := iface.EncodeFuncResult(fc.env, s.hash, r)
 			k := funcEntryKey(ifKey, it.Key)
 			outs = append(outs, fres{key: k, bytes: fb})
@@ -1142,7 +1142,7 @@ func funcEntryKey(ifKey source.Hash, item types.Key) source.Hash {
 // exists, but the guard decisions are all a later stage reads of
 // borrow.Facts (flowCheck), so the driver stores them and not the facts they
 // are derived from.
-func encodeFlow(e *bodyEntry) []byte {
+func encodeFlow(w *world, it *types.Item, e *bodyEntry) []byte {
 	var enc iface.Encoder
 	enc.Uvarint(uint64(e.state))
 	enc.Bool(e.flowed)
@@ -1150,6 +1150,12 @@ func encodeFlow(e *bodyEntry) []byte {
 	enc.Uvarint(uint64(len(e.onerr)))
 	for _, r := range e.onerr {
 		enc.Bool(r)
+	}
+	if canCacheBodyHash(w, it, e) {
+		enc.Bool(true)
+		enc.Hash(w.sem5.hash.Body(e.mir))
+	} else {
+		enc.Bool(false)
 	}
 	return enc.Out()
 }
@@ -1165,6 +1171,10 @@ func decodeFlow(b []byte) (*bodyEntry, error) {
 		for i := range e.onerr {
 			e.onerr[i] = d.Bool()
 		}
+	}
+	if d.Bool() {
+		e.bodyHash = d.Hash()
+		e.hasBodyHash = true
 	}
 	if err := d.Done(); err != nil {
 		return nil, fmt.Errorf("flow facts: %w", err)

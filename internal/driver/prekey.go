@@ -24,6 +24,7 @@ import (
 	"mk/internal/codegen"
 	"mk/internal/diag"
 	"mk/internal/iface"
+	"mk/internal/mir"
 	"mk/internal/source"
 	"mk/internal/toolchain"
 	"mk/internal/types"
@@ -248,6 +249,19 @@ func (pw *packWorld) DeclHash(it *types.Item) source.Hash {
 	pw.decls[it.ID] = h
 	pw.mu.Unlock()
 	return h
+}
+
+// BodyHash returns a cached mk.body hash stored alongside a FuncResult when b
+// is an unchanged non-generic body (and MK_CACHE_VERIFY is off), letting
+// InstanceContentHash skip re-walking unchanged MIR bodies during emitPacks.
+func (pw *packWorld) BodyHash(b *mir.Body) (source.Hash, bool) {
+	if b == nil || pw.w.cfg.CacheVerify || pw.w.sem5 == nil {
+		return source.Hash{}, false
+	}
+	if e := pw.w.sem5.body(b.Item); e != nil && e.mir == b && e.hasBodyHash {
+		return e.bodyHash, true
+	}
+	return source.Hash{}, false
 }
 
 // Part answers no read by key: InstanceContentHash asks LayoutPart.

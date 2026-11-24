@@ -68,6 +68,13 @@ type declWorld interface {
 	DeclHash(it *types.Item) source.Hash
 }
 
+// bodyHashWorld is optionally implemented by a World that carries precomputed
+// mk.body hashes (e.g. decoded from cached FuncResults) so InstanceContentHash
+// avoids re-hashing unchanged MIR bodies.
+type bodyHashWorld interface {
+	BodyHash(b *mir.Body) (source.Hash, bool)
+}
+
 // InstanceContentHash is what the instance's code depends on:
 // mk.instance over the substituted body's mk.body hash, then the sorted
 // external facts the code bakes in: per direct callee and function value
@@ -300,7 +307,16 @@ func (h *Hasher) InstanceContentHash(w World, b *mir.Body) source.Hash {
 		return cmp.Or(cmp.Compare(x.class, y.class), strings.Compare(x.key, y.key), x.a.Compare(y.a))
 	})
 	var e Encoder
-	e.Hash(h.Body(b))
+	var bh source.Hash
+	if bw, ok := w.(bodyHashWorld); ok {
+		if cached, hit := bw.BodyHash(b); hit {
+			bh = cached
+		}
+	}
+	if bh.IsZero() {
+		bh = h.Body(b)
+	}
+	e.Hash(bh)
 	e.Uvarint(uint64(len(facts)))
 	for _, f := range facts {
 		e.Uvarint(uint64(f.class))

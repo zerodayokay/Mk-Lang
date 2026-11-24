@@ -86,7 +86,7 @@ func (fc *frontCache) lazyEntry(path string, item types.Key, b []byte) *bodyEntr
 			e.state = eval.BodyPoisoned
 			return
 		}
-		e.mir, e.state, e.onerr, e.flowed = r.Body, fl.state, fl.onerr, fl.flowed
+		e.mir, e.state, e.onerr, e.flowed, e.bodyHash, e.hasBodyHash = r.Body, fl.state, fl.onerr, fl.flowed, fl.bodyHash, fl.hasBodyHash
 	}
 	e.lazy = lz
 	return e
@@ -281,4 +281,56 @@ func (w *world) prefetchBinBodies(j nativeJob) {
 			e.lazy.once.Do(e.lazy.decode)
 		}
 	})
+}
+
+// canCacheBodyHash reports whether e's lowered MIR body hash depends solely on
+// e.mir's own fields, item keys, and immutable types/consts (no generics,
+// fn literals, or relocated consts), so it can be cached in FuncResult's flow
+// payload and reused by InstanceContentHash on warm builds.
+func canCacheBodyHash(w *world, it *types.Item, e *bodyEntry) bool {
+	if e == nil || e.state != eval.BodyReady || e.mir == nil || e.mir.GenericCount != 0 || it.Kind != types.KindFunc {
+		return false
+	}
+	if fd, ok := it.Decl.(*types.FuncDecl); !ok || len(fd.Sig.Generics) > 0 {
+		return false
+	}
+	b := e.mir
+	items := w.items
+	consts := w.tab.Consts()
+	hasReloc := func(c types.ConstID) bool {
+		return c != types.NoConst && len(consts.Get(c).Relocs) > 0
+	}
+	isLit := func(id types.ItemID) bool {
+		return id != types.NoItem && items.Get(id).Kind == types.KindLiteral
+	}
+	for i := range b.GenericArgs {
+		a := &b.GenericArgs[i]
+		if a.IsConst && a.Const.Kind == types.CAValue && hasReloc(a.Const.Value) {
+			return false
+		}
+	}
+	for i := range b.Operands {
+		if hasReloc(b.Operands[i].Const) {
+			return false
+		}
+	}
+	for i := range b.Args {
+		if hasReloc(b.Args[i].Operand.Const) {
+			return false
+		}
+	}
+	for i := range b.Blocks {
+		bl := &b.Blocks[i]
+		for j := range bl.Stmts {
+			rv := &bl.Stmts[j].Rvalue
+			if hasReloc(rv.A.Const) || hasReloc(rv.B.Const) || isLit(rv.Fn.Item) {
+				return false
+			}
+		}
+		t := &bl.Term
+		if hasReloc(t.On.Const) || hasReloc(t.Msg.Const) || hasReloc(t.Callee.Value.Const) || isLit(t.Callee.Fn.Item) {
+			return false
+		}
+	}
+	return true
 }
