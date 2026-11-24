@@ -346,6 +346,9 @@ type fnGen struct {
 	pnoneLocals []types.ItemID
 	// loopBlks memoizes natural-loop membership per MIR block (solecall.go).
 	loopBlks []bool
+	// coldGuard maps each loop-versioning guard block to its cold fallback header
+	// so unprofiled codegen can attach cold branch weights (term.go).
+	coldGuard map[int]mir.BlockID
 }
 
 // addr is a memory address and the alignment known for it.
@@ -379,6 +382,9 @@ func (g *packGen) emitFunc(fi int) {
 		fg.subprogram(f.Key, bodySpan(f))
 	}
 	fg.checkImmutParams() // immutarg.go
+	if !g.cfg.Debug && fg.pgo == nil && !g.ctModule(fi) {
+		fg.coldGuard = findColdGuards(fg.b)
+	}
 	fg.emitBlocks()
 }
 

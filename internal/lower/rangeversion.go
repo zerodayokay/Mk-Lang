@@ -1,17 +1,14 @@
 // Why: a bounds check in a hot loop blocks vectorisation even when one test
 // before the loop could show every index in range.
 //
-// What: VersionLoops and VersionOptions, a codegen-only rewrite that runs
-// accumulator TRE (rectre.go), counted-loop bounds versioning (versionBounds),
-// monotone while-loop bounds versioning (rangemono.go), and checked reduction
-// versioning (rangereduce.go).
+// What: VersionLoops and VersionOptions — accumulator TRE (rectre.go), 2D nest
+// versioning (rangenest.go), counted-loop versioning (versionBounds), monotone
+// while-loop versioning (rangemono.go), and reduction versioning (rangereduce.go).
 //
-// How: runs after mono in release builds on instance bodies handed to codegen
-// (internal/driver/loopversion.go), returning a new body so eval, borrow and
-// cache bodies stay untouched. Before a qualifying loop, a non-trapping guard
-// checks every formed index lies in [0, len); on pass a check-free fast copy
-// runs, otherwise the original loop runs with identical trap sites and order.
-// Decisions depend only on the body's MIR.
+// How: runs after mono in release builds (internal/driver/loopversion.go),
+// returning a new body so eval/borrow/cache stay untouched. Non-trapping entry
+// guards prove all indices in [0, len); fast copies drop proved checks, while
+// fallback runs the original loop with identical trap sites and order.
 
 package lower
 
@@ -88,8 +85,14 @@ func versionLoops(cfg *Config, b *mir.Body, opt VersionOptions) (out *mir.Body, 
 		return out, 0, 0
 	}
 	if !opt.NoBounds {
+		var skip map[mir.BlockID]bool
 		if hasLatch(out) {
-			out, bounds = versionBounds(cfg, out, opt.mut)
+			out, bounds, skip = versionNestedBounds(cfg, out, opt.mut)
+		}
+		if bounds < verMaxLoops && hasLatch(out) && len(out.Blocks) <= verMaxBlocks {
+			var sb int
+			out, sb = versionBounds(cfg, out, opt.mut, skip, verMaxLoops-bounds)
+			bounds += sb
 		}
 		if bounds < verMaxLoops && len(out.Blocks) <= verMaxBlocks {
 			var mb int
@@ -1054,15 +1057,18 @@ func (x *vctx) retarget(from, old, nw mir.BlockID) {
 	}
 }
 
-// versionBounds versions every qualifying loop of b on its bounds test.
-func versionBounds(cfg *Config, b *mir.Body, mut versionMut) (*mir.Body, int) {
+// versionBounds versions up to limit qualifying innermost loops of b.
+func versionBounds(cfg *Config, b *mir.Body, mut versionMut, skip map[mir.BlockID]bool, limit int) (*mir.Body, int) {
+	if limit <= 0 {
+		return b, 0
+	}
 	x := newVctx(cfg, b, mut)
 	done := 0
 	for _, l := range countedLoops(x.g, x.tab) {
-		if done == verMaxLoops {
+		if done >= limit {
 			break
 		}
-		if l.ops > verMaxLoopOps || l.small || !x.hiInvariant(l) || x.addr[l.c] {
+		if skip[l.h] || l.ops > verMaxLoopOps || l.small || !x.hiInvariant(l) || x.addr[l.c] {
 			continue
 		}
 		var checks []vcheck
@@ -1083,22 +1089,10 @@ func versionBounds(cfg *Config, b *mir.Body, mut versionMut) (*mir.Body, int) {
 	return x.out, done
 }
 
-// versionLoop builds the guard and the fast copy of l. The guard runs
-// between l's predecessor and its header, in fresh temporaries, with only
-// wrapping operators and compares (it never traps, so a loop of no
-// iteration and the trap order are unchanged). With c0 the counter on
-// entry, T = (hi - 1) - c0 is the last iteration's k when the loop runs
-// (hi > c0: hi - 1 cannot wrap, and T is tested). For each check, with S
-// its counter's start (c0, or p0 for a stepped p) and base B:
-//
-//	lo = S + B (or S - B)   exact, and lo >= 0
-//	up = lo + T             exact, and uint(up) < uint(len)
-//
-// so every index S + k ± B, k in [0, T], lies in [lo, up], inside [0,
-// len): the check passes, and its sum (lo <= S + k ± B <= up, both in
-// the type) cannot overflow. A stepped p also gets p0 + T < max, so its
-// step never overflows. A loop of no iteration runs no check whatever the
-// guard decides.
+// versionLoop builds the non-trapping entry guard and check-free fast copy of l.
+// With c0 on entry and T = (hi - 1) - c0, each check proves lo = S ± B exact
+// with lo >= 0 and up = lo + T exact with uint(up) < uint(len); stepped
+// counters also prove p0 + T < max. Zero-trip loops run no check either way.
 func (x *vctx) versionLoop(l *vloop, checks []vcheck) {
 	b := x.b
 	span := b.Blocks[l.h].Term.Span
