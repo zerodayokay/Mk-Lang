@@ -300,6 +300,7 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	cfg.AllTargets = *allTargets
+	cfg.LazyStd = true
 	s, err := driver.NewSession(cfg)
 	if err != nil {
 		fmt.Fprintf(stderr, "mk check: %v\n", err)

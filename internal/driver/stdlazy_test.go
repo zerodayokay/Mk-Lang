@@ -42,7 +42,7 @@ func TestLazyStdPrunesUnimported(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := NewSession(Config{Root: mainPath, CacheDir: t.TempDir()})
+	s, err := NewSession(Config{Root: mainPath, CacheDir: t.TempDir(), LazyStd: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestLazyStdWrappingSkipsMath(t *testing.T) {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s, err := NewSession(Config{Root: mainPath, CacheDir: t.TempDir()})
+	s, err := NewSession(Config{Root: mainPath, CacheDir: t.TempDir(), LazyStd: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestLazyStdWrappingSkipsMath(t *testing.T) {
 	if err := os.WriteFile(remPath, []byte(remSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s2, err := NewSession(Config{Root: remPath, CacheDir: t.TempDir()})
+	s2, err := NewSession(Config{Root: remPath, CacheDir: t.TempDir(), LazyStd: true})
 	if err != nil {
 		t.Fatal(err)
 	}

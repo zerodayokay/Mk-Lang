@@ -136,6 +136,12 @@ type Config struct {
 	// UsesOf walks std's modules as well as the package's. It changes no
 	// output of a check.
 	BrowseStd bool
+	// LazyStd: Check loads only the std modules the package reaches and
+	// none of std's test files (stdlazy.go). mk check sets it; build, run
+	// and test always load std lazily. Other callers (mk lsp, the Query
+	// APIs) leave it false, so every later question answers from the one
+	// Check without loading std again. It changes no diagnostic.
+	LazyStd bool
 	// Overlay holds files added to, or replacing, the package tree, keyed
 	// by package-relative '/'-separated path (in single-file mode, relative
 	// to the file's directory, and only that directory's files join the

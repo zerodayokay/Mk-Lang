@@ -406,7 +406,10 @@ func (s *Session) run(p *pipeline, stdT, pkgT *srcTree, stdMan, pkgMan *Manifest
 	w := p.w
 	stdB := newBuild(w, nil)
 	pkgB := newBuild(w, stdB)
-	fullStd := s.fullStd || s.cfg.StdTests != "" || s.cfg.BrowseStd || s.cfg.KeepSyntax || s.root.kind == rootNone || (!s.forBuild && s.cfg.StdDir != "")
+	// A plain Check (mk lsp, the Query APIs) loads all of std unless the
+	// caller opts in with Config.LazyStd; build, run and test are lazy.
+	lazyCaller := s.forBuild || s.testing || s.prop || s.cfg.LazyStd
+	fullStd := !lazyCaller || s.fullStd || s.cfg.StdTests != "" || s.cfg.BrowseStd || s.cfg.KeepSyntax || s.root.kind == rootNone || (!s.forBuild && s.cfg.StdDir != "")
 	s.lastFullStd = fullStd
 	stdB.skipStdTests = !fullStd
 	p.lazyStd = !fullStd
