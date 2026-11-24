@@ -352,7 +352,7 @@ func (c *checker) aggregateFV(rv *mir.Rvalue, sets []setID, fvs []fvID, dst type
 // the entry sets; a field of a type that is no carrier holds nothing. A view's
 // rest, which no clause names, holds the union, Flows.Sources. 0 when the
 // callee has no per-field clause or Dest keeps no field sets.
-func (c *checker) resultFV(st *state, fv *flowView, argH []setID, dest types.TypeID, destRoot rootID) fvID {
+func (c *checker) resultFV(st *state, ctx *stmtCtx, args []mir.Arg, fv *flowView, argH []setID, gargs []types.GenericArg, dest types.TypeID, destRoot rootID) fvID {
 	if fv == nil || len(fv.fields) == 0 || c.roots[destRoot].nfields == 0 {
 		return 0
 	}
@@ -375,7 +375,11 @@ func (c *checker) resultFV(st *state, fv *flowView, argH []setID, dest types.Typ
 			}
 			h := argH[s.Param-1]
 			if s.Behind {
-				h = c.behind(st, h)
+				var arg *mir.Arg
+				if int(s.Param)-1 < len(args) {
+					arg = &args[s.Param-1]
+				}
+				h = c.behindSource(st, ctx, arg, h, s, gargs)
 			}
 			out[i] = c.sets.unite(out[i], h)
 		}
@@ -394,16 +398,147 @@ func (c *checker) fieldSources(fl types.Flows, f uint32) ([]types.Source, bool) 
 	return fl.Sources, false
 }
 
-// sourcesSet is step 5's union over sources: argH[p] for H(p), B(argH[p])
-// for B(p).
-func (c *checker) sourcesSet(st *state, srcs []types.Source, argH []setID) setID {
+func (c *checker) derefType(id types.TypeID) types.TypeID {
+	if id == types.NoType {
+		return id
+	}
+	switch ty := c.tab.Get(id); ty.Kind {
+	case types.KRef, types.KMut:
+		return ty.Elem
+	}
+	return id
+}
+
+// argParamFieldPrefix finds the inline field path from parameter p's referent to
+// arg when arg's passed referent differs from p's own referent (for example
+// `self.c.Vec16()` inside a method taking `self`). When the referent matches
+// directly, prefix is nil and ok is true; when ambiguous, ok is false.
+func (c *checker) argParamFieldPrefix(ctx *stmtCtx, arg *mir.Arg, p types.ParamIndex) ([]uint32, bool) {
+	if arg == nil || p == types.NoParam || int(p) >= len(c.roots) {
+		return nil, false
+	}
+	paramTy := c.derefType(c.roots[rootID(p)].typ)
+	var argTy types.TypeID
+	if arg.Operand.Kind == mir.OpCopy || arg.Operand.Kind == mir.OpMove {
+		argTy = c.body.PlaceType(arg.Operand.Place)
+	} else {
+		return nil, false
+	}
+	if paramTy != types.NoType && c.derefType(argTy) == paramTy {
+		return nil, true
+	}
+	var pl mir.Place
+	hasPl := false
+	if arg.Mode == mir.ArgReborrow {
+		pl, hasPl = arg.Operand.Place, true
+	} else if ctx != nil && arg.Operand.Place.Proj.Len == 0 {
+		stmts := c.body.Blocks[ctx.b].Stmts
+		curLoc := arg.Operand.Place.Local
+		for si := len(stmts) - 1; si >= 0; si-- {
+			st := &stmts[si]
+			if st.Kind != mir.StAssign || st.Place.Proj.Len != 0 || st.Place.Local != curLoc {
+				continue
+			}
+			if st.Rvalue.Kind == mir.RvRef {
+				pl, hasPl = st.Rvalue.Place, true
+				break
+			}
+			if st.Rvalue.Kind == mir.RvUse && (st.Rvalue.A.Kind == mir.OpCopy || st.Rvalue.A.Kind == mir.OpMove) && st.Rvalue.A.Place.Proj.Len == 0 {
+				curLoc = st.Rvalue.A.Place.Local
+				continue
+			}
+			break
+		}
+	}
+	if !hasPl {
+		return nil, false
+	}
+	pi := c.paths.get(c.paths.ofPlace(c.body, c.tab, pl))
+	if c.roots[pi.root].kind != rkParam || c.roots[pi.root].param != p {
+		return nil, false
+	}
+	start := 0
+	if k := c.tab.Kind(c.roots[pi.root].typ); k == types.KRef || k == types.KMut {
+		if len(pi.steps) == 0 || pi.steps[0].kind != stDeref {
+			return nil, false
+		}
+		start = 1
+	}
+	var prefix []uint32
+	for _, stp := range pi.steps[start:] {
+		if stp.kind != stField || stp.any {
+			return nil, false
+		}
+		prefix = append(prefix, stp.a)
+	}
+	return prefix, true
+}
+
+// behindSource is step 5's B(argSet) filtered by Source.Path when present: on
+// a split non-rest field of a local struct it reads that field's loan set; on
+// an abstract level-1 parameter node it tags untagged inner loans with Path
+// (prefixed when arg was borrowed from a sub-field of the parameter).
+func (c *checker) behindSource(st *state, ctx *stmtCtx, arg *mir.Arg, argSet setID, s types.Source, gargs []types.GenericArg) setID {
+	if len(s.Path) == 0 {
+		return c.behind(st, argSet)
+	}
+	fields := make([]uint32, len(s.Path))
+	for i, step := range s.Path {
+		fields[i] = step.Field
+	}
+	last := s.Path[len(s.Path)-1].Type
+	if len(gargs) > 0 {
+		last = c.w.subst(last, gargs)
+	}
+	out := emptySet
+	for _, l := range c.sets.get(argSet) {
+		t := c.loans[l].target
+		if t != noRoot && c.roots[t].nfields > 0 && st.get(t).fv != 0 {
+			fs := c.sets.fieldSets(st.get(t).fv)
+			nf := c.roots[t].nfields
+			if c.roots[t].rest {
+				nf--
+			}
+			if lp := c.loans[l].place; lp != noPath {
+				k, f, _ := c.keyOf(c.paths.get(lp))
+				if k == keyField && int(f) < nf {
+					out = c.sets.unite(out, fs[f])
+					continue
+				}
+				if k == keyPayload && int(s.Path[0].Field) < nf {
+					out = c.sets.unite(out, fs[s.Path[0].Field])
+					continue
+				}
+			}
+		}
+		h := c.behind(st, c.sets.of(l))
+		if t != noRoot && c.roots[t].kind == rkAbstract && c.roots[t].depth == 1 {
+			if prefix, ok := c.argParamFieldPrefix(ctx, arg, c.loans[l].param); ok {
+				full := fields
+				if len(prefix) > 0 {
+					full = append(slices.Clone(prefix), fields...)
+				}
+				h = c.tagFields(h, full, last, true)
+			}
+		}
+		out = c.sets.unite(out, h)
+	}
+	return out
+}
+
+// sourcesSet is step 5's union over sources: argH[p] for H(p), behindSource for B(p).
+func (c *checker) sourcesSet(st *state, ctx *stmtCtx, args []mir.Arg, srcs []types.Source, argH []setID, gargs []types.GenericArg) setID {
 	res := emptySet
 	for _, s := range srcs {
 		if int(s.Param) > len(argH) || s.Param == types.NoParam {
 			continue
 		}
 		if s.Behind {
-			res = c.sets.unite(res, c.behind(st, argH[s.Param-1]))
+			var arg *mir.Arg
+			if int(s.Param)-1 < len(args) {
+				arg = &args[s.Param-1]
+			}
+			res = c.sets.unite(res, c.behindSource(st, ctx, arg, argH[s.Param-1], s, gargs))
 		} else {
 			res = c.sets.unite(res, argH[s.Param-1])
 		}

@@ -308,6 +308,9 @@ func (k *kit) namedFacts(t types.TypeID, ty *types.Type) types.Facts {
 		f = combine(f, k.facts(ft))
 	}
 	it := k.items.Get(ty.Item)
+	if _, isIface := it.Decl.(*types.InterfaceDecl); isIface {
+		return types.Facts{Kind: types.Linear, Carrier: true}
+	}
 	if sd, ok := it.Decl.(*types.StructDecl); ok {
 		if sd.View {
 			f.View, f.Carrier = true, true

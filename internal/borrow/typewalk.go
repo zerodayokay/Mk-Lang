@@ -44,9 +44,10 @@ type walker struct {
 	// reachability and skipping t's closure changes no other walk's bound.
 	walkExact map[types.TypeID]bool
 	// walkCalls counts walkFrom calls (read by tests).
-	walkCalls int
-	refs      map[types.TypeID]*refInfo
-	readDecl  map[types.ItemID]bool
+	walkCalls  int
+	refs       map[types.TypeID]*refInfo
+	splitMerge map[types.TypeID][][]bool
+	readDecl   map[types.ItemID]bool
 }
 
 type memoBit uint8
@@ -86,6 +87,7 @@ func newWalker(env *Env, reads *types.ReadSet) *walker {
 		walk:         make(map[types.TypeID]memoBit),
 		walkExact:    make(map[types.TypeID]bool),
 		refs:         make(map[types.TypeID]*refInfo),
+		splitMerge:   make(map[types.TypeID][][]bool),
 		readDecl:     make(map[types.ItemID]bool),
 	}
 	if env.Types != nil {

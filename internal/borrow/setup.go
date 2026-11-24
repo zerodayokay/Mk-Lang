@@ -135,6 +135,12 @@ type paramInfo struct {
 	n1A          rootID
 	outer, inner loanID
 	outerA       loanID
+	outerKeep    loanID
+	// n2F holds optional per-field depth-2 abstract nodes for aliasing-disjoint
+	// reference fields of a &S or mut S parameter (noRoot when field stays on n2).
+	n2F      []rootID
+	n2FLoan  []loanID
+	n2FInner []setID
 	// innerSet is {inner}: what every abstract node of the parameter holds
 	// at entry, before the body stores into it.
 	innerSet setID
@@ -174,7 +180,7 @@ func (c *checker) setup() {
 		pi := &c.params[p]
 		pi.carrier = true
 		pi.n1 = c.addAbstract(types.ParamIndex(p), 1, &n1)
-		pi.n1A, pi.outerA = noRoot, noLoan
+		pi.n1A, pi.outerA, pi.outerKeep = noRoot, noLoan, noLoan
 		if len(n1A.types) > 0 {
 			// Depth 1: a first-level node, as the merged p#1 was.
 			pi.n1A = c.addAbstract(types.ParamIndex(p), 1, &n1A)
@@ -194,6 +200,7 @@ func (c *checker) setup() {
 		if pi.n1A != noRoot {
 			pi.outerA = c.addLoan(loan{excl: n1.excl, place: noPath, target: pi.n1A, param: types.ParamIndex(p), abstract: true, base: noLoan, loop: mir.NoLoop})
 		}
+		c.setupParamFieldNodes(types.ParamIndex(p), pi, ri.typ)
 	}
 	// Static nodes, in first-seen block order; then borrow sites and slots.
 	for bi := range b.Blocks {
@@ -591,14 +598,167 @@ func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared, noAll
 	base := c.params[p].inner
 	bl := c.loans[base]
 	target := bl.target
+	excl := bl.excl && !shared
 	if alloc {
 		target = c.params[p].nA
+	} else if len(path) > 0 && int(path[0]) < len(c.params[p].n2F) && c.params[p].n2F[path[0]] != noRoot {
+		nf := c.params[p].n2F[path[0]]
+		nl := c.params[p].n2FLoan[path[0]]
+		if len(path) == 1 && excl == c.loans[nl].excl && noAlloc == c.loans[nl].noAlloc {
+			c.tags[key] = nl
+			return nl
+		}
+		target = nf
 	}
-	excl := bl.excl && !shared
 	l := c.addLoan(loan{excl: excl, place: noPath, target: target, param: p, abstract: true, inner: true, noAlloc: noAlloc,
 		tag: append([]uint32(nil), path...), base: base, loop: mir.NoLoop})
 	c.tags[key] = l
 	return l
+}
+
+// setupParamFieldNodes allocates aliasing-disjoint depth-2 abstract nodes n2F[i]
+// for top-level carrier reference fields of a concrete non-view `&S` or `mut S`
+// parameter: `mut` reference/slice fields (exclusive, cannot alias) and
+// shared non-writable, non-store-taking struct/slice/str fields.
+func (c *checker) setupParamFieldNodes(p types.ParamIndex, pi *paramInfo, paramType types.TypeID) {
+	if c.hiddenParam(p) || c.mentionsParam(paramType) || c.tab.Items() == nil {
+		return
+	}
+	ty := c.tab.Get(paramType)
+	if ty.Kind != types.KRef && ty.Kind != types.KMut {
+		return
+	}
+	st := c.tab.Get(ty.Elem)
+	if st.Kind != types.KNamed || st.Item == types.NoItem {
+		return
+	}
+	d, isStruct := c.tab.Items().Get(st.Item).Decl.(*types.StructDecl)
+	if !isStruct || d.View || len(d.Fields) == 0 {
+		return
+	}
+	// Record ReadShape/ReadFields on the struct declaration for incremental caching.
+	_ = c.w.factsOf(ty.Elem)
+	_ = c.w.inlineFields(ty.Elem)
+	for i, fd := range d.Fields {
+		ft := c.w.subst(fd.Type, st.Args)
+		if !c.w.carrier(ft) || c.w.allocRefs(ft) {
+			continue
+		}
+		fk := c.tab.Get(ft)
+		eligible := false
+		isMut := false
+		switch fk.Kind {
+		case types.KMut, types.KMutSlice:
+			eligible = true
+			isMut = true
+		case types.KRef, types.KSlice, types.KStr:
+			elem := fk.Elem
+			if fk.Kind == types.KStr {
+				elem = types.U8
+			}
+			// Keep scalar non-carrier shared refs (&i32) on p#2 while isolating
+			// struct/slice/str referents that cannot alias any writable field.
+			if !c.w.writableByType(elem) && !c.w.takesStores(elem) &&
+				!(fk.Kind == types.KRef && !c.w.carrier(elem) && c.tab.Kind(elem) != types.KNamed) {
+				eligible = true
+			}
+		}
+		if !eligible {
+			continue
+		}
+		if pi.n2F == nil {
+			n := len(d.Fields)
+			pi.n2F = make([]rootID, n)
+			pi.n2FLoan = make([]loanID, n)
+			pi.n2FInner = make([]setID, n)
+			for j := range n {
+				pi.n2F[j] = noRoot
+				pi.n2FLoan[j] = noLoan
+			}
+		}
+		fn1, _, _ := c.w.abstractNodes(ft)
+		if len(fn1.types) == 0 && !fn1.any {
+			continue
+		}
+		nf := c.addAbstract(p, 2, &fn1)
+		nl := c.addLoan(loan{
+			excl:     isMut,
+			place:    noPath,
+			target:   nf,
+			param:    p,
+			abstract: true,
+			inner:    true,
+			noAlloc:  !c.w.reachesAlloc(ft),
+			tag:      []uint32{uint32(i)},
+			base:     pi.inner,
+			loop:     mir.NoLoop,
+		})
+		pi.n2F[i] = nf
+		pi.n2FLoan[i] = nl
+		pi.n2FInner[i] = c.sets.of(uint32(nl))
+	}
+}
+
+func (c *checker) isParamN2Field(p types.ParamIndex, r rootID) bool {
+	if r == noRoot || p == types.NoParam || int(p) >= len(c.params) {
+		return false
+	}
+	for _, nf := range c.params[p].n2F {
+		if nf == r {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *checker) isParamN2FieldLoan(p types.ParamIndex, l loanID) bool {
+	if l == noLoan || p == types.NoParam || int(p) >= len(c.params) {
+		return false
+	}
+	for _, nl := range c.params[p].n2FLoan {
+		if nl == l {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *checker) outerKeep(p types.ParamIndex) loanID {
+	pi := &c.params[p]
+	if pi.outerKeep != noLoan {
+		return pi.outerKeep
+	}
+	pi.outerKeep = c.addLoan(loan{
+		excl:     false,
+		place:    noPath,
+		target:   noRoot,
+		param:    p,
+		abstract: true,
+		inner:    false,
+		base:     pi.outer,
+		loop:     mir.NoLoop,
+	})
+	return pi.outerKeep
+}
+
+func (c *checker) hasIsolatedFieldTarget(p types.ParamIndex, s setID) bool {
+	pi := &c.params[p]
+	seen := false
+	for _, m := range c.sets.get(s) {
+		lo := &c.loans[loanID(m)]
+		if !lo.abstract || !lo.inner || lo.param != p {
+			continue
+		}
+		seen = true
+		if c.isParamN2Field(p, lo.target) {
+			continue
+		}
+		if pi.nA != noRoot && lo.target == pi.nA {
+			continue
+		}
+		return false
+	}
+	return seen
 }
 
 type tagKey struct {

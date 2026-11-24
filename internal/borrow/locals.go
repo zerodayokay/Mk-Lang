@@ -204,10 +204,10 @@ func (c *checker) collapse(st *state, r rootID) {
 // collapseFor is the collapse at an RvRef or RvSlice of place pl: a borrow
 // of x.f… keeps x split; a borrow of the whole of x keeps it only as a
 // shared borrow of a type not writable by type that mentions no type
-// parameter; every other borrow of x makes it whole, every exclusive one
-// included, whatever the callee it goes to: the first-level exemption lets
-// any callee, and any callee it hands the reference on to, move a loan
-// between x's fields.
+// parameter; on a concrete non-view struct/record, a whole exclusive borrow (or
+// shared borrow of a writable struct) merges only the fields that are
+// store-compatible at depth 1 (splitMergeMatrix) instead of collapsing whole;
+// every other borrow makes x whole.
 func (c *checker) collapseFor(st *state, pl mir.Place, excl bool) {
 	p := c.paths.ofPlace(c.body, c.tab, pl)
 	pi := c.paths.get(p)
@@ -215,18 +215,44 @@ func (c *checker) collapseFor(st *state, pl mir.Place, excl bool) {
 	if int(r) >= len(c.roots) || c.roots[r].nfields == 0 || st.get(r).fv == 0 {
 		return
 	}
-	if k, _, _ := c.keyOf(pi); k == keyField {
+	k, _, _ := c.keyOf(pi)
+	if k == keyField {
 		return // a borrow of one field keeps x split
 	}
-	if c.mentionsParam(c.roots[r].typ) {
+	ri := &c.roots[r]
+	if c.mentionsParam(ri.typ) {
 		// Writable by type is judged on the instance: Two2[T] holds a Cell
 		// inline at T = Slot, so in a generic body a whole borrow of a type
 		// that mentions a parameter or Self makes it whole.
 		c.collapse(st, r)
 		return
 	}
-	if len(pi.steps) == 0 && !excl && !c.roots[r].writable {
+	if len(pi.steps) == 0 && !excl && !ri.writable {
 		return // a shared whole borrow keeps x split
+	}
+	if (len(pi.steps) == 0 || k == keyPayload) && !ri.rest {
+		if reach := c.w.splitMergeMatrix(ri.typ, ri.nfields, ri.fcar); reach != nil {
+			fs := c.sets.fieldSets(st.get(r).fv)
+			if len(fs) == ri.nfields {
+				merged := make([]setID, ri.nfields)
+				added := emptySet
+				for i := range merged {
+					if !ri.fcar[i] {
+						continue
+					}
+					s := fs[i]
+					for j, f := range fs {
+						if reach[i][j] {
+							s = c.sets.unite(s, f)
+						}
+					}
+					merged[i] = s
+					added = c.sets.unite(added, c.sets.minus(s, fs[i]))
+				}
+				c.writeSplit(st, r, merged, added)
+				return
+			}
+		}
 	}
 	c.collapse(st, r)
 }

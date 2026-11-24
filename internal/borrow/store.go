@@ -236,7 +236,7 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 			if ti.allocator {
 				fa = t
 			}
-			na := noAlloc && ti.kind == rkAbstract && ti.depth == 2 && loanID(m) == c.params[ti.param].inner
+			na := noAlloc && ti.kind == rkAbstract && ti.depth == 2 && (loanID(m) == c.params[ti.param].inner || c.isParamN2FieldLoan(ti.param, loanID(m)))
 			reach(t, loanID(m))
 			work = append(work, hop{l: loanID(m), excl: e || ti.writable, fromAlloc: fa, capFld: cf, noAlloc: na})
 		}
@@ -289,10 +289,10 @@ func (c *checker) allocOf(t rootID) rootID {
 	if ri.kind != rkAbstract {
 		return noRoot
 	}
-	switch pp := &c.params[ri.param]; t {
-	case pp.n2:
+	switch pp := &c.params[ri.param]; {
+	case t == pp.n2 || c.isParamN2Field(ri.param, t):
 		return pp.nA
-	case pp.n1:
+	case t == pp.n1:
 		return pp.n1A
 	}
 	return noRoot
@@ -597,10 +597,12 @@ func (c *checker) directWrite(st *state, ctx *stmtCtx, p pathID, S setID) {
 	// allocs are the allocators the last deref's walk on from a view met
 	// (case (2) above).
 	var allocs []rootID
+	derefs := 0
 	for si, sp := range pi.steps {
 		if sp.kind != stDeref {
 			continue
 		}
+		derefs++
 		allocs = allocs[:0]
 		var next []rootID
 		seen := make(map[rootID]bool)
@@ -617,7 +619,11 @@ func (c *checker) directWrite(st *state, ctx *stmtCtx, p pathID, S setID) {
 			next = append(next, t)
 		}
 		for _, r := range roots {
-			for _, l := range c.sets.get(c.held(st, r)) {
+			h := c.held(st, r)
+			if derefs == 2 {
+				h = c.tag(h, p)
+			}
+			for _, l := range c.sets.get(h) {
 				if t := c.loans[l].target; t != noRoot {
 					add(t, c.fieldOfLoan(loanID(l), t))
 					if directCap < 0 {
@@ -625,7 +631,7 @@ func (c *checker) directWrite(st *state, ctx *stmtCtx, p pathID, S setID) {
 					}
 					// A deref onto p#2 also lands on p#A, reached
 					// directly, as on one merged node.
-					if a := c.allocOf(t); a != noRoot {
+					if a := c.allocOf(t); a != noRoot && !c.loans[l].noAlloc {
 						add(a, -1)
 						if directCap < 0 {
 							c.noteCapField(a, loanID(l))

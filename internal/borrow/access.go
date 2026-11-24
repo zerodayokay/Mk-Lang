@@ -391,6 +391,34 @@ func (c *checker) liveHolder(st *state, ctx *stmtCtx, l loanID, noReturn bool, e
 // revisited when this path adds loans of another field.
 func (c *checker) absPredecessors(st *state, h rootID, reach func(rootID, setID)) {
 	tg := c.absTargeting(h)
+	p := c.roots[h].param
+	if c.isParamN2Field(p, h) {
+		pi := &c.params[p]
+		tg2 := c.absTargeting(pi.n2)
+		pushTg := func(g rootID, set setID) {
+			if g != noRoot && set != emptySet && c.sets.intersects(c.held(st, g), set) {
+				reach(g, set)
+			}
+		}
+		if tg != emptySet {
+			for _, g := range c.absHoldersOf(h) {
+				pushTg(g, tg)
+			}
+		}
+		// Any caller holding untagged p.inner (or p itself / p#1 / p#A) can
+		// reach this field node without routing into sibling n2F[j] nodes.
+		tgAll := c.sets.unite(tg, tg2)
+		if tg2 != emptySet {
+			for _, g := range c.absHoldersOf(pi.n2) {
+				pushTg(g, tg2)
+			}
+		}
+		pushTg(rootID(p), tgAll)
+		pushTg(pi.n1, tgAll)
+		pushTg(pi.n1A, tgAll)
+		pushTg(pi.nA, tgAll)
+		return
+	}
 	if tg == emptySet {
 		return
 	}
@@ -402,13 +430,32 @@ func (c *checker) absPredecessors(st *state, h rootID, reach func(rootID, setID)
 	for _, g := range c.absHoldersOf(h) {
 		push(g)
 	}
-	p := c.roots[h].param
 	if pi := &c.params[p]; pi.carrier {
 		push(rootID(p))
 		push(pi.n1)
 		push(pi.n1A)
 		push(pi.n2)
 		push(pi.nA)
+		for _, nf := range pi.n2F {
+			push(nf)
+		}
+		if h == pi.n2 {
+			// held(nf) includes st.get(pi.n2).held, so any live holder of
+			// n2F[i] keeps loans stored directly into p#2 alive too.
+			for _, nf := range pi.n2F {
+				if nf != noRoot {
+					nfg := c.absTargeting(nf)
+					if nfg == emptySet {
+						continue
+					}
+					for _, g := range c.absHoldersOf(nf) {
+						if g != noRoot && c.sets.intersects(c.held(st, g), nfg) {
+							reach(g, nfg)
+						}
+					}
+				}
+			}
+		}
 	}
 }
 

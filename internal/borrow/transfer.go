@@ -30,8 +30,30 @@ import (
 func (c *checker) held(st *state, r rootID) setID {
 	ri := &c.roots[r]
 	if ri.kind == rkAbstract {
-		in := c.params[ri.param].innerSet
-		if h := st.get(r).held; h != emptySet && !c.csrConst {
+		pi := &c.params[ri.param]
+		in := pi.innerSet
+		nfIdx := -1
+		for i, nf := range pi.n2F {
+			if nf == r {
+				in = pi.n2FInner[i]
+				nfIdx = i
+				break
+			}
+		}
+		if c.csrConst {
+			return in
+		}
+		h := st.get(r).held
+		if nfIdx >= 0 {
+			h = c.sets.unite(h, st.get(pi.n2).held)
+		} else if r == pi.n2 {
+			for _, nf := range pi.n2F {
+				if nf != noRoot {
+					h = c.sets.unite(h, st.get(nf).held)
+				}
+			}
+		}
+		if h != emptySet {
 			return c.sets.unite(in, h)
 		}
 		return in
@@ -514,18 +536,28 @@ func (c *checker) tag(s setID, p pathID) setID {
 			last = pi.types[j]
 		}
 	}
+	sharedParam := c.roots[pi.root].kind == rkParam
+	return c.tagFields(s, fields, last, sharedParam)
+}
+
+func (c *checker) tagFields(s setID, fields []uint32, last types.TypeID, sharedParam bool) setID {
 	if len(fields) == 0 {
 		return s
 	}
+	if last != types.NoType && c.mentionsParam(last) {
+		last = types.NoType
+	}
 	alloc := last != types.NoType && c.w.allocRefs(last)
 	shared := false
-	if ri := &c.roots[pi.root]; ri.kind == rkParam && c.hiddenParam(ri.param) && last != types.NoType && c.tab.Kind(last) == types.KRef {
-		// A read-only capture in a mut R environment holds &T (CapShared);
-		// its inner loan is non-exclusive and, when T itself only references
-		// allocators (such as captured a: &Arena stored as &(&Arena)), stays
-		// with p#A.
-		shared = true
-		alloc = alloc || c.w.allocRefs(c.tab.Get(last).Elem)
+	hiddenShared := false
+	if sharedParam && last != types.NoType {
+		k := c.tab.Kind(last)
+		if k == types.KRef || k == types.KSlice || k == types.KStr {
+			// Reading a shared reference, slice, or str field yields a shared
+			// inner loan even when another field of the enclosing struct is mut.
+			shared = true
+			hiddenShared = k == types.KRef
+		}
 	}
 	noAlloc := last != types.NoType && !alloc && !c.w.reachesAlloc(last)
 	var out []uint32
@@ -533,7 +565,11 @@ func (c *checker) tag(s setID, p pathID) setID {
 	for _, l := range c.sets.get(s) {
 		lo := &c.loans[l]
 		if lo.abstract && lo.inner && lo.tag == nil {
-			out = append(out, uint32(c.tagged(lo.param, fields, alloc, shared, noAlloc)))
+			la := alloc
+			if hiddenShared && c.hiddenParam(lo.param) {
+				la = la || c.w.allocRefs(c.tab.Get(last).Elem)
+			}
+			out = append(out, uint32(c.tagged(lo.param, fields, la, shared, noAlloc && !la)))
 			changed = true
 			continue
 		}

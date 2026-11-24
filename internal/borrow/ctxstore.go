@@ -30,7 +30,7 @@ import (
 // checks (ctxStateClause).
 func (c *checker) ctxStateAlt(d *diag.Diagnostic, t rootID, l loanID, p types.ParamIndex) {
 	s := c.env.Sig
-	if s == nil || p == types.NoParam || int(p) > len(s.Params) || int(p) >= len(c.params) || c.params[p].n2 != t {
+	if s == nil || p == types.NoParam || int(p) > len(s.Params) || int(p) >= len(c.params) || (c.params[p].n2 != t && !c.isParamN2Field(p, t)) {
 		return
 	}
 	if int(p) == 1 && s.Receiver != types.NoReceiver {

@@ -401,9 +401,10 @@ func (c *checker) call(st *state, ctx *stmtCtx, t *mir.Terminator) []out {
 	res := emptySet
 	var resFV fvID
 	if fv != nil && c.w.carrier(c.body.PlaceType(t.Dest)) {
-		res = c.sourcesSet(st, fv.sources, argH)
+		gargs := c.directCallArgs(t, fv)
+		res = c.sourcesSet(st, ctx, args, fv.sources, argH, gargs)
 		if t.Dest.Proj.Len == 0 {
-			resFV = c.resultFV(st, fv, argH, c.body.PlaceType(t.Dest), rootID(t.Dest.Local))
+			resFV = c.resultFV(st, ctx, args, fv, argH, gargs, c.body.PlaceType(t.Dest), rootID(t.Dest.Local))
 		}
 		// A result that may point into global memory holds the
 		// global node's static loan, so a store through it is judged as a
@@ -475,6 +476,13 @@ func (c *checker) remnantReach(st *state, fv *flowView, argH []setID) bool {
 	return false
 }
 
+func (c *checker) directCallArgs(t *mir.Terminator, fv *flowView) []types.GenericArg {
+	if fv == nil || t.Callee.Kind != mir.CallDirect || t.Callee.Fn.Args.Len == 0 || int(t.Callee.Fn.Args.Len) != fv.generics {
+		return nil
+	}
+	return c.body.GenericArgs[t.Callee.Fn.Args.Start:t.Callee.Fn.Args.End()]
+}
+
 // storesLoans reports whether `*q into p` can carry a loan at this call: the
 // contents of q's type, under the call's generic arguments, are a carrier.
 // `CopyFrom(mut self, src: []T) *src into self` at T = u8 stores bytes,
@@ -482,11 +490,10 @@ func (c *checker) remnantReach(st *state, fv *flowView, argH []setID) bool {
 // that still mention a parameter, it is a carrier as written (a generic
 // callee is otherwise not substituted).
 func (c *checker) storesLoans(t *mir.Terminator, fv *flowView, q types.ParamIndex) bool {
-	if t.Callee.Kind != mir.CallDirect || t.Callee.Fn.Args.Len == 0 || int(q) > len(fv.paramTypes) ||
-		int(t.Callee.Fn.Args.Len) != fv.generics {
+	args := c.directCallArgs(t, fv)
+	if args == nil || int(q) > len(fv.paramTypes) {
 		return true
 	}
-	args := c.body.GenericArgs[t.Callee.Fn.Args.Start:t.Callee.Fn.Args.End()]
 	ty := c.tab.Get(c.w.subst(fv.paramTypes[q-1], args))
 	var elem types.TypeID
 	switch ty.Kind {

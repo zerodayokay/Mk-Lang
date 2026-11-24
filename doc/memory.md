@@ -532,11 +532,12 @@ These uses keep `p` split, because each touches only the field it names:
 - assigning `p.f = e`, or a deeper `p.f.g = e` or `p.f[i] = e`;
 - assigning the whole of `p` from a literal, a call with a per-field clause (R9), or another split value of the same type;
 - copying, moving, destructuring or returning `p` whole: each field goes to its own;
-- `&p`, a `&self` call included, when `p`'s type holds no `Cell`, `Mutex`, `Chan`, `Arena` or `view` inline.
+- `&p`, a `&self` call included, when `p`'s type holds no `Cell`, `Mutex`, `Chan`, `Arena` or `view` inline;
+- `mut p` (or `mut self`), or `&p` of a type with an interior-mutable field inline, between any two fields whose carrier types are store-disjoint: a concrete non-`view` struct or record only merges a field `j`'s loans into field `i` when a carrier slot reachable inside field `i` could receive a carrier extracted from field `j` (a struct with one carrier field and scalars never merges it; `Pass { graph: &Graph, scratch: &ScratchBuf, steps: int }` keeps `graph` and `scratch` separate across `p.Advance()`).
 
 Passing `p` by value, storing it, or giving it to `s.go` or to a generic `T` keeps `p` split, but the value that leaves holds the union of its fields.
 
-Every other use makes `p` whole until its next whole assignment, and a store that reaches `p` through a whole loan adds to every field. That includes every `mut p` (a `mut self` call included, whatever the callee), `for x in mut p`, and `&p` of a type with one of the types above inline. A callee given `mut p` may move a loan from one field to another with no clause (R11), so afterwards the caller cannot know which field holds what. In a generic body, `&p` also makes `p` whole when its type mentions a type parameter or `Self`, since an instance may hold a `Cell` inline.
+`for x in mut p`, `view` structs, generic bodies whose parameter or `Self` may hide a shared carrier or `Cell`, and any pair of compatible fields under `mut p` (`Mix(t: mut Two)` with two `&i32` fields, or `&Graph` beside `&Arena`, which can allocate `&Graph`) merge the compatible fields (or make `p` whole). A callee given `mut Two` may move a loan from `t.b` into `t.a` with no clause (R11), so afterwards `t.a` holds both fields' loans. In a generic body, `&p` also makes `p` whole when its type mentions a type parameter or `Self`, since an instance may hold a `Cell` inline.
 
 A shared borrow of the whole keeps the split when nothing in the type writes past it:
 

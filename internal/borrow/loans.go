@@ -18,6 +18,7 @@ import (
 
 	"mk/internal/diag"
 	"mk/internal/mir"
+	"mk/internal/types"
 )
 
 // borrow is RvRef (or the RvSlice rows that act as one) of path p.
@@ -79,7 +80,7 @@ func (c *checker) borrow(st *state, ctx *stmtCtx, s *mir.Statement, p pathID, ex
 	if last == dmShared {
 		// No new loan: as reading the reference.
 		c.access(st, ctx, p, colRead, skip)
-		h := c.held(st, root)
+		h := c.fieldOrHeld(st, root, p)
 		if k == 1 {
 			return h
 		}
@@ -88,7 +89,7 @@ func (c *checker) borrow(st *state, ctx *stmtCtx, s *mir.Statement, p pathID, ex
 	// The last reference crossed is exclusive: a new loan with no target,
 	// holding everything on the path.
 	c.access(st, ctx, p, col, skip)
-	out := c.pathHeld(st, root, k)
+	out := c.pathHeldTagged(st, root, k, p)
 	if l, ok := c.siteLoans[siteKey{ctx.b, uint32(ctx.i)}]; ok && l != noLoan {
 		out = c.sets.add(out, uint32(l))
 	}
@@ -130,12 +131,36 @@ func (c *checker) subSliceAlt(d *diag.Diagnostic, p pathID) {
 }
 
 // pathHeld is H(root) ∪ B(H(root)) ∪ … with one more B per deref after the
-// first.
-func (c *checker) pathHeld(st *state, root rootID, derefs int) setID {
-	cur := c.held(st, root)
+// first, reading split field f on a split local when path p names field f and
+// tagging layer 1 behind a deref when p steps through a field before a deref.
+func (c *checker) fieldOrHeld(st *state, root rootID, p pathID) setID {
+	if int(root) < len(c.roots) && c.roots[root].nfields > 0 && st.get(root).fv != 0 {
+		pi := c.paths.get(p)
+		if k, f, _ := c.keyOf(pi); k == keyField {
+			if fs := c.sets.fieldSets(st.get(root).fv); int(f) < len(fs) {
+				return fs[f]
+			}
+		}
+	}
+	return c.held(st, root)
+}
+
+func (c *checker) pathHeldTagged(st *state, root rootID, derefs int, p pathID) setID {
+	cur := c.fieldOrHeld(st, root, p)
 	acc := cur
 	for i := 1; i < derefs; i++ {
 		cur = c.behind(st, cur)
+		if i == 1 {
+			cur = c.tag(cur, p)
+			if int(root) < len(c.roots) {
+				if ri := &c.roots[root]; ri.kind == rkParam && ri.param != types.NoParam {
+					if outer := c.params[ri.param].outer; outer != noLoan && c.sets.has(acc, uint32(outer)) && c.hasIsolatedFieldTarget(ri.param, cur) {
+						acc = c.sets.minus(acc, c.sets.of(uint32(outer)))
+						acc = c.sets.add(acc, uint32(c.outerKeep(ri.param)))
+					}
+				}
+			}
+		}
 		acc = c.sets.unite(acc, cur)
 	}
 	return acc
