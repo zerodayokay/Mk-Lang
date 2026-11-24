@@ -141,8 +141,41 @@ func elimAccTailRec(cfg *Config, b *mir.Body, opt VersionOptions) *mir.Body {
 	if len(active) == 0 {
 		return b
 	}
+	if writesImmutAggregateParam(b, tab, active) {
+		return b
+	}
 
 	return rewriteAccTailRec(b, active, chosen, retT, retIn, ovfSpan)
+}
+
+// writesImmutAggregateParam reports whether any active tail-call site updates
+// a non-var parameter whose type may travel Indirect in the ABI. Codegen marks
+// such parameters readonly (immutarg.go) and rejects direct writes to them.
+func writesImmutAggregateParam(b *mir.Body, tab *types.Table, sites []tailRecSite) bool {
+	for _, s := range sites {
+		t := &b.Blocks[s.callBlk].Term
+		args := b.Args[t.Args.Start:t.Args.End()]
+		for i := range int(b.ParamCount) {
+			p := mir.LocalID(i + 1)
+			l := b.Locals[p]
+			if l.Var || isDirectScalarParam(tab, l.Type) {
+				continue
+			}
+			if !argUnchanged(args[i], p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isDirectScalarParam(tab *types.Table, tid types.TypeID) bool {
+	switch tab.Kind(tid) {
+	case types.KInt, types.KIntPtr, types.KFloat, types.KBool, types.KChar, types.KRef, types.KMut, types.KRawPtr, types.KVoid:
+		return true
+	default:
+		return false
+	}
 }
 
 // isDirectSelfCall reports whether t is a direct non-fallible, non-spawned
