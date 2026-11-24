@@ -421,13 +421,59 @@ Spin(c: *Carrier) {
     }
 }
 
-// SwitchOut saves t and resumes the scheduler with the given after-action.
+// FinishHandoff releases the lock left by a direct task-to-task handoff
+// (SwitchOut) once Switch has saved the departing task's context.
+FinishHandoff(t: *Task) {
+    unsafe "t is running on its carrier; a direct handoff leaves only AfterUnlock" {
+        c := (*t).carrier
+        if (*c).after.kind == AfterUnlock {
+            w := (*c).after.word
+            (*c).after.kind = AfterNone
+            // Edge: release (order 2, as RunAfter) after Switch saved the
+            // departing task's context; a waker acquiring this lock sees the
+            // saved context before readying it.
+            (*w).StoreOrd(0, 2)
+        }
+    }
+}
+
+// SwitchOut saves t and switches directly to c's runnext task on an
+// unpinned AfterUnlock park (one Switch instead of task -> sys_ctx -> next),
+// or resumes c's scheduler loop otherwise.
 SwitchOut(t: *Task, kind: u32, word: *raw.Atomic[u32]) {
     Jitter(JitterPark)
     unsafe "t is the running task on carrier c" {
         c := (*t).carrier
         (*c).after = AfterSwitch(kind: kind, word: word, task: t)
+        st := TS()
+        if kind == AfterUnlock && raw.IsNull((*c).home) && (*st).jitter_seed == 0 && !(*c).spinning {
+            tick := (*c).tick +% 1
+            // Edge: hint reads; TimerTick falls through to FindRunnable for
+            // timers, polling and fairness, and Swap(0) claims runnext.
+            if tick % TimerTick != 0 && (*st).need_arm.LoadOrd(0) == 0 && (*c).runnext.LoadOrd(0) != 0 {
+                // Edge: atomic claim of runnext, matching TakeNext.
+                next_addr := (*c).runnext.Swap(0)
+                if next_addr != 0 {
+                    (*c).tick = tick
+                    next := TaskAt(next_addr)
+                    // Edge: runnext.Swap above synchronized with ReadyPut's Swap.
+                    if (*next).state.LoadOrd(0) != TaskRunnable {
+                        rt.Fatal("scheduler: switched to a task that is not runnable")
+                    }
+                    // Edge: c exclusively owns next until next parks or yields.
+                    (*next).state.StoreOrd(TaskRunning, 0)
+                    (*HeaderOf(t)).carrier = rt.NoCarrier
+                    (*c).current = next
+                    (*next).carrier = c
+                    (*HeaderOf(next)).carrier = Trunc[u16]((*c).index)
+                    Switch(raw.Of(&(*t).ctx), raw.Of(&(*next).ctx))
+                    FinishHandoff(t)
+                    return
+                }
+            }
+        }
         Switch(raw.Of(&(*t).ctx), raw.Of(&(*c).sys_ctx))
+        FinishHandoff(t)
     }
 }
 
@@ -1170,14 +1216,17 @@ Run(c: *Carrier) {
             (*t).carrier = c
             // Invariant (one resume): only a runnable task is resumed;
             // a task resumed twice (two carriers holding it) stops here.
-            // Edge: reads the readier's Swap(Runnable); the context it resumes was
-            // saved before that ready.
-            if (*t).state.Swap(TaskRunning) != TaskRunnable {
+            // Edge: FindRunnable's atomic dequeue synchronized with ReadyPut's
+            // publication, and c exclusively owns t until t parks or yields.
+            if (*t).state.LoadOrd(0) != TaskRunnable {
                 rt.Fatal("scheduler: switched to a task that is not runnable")
             }
+            // Edge: c exclusively owns t until t parks or yields.
+            (*t).state.StoreOrd(TaskRunning, 0)
             (*h).carrier = Trunc[u16]((*c).index)
             Switch(raw.Of(&(*c).sys_ctx), raw.Of(&(*t).ctx))
-            (*h).carrier = rt.NoCarrier
+            cur := (*c).current
+            (*HeaderOf(cur)).carrier = rt.NoCarrier
             (*c).current = raw.Null[Task]()
         }
         RunAfter(c)

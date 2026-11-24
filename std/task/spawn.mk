@@ -330,6 +330,7 @@ Context1(t: *Task, h: *rt.SlotHeader, top: uint, entry: fn(*u8)) {
 TaskEntry(p: *u8) {
     unsafe "p is this task's record" {
         t := raw.PtrCast[u8, Task](p)
+        FinishHandoff(t)
         f := (*t).thunk
         HookFirst(t)
         failed := f(raw.Of(&(*t).io), (*t).block, (*t).err)

@@ -362,6 +362,7 @@ export RunFromC(entry: fn(*u8), frame: *u8) {
 FromCEntry(p: *u8) {
     unsafe "p is this task's record; its block is RunFromC's request, alive until the post" {
         t := raw.PtrCast[u8, Task](p)
+        FinishHandoff(t)
         req := raw.PtrCast[u8, FromCReq]((*t).block)
         f := (*req).entry
         f((*req).frame)
