@@ -131,7 +131,7 @@ export Current(): *Task {
 MustCurrent(): *Task {
     t := Current()
     if raw.IsNull(t) {
-        rt.Reporting(raw.Null[rt.Site](), rt.PanicText(rt.PanicSuspendInCallback), "", "")
+        rt.Report(rt.PanicSuspendInCallback, raw.Null[rt.Site](), rt.PanicText(rt.PanicSuspendInCallback), "")
     }
     return t
 }

@@ -88,3 +88,86 @@ func TestPanicHook_Hosted(t *testing.T) {
 		}
 	}
 }
+
+const suspendHookC = `#include <stdint.h>
+extern void SuspendCb(uintptr_t arg);
+void call_cb(uintptr_t arg) {
+    SuspendCb(arg);
+}
+`
+
+const suspendHookProgram = `import std.raw
+import std.runtime
+import std.time
+
+extern GetStdHandle(n: u32): *u8
+extern WriteFile(h: *u8, buf: *u8, n: u32, done: *u32, ov: *u8): i32
+extern call_cb(arg: uint)
+
+Say(s: str) {
+    var done: u32 = 0
+    unsafe "a console write of s's bytes" {
+        _ = WriteFile(GetStdHandle(0xFFFFFFF4), raw.StrData(s), Trunc[u32](s.Len()), raw.Of(&done), raw.Null[u8]())
+    }
+}
+
+export extern MkPanicHook(info: &runtime.PanicInfo) {
+    Say("hook ")
+    Say(info.message)
+    if info.code == 16 {
+        Say(" code 16")
+    }
+    Say("\n")
+}
+
+export extern SuspendCb(io_addr: uint) {
+    unsafe "io_addr points to io in Main while call_cb runs" {
+        io := raw.Read(raw.FromAddr[Io](io_addr))
+        _ = io.Sleep(time.Millis(1)) else {}
+    }
+}
+
+export Main(sys: &System): void {
+    var io := sys.io
+    unsafe "io outlives call_cb, which runs SuspendCb on the carrier system stack" {
+        call_cb(raw.Addr(raw.Of(&io)))
+    }
+}
+`
+
+// TestPanicHook_SuspendInCallback: suspending inside a callback called from an
+// extern C frame passes PanicSuspendInCallback (16) to MkPanicHook.
+func TestPanicHook_SuspendInCallback(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("SKIP: the hook writes through Win32")
+	}
+	tools := needTools(t)
+	root := writeTree(t, map[string]string{
+		"pkg.mk": manifest(map[string]string{
+			"name":           `"hook16"`,
+			"bins":           `[pkg.Bin(name: "hook16", root: ".", link_script: "", cpu: "", subsystem: "", kind: "", abi: "")]`,
+			"c_sources":      `[pkg.CSource(path: "cb.c", flags: [])]`,
+			"unsafe_modules": `["."]`,
+		}),
+		"cb.c":    suspendHookC,
+		"main.mk": suspendHookProgram,
+	})
+	for _, prof := range []types.Profile{types.Dev, types.Release} {
+		s, err := NewSession(Config{Root: root, Target: types.X86_64Windows, Profile: prof, Tools: tools, CacheDir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, paths, err := s.Build(filepath.Join(t.TempDir(), "hook16.exe"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Report.Diags) > 0 || len(paths) != 1 {
+			t.Fatalf("build: %d paths\n%s", len(paths), r.Report.Text(r.Sources))
+		}
+		_, errOut, code := runExe(t, types.X86_64Windows, paths[0], "")
+		want := regexp.MustCompile(`^hook suspend in callback code 16\npanic: suspend in callback\n$`)
+		if code != 101 || !want.MatchString(dropBacktrace(errOut)) || strings.Count(errOut, "hook ") != 1 {
+			t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
+		}
+	}
+}

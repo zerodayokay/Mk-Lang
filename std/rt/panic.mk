@@ -115,8 +115,11 @@ Kept(i: int): str {
     }
 }
 
-// Report runs Reporting for the message text + ": " + msg (msg empty: text alone).
-Report(code: u32, site: *Site, text: str, msg: str): never {
+/// Report records the panic code and starts Reporting with text + ": " + msg
+/// (or text alone when msg is empty).
+/// Its cost is the flush of the standard streams and the report's writes;
+/// allocates nothing. Never returns: the process exits with 101 (Reporting).
+export Report(code: u32, site: *Site, text: str, msg: str): never {
     // Edge: a racing panic of another thread may overwrite it; only the
     // winner's hook reads it, and a lost race costs only the code it shows.
     Panics.code.Store(code)

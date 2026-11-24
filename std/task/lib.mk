@@ -307,7 +307,7 @@ export FromCNeeded(): bool {
     if s != LibRunning && (s == LibStopped || MkLibStart(0, 0) == 2) {
         // Edge: the count given back; the process ends in the report.
         _ = Lib.calls.Add(0xFFFF_FFFF)
-        rt.Reporting(raw.Null[rt.Site](), rt.PanicText(rt.PanicSuspendInCallback), ": a call after the library's stop", "")
+        rt.Report(rt.PanicSuspendInCallback, raw.Null[rt.Site](), rt.PanicText(rt.PanicSuspendInCallback), "a call after the library's stop")
     }
     if rt.SysStackOf(rt.StackPointer()) >= 0 {
         // Edge: uncounted at once; this call is direct.
