@@ -88,8 +88,8 @@ mutant M-F8-W6-res-before
 rule R9 R11
 class R
 file internal/borrow/call.go
-anchor c.resultFV(st, ctx, args, fv, argH,
-replace c.resultFV(st, ctx, args, fv, entryH,
+anchor c.resultFV(st, fv, argH,
+replace c.resultFV(st, fv, entryH,
 note W6: the call result's field sets read from the arguments' entry sets, before the call's `x into p` and `*q into p` stores write into them
 witness W6.mk
 end

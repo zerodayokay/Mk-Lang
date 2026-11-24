@@ -8,10 +8,10 @@
 // can receive a loan from field j during a mut borrow of the whole value).
 //
 // How: for each carrier field i we collect the assignable depth-1 carrier
-// slots (dstSlots: &T, mut T, []T, mut []T, str; any view struct marks dst.any),
-// and for each carrier field j we collect the extractable carriers from j
-// behind mut self (srcProvides: the field itself by &/mut and every carrier
-// reachable through its type; any non-plain view, allocator, fn, or interface
+// slots (dstSlots: &T, mut T, []T, mut []T, str; any view struct or *T marks
+// dst.any), and for each carrier field j we collect the extractable carriers
+// from j behind mut self (srcProvides: the field itself by &/mut and every
+// carrier reachable through its type; any view, *T, allocator, fn, or interface
 // marks src.any). Field i can receive from j iff fcar[i] && fcar[j] and their
 // slot sets intersect (or either side sets .any); Warshall closes transitively.
 
@@ -27,7 +27,6 @@ const (
 	smSlice
 	smMutSlice
 	smStr
-	smPlainView
 )
 
 type smSlot struct {
@@ -249,7 +248,7 @@ func (w *walker) collectDstSlots(t types.TypeID, out *smSet, seen map[types.Type
 	case types.KStr:
 		out.add(smStr, types.NoType)
 		return
-	case types.KFn, types.KParam, types.KSelf:
+	case types.KFn, types.KParam, types.KSelf, types.KRawPtr:
 		out.any = true
 		return
 	case types.KNamed:
@@ -356,7 +355,7 @@ func (w *walker) collectSrc(t types.TypeID, inRef, inMut bool, out *smSet, seen 
 		out.add(smSlice, types.U8)
 		out.add(smRef, types.U8)
 		return
-	case types.KFn, types.KParam, types.KSelf:
+	case types.KFn, types.KParam, types.KSelf, types.KRawPtr:
 		out.any = true
 		return
 	case types.KArray:
@@ -367,14 +366,13 @@ func (w *walker) collectSrc(t types.TypeID, inRef, inMut bool, out *smSet, seen 
 			return
 		}
 		f := w.factsOf(t)
-		if f.Allocator || (f.View && !f.PlainView) {
+		if f.Allocator || f.View {
 			out.any = true
 			return
 		}
-		if f.PlainView {
-			out.add(smPlainView, t)
-		}
-		if w.isKnown(t, func(k *types.KnownItems) types.ItemID { return k.Mutex }) && len(ty.Args) > 0 && !ty.Args[0].IsConst {
+		if (w.isKnown(t, func(k *types.KnownItems) types.ItemID { return k.Mutex }) ||
+			w.isKnown(t, func(k *types.KnownItems) types.ItemID { return k.SpinCore })) &&
+			len(ty.Args) > 0 && !ty.Args[0].IsConst {
 			elem := ty.Args[0].Type
 			out.add(smRef, elem)
 			out.add(smMut, elem)

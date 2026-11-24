@@ -4,7 +4,7 @@
 // through `mut *cx.heap`, and ignored `Source.Path` at call sites.
 //
 // What: unit tests verifying isolated depth-2 field tagging (`n2F`), `outerKeep`
-// store isolation, `directWrite` field tagging, `behindSource` precision across
+// store isolation, `directWrite` field tagging, call-result field precision across
 // split locals and abstract context parameters, and soundness negative bounds.
 //
 // How: constructs MIR bodies in `internal/borrow` covering positive multi-call

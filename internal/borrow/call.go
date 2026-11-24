@@ -401,10 +401,9 @@ func (c *checker) call(st *state, ctx *stmtCtx, t *mir.Terminator) []out {
 	res := emptySet
 	var resFV fvID
 	if fv != nil && c.w.carrier(c.body.PlaceType(t.Dest)) {
-		gargs := c.directCallArgs(t, fv)
-		res = c.sourcesSet(st, ctx, args, fv.sources, argH, gargs)
+		res = c.sourcesSet(st, fv.sources, argH)
 		if t.Dest.Proj.Len == 0 {
-			resFV = c.resultFV(st, ctx, args, fv, argH, gargs, c.body.PlaceType(t.Dest), rootID(t.Dest.Local))
+			resFV = c.resultFV(st, fv, argH, c.body.PlaceType(t.Dest), rootID(t.Dest.Local))
 		}
 		// A result that may point into global memory holds the
 		// global node's static loan, so a store through it is judged as a

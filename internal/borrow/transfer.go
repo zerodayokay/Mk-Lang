@@ -537,10 +537,14 @@ func (c *checker) tag(s setID, p pathID) setID {
 		}
 	}
 	sharedParam := c.roots[pi.root].kind == rkParam
-	return c.tagFields(s, fields, last, sharedParam)
+	baseParam := types.NoParam
+	if sharedParam {
+		baseParam = c.roots[pi.root].param
+	}
+	return c.tagFields(s, fields, last, sharedParam, baseParam)
 }
 
-func (c *checker) tagFields(s setID, fields []uint32, last types.TypeID, sharedParam bool) setID {
+func (c *checker) tagFields(s setID, fields []uint32, last types.TypeID, sharedParam bool, baseParam types.ParamIndex) setID {
 	if len(fields) == 0 {
 		return s
 	}
@@ -569,7 +573,8 @@ func (c *checker) tagFields(s setID, fields []uint32, last types.TypeID, sharedP
 			if hiddenShared && c.hiddenParam(lo.param) {
 				la = la || c.w.allocRefs(c.tab.Get(last).Elem)
 			}
-			out = append(out, uint32(c.tagged(lo.param, fields, la, shared, noAlloc && !la)))
+			allowN2F := baseParam != types.NoParam && lo.param == baseParam
+			out = append(out, uint32(c.tagged(lo.param, fields, la, shared, noAlloc && !la, allowN2F)))
 			changed = true
 			continue
 		}

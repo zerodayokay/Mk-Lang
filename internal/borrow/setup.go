@@ -583,7 +583,7 @@ type slotInfo struct {
 // reaches no allocator, reachesAlloc), the loan stays off p#A. It is otherwise
 // the tagged p.inner it always was (base, tag, flows), so every rule that reads
 // a tagged inner loan reads it unchanged.
-func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared, noAlloc bool) loanID {
+func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared, noAlloc, allowN2F bool) loanID {
 	if len(path) == 0 {
 		return c.params[p].inner
 	}
@@ -591,7 +591,8 @@ func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared, noAll
 	if alloc {
 		noAlloc = false
 	}
-	key := tagKey{p: p, path: pathKey(path), alloc: alloc, shared: shared, noAlloc: noAlloc}
+	useN2F := !alloc && allowN2F && len(path) > 0 && int(path[0]) < len(c.params[p].n2F) && c.params[p].n2F[path[0]] != noRoot
+	key := tagKey{p: p, path: pathKey(path), alloc: alloc, shared: shared, noAlloc: noAlloc, allowN2F: useN2F}
 	if l, ok := c.tags[key]; ok {
 		return l
 	}
@@ -601,7 +602,7 @@ func (c *checker) tagged(p types.ParamIndex, path []uint32, alloc, shared, noAll
 	excl := bl.excl && !shared
 	if alloc {
 		target = c.params[p].nA
-	} else if len(path) > 0 && int(path[0]) < len(c.params[p].n2F) && c.params[p].n2F[path[0]] != noRoot {
+	} else if useN2F {
 		nf := c.params[p].n2F[path[0]]
 		nl := c.params[p].n2FLoan[path[0]]
 		if len(path) == 1 && excl == c.loans[nl].excl && noAlloc == c.loans[nl].noAlloc {
@@ -666,6 +667,16 @@ func (c *checker) setupParamFieldNodes(p types.ParamIndex, pi *paramInfo, paramT
 		if !eligible {
 			continue
 		}
+		fn1, fn2, _ := c.w.abstractNodes(ft)
+		if len(fn1.types) == 0 && !fn1.any {
+			continue
+		}
+		// Keep fields whose deeper referents include interior-writable storage
+		// (e.g. &Cell/&Mutex) or unbounded recursion on p#2, because distinct
+		// fields of the caller's struct could share the same backing Cell.
+		if _, fn2Writable, _, _ := c.w.nodeFlags(&fn2); fn2.any || fn2Writable {
+			continue
+		}
 		if pi.n2F == nil {
 			n := len(d.Fields)
 			pi.n2F = make([]rootID, n)
@@ -676,13 +687,18 @@ func (c *checker) setupParamFieldNodes(p types.ParamIndex, pi *paramInfo, paramT
 				pi.n2FLoan[j] = noLoan
 			}
 		}
-		fn1, _, _ := c.w.abstractNodes(ft)
-		if len(fn1.types) == 0 && !fn1.any {
-			continue
+		combined := fn1
+		combined.excl = combined.excl || fn2.excl
+		combined.cutTakes = combined.cutTakes || fn2.cutTakes
+		if !combined.cut.stopped() && fn2.cut.stopped() {
+			combined.cut = fn2.cut
 		}
-		nf := c.addAbstract(p, 2, &fn1)
+		for _, dt := range fn2.types {
+			combined.addType(dt)
+		}
+		nf := c.addAbstract(p, 2, &combined)
 		nl := c.addLoan(loan{
-			excl:     isMut,
+			excl:     isMut && ty.Kind == types.KMut,
 			place:    noPath,
 			target:   nf,
 			param:    p,
@@ -762,11 +778,12 @@ func (c *checker) hasIsolatedFieldTarget(p types.ParamIndex, s setID) bool {
 }
 
 type tagKey struct {
-	p       types.ParamIndex
-	path    string
-	alloc   bool
-	shared  bool
-	noAlloc bool
+	p        types.ParamIndex
+	path     string
+	alloc    bool
+	shared   bool
+	noAlloc  bool
+	allowN2F bool
 }
 
 func pathKey(xs []uint32) string {

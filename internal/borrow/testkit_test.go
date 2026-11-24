@@ -64,6 +64,7 @@ func newKit(t testing.TB) *kit {
 	// what a walk can see.
 	k.known.Cell = k.structItem(k.std, "Cell", 1, false, false, field("value", p0))
 	k.known.Mutex = k.structItem(k.std, "Mutex", 1, false, false, field("state", types.U32), field("value", p0))
+	k.known.SpinCore = k.structItem(k.std, "SpinCore", 1, false, false, field("state", types.U32), field("value", p0))
 	k.known.Chan = k.structItem(k.std, "Chan", 1, true, false, field("p", raw))
 	k.known.Arena = k.structItem(k.std, "Arena", 0, true, true, field("hdr", raw))
 	k.known.Alloc = k.structItem(k.std, "Alloc", 0, false, false, field("ctx", raw))
@@ -340,7 +341,7 @@ func (k *kit) namedFacts(t types.TypeID, ty *types.Type) types.Facts {
 		if len(ty.Args) > 0 && !ty.Args[0].IsConst && k.facts(ty.Args[0].Type).Carrier {
 			f.LoanInterior = true
 		}
-	case k.known.Mutex, k.known.Chan:
+	case k.known.Mutex, k.known.SpinCore, k.known.Chan:
 		f.Interior, f.Freeze = true, false
 		f.Kind = max(f.Kind, types.Unique)
 		if len(ty.Args) > 0 && !ty.Args[0].IsConst && k.facts(ty.Args[0].Type).Carrier {
