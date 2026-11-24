@@ -32,6 +32,15 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Performance
 
+- Compiler lowering and codegen (`internal/lower`, `internal/codegen`):
+  - Added sound accumulator and direct tail-recursion loop lowering (`elimAccTailRec`), monotone while-loop bounds versioning (`versionMonotone`), 2D counted-loop nest bounds/overflow versioning (`versionNestedBounds`) with cold fallback branch weights, two-local exact add/sub interval inversion in `refineStep`, small flat-loop single-callsite inlining on leaf-loop spines (`solecall.go`), and branchless bitmask lowering for 2-target integer switches (span < 128).
+- Standard library (`std`):
+  - Upgraded `std.core` SwissTable control groups from 8-byte scalar SWAR to 16-byte SIMD (`Vec[u8, 16]`) groups (with scalar fallback on freestanding) and outlined `Text.GrowFor` so `Text.PushBytes` inlines cleanly.
+  - Added a safe SIMD multi-branch prefilter, tighter DFA scan loops, and direct zero-revalidation `Replace` in `std.regex`.
+  - Split register-only `HuffFast` with inline SIMD bit-refill and match copies in `std.compress`.
+  - Added per-carrier `ClassDefault` slot caches, cache-line padding of hot scheduler atomics, Go-style FIFO work-stealing `runq`, direct task-to-task handoff on park, and faster `Chan` wakeups in `std.rt`/`std.task`/`std.core`.
+- Compile speed (`internal/driver`, `internal/toolchain`, `internal/mono`, `internal/iface`):
+  - Added lazy `std` loading for `mk build`/`run`/`test`/`check` (skipping embedded `std` test files outside `--std` testing), deterministic stratified pack coalescing with largest-first `clang` and ThinLTO backend scheduling, probed `clang -cc1` argv template reuse (`-###`), whole-build fingerprint fast path for warm no-change builds, lock-free `iface.Hasher` dense-ID caches, indexed `AnchorSet` lookups, and overlapped cold-cache prep / import-lib / snapshot work.
 - In optimized builds outside `--debug` and `--profile size` on `x86_64` and `aarch64`, module-private `const` function dispatch tables used via `become` (`become handlers[op](...)`) automatically emit `preserve_nonecc` handler bodies (`<sym>$pnone`) and companion dispatch tables (`<table_sym>$pnone`) alongside C ABI entry wrappers, keeping 8 to 12 state arguments in registers across threaded tail-call dispatches with no stack spills.
 - `aarch64-linux` and `aarch64-macos`: non-`var` slice parameters (`mut []T`, `str`, and `[]T` of a `Freeze` element type) now emit scoped alias metadata (`!alias.scope`, `!noalias`, and entry-block `llvm.experimental.noalias.scope.decl`) whenever a function takes at least two qualifying slice parameters including a `mut []T` (alongside Win64 C ABI `Indirect` slices and System V `byval` stack-spilled slices). Because AAPCS64 passes 16-byte slices as `[2 x i64]` aggregates where parameter-level `noalias` cannot attach, this lets LLVM eliminate runtime alias checks and vectorize hot slice loops on AArch64.
 
