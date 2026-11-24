@@ -7,7 +7,7 @@
 // * 0x9E3779B97F4A7C15) from phase r % 4; the checksum adds, per round,
 // the byte at (r * 7919) % n and the phase Mask returns. The buffer is an
 // arena slice, whose alignment Mk code cannot set without std.raw (BS-4's
-// labelled exception, README.md).
+// labelled alignment exception, README.md).
 // Usage: ws-mask <n> <rounds>.
 
 import std.simd
