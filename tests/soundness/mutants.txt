@@ -233,10 +233,10 @@ mutant M-R11-noalloc-loop
 rule R11
 class P
 file internal/borrow/store.go
-anchor \t\t\tna := noAlloc && ti.kind == rkAbstract && ti.depth == 2 && loanID(m) == c.params[ti.param].inner
-replace \t\t\tna := false && noAlloc && ti.kind == rkAbstract && ti.depth == 2 && loanID(m) == c.params[ti.param].inner
-note a precision row: stepping along p#2's own inner self-loop drops noAlloc, so storing sys.args into a local Arena causes later writes into that Arena to jump to sys#A and fail E0505
-witness MV-noalloc-arena-ok.mk
+anchor \t\t\tna := noAlloc && ti.kind == rkAbstract && ti.depth == 2 && (loanID(m) == c.params[ti.param].inner || c.isParamN2FieldLoan(ti.param, loanID(m)))
+replace \t\t\tna := false && noAlloc && ti.kind == rkAbstract && ti.depth == 2 && (loanID(m) == c.params[ti.param].inner || c.isParamN2FieldLoan(ti.param, loanID(m)))
+note a precision row: stepping along p#2's own inner self-loop drops noAlloc, so storing a nested non-alloc field (box.tag.args) into a local Arena causes later writes into that Arena to jump to box#A and fail E0505
+witness MV-noalloc-nested-ok.mk
 end
 
 mutant M-D115-view
@@ -550,8 +550,8 @@ mutant M-D756-view
 rule R16 R9
 class R
 file internal/borrow/typewalk.go
-anchor \t\tif f.View {\n\t\t\tif behindShared {
-replace \t\tif false && f.View {\n\t\t\tif behindShared {
+anchor \t\tif f.View && !f.PlainView {\n\t\t\tif behindShared {
+replace \t\tif false && f.View && !f.PlainView {\n\t\t\tif behindShared {
 note a view's hidden storage not counted: a SpinGuard of a global Spin, handed back by a source-less function, holds nothing, and Store's `x: T into self` lands nowhere; G756-view-guard, G756-view-opt and G756-io-store (a Guard under ?T) are accepted, and the first two read a dead frame when run; expected VDeadScope
 witness G756-view-guard.mk G756-view-opt.mk G756-io-store.mk
 end
@@ -793,8 +793,8 @@ mutant M-P4-view-a6
 rule R7 R11
 class R
 file internal/borrow/locals.go
-anchor \tif len(pi.steps) == 0 && !excl && !c.roots[r].writable {
-replace \tif len(pi.steps) == 0 && !excl && (!c.roots[r].writable || c.roots[r].rest) {
+anchor \tif len(pi.steps) == 0 && !excl && !ri.writable {
+replace \tif len(pi.steps) == 0 && !excl && (!ri.writable || ri.rest) {
 note a shared whole borrow of a split view keeps the split (the rule that a shared whole borrow keeps a split, widened past writable-by-type to views), though a view writes past a shared reference; P4-view-a6-u1's Mix moves b into a behind &self and is accepted; expected VDeadScope
 witness P4-view-a6-u1
 end

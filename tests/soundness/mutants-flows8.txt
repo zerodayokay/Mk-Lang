@@ -88,8 +88,8 @@ mutant M-F8-W6-res-before
 rule R9 R11
 class R
 file internal/borrow/call.go
-anchor c.resultFV(st, fv, argH,
-replace c.resultFV(st, fv, entryH,
+anchor c.resultFV(st, ctx, args, fv, argH,
+replace c.resultFV(st, ctx, args, fv, entryH,
 note W6: the call result's field sets read from the arguments' entry sets, before the call's `x into p` and `*q into p` stores write into them
 witness W6.mk
 end
@@ -230,8 +230,8 @@ mutant M-RV2-1-excl-collapse
 rule R7
 class R
 file internal/borrow/locals.go
-anchor \tif len(pi.steps) == 0 && !excl && !c.roots[r].writable {\n
-replace \tif len(pi.steps) == 0 && (excl || !c.roots[r].writable) {\n
+anchor \tif len(pi.steps) == 0 && !excl && !ri.writable {\n
+replace \tif len(pi.steps) == 0 && (excl || !ri.writable) {\n
 note an exclusive borrow of the whole of a split local keeps it split, for every callee: the callee, or one it hands the reference on to (a generic, an extern, a fn value), moves a loan between the local's fields under R11's first-level exemption, unseen
 witness RV2-1-generic-hop.mk RV2-1-generic-shared-hop.mk RV2-1-extern-hop-fnvalue.mk RV2-1-into-escape.mk S2a-t2.mk S2-t2-generic.mk S2-t2-extern.mk S2-t2-extern-fnvalue.mk RV2-1-extern-method-fnvalue.mk RV2-1-fnvalue-field.mk
 end
@@ -242,7 +242,7 @@ mutant M-RV2-a6-writable
 rule R7
 class R
 file internal/borrow/locals.go
-anchor \tif len(pi.steps) == 0 && !excl && !c.roots[r].writable {\n
+anchor \tif len(pi.steps) == 0 && !excl && !ri.writable {\n
 replace \tif len(pi.steps) == 0 && !excl {\n
 note a shared whole borrow keeps a split without the writable-by-type condition: a shared borrow of a type with a Cell inline keeps the local split; the callee (here an extern through a fn value) may store one field's loan into the Cell field under R11's first-level exemption, unseen. S2b-a6.mk depends on it too
 witness RV2-a6-writable-fnvalue.mk S2b-a6.mk
@@ -312,8 +312,8 @@ mutant M-FIX12-a6-generic
 rule R7
 class R
 file internal/borrow/locals.go
-anchor \tif c.mentionsParam(c.roots[r].typ) {\n
-replace \tif false && c.mentionsParam(c.roots[r].typ) {\n
+anchor \tif c.mentionsParam(ri.typ) {\n
+replace \tif false && c.mentionsParam(ri.typ) {\n
 also-file internal/borrow/setup.go
 also-anchor ) && c.w.fnResultSupplied(c.body.OperandType(t.Callee.Value)) {
 also-replace ) || false && c.w.fnResultSupplied(c.body.OperandType(t.Callee.Value)) {
