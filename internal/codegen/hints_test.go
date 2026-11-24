@@ -13,6 +13,7 @@
 package codegen
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -41,38 +42,11 @@ func TestRuntimeHintsIR(t *testing.T) {
 	preHelper.assign(place(0), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.AddWrap, A: mir.Copy(place(1)), B: mir.Imm(types.Int, 5), Type: types.Int}, spP)
 	preHelper.ret(spP)
 
-	// f:
+	// f2:
 	//   c := Unlikely(cond)
 	//   if c { PreHelper(x); Cold(); return SlowHelper(x) }
 	//   if Likely(flag) { return HotHelper(x) }
 	//   match tag { 1 => HotHelper(x); _ => { Cold(); SlowHelper(x) } }
-	f := e.body(e.fn("Hinted", []types.TypeID{types.Bool, types.Bool, types.Int}, types.Int, 0))
-	spF := f.at(10, 1)
-	uc := f.local(types.Bool)
-	bbColdPre := f.newBlock()
-	bbCold := f.newBlock()
-	bbColdPost := f.newBlock()
-	bbHotCheck := f.newBlock()
-	bbHotFast := f.newBlock()
-	bbMatch := f.newBlock()
-	bbArm1 := f.newBlock()
-	bbArmDef := f.newBlock()
-	bbArmDefPost := f.newBlock()
-
-	f.callTo(direct(unlikelyFn), place(uc), mir.NoLocal, spF, mir.Copy(place(1)))
-	f.term(mir.Terminator{Kind: mir.TermSwitch, On: mir.Copy(place(uc)),
-		Cases: f.b.AddCases(mir.SwitchCase{Value: 1, Target: bbColdPre}), Default: bbHotCheck, Span: spF})
-
-	// Cold path: PreHelper (backward) -> Cold() (seed) -> SlowHelper (forward).
-	f.cur = bbColdPre
-	pv := f.local(types.Int)
-	f.callTo(direct(preHelper.item), place(pv), mir.NoLocal, spF, mir.Copy(place(3)))
-	f.cur = f.b.Blocks[bbColdPre].Term.Target
-	f.cur = bbColdPre
-	// Fix target manually via block chaining below.
-	_ = pv
-
-	// Rebuild F clean linear blocks with explicit transitions.
 	f2 := e.body(e.fn("HintedClean", []types.TypeID{types.Bool, types.Bool, types.Int}, types.Int, 0))
 	sp := f2.at(20, 1)
 	bEntry := mir.BlockID(0)
@@ -161,15 +135,6 @@ func TestRuntimeHintsIR(t *testing.T) {
 	f2.assign(place(0), use(mir.Copy(place(dOut))), sp)
 	f2.ret(sp)
 
-	_ = bbCold
-	_ = bbColdPost
-	_ = bbHotCheck
-	_ = bbHotFast
-	_ = bbMatch
-	_ = bbArm1
-	_ = bbArmDef
-	_ = bbArmDefPost
-
 	u := unitOf(e, []*mir.Body{hotHelper.b, slowHelper.b, preHelper.b, f2.b})
 	for _, target := range []types.Target{types.X86_64Windows, types.X86_64Linux, types.Aarch64Linux, types.Aarch64Macos} {
 		t.Run(target.Name, func(t *testing.T) {
@@ -194,7 +159,7 @@ func TestRuntimeHintsIR(t *testing.T) {
 					if strings.Contains(line, "alwaysinline") {
 						t.Errorf("%s: cold call must not get alwaysinline: %s", target.Name, line)
 					}
-					if !strings.Contains(ll, " cold") {
+					if !strings.Contains(line, " cold") {
 						t.Errorf("%s: missing cold attribute on cold path call: %s", target.Name, line)
 					}
 				}
@@ -202,4 +167,90 @@ func TestRuntimeHintsIR(t *testing.T) {
 			clangC(t, target, t.TempDir(), "hints", ll, "-O3")
 		})
 	}
+}
+
+func TestRuntimeHintsColdNoBlockAndCrossPack(t *testing.T) {
+	e := newTestEnv()
+	coldFn := e.fnIn("std.runtime", "", "Cold", nil, types.Void, true)
+	e.mods["other"] = e.items.AddModule(&types.Module{Path: "other"})
+	crossID := e.itemIn("other", types.ItemKey("other", "CrossSlow"), "CrossSlow", types.KindFunc,
+		&types.FuncDecl{Sig: types.Signature{
+			Name:   e.in.Intern("CrossSlow"),
+			Params: []types.Param{{Name: e.in.Intern("x"), Type: types.Int}},
+			Result: types.Int,
+		}})
+	crossCallee := e.body(crossID)
+	spC := crossCallee.at(1, 1)
+	acc := crossCallee.local(types.Int)
+	crossCallee.assign(place(acc), use(mir.Copy(place(1))), spC)
+	for range 40 {
+		next := crossCallee.local(types.Int)
+		crossCallee.assign(place(next), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.AddWrap, A: mir.Copy(place(acc)), B: mir.Imm(types.Int, 7), Type: types.Int}, spC)
+		acc = next
+	}
+	crossCallee.assign(place(0), use(mir.Copy(place(acc))), spC)
+	crossCallee.ret(spC)
+
+	// Main calls CrossSlow (in another pack) inside a Cold() block and exercises
+	// exhaustive bool and integer TermSwitch terminators with Default == mir.NoBlock.
+	fn := e.body(e.fn("MainHinted", []types.TypeID{types.Bool, types.Int}, types.Int, 0))
+	sp := fn.at(10, 1)
+	bBoolT := fn.newBlock()
+	bBoolF := fn.newBlock()
+	bSw := fn.newBlock()
+	bSw0 := fn.newBlock()
+	bSw1 := fn.newBlock()
+	bSw1Post := fn.newBlock()
+
+	fn.term(mir.Terminator{Kind: mir.TermSwitch, On: mir.Copy(place(1)),
+		Cases:   fn.b.AddCases(mir.SwitchCase{Value: 1, Target: bBoolT}, mir.SwitchCase{Value: 0, Target: bBoolF}),
+		Default: mir.NoBlock, Span: sp})
+
+	// Keep only Value=1 in the bool switch so Default == mir.NoBlock on the false arm.
+	_ = bBoolF
+	fn.b.Blocks[0].Term.Cases.Len = 1
+
+	fn.cur = bBoolT
+	fn.term(mir.Terminator{Kind: mir.TermGoto, Target: bSw, Span: sp})
+
+	fn.cur = bSw
+	fn.term(mir.Terminator{Kind: mir.TermSwitch, On: mir.Copy(place(2)),
+		Cases:   fn.b.AddCases(mir.SwitchCase{Value: 0, Target: bSw0}, mir.SwitchCase{Value: 1, Target: bSw1}),
+		Default: mir.NoBlock, Span: sp})
+
+	fn.cur = bSw0
+	fn.assign(place(0), use(mir.Imm(types.Int, 42)), sp)
+	fn.ret(sp)
+
+	fn.cur = bSw1
+	voidCold := fn.local(types.Void)
+	fn.callTo(direct(coldFn), place(voidCold), mir.NoLocal, sp)
+	fn.term(mir.Terminator{Kind: mir.TermGoto, Target: bSw1Post, Span: sp})
+
+	fn.cur = bSw1Post
+	out := fn.local(types.Int)
+	fn.callTo(direct(crossCallee.item), place(out), mir.NoLocal, sp, mir.Copy(place(2)))
+	fn.cur = fn.b.Blocks[bSw1Post].Term.Target
+	fn.assign(place(0), use(mir.Copy(place(out))), sp)
+	fn.ret(sp)
+
+	u := unitOf(e, []*mir.Body{fn.b, crossCallee.b})
+	u.Packs = [][]int{{0}, {1}}
+	u.Funcs[1].Pack = 1
+
+	ll := emit(t, e, u, types.X86_64Linux, types.Release)
+	var buf1 bytes.Buffer
+	if _, err := EmitPack(u, 1, e, Config{Target: types.X86_64Linux, Profile: types.Release}, &buf1); err != nil {
+		t.Fatalf("EmitPack(pack 1): %v", err)
+	}
+	ll1 := buf1.String()
+	// Cross-pack callee whose sole call site is inside a Cold block must NOT get alwaysinline in either pack.
+	if strings.Contains(fnDefText(ll, "mk.other.CrossSlow"), "alwaysinline") || strings.Contains(fnDefText(ll1, "mk.other.CrossSlow"), "alwaysinline") {
+		t.Errorf("cross-pack cold-called helper must not get alwaysinline:\npack0:\n%s\npack1:\n%s", ll, ll1)
+	}
+	// Exhaustive int switch with Default == mir.NoBlock and cold arm gets weight 0 for default, 1048575 for hot case, 1 for cold case.
+	if !strings.Contains(ll, `!{!"branch_weights", i32 0, i32 1048575, i32 1}`) {
+		t.Errorf("expected weight 0 for Default == mir.NoBlock in cold switch:\n%s", ll)
+	}
+	clangC(t, types.X86_64Linux, t.TempDir(), "hints_noblock", ll, "-O3")
 }

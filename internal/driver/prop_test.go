@@ -704,3 +704,44 @@ FailNaN32(x: f32): bool
 		}
 	}
 }
+
+// TestPropCasesEightMixesRandomAndCompletes verifies that --prop-cases 8 caps
+// edge-case enumeration so random inputs still run within small budgets and a
+// single-integer property still runs all requested cases without stalling at 7.
+func TestPropCasesEightMixesRandomAndCompletes(t *testing.T) {
+	passSrc := `SingleInt(x: i32): bool
+    ensures result
+{
+    return x == x
+}
+
+TwoInts(x: i32, y: i32): bool
+    ensures result
+{
+    return (x +% y) == (y +% x)
+}
+`
+	rep, text := propTest(t, map[string]string{"t.mk": passSrc}, Config{}, TestOptions{PropCases: 8})
+	if rep.Failed != 0 || rep.Passed != 2 {
+		t.Fatalf("want both passing properties at PropCases=8:\n%s", text)
+	}
+	var singleValid int
+	if tc := propCaseOf(t, rep, "SingleInt"); func() bool {
+		_, err := fmt.Sscanf(tc.Output, "%d cases", &singleValid)
+		return err != nil || singleValid < 8
+	}() {
+		t.Fatalf("SingleInt should complete >= 8 cases (not stall after 7 edges): %q", propCaseOf(t, rep, "SingleInt").Output)
+	}
+
+	failSrc := `OnlyEdges(x: i32, y: i32): bool
+    ensures result
+{
+    _ = y
+    return x == 0 || x == 1 || x == -1 || x == 2147483647 || x == -2147483648 || x == 2147483646 || x == -2147483647
+}
+`
+	repFail, textFail := propTest(t, map[string]string{"t.mk": failSrc}, Config{}, TestOptions{PropCases: 8})
+	if repFail.Failed != 1 {
+		t.Fatalf("want OnlyEdges to fail via random draw within --prop-cases 8:\n%s", textFail)
+	}
+}

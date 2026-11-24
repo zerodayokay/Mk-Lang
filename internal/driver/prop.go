@@ -77,6 +77,7 @@ type propInst struct {
 	params  []*propShape // receiver first, as sig.Params
 	dropped string
 	gen     *propGen
+	edges   int
 	seen    map[string]bool
 }
 
@@ -282,6 +283,13 @@ func (s *Session) propPrepare(t *propTarget, seed uint64) {
 				break
 			}
 			in.params = append(in.params, sh)
+			if n := propEdgeCount(sh); n > 0 {
+				if in.edges == 0 {
+					in.edges = n
+				} else {
+					in.edges = min(in.edges*n, propEdgeCases)
+				}
+			}
 		}
 		if in.dropped == "" {
 			t.insts = append(t.insts, in)
@@ -302,6 +310,12 @@ func (s *Session) propRun(ts []*propTarget, want int) error {
 			}
 		}
 		return out
+	}
+	edgeBudget := min(propEdgeCases, want)
+	for _, t := range ts {
+		for _, in := range t.insts {
+			in.gen.edgeLimit = min(in.edges, edgeBudget)
+		}
 	}
 	// Round 0: the corpus, then one case per instance (an instance whose
 	// line does not check is dropped: a bound the type does not meet).

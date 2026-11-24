@@ -76,8 +76,9 @@ func (s *Session) checkAllTargetsSelect() []*diag.Diagnostic {
 	}
 
 	hostOS := targetOS(s.cfg.Target)
-	var hostFacts map[string][]apiFact
-	var hostMeta map[string]apiMeta
+	var baseName string
+	var baseFacts map[string][]apiFact
+	var baseMeta map[string]apiMeta
 	for _, osName := range osNames {
 		if osName == hostOS || !selectedOS[osName] {
 			continue
@@ -89,11 +90,15 @@ func (s *Session) checkAllTargetsSelect() []*diag.Diagnostic {
 				In(diag.PhaseTypes).Text("target", osName).Text("reason", "unknown-target"))
 			continue
 		}
+		cpu := ""
+		if tgt.Arch == s.cfg.Target.Arch {
+			cpu = s.cfg.CPU
+		}
 		childCfg := Config{
 			Root:     s.cfg.Root,
 			Target:   tgt,
 			Profile:  s.cfg.Profile,
-			CPU:      s.cfg.CPU,
+			CPU:      cpu,
 			Jobs:     s.cfg.Jobs,
 			NoCache:  s.cfg.NoCache,
 			Offline:  s.cfg.Offline,
@@ -125,11 +130,17 @@ func (s *Session) checkAllTargetsSelect() []*diag.Diagnostic {
 				In(diag.PhaseTypes).Text("target", tgt.Name).Text("reason", "target-check-failed").Text("detail", detail))
 			continue
 		}
-		if hostFacts == nil {
-			hostFacts, hostMeta = sessionAPIFacts(s, false)
+		if baseFacts == nil && selectedOS[hostOS] {
+			baseName = s.cfg.Target.Name
+			baseFacts, baseMeta = sessionAPIFacts(s, false)
 		}
 		otherFacts, otherMeta := sessionAPIFacts(cs, false)
-		diags = append(diags, compareSelectedAPIs(at, s.cfg.Target.Name, tgt.Name, selectedMods, hostFacts, hostMeta, otherFacts, otherMeta)...)
+		if baseFacts == nil {
+			baseName = tgt.Name
+			baseFacts, baseMeta = otherFacts, otherMeta
+			continue
+		}
+		diags = append(diags, compareSelectedAPIs(at, baseName, tgt.Name, selectedMods, baseFacts, baseMeta, otherFacts, otherMeta)...)
 	}
 	return diags
 }

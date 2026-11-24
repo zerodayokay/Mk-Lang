@@ -255,3 +255,76 @@ export Main(sys: &System) {
 		t.Errorf("unexpected missing-target-select message:\n%s", text)
 	}
 }
+
+// TestAllTargetsSelect_CrossArchClearsCPU checks that forwarding an aarch64 CPU
+// flag under --all-targets does not poison an x86_64 pkg.Select target.
+func TestAllTargetsSelect_CrossArchClearsCPU(t *testing.T) {
+	win := "export const Flag: u32 = 1\n"
+	mac := "export const Flag: u32 = 2\n"
+	dir := writeTree(t, map[string]string{
+		"pkg.mk": manifest(map[string]string{
+			"name": `"crossarch"`,
+			"bins": `[pkg.Bin(name: "crossarch", root: "src", link_script: "", cpu: "", subsystem: "console")]`,
+			"targets": `[` +
+				`pkg.Select(os: "windows", modules: [pkg.Module(name: "os.native", dir: "os/windows")]), ` +
+				`pkg.Select(os: "macos", modules: [pkg.Module(name: "os.native", dir: "os/macos")])` +
+				`]`,
+		}),
+		"src/main.mk": `import os.native
+
+export Main(sys: &System) {
+    _ = native.Flag
+}
+`,
+		"os/windows/native.mk": win,
+		"os/macos/native.mk":   mac,
+	})
+	cfg := Config{Root: dir, Target: types.Aarch64Macos, CPU: "apple-m1", CacheDir: t.TempDir(), AllTargets: true, LazyStd: true}
+	r := frontCheck(t, cfg)
+	if len(r.Report.Diags) != 0 {
+		t.Fatalf("cross-arch --all-targets with host CPU failed:\n%s", r.Report.Text(r.Sources))
+	}
+}
+
+// TestAllTargetsSelect_NonHostBaselineSeedsFirstTarget checks that when
+// targets omits the host OS, --all-targets still compares selected targets
+// against one another rather than against empty host facts.
+func TestAllTargetsSelect_NonHostBaselineSeedsFirstTarget(t *testing.T) {
+	makePkg := func(macSrc string) string {
+		return writeTree(t, map[string]string{
+			"pkg.mk": manifest(map[string]string{
+				"name": `"nonhost"`,
+				"bins": `[pkg.Bin(name: "nonhost", root: "src", link_script: "", cpu: "", subsystem: "console")]`,
+				"targets": `[` +
+					`pkg.Select(os: "linux", modules: [pkg.Module(name: "os.native", dir: "os/linux")]), ` +
+					`pkg.Select(os: "macos", modules: [pkg.Module(name: "os.native", dir: "os/macos")])` +
+					`]`,
+			}),
+			"src/main.mk": `export Main(sys: &System) {
+    _ = sys
+}
+`,
+			"os/linux/native.mk": "export Val(): i32 {\n    return 1\n}\n",
+			"os/macos/native.mk": macSrc,
+		})
+	}
+
+	t.Run("matching non-host targets produce no bogus missing-on-host API diff", func(t *testing.T) {
+		r := frontCheck(t, Config{Root: makePkg("export Val(): i32 {\n    return 2\n}\n"), Target: types.X86_64Windows, CacheDir: t.TempDir(), AllTargets: true, LazyStd: true})
+		text := r.Report.Text(r.Sources)
+		if strings.Contains(text, "selected module os.native differs") {
+			t.Fatalf("unexpected bogus selected-module diff against host:\n%s", text)
+		}
+		if !strings.Contains(text, "missing-target-select") {
+			t.Fatalf("expected missing-target-select for omitted host OS, got:\n%s", text)
+		}
+	})
+
+	t.Run("differing non-host targets report diff between selected targets", func(t *testing.T) {
+		r := frontCheck(t, Config{Root: makePkg("export Val(): i64 {\n    return 2\n}\n"), Target: types.X86_64Windows, CacheDir: t.TempDir(), AllTargets: true, LazyStd: true})
+		text := r.Report.Text(r.Sources)
+		if !strings.Contains(text, "x86_64-linux") || !strings.Contains(text, "x86_64-macos") || !strings.Contains(text, "Val") {
+			t.Fatalf("expected diff between x86_64-linux and x86_64-macos for Val, got:\n%s", text)
+		}
+	})
+}

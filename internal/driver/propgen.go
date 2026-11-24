@@ -329,9 +329,11 @@ type propGen struct {
 	// or struct parameter, the receiver included, takes no digit), so MIN /
 	// -1 and MAX + 1 are met at once by the first two integer parameters
 	// wherever they stand. radix is the product of the earlier integer
-	// parameters' edge counts (propEdgeCount); draw sets it.
-	radix int
-	top   bool
+	// parameters' edge counts (propEdgeCount); draw sets it. edgeLimit
+	// bounds edge enumeration; top marks a top-level parameter.
+	radix     int
+	edgeLimit int
+	top       bool
 }
 
 const propFloatEdges = 17
@@ -355,7 +357,7 @@ const propEdgeCases = 256
 // edge is the case's edge index for the current integer parameter of n
 // edges, or -1 past the enumeration.
 func (g *propGen) edge(n int) int {
-	if !g.top || g.i >= propEdgeCases {
+	if !g.top || g.i >= g.edgeLimit {
 		return -1
 	}
 	return g.i / max(g.radix, 1) % n

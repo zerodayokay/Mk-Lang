@@ -123,3 +123,32 @@ func TestCoverCmpPackFacts(t *testing.T) {
 		t.Error("PackFacts did not distinguish presence vs absence of std.rt.CoverCmp")
 	}
 }
+
+func TestCoverCmpNotAlwaysInline(t *testing.T) {
+	e := newTestEnv()
+	e.mods["std.rt"] = e.items.AddModule(&types.Module{Path: "std.rt", Std: true})
+	rtItem := e.itemIn("std.rt", types.ItemKey("std.rt", "CoverCmp"), "CoverCmp", types.KindFunc,
+		&types.FuncDecl{Sig: types.Signature{
+			Name:   e.in.Intern("CoverCmp"),
+			Params: []types.Param{{Name: e.in.Intern("a"), Type: types.U64}, {Name: e.in.Intern("b"), Type: types.U64}, {Name: e.in.Intern("w"), Type: types.U8}},
+			Result: types.Void,
+		}})
+	rtBody := e.body(rtItem)
+	spR := rtBody.at(1, 1)
+	rtBody.ret(spR)
+
+	cmpEq := e.fn("CmpEq32", []types.TypeID{types.U32}, types.Bool, 0)
+	f := e.body(cmpEq)
+	sp := f.at(10, 3)
+	f.assign(place(0), mir.Rvalue{Kind: mir.RvBinary, Bin: mir.Eq, A: mir.Copy(place(1)), B: mir.Imm(types.U32, 0xCAFEBABE), Type: types.Bool}, sp)
+	f.ret(sp)
+
+	u := unitOf(e, []*mir.Body{rtBody.b, f.b})
+	var buf bytes.Buffer
+	if _, err := EmitPack(u, 0, e, Config{Target: types.X86_64Linux, Profile: types.Release, Cover: true}, &buf); err != nil {
+		t.Fatalf("EmitPack: %v", err)
+	}
+	if def := fnDefText(buf.String(), "mk.std.rt.CoverCmp"); strings.Contains(def, "alwaysinline") {
+		t.Errorf("std.rt.CoverCmp must never be marked alwaysinline:\n%s", def)
+	}
+}

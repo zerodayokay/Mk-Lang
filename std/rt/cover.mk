@@ -143,7 +143,7 @@ export CoverLoad(base: uint, i: int): u64 {
 
 struct CoverCmpWords {
     on: raw.Atomic[u32]
-    idx: raw.Atomic[u32]
+    idx: raw.Atomic[u64]
     a: [64]raw.Atomic[u64]
     b: [64]raw.Atomic[u64]
     w: [64]raw.Atomic[u32]
@@ -151,7 +151,7 @@ struct CoverCmpWords {
 
 var CoverCmps: CoverCmpWords = CoverCmpWords(
     on: raw.Atomic[u32].New(0),
-    idx: raw.Atomic[u32].New(0),
+    idx: raw.Atomic[u64].New(0),
     a: [raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0),
         raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0),
         raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0), raw.Atomic[u64].New(0),
@@ -181,39 +181,48 @@ var CoverCmps: CoverCmpWords = CoverCmpWords(
 /// CoverCmpEnable turns live integer-comparison recording on or off for fuzz guidance.
 /// O(1); allocates nothing.
 export CoverCmpEnable(on: bool) {
-    CoverCmps.on.StoreOrd(if on { 1 } else { 0 }, 0)
+    // Edge: release-store publishes reset and ring state before enabling CoverCmp.
+    CoverCmps.on.StoreOrd(if on { 1 } else { 0 }, 2)
 }
 
 /// CoverCmp records a failed 2, 4 or 8-byte integer comparison operand pair
 /// into the live 64-entry ring buffer while fuzz guidance is active.
 /// O(1); allocates nothing.
 export CoverCmp(a: u64, b: u64, width: u8) {
-    if a == b || CoverCmps.on.LoadOrd(0) == 0 {
+    // Edge: acquire-load pairs with CoverCmpEnable release-store.
+    if a == b || CoverCmps.on.LoadOrd(1) == 0 {
         return
     }
+    // Edge: none; monotonic slot claim published by w[slot] release-store below.
     slot := Trunc[int](CoverCmps.idx.AddOrd(1, 0) & 63)
+    // Edge: published by the w[slot] release-store below.
     CoverCmps.a[slot].StoreOrd(a, 0)
     CoverCmps.b[slot].StoreOrd(b, 0)
-    CoverCmps.w[slot].StoreOrd(Trunc[u32](width), 0)
+    // Edge: release-store publishes a[slot] and b[slot] to CoverCmpWidthAt acquire-load.
+    CoverCmps.w[slot].StoreOrd(Trunc[u32](width), 2)
 }
 
 /// CoverCmpReset clears the live comparison ring buffer before each fuzz call.
 /// O(1); allocates nothing.
 export CoverCmpReset() {
-    prev := CoverCmps.idx.LoadOrd(0)
+    // Edge: none; called between fuzz runs after disabling CoverCmp.
+    prev := CoverCmps.idx.LoadOrd(1)
     if prev != 0 {
         limit := if prev > 64 { 64 } else { Trunc[int](prev) }
         for i in 0..limit {
-            CoverCmps.w[i].StoreOrd(0, 0)
+            // Edge: release-store clears slot width before re-enabling CoverCmp.
+            CoverCmps.w[i].StoreOrd(0, 2)
         }
-        CoverCmps.idx.StoreOrd(0, 0)
+        // Edge: release-store resets counter after clearing w[0..limit].
+        CoverCmps.idx.StoreOrd(0, 2)
     }
 }
 
 /// CoverCmpCount returns the number of entries recorded in the live comparison ring.
 /// O(1); allocates nothing.
 export CoverCmpCount(): int {
-    n := CoverCmps.idx.LoadOrd(0)
+    // Edge: acquire-load observes prior CoverCmp increments after a fuzz target returns.
+    n := CoverCmps.idx.LoadOrd(1)
     if n > 64 {
         return 64
     }
@@ -224,13 +233,15 @@ export CoverCmpCount(): int {
 /// O(1); allocates nothing.
 export CoverCmpAt(i: int): (a: u64, b: u64) {
     slot := i & 63
+    // Edge: callers acquire w[slot] via CoverCmpWidthAt before reading a[slot] and b[slot].
     return (a: CoverCmps.a[slot].LoadOrd(0), b: CoverCmps.b[slot].LoadOrd(0))
 }
 
 /// CoverCmpWidthAt returns the byte width (2, 4, or 8, or 0 if unset) at slot i.
 /// O(1); allocates nothing.
 export CoverCmpWidthAt(i: int): u8 {
-    return Trunc[u8](CoverCmps.w[i & 63].LoadOrd(0))
+    // Edge: acquire-load pairs with CoverCmp's release-store of w[slot].
+    return Trunc[u8](CoverCmps.w[i & 63].LoadOrd(1))
 }
 
 // CoverFile is MK_COVER's last field, the counts file's path; "" when

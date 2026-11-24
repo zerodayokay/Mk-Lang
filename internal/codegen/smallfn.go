@@ -158,7 +158,7 @@ var ctModules = []string{"std.crypto.", "std.simd.kernel."}
 func (g *packGen) codegenCalled(fi int) bool {
 	k := g.items.Get(g.u.Funcs[fi].Item).Key
 	switch k {
-	case keyEnter, keySpawnAlloc, keySpawn, keyJoin, keyCancel, keySystemStack, keySystemStackDone, keyRem64, keyRem32,
+	case keyEnter, keySpawnAlloc, keySpawn, keyJoin, keyCancel, keySystemStack, keySystemStackDone, keyRem64, keyRem32, keyCoverCmp,
 		types.ItemKey(g.hookModule(), hookPanic), types.ItemKey(g.hookModule(), hookPanicMsg), types.ItemKey(g.hookModule(), hookPanicErr):
 		return true
 	}
@@ -296,7 +296,27 @@ func (g *packGen) crossEligible(s *smallSet, j, c int) bool {
 	if s.fx[j].ops > soleCallOps || s.loops[j] && (len(cf.Body.Loops) > 0 || len(cf.Body.Blocks) > thinCallerBlocks) {
 		return false
 	}
+	if callInColdBlock(cf.Body, f.Item, g.items) {
+		return false
+	}
 	return !(g.u.soleCallsOf().outside[cf.Item] && len(g.cpuOf(c)) == 0)
+}
+
+func callInColdBlock(b *mir.Body, callee types.ItemID, items *types.Items) bool {
+	cold := findColdBlocks(b, items)
+	if len(cold) == 0 {
+		return false
+	}
+	for bi := range b.Blocks {
+		if !cold[mir.BlockID(bi)] {
+			continue
+		}
+		t := &b.Blocks[bi].Term
+		if t.Kind == mir.TermCall && t.Callee.Kind == mir.CallDirect && t.Spawn == mir.NoLocal && t.Callee.Fn.Item == callee {
+			return true
+		}
+	}
+	return false
 }
 
 // smallSetOf computes the unit's facts once. Every function's direct calls

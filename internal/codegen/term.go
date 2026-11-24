@@ -102,15 +102,17 @@ func (fg *fnGen) switchTerm(t *mir.Terminator) {
 				return counts[j]
 			}
 			w = fg.weights([]uint64{at(tj), at(fj)}) // br: true, then false
-		} else if fg.coldBlock[tMir] && !fg.coldBlock[fMir] {
-			w = []llvm.Attach{fg.trapWeights(true)}
-		} else if fg.coldBlock[fMir] && !fg.coldBlock[tMir] {
-			w = []llvm.Attach{fg.trapWeights(false)}
-		} else if cold, ok := fg.coldGuard[fg.bi]; ok {
-			if tMir == cold && fMir != cold {
+		} else if tMir != mir.NoBlock && fMir != mir.NoBlock {
+			if fg.coldBlock[tMir] && !fg.coldBlock[fMir] {
 				w = []llvm.Attach{fg.trapWeights(true)}
-			} else if fMir == cold && tMir != cold {
+			} else if fg.coldBlock[fMir] && !fg.coldBlock[tMir] {
 				w = []llvm.Attach{fg.trapWeights(false)}
+			} else if cold, ok := fg.coldGuard[fg.bi]; ok {
+				if tMir == cold && fMir != cold {
+					w = []llvm.Attach{fg.trapWeights(true)}
+				} else if fMir == cold && tMir != cold {
+					w = []llvm.Attach{fg.trapWeights(false)}
+				}
 			}
 		}
 		fg.cur.CondBr(on.v, tb, fb, w...)
@@ -461,7 +463,7 @@ func findColdBlocks(b *mir.Body, items *types.Items) map[mir.BlockID]bool {
 	anySeed := false
 	for i := range nb {
 		t := &b.Blocks[i].Term
-		if t.Kind == mir.TermCall && t.Callee.Kind == mir.CallDirect {
+		if t.Kind == mir.TermCall && t.Callee.Kind == mir.CallDirect && t.Spawn == mir.NoLocal {
 			if it := items.Get(t.Callee.Fn.Item); it != nil && it.Key.String() == "std.runtime.Cold" {
 				isSeed[i] = true
 				anySeed = true
@@ -564,7 +566,10 @@ func (fg *fnGen) hasMixedColdSwitch(cases []mir.SwitchCase, def mir.BlockID) boo
 func (fg *fnGen) coldSwitchWeights(cases []mir.SwitchCase, def mir.BlockID) []llvm.Attach {
 	ws := make([]uint64, 1+len(cases))
 	wOf := func(b mir.BlockID) uint64 {
-		if b != mir.NoBlock && fg.coldBlock[b] {
+		if b == mir.NoBlock {
+			return 0
+		}
+		if fg.coldBlock[b] {
 			return 1
 		}
 		return 1048575
