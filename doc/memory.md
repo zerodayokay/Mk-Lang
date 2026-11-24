@@ -113,7 +113,7 @@ Fix it in one of four ways:
 | E0403 | A local read before it is assigned | R3 |
 | E0404, E0508 | An assignment to, or a `mut` borrow of, a local not declared `var` | Add `var` |
 | E0408, E0409 | A copy of a value that is not plain, or a move out of a field or reference | R1, R4 |
-| E0410 | An exported struct whose private fields make it a carrier, unique, linear or interior-writable for loans, without `view`, `mut view` or `linear` | R9, R18 |
+| E0410 | An exported struct whose private fields make it a carrier, unique, linear or interior-writable for loans, without `plain view`, `view`, `mut view` or `linear` | R9, R18 |
 | E0501 to E0504 | An access conflicts with a live loan | R5 |
 | E0505 | A loan outlives the local it borrows | R6, R11 |
 | E0506 | A loan on a temporary kept past its statement | R14 |
@@ -156,8 +156,8 @@ Every type has a kind that decides what happens when a value of it is used. Plai
 
 | Kind | On use | Types |
 |---|---|---|
-| Plain | Copies | Numbers, `bool`, `char`, `&T`, `[]T`, `str`, `fn`, `*T`, and enums and structs of plain fields |
-| Unique | Moves, no obligation | `mut T`, `mut []T`, `List`, every `view` type, anything holding a `Cell`, anything that asserts `Send` or `Share` in `unsafe`, anything holding a unique value |
+| Plain | Copies | Numbers, `bool`, `char`, `&T`, `[]T`, `str`, `fn`, `*T`, `plain view` types, and enums and structs of plain fields |
+| Unique | Moves, no obligation | `mut T`, `mut []T`, `List`, non-`plain` `view` types (`view`, `mut view`), anything holding a `Cell`, anything that asserts `Send` or `Share` in `unsafe`, anything holding a unique value |
 | Linear | Moves, must be consumed (R2) | Types declared `linear`, such as `Arena` and `fs.File`, anything holding a linear value |
 
 Why: a copy is safe only for a value that owns no resource and grants no exclusive access.
@@ -198,7 +198,7 @@ The rules in full:
 
 - A struct's kind is the worst kind among its fields, after type arguments are substituted, so `Pair[Res]` is linear with no keyword.
 - Write `linear` on a type that has no linear field but must be consumed, such as a handle.
-- In a generic body, an unbounded type parameter is treated as linear. `T: Plain` asks for a plain type; a `view` built on raw pointers is not `Plain`.
+- In a generic body, an unbounded type parameter is treated as linear. `T: Plain` asks for a plain type; a non-`plain` `view` built on raw pointers is not `Plain`.
 - `Cell[T]` needs `T: Plain`, because `Get` copies.
 - An array repeat `[e; N]` needs a plain `e` (E0408):
 
@@ -651,7 +651,7 @@ More details of the split:
 - A write to one field leaves the rest alone. Only a write of the whole view replaces it.
 - A use of the whole view, every method call included, needs everything the view was given. A read of one carrier field needs only that field's set.
 - A use of a field that holds no loans as typed, such as a raw pointer, is a use of the whole view.
-- A `mut view` (or any type that takes loan stores through `&`, such as a plain `view` with a loan-interior-writable type argument like `Box[Mutex[?&i32]]`) may write past a shared reference, so a shared reference never keeps one split: `&v`, a `&self` call included, makes it whole. A plain read-only `view` keeps its split across `&v`.
+- A `mut view` (or any type that takes loan stores through `&`, such as a read-only `view` with a loan-interior-writable type argument like `Box[Mutex[?&i32]]`) may write past a shared reference, so a shared reference never keeps one split: `&v`, a `&self` call included, makes it whole. A read-only `view` or `plain view` keeps its split across `&v`.
 
 A view whose fields are read one at a time splits like a struct: declared as `view struct Views`, the `Split` above still compiles.
 
@@ -796,7 +796,7 @@ What "refers to" and "found inside" mean:
 - A type parameter contains itself and what its bounds mention, and `Self` mentions every type parameter.
 - `&Alloc` and `&Heap` supply only `view` results, and `Io` never supplies one.
 
-An exported type whose private fields make it a carrier or unique must be declared `view`, one whose private fields take loan stores through `&` must be declared `mut view`, and one they make linear must be declared `linear` (E0410). So a change to private fields cannot change what a caller is allowed to do.
+An exported type whose private fields make it a `Plain` and `Freeze` carrier must be declared `plain view` (or `view`), one whose private fields make it a non-`plain` carrier or unique must be declared `view`, one whose private fields take loan stores through `&` must be declared `mut view`, and one they make linear must be declared `linear` (E0410). So a change to private fields cannot change what a caller is allowed to do.
 
 **`fn` types and interfaces.** A `fn` type or an interface method states its flows the same way, with parameter names where a clause needs them: `fn(x: &i32): T from x`. A `fn` value or an `impl` method fits only if each of its flows is covered by a declared flow (E0608). So `Id(x: &i32): &i32` does not fit `fn(&i32): T`, which declares no flow.
 
@@ -1825,9 +1825,13 @@ Late(io: Io, h: &Heap, p: mut &i32, v: &i32 into p): OutOfMemory!void {
 
 ### R18. `view` and `ends`
 
-A `view` type is a declared carrier, and it is unique. A plain `view struct` is read-only for loans through `&`: it borrows (such as `List`, `Map`, `Text`, `Box` or `Iter`), and takes loan stores through `&` only if one of its type arguments does (such as `Box[Mutex[?&i32]]`). A `mut view struct` additionally declares that it takes loan stores through `&` (such as `Arena`, `Scope`, `ErasedBox`, `dyn.Ref`, or a custom allocator), and is not `Freeze`.
+A `view` type is a declared carrier:
 
-You need `view` or `mut view` in two cases. A struct built on raw pointers has no reference field to show that it borrows (or writes loans through `&`). An exported struct whose private fields make it a carrier or unique must say `view`, one whose private fields take loan stores through `&` must say `mut view`, and one they make linear must say `linear` (E0410). Why: callers must see from the declaration alone whether a value borrows or takes loan stores through `&`.
+- A **`plain view struct`** is bitwise copyable (`Kind == Plain`, `Carrier == true`, `Freeze == true`) — the user-defined counterpart of `&T`, `[]T` and `str` for copyable index or slice handles such as `plain view struct Ref[T] { idx: u32 }` or `SpanView[T] { ptr: []T }`. Every field must be `Plain` and `Freeze` under its own generic bounds (E0408), so phantom handles stay `Plain + Freeze` even when `T` is unique or linear; and `ends` and holder `into` clauses on by-value or `&` parameters (`self`, `&self`) are forbidden (E0507), while `mut PlainView` allows `into` like `mut []T`.
+- A **read-only `view struct`** (without `plain` or `mut`) is unique and read-only for loans through `&`: it borrows (such as `List`, `Map`, `Text`, `Box` or `Iter`), and takes loan stores through `&` only if one of its type arguments does (such as `Box[Mutex[?&i32]]`).
+- A **`mut view struct`** additionally declares that it takes loan stores through `&` (such as `Arena`, `Scope`, `ErasedBox`, `dyn.Ref`, or a custom allocator), is unique, and is not `Freeze`.
+
+You need `plain view`, `view` or `mut view` in two cases. A struct built on raw pointers has no reference field to show that it borrows (or writes loans through `&`), and a copyable index handle has no reference field to bind it to its backing arena or pool. An exported struct whose private fields make it a `Plain` and `Freeze` carrier must say `plain view` (or `view`), one whose private fields make it unique or a raw-pointer carrier must say `view`, one whose private fields take loan stores through `&` must say `mut view`, and one they make linear must say `linear` (E0410). Why: callers must see from the declaration alone whether a value borrows, copies, or takes loan stores through `&`.
 
 ```mk
 // verdict: parse
@@ -1933,9 +1937,9 @@ Peek(p: *i32): i32 {
 
 Five duties are worth naming:
 
-- **Interior-writable views.** A `view` whose `unsafe` code writes loans through `&self` behind raw pointers, or hands out loan-interior-writable storage (such as `&Mutex[?&i32]` or `&Alloc`) from raw pointers through `&self`, must be declared `mut view struct` (R18). A plain `view struct` promises that `&self` cannot accept loan stores except through its type arguments.
-- **Borrowed exclusive views.** A plain `view struct` whose raw pointer borrows external storage exclusively for writing through `mut self` (such as `Guard[T]`, `SpinGuard[T]` or `ChunksMut[T]`) must carry a `[0]mut T` marker field or be declared `mut view struct`. Without an exclusive marker, passing the view by value looks like moving an owning container (`List[T]`, `Box[T]`) rather than borrowing mutable external memory.
-- **Type-erased views.** A non-generic plain `view struct` that erases a carrier behind raw pointers must not return that carrier to callers (even through `mut self` or consuming `self`), because a non-generic plain view carries no type argument for the borrow checker to walk. A type-erased box that hands its value back must be declared `mut view struct` (`ErasedBox`, `dyn.Ref`); a plain `view struct` like `core.SealedBox` may expose its contents only to zero-flow callbacks returning `void`.
+- **Interior-writable views.** A `view` whose `unsafe` code writes loans through `&self` behind raw pointers, or hands out loan-interior-writable storage (such as `&Mutex[?&i32]` or `&Alloc`) from raw pointers through `&self`, must be declared `mut view struct` (R18). A read-only `view struct` promises that `&self` cannot accept loan stores except through its type arguments, and a `plain view struct` holds only `Plain`, `Freeze` fields with no `ends` or shared `into`.
+- **Borrowed exclusive views.** A read-only `view struct` whose raw pointer borrows external storage exclusively for writing through `mut self` (such as `Guard[T]`, `SpinGuard[T]` or `ChunksMut[T]`) must carry a `[0]mut T` marker field or be declared `mut view struct`. Without an exclusive marker, passing the view by value looks like moving an owning container (`List[T]`, `Box[T]`) rather than borrowing mutable external memory.
+- **Type-erased views.** A non-generic read-only `view struct` that erases a carrier behind raw pointers must not return that carrier to callers (even through `mut self` or consuming `self`), because a non-generic read-only view carries no type argument for the borrow checker to walk. A type-erased box that hands its value back must be declared `mut view struct` (`ErasedBox`, `dyn.Ref`); a read-only `view struct` like `core.SealedBox` may expose its contents only to zero-flow callbacks returning `void`.
 - **Fresh memory.** An allocator method that returns `mut T from self` with a shared `self`, such as `Arena.Put` and `Arena.Slice`, hands out an exclusive reference backed by a shared loan, so two results are usable at once. The loan rules do not check that they point at disjoint storage; the `unsafe` body does, by returning fresh memory every time. A method on `&Arena` that returned a `mut` reference to existing contents would be unsound, and the rules would not catch it.
 - **Stores into owned memory.** Memory that a by-value parameter owns, as a `Box` owns its value, may take a store with no `into` clause when two things hold. The body moves that parameter into the result and nowhere else, and the result is a carrier `from` both that parameter and the stored value. `ErasedBox.Fill(b: Box[?T], x: T): ErasedBox from b, x` writes `x` into the memory `b` owns. `b` is consumed, so only the result reaches that memory afterwards, and the result holds `x`'s loans beside `b`'s. Both sources are needed: with the result `from b` alone, `x`'s loans could end while the box still holds `x`. A checked body cannot make this store (E0604), so only `unsafe` code uses it. `Box[T].New(a: &Alloc, x: T): OutOfMemory!Box[T] from a, x` works the same way.
 
@@ -2103,7 +2107,7 @@ A **shallow** access, a write or a scope end, conflicts with loans on the place 
 | What a parameter `p` points at | At the first level, `e`'s loans must already be held there, or be declared `into p`. Deeper, only a declared `into` counts. Otherwise E0604. A loan on a local is E0505 |
 | A global | `e` may hold only the static pseudo-loan, else E0605 (R16) |
 
-A write into a field, variant or array element of a parameter that neither is nor holds a view counts as the first level. A type parameter there counts as a possible view unless it is bounded by `Plain`, since every view is unique (R1). So a generic `Pair[T: Plain].Dup(mut self)` writing `self.b = self.a`, or `Rev[T: Plain](xs: mut []T)` writing `xs[i] = xs[j]`, needs no clause.
+A write into a field, variant or array element of a parameter that neither is nor holds a non-`plain` view counts as the first level. A type parameter there counts as a possible unique view unless it is bounded by `Plain`, since every non-`plain` view is unique (R1). So a generic `Pair[T: Plain].Dup(mut self)` writing `self.b = self.a`, a `TwoSyms` writing `self.a = self.b` on `plain view struct Sym`, or `Rev[T: Plain](xs: mut []T)` writing `xs[i] = xs[j]`, needs no clause.
 
 `Get` returns `mut *s.m`, so its result holds the loan on the local `sv`. The type of `sv` holds a `mut` reference, so a write through the result lands on what `x` points at, which outlives `n`:
 
@@ -2185,7 +2189,8 @@ A signature is the whole contract between a function and its callers. These are 
 | `&self into p` | The method may store `self` somewhere inside `p` | R11 |
 | `*q into p`, after the parameters | The function may store what `q` points at somewhere inside `p` | R11 |
 | `ends self` | The call ends every loan on `self` | R18 |
-| `view struct` | The type borrows, though no field shows it; read-only for loans through `&` | R18 |
+| `plain view struct` | The type is a `Plain`, `Freeze` carrier handle: copied on use, cannot hide loans behind raw pointers | R1, R18 |
+| `view struct` | The type borrows, though no field shows it; unique, read-only for loans through `&` | R18 |
 | `mut view struct` | A `view struct` that also accepts loan stores through `&` | R16, R18 |
 | `linear struct` | Values of the type must be consumed | R1, R2 |
 

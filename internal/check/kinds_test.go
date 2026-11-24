@@ -62,10 +62,11 @@ func (h *hand) item(name string, kind types.ItemKind, d types.Decl) types.ItemID
 	return id
 }
 
-// strct adds a struct with gens type parameters; kw holds "linear", "view", "mut view".
+// strct adds a struct with gens type parameters; kw holds "linear", "view", "mut view", "plain view".
 func (h *hand) strct(name string, gens int, kw string, fields ...types.TypeID) types.ItemID {
 	mv := contains(kw, "mut view")
-	d := &types.StructDecl{Linear: contains(kw, "linear"), View: contains(kw, "view") || mv, MutView: mv}
+	pv := contains(kw, "plain view")
+	d := &types.StructDecl{Linear: contains(kw, "linear"), View: contains(kw, "view") || mv || pv, MutView: mv, PlainView: pv}
 	for i := 0; i < gens; i++ {
 		d.Generics = append(d.Generics, types.GenericParam{Name: h.in.Intern(fmt.Sprintf("T%d", i))})
 	}
@@ -371,6 +372,41 @@ func TestLoanInterior_RecursivePlainView(t *testing.T) {
 		if !fn.LoanInterior || !fl.LoanInterior {
 			t.Errorf("nodeFirst=%v: Node.LoanInterior=%v RoList[Node].LoanInterior=%v, want both true",
 				nodeFirst, fn.LoanInterior, fl.LoanInterior)
+		}
+	}
+}
+
+func TestPlainViewFacts(t *testing.T) {
+	h := newHand(t)
+	k, tab := &h.c.known, h.tab
+	linRes := h.strct("Res", 0, "linear", types.Int)
+	ref := h.strct("Ref", 1, "plain view", types.U32)
+	span := h.strct("Span", 1, "plain view", tab.Slice(tab.Param(0)), types.U32)
+	optRef := tab.Optional(h.named(ref, h.named(linRes)))
+	mutexRef := h.named(k.Mutex, tab.Optional(tab.Ref(types.Int)))
+	rows := []struct {
+		name         string
+		t            types.TypeID
+		kind         types.Kind
+		carrier      bool
+		view         bool
+		plainView    bool
+		mutView      bool
+		loanInterior bool
+		freeze       bool
+	}{
+		{"Ref[i32]", h.named(ref, types.I32), types.Plain, true, true, true, false, false, true},
+		{"Ref[Res]", h.named(ref, h.named(linRes)), types.Plain, true, true, true, false, false, true},
+		{"Ref[Mutex[?&int]]", h.named(ref, mutexRef), types.Plain, true, true, true, false, false, true},
+		{"Span[Res]", h.named(span, h.named(linRes)), types.Plain, true, true, true, false, false, true},
+		{"?Ref[Res]", optRef, types.Plain, true, false, false, false, false, true},
+	}
+	for _, r := range rows {
+		f := h.c.Facts(r.t)
+		if f.Kind != r.kind || f.Carrier != r.carrier || f.View != r.view || f.PlainView != r.plainView ||
+			f.MutView != r.mutView || f.LoanInterior != r.loanInterior || f.Freeze != r.freeze {
+			t.Errorf("%s: got %+v, want kind=%v carrier=%v view=%v plainView=%v mutView=%v loanInt=%v freeze=%v",
+				r.name, f, r.kind, r.carrier, r.view, r.plainView, r.mutView, r.loanInterior, r.freeze)
 		}
 	}
 }

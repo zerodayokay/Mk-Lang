@@ -91,6 +91,9 @@ type Shape struct {
 	// MutView is true on a `mut view struct` itself (not on wrappers or
 	// arrays/optionals of it). MutView implies View and LoanInterior.
 	MutView bool
+	// PlainView is true on a `plain view struct` itself (not on wrappers or
+	// arrays/optionals of it). PlainView implies View, Kind == Plain and Freeze.
+	PlainView bool
 	// LoanInterior is true when a shared reference `&T` can store a loan into
 	// interior storage: a `mut view struct`, `Arena`, `Scope`, a `Cell[U]` /
 	// `Mutex[U]` / `Chan[U]` whose payload `U` is a carrier, or a composite
@@ -117,6 +120,9 @@ type Facts struct {
 	// MutView is true on a `mut view struct` itself; cleared by wrappers like
 	// `[N]T`, `?T` and `E!T`.
 	MutView bool
+	// PlainView is true on a `plain view struct` itself; cleared by wrappers
+	// like `[N]T`, `?T` and `E!T`.
+	PlainView bool
 	// Allocator is true for Arena, Alloc and Heap.
 	Allocator bool
 	// Interior is true for a type that is, or holds inline (not behind a
@@ -252,21 +258,22 @@ const (
 // order and packing, enum discriminants (Discrs, which fix the tag width and
 // VariantLayout.Discr), the declared tag, and Marks.
 type ShapeTerm struct {
-	Kind     ShapeTermKind
-	Leaf     Shape
-	Param    uint32
-	Fields   []ShapeTerm
-	Packed   uint32
-	View     bool
-	MutView  bool
-	Linear   bool
-	Marks    TermMarks
-	Variants [][]ShapeTerm
-	Discrs   []uint64
-	Tag      TypeID
-	Len      ConstArg
-	Elem     *ShapeTerm
-	Errors   ErrorSetID
+	Kind      ShapeTermKind
+	Leaf      Shape
+	Param     uint32
+	Fields    []ShapeTerm
+	Packed    uint32
+	View      bool
+	MutView   bool
+	PlainView bool
+	Linear    bool
+	Marks     TermMarks
+	Variants  [][]ShapeTerm
+	Discrs    []uint64
+	Tag       TypeID
+	Len       ConstArg
+	Elem      *ShapeTerm
+	Errors    ErrorSetID
 	// Align is a TermStruct's align(n), 0 when absent, read with Packed
 	// when an instance's layout is computed.
 	Align uint32

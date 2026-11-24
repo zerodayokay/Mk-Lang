@@ -708,6 +708,7 @@ func (x *tctx) clauses(flows []ast.Flow, sig *types.Signature) *flowClauses {
 		case *ast.EndsFlow:
 			if p := param(f.Name); p != types.NoParam {
 				cl.ends = append(cl.ends, p)
+				cl.endsAt = append(cl.endsAt, f.Span())
 			}
 		}
 	}

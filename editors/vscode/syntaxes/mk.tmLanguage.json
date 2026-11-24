@@ -401,8 +401,8 @@
       }
     },
     "type-declaration": {
-      "comment": "struct S, enum E, error E, interface I, type T, and the modifiers before them (export, open, unsafe, linear, mut view, view, packed, align).",
-      "match": "\\b(?:(export)\\s+)?(?:(open)\\s+)?(?:(unsafe)\\s+)?(?:(linear)\\s+)?(?:(?:(mut)\\s+)?(view)\\s+)?(?:(packed)(?:\\([0-9]+\\))?\\s+)?(?:(align)\\([0-9_]+\\)\\s+)?(struct|enum|error|interface|type)\\s+([A-Za-z_][A-Za-z0-9_]*)(\\[[^\\]]*\\])?",
+      "comment": "struct S, enum E, error E, interface I, type T, and the modifiers before them (export, open, unsafe, linear, mut view, plain view, view, packed, align).",
+      "match": "\\b(?:(export)\\s+)?(?:(open)\\s+)?(?:(unsafe)\\s+)?(?:(linear)\\s+)?(?:(?:(mut|plain)\\s+)?(view)\\s+)?(?:(packed)(?:\\([0-9]+\\))?\\s+)?(?:(align)\\([0-9_]+\\)\\s+)?(struct|enum|error|interface|type)\\s+([A-Za-z_][A-Za-z0-9_]*)(\\[[^\\]]*\\])?",
       "captures": {
         "1": {
           "name": "storage.modifier.export.mk"
@@ -497,11 +497,15 @@
           "match": "\\b(?:from|into|ends)\\b(?!\\s*(?::=|=[^=]|:|\\.|\\())"
         },
         {
-          "comment": "Contextual words that are keywords only in their positions: packed, align, cpu, section, naked, open, fuel.",
+          "comment": "Contextual words that are keywords only in their positions: packed, plain, align, cpu, section, naked, open, fuel.",
           "patterns": [
             {
               "name": "storage.modifier.mk",
-              "match": "\\b(?:packed|align)\\b(?=\\s*\\()|\\bpacked\\b(?=\\s+(?:struct|align)\\b)"
+              "match": "\\b(?:packed|align)\\b(?=\\s*\\()|\\bpacked\\b(?=\\s+(?:struct|align|plain|linear|view|mut)\\b)"
+            },
+            {
+              "name": "storage.modifier.mk",
+              "match": "\\bplain\\b(?=\\s+view\\b)"
             },
             {
               "name": "storage.modifier.mk",

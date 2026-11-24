@@ -199,6 +199,13 @@ func (m *Module) coherence(it *types.Item) {
 			// A built-in bound has no module: the assertion lives with C.
 			m.implConflict(it, "orphan", "`unsafe impl "+name+"` must be in the module that declares the type", types.NoItem).
 				Alt("move the impl to the type's module")
+			return
+		}
+		if ck.item != types.NoItem {
+			if sd, ok := c.cfg.Items.Get(ck.item).Decl.(*types.StructDecl); ok && sd.PlainView {
+				m.implConflict(it, "plain view", "`unsafe impl "+name+"` cannot be asserted on a `plain view struct`", types.NoItem).
+					Alt("remove `unsafe impl " + name + "`")
+			}
 		}
 		return
 	}

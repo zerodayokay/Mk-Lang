@@ -104,6 +104,7 @@ async function main() {
     ends: ['Release(self) ends self {', 'keyword.other.flow'],
     fuel: ['const T = Build() fuel 100_000_000', 'keyword.other.fuel'],
     packed: ['export packed struct Header {', 'storage.modifier'],
+    plain: ['plain view struct Handle {', 'storage.modifier'],
     open: ['export open type Error = A | B', 'storage.modifier'],
     self: ['    return self.v', 'variable.language.self'],
     Self: ['    return Self(v: 1)', 'variable.language.self'],
@@ -116,7 +117,7 @@ async function main() {
     }
     expect(g, contextual[w][0], w, contextual[w][1]);
   }
-  for (const w of ['from', 'into', 'ends', 'fuel', 'packed', 'open', 'result']) {
+  for (const w of ['from', 'into', 'ends', 'fuel', 'packed', 'plain', 'open', 'result']) {
     expect(g, `    ${w} := 3`, w, 'source.mk');
   }
   // The systems words, at their positions.
@@ -236,6 +237,9 @@ async function main() {
     ['export error Unknown(arg: int)', 'Unknown', 'entity.name.type'],
     ['export interface Reader {', 'interface', 'storage.type.interface'],
     ['export view struct List[T] {', 'view', 'storage.modifier'],
+    ['export plain view struct Ref[T] {', 'plain', 'storage.modifier'],
+    ['export plain view struct Ref[T] {', 'view', 'storage.modifier'],
+    ['export align(8) packed(4) plain view struct Handle[T] {', 'plain', 'storage.modifier'],
     ['export mut view struct Spin[T] {', 'mut', 'storage.modifier'],
     ['export mut view struct Spin[T] {', 'view', 'storage.modifier'],
     ['export mut view struct Spin[T] {', 'T', 'entity.name.type.parameter'],

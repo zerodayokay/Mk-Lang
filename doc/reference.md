@@ -451,7 +451,7 @@ See also: [the style guide](style.md) for choosing names.
 
 ### Keywords
 
-Keywords: `import export struct enum error interface impl type const var linear view gen quote test extern if else for in match return break continue defer onerr fail try scope go unsafe asm become mut fn is requires ensures invariant`. Contextual: `from into ends fuel packed open self Self result`.
+Keywords: `import export struct enum error interface impl type const var linear view gen quote test extern if else for in match return break continue defer onerr fail try scope go unsafe asm become mut fn is requires ensures invariant`. Contextual: `from into ends fuel packed plain open self Self result`.
 
 A keyword cannot be a name. A contextual word is a keyword only where the grammar expects it, and a plain name elsewhere:
 
@@ -460,6 +460,7 @@ A keyword cannot be a name. A contextual word is a keyword only where the gramma
 | In a signature's flows: what a result or a parameter borrows | `from`, `into`, `ends` | [section 8](#8-ownership-and-borrowing) |
 | After a `const` initializer or a `gen` call: the step budget of compile-time evaluation | `fuel` | [section 11](#11-compile-time) |
 | Before `struct`: a layout with no padding | `packed` | [section 4](#4-declarations) |
+| Before `view struct`: a copyable, `Freeze` carrier view | `plain` | [section 4](#4-declarations) |
 | Before `enum` or `type`: a set a later release may extend | `open` | [error sets](#error-sets) |
 | The receiver of a method, and its type | `self`, `Self` | [section 4](#4-declarations) |
 | In an `ensures` clause: the function's return value | `result` | [section 15](#15-contracts-and-tests) |
@@ -2087,7 +2088,7 @@ Area(s: Shape): f64 {
 | Form | Declares |
 |---|---|
 | `struct Name { f: T }` | A [struct](#structs): named fields, held by value |
-| `linear struct`, `view struct`, `mut view struct` | A struct with a stated [kind](#linear-and-view-structs) |
+| `linear struct`, `plain view struct`, `view struct`, `mut view struct` | A struct with a stated [kind](#linear-and-view-structs) |
 | `enum Name { ... }` | An [enum](#enums): one of several variants, one per line, each with its own fields |
 | `enum Name: u8 { A = 1 }` | An enum with an integer [tag](#enum-tags) |
 | `error Name(f: T)` | An error ([section 9](#9-errors)) |
@@ -2189,10 +2190,11 @@ See also: [struct patterns](#struct-patterns) and [destructuring](#destructuring
 
 ### `linear` and `view` structs
 
-A struct's kind is the worst kind of its fields ([section 3](#3-types-and-kinds)). A struct that holds a linear value is linear, with no keyword. Three forms state a kind the fields do not show:
+A struct's kind is the worst kind of its fields ([section 3](#3-types-and-kinds)). A struct that holds a linear value is linear, with no keyword. Four forms state a kind or view behaviour the fields do not show:
 
 - `linear struct` makes the struct linear even when its fields are plain. Every value must then be consumed on every path: passed on by value, or taken apart by a destructure. A struct with private fields is taken apart only in its own module, usually in a method that takes `self`.
-- `view struct` declares a carrier of loans, such as a struct built on raw pointers, whose `&self` methods do not store loans through interior state. A view is unique: it moves on use.
+- `plain view struct` declares a copyable, shared-only carrier view (`Kind == Plain`, `Carrier == true`, `Freeze == true`). Every field must be `Plain` and `Freeze` under the struct's own bounds (no unique/linear fields, no raw pointers, no `Cell`/`Mutex`/`Atomic`, and no unconstrained type parameter `T` stored by value); it forbids `ends` and holder `into` clauses on non-`mut` parameters (`self` / `&self`), while keeping phantom handles such as `plain view struct Ref[T] { idx: u32 }` copyable for any `T`.
+- `view struct` declares a unique carrier of loans, such as a struct built on raw pointers, whose `&self` methods do not store loans through interior state. A `view struct` without `plain` moves on use.
 - `mut view struct` declares an interior-writable view: a carrier whose `&self` methods store loans behind raw pointers or interior state (such as `Arena` or `dyn.Ref`). It is unique and not `Freeze`. See [`view` and `ends`](memory.md#r18-view-and-ends).
 
 ```mk
@@ -5075,7 +5077,7 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
 | `mut p` | An exclusive borrow: reads and writes, nothing else touches `p` meanwhile. A local `p` must be `var` (E0508) | [R5](memory.md#r5-the-conflict-table) |
 | `self`, `&self`, `mut self` | A method takes its receiver by value, by shared borrow or by exclusive borrow | [Functions and methods](#functions-and-methods) |
 | `for x in mut xs` | Borrows each element exclusively in turn | [R20](memory.md#r20-disjoint-elements) |
-| `from`, `into`, `ends`, `view struct`, `mut view struct`, `linear struct` | What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | [Signatures at a glance](memory.md#5-signatures-at-a-glance) |
+| `from`, `into`, `ends`, `plain view struct`, `view struct`, `mut view struct`, `linear struct` | What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | [Signatures at a glance](memory.md#5-signatures-at-a-glance) |
 | `defer s`, `onerr s` | Run `s` at every exit, or at error exits only | [R21](memory.md#r21-onerr-and-exits), [`onerr`](#cleanup-on-the-error-path-onerr) |
 
 - A borrow lasts until the last use of anything that holds it, not until the end of the block.
@@ -9044,7 +9046,7 @@ export Make(): Inner { // <- E0412
 
 ### Exported kinds
 
-A struct's kind follows from its fields ([kinds](#kinds)). Another module cannot see private fields. So an exported struct whose private fields make it linear must say `linear`, one they make interior-writable for loans (such as holding a private `mut view`, or a `Cell`, `Mutex` or `Chan` of a carrier) must say `mut view`, and one they make a carrier of loans or unique must say `view` (E0410). Its kind is then visible in the declaration.
+A struct's kind follows from its fields ([kinds](#kinds)). Another module cannot see private fields. So an exported struct whose private fields make it linear must say `linear`, one they make interior-writable for loans (such as holding a private `mut view`, or a `Cell`, `Mutex` or `Chan` of a carrier) must say `mut view`, one whose private fields are all `Plain` and `Freeze` carriers must say `plain view` (or `view`), and one they make unique must say `view` (E0410). Its kind is then visible in the declaration.
 
 ```mk
 // verdict: reject E0410
@@ -9053,7 +9055,7 @@ export struct Window { // <- E0410
 }
 ```
 
-Write `export view struct Window`, or export the field. A struct that is both linear and interior-writable writes `export linear mut view struct`.
+Write `export plain view struct Window`, `export view struct Window`, or export the field. A struct that is both linear and interior-writable writes `export linear mut view struct`.
 
 - A private field of type `std.raw.Atomic` counts as exported for this rule. That is why `Mutex` has the kind [section 3](#3-types-and-kinds) gives it.
 - `mk apidiff` reports a type that gains or loses `Send` or `Share` between two versions ([tools](tools.md#6-api-diff)).
@@ -9444,7 +9446,7 @@ impl Send for Buf {} // <- E1101
 
 ### `view` structs and `ends self`
 
-A struct built on raw pointers has no reference field to show that it borrows. `view struct` declares it a carrier of loans whose `&self` methods do not store loans behind raw pointers; `mut view struct` declares an interior-writable view whose `&self` methods do, so the borrow rules treat a shared step into it as writable and codegen marks it not `Freeze`. `ends self` on a release function, such as `Arena.Reset`, ends every loan on `self`. Both are rules of [the memory model, R18](memory.md#r18-view-and-ends), which shows a `view struct Iter[T]` over two raw pointers.
+A struct built on raw pointers has no reference field to show that it borrows. `plain view struct` declares a copyable, `Freeze` carrier handle whose fields are all `Plain` and `Freeze`; `view struct` declares a unique carrier whose `&self` methods do not store loans behind raw pointers; `mut view struct` declares an interior-writable view whose `&self` methods do, so the borrow rules treat a shared step into it as writable and codegen marks it not `Freeze`. `ends self` on a release function, such as `Arena.Reset`, ends every loan on `self`. Both are rules of [the memory model, R18](memory.md#r18-view-and-ends), which shows a `view struct Iter[T]` over two raw pointers.
 
 ### Undefined behaviour
 

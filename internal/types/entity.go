@@ -299,7 +299,10 @@ type StructDecl struct {
 	// MutView is true for `mut view struct`: a view that writes or stores into
 	// hidden storage through `&self`. MutView implies View.
 	MutView bool
-	Linear  bool
+	// PlainView is true for `plain view struct`: a shared-only, Plain + Freeze
+	// bitwise-copyable carrier view. PlainView implies View.
+	PlainView bool
+	Linear    bool
 	// Packed is 0 for a padded struct, else the alignment cap: 1 for bare
 	// packed, n for packed(n).
 	Packed uint32

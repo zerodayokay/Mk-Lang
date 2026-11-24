@@ -157,7 +157,7 @@ var keywordDocs = map[string][]keywordDoc{
 		{Section: "reference: Errors", Text: "`e else { ... }` handles a failure where it happens. When `e` succeeds, the result is its value. When it fails, the block runs. `else` works on `E!T` and on an optional `?T`, where `none` is the failure."},
 	},
 	"ends": {
-		{Section: "reference: Ownership and borrowing", Text: "`from`, `into`, `ends`, `view struct`, `mut view struct`, `linear struct`: What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | Signatures at a glance"},
+		{Section: "reference: Ownership and borrowing", Text: "`from`, `into`, `ends`, `plain view struct`, `view struct`, `mut view struct`, `linear struct`: What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | Signatures at a glance"},
 		{Section: "memory model: Signatures at a glance", Text: "`ends self`: The call ends every loan on `self` | R18"},
 	},
 	"ensures": {
@@ -194,7 +194,7 @@ var keywordDocs = map[string][]keywordDoc{
 		{Section: "reference: Statements", Text: "`for` is Mk's only loop. Its header says what it repeats over."},
 	},
 	"from": {
-		{Section: "reference: Ownership and borrowing", Text: "`from`, `into`, `ends`, `view struct`, `mut view struct`, `linear struct`: What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | Signatures at a glance"},
+		{Section: "reference: Ownership and borrowing", Text: "`from`, `into`, `ends`, `plain view struct`, `view struct`, `mut view struct`, `linear struct`: What signatures and type declarations promise about loans and consumption. A receiver takes `into` like a parameter: `Names.Keys(&self into arena, arena: &Arena)` | Signatures at a glance"},
 		{Section: "memory model: Rules", Text: "`from p`: Borrows `p`: the result holds `H(p)`, and `p` stays borrowed, whatever the table above says | Several parameters could supply the result"},
 	},
 	"gen": {
@@ -256,7 +256,7 @@ var keywordDocs = map[string][]keywordDoc{
 		{Section: "reference: Unsafe and C", Text: "`lateout(class) p`: An output assigned after all inputs are read, so it may share an input's register"},
 	},
 	"linear": {
-		{Section: "reference: Declarations", Text: "`linear struct`, `view struct`, `mut view struct`: A struct with a stated kind"},
+		{Section: "reference: Declarations", Text: "`linear struct`, `plain view struct`, `view struct`, `mut view struct`: A struct with a stated kind"},
 		{Section: "memory model: Signatures at a glance", Text: "`linear struct`: Values of the type must be consumed | R1, R2"},
 	},
 	"match": {
@@ -298,6 +298,10 @@ var keywordDocs = map[string][]keywordDoc{
 	},
 	"packed": {
 		{Section: "reference: Declarations", Text: "`packed struct`: No padding. Alignment 1."},
+	},
+	"plain": {
+		{Section: "reference: Lexical rules", Text: "Before `view struct`: a copyable, `Freeze` carrier view: `plain` | section 4"},
+		{Section: "memory model: Signatures at a glance", Text: "`plain view struct`: The type is a `Plain`, `Freeze` carrier handle: copied on use, cannot hide loans behind raw pointers | R1, R18"},
 	},
 	"preserves_flags": {
 		{Section: "reference: Unsafe and C", Text: "`options(...)`: `pure`, `nomem`, `readonly`, `preserves_flags`, `nostack`, `noreturn`, `att` and `raw`. With `noreturn`, the statement never ends"},
@@ -372,8 +376,8 @@ var keywordDocs = map[string][]keywordDoc{
 		{Section: "reference: Declarations", Text: "`var Name: T = e`: A global variable"},
 	},
 	"view": {
-		{Section: "reference: Declarations", Text: "`linear struct`, `view struct`, `mut view struct`: A struct with a stated kind"},
-		{Section: "memory model: Signatures at a glance", Text: "`view struct`: The type borrows, though no field shows it; read-only for loans through `&` | R18"},
+		{Section: "reference: Lexical rules", Text: "Before `view struct`: a copyable, `Freeze` carrier view: `plain` | section 4"},
+		{Section: "memory model: Signatures at a glance", Text: "`view struct`: The type borrows, though no field shows it; unique, read-only for loans through `&` | R18"},
 	},
 	"void": {
 		{Section: "reference: Types and kinds", Text: "`void` is the result of a function that returns no value; leaving out the result type means `void`. `never` is the result of a function that does not return at all, such as `Panic`."},

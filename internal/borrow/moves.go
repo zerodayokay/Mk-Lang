@@ -17,6 +17,7 @@ import (
 
 	"mk/internal/diag"
 	"mk/internal/mir"
+	"mk/internal/types"
 )
 
 // useCheck is the use check on root r. allowTaken says the use is one of
@@ -74,8 +75,9 @@ func (c *checker) movedUse(ctx *stmtCtx, r rootID, sites setID) {
 			Text("place", c.rootName(r)).Loc("moved_at", c.body.Span(c.siteSpan(first))).
 			Loc("loop", c.body.Span(c.body.Loops[loop].Span))
 	} else {
-		c.errAt(diag.E0401, ctx.span, "%s is used after it was moved", c.rootName(r)).
+		dg := c.errAt(diag.E0401, ctx.span, "%s is used after it was moved", c.rootName(r)).
 			Text("place", c.rootName(r)).Loc("moved_at", c.body.Span(c.siteSpan(first)))
+		c.suggestPlainView(dg, r)
 	}
 	c.reported = c.sets.unite(c.reported, sites)
 }
@@ -191,4 +193,119 @@ func (c *checker) reachesInIteration(l mir.LoopID, in []bool, s uint32, ctx *stm
 		}
 	}
 	return false
+}
+
+// suggestPlainView attaches a note suggesting `plain view struct` on E0401 when
+// the moved root is a same-module `view struct` whose fields are all Plain +
+// Freeze (without unconstrained type parameters stored by value) and none of
+// its methods declare `ends` or non-`mut` holder `into` clauses on `self`.
+func (c *checker) suggestPlainView(dg *diag.Diagnostic, r rootID) {
+	if dg == nil || c.tab == nil || c.tab.Items() == nil || c.env == nil || c.env.Module == nil {
+		return
+	}
+	typ := c.roots[r].typ
+	ty := c.tab.Get(typ)
+	if ty.Kind != types.KNamed || ty.Item == types.NoItem {
+		return
+	}
+	it := c.tab.Items().Get(ty.Item)
+	if it.Module != c.env.Module.ID {
+		return
+	}
+	sd, ok := it.Decl.(*types.StructDecl)
+	if !ok || !sd.View || sd.MutView || sd.PlainView || sd.Linear {
+		return
+	}
+	for _, f := range sd.Fields {
+		if c.hasBareParamByValue(f.Type, map[types.TypeID]bool{}) {
+			return
+		}
+	}
+	for _, ft := range c.w.inlineFields(typ) {
+		xf := c.w.factsOf(ft)
+		if xf.Kind != types.Plain || !xf.Freeze {
+			return
+		}
+	}
+	if !c.viewHasOnlyCopyableMethods(it.ID) {
+		return
+	}
+	dg.Alt("if this view is shared-only and copyable, declare it `plain view struct`")
+}
+
+func (c *checker) hasBareParamByValue(t types.TypeID, seen map[types.TypeID]bool) bool {
+	if t == types.NoType || t == types.Poison || seen[t] {
+		return false
+	}
+	seen[t] = true
+	ty := c.tab.Get(t)
+	switch ty.Kind {
+	case types.KParam, types.KSelf:
+		return true
+	case types.KOptional, types.KArray, types.KErrorUnion:
+		return c.hasBareParamByValue(ty.Elem, seen)
+	case types.KRecord:
+		for _, f := range ty.Fields {
+			if c.hasBareParamByValue(f.Type, seen) {
+				return true
+			}
+		}
+	case types.KNamed:
+		it := c.tab.Items().Get(ty.Item)
+		if sd, ok := it.Decl.(*types.StructDecl); ok && !sd.View {
+			for _, f := range sd.Fields {
+				if c.hasBareParamByValue(f.Type, seen) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (c *checker) viewHasOnlyCopyableMethods(structID types.ItemID) bool {
+	items := c.tab.Items()
+	disqualifies := func(sig *types.Signature) bool {
+		if sig.Receiver == types.NoReceiver {
+			return false
+		}
+		if slices.Contains(sig.Flows.Ends, 1) {
+			return true
+		}
+		if sig.Receiver != types.ByMut {
+			for _, st := range sig.Flows.Stores {
+				if st.Into == 1 {
+					return true
+				}
+			}
+			for _, pr := range sig.Params {
+				if pr.Into == 1 {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, mid := range c.env.Module.Items {
+		mit := items.Get(mid)
+		if mit.Owner == structID && mit.Kind == types.KindFunc {
+			c.readSig(mit.ID)
+			if fd, ok := mit.Decl.(*types.FuncDecl); ok && disqualifies(&fd.Sig) {
+				return false
+			}
+		}
+		if mit.Kind == types.KindImpl {
+			im, ok := mit.Decl.(*types.ImplDecl)
+			if !ok || c.tab.Kind(im.For) != types.KNamed || c.tab.Get(im.For).Item != structID {
+				continue
+			}
+			for _, mthID := range im.Methods {
+				c.readSig(mthID)
+				if fd, ok := items.Get(mthID).Decl.(*types.FuncDecl); ok && disqualifies(&fd.Sig) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }

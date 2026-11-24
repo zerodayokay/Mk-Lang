@@ -741,11 +741,11 @@ func (c *checker) ownInline(pi *pathInfo, si int, t rootID) bool {
 	// none a view, and none a type parameter or Self, which an instance may
 	// make a view.
 	for j := si; j < last; j++ {
-		if ct := pi.types[j]; c.w.factsOf(ct).View || c.typeVar(ct) {
+		if ct := pi.types[j]; (c.w.factsOf(ct).View && !c.w.factsOf(ct).PlainView) || c.typeVar(ct) {
 			return false
 		}
 	}
-	return last != si && !c.w.holdsView(pi.types[last]) && !c.inlineParam(pi.types[last], map[types.TypeID]bool{})
+	return last != si && !c.w.holdsNonPlainView(pi.types[last]) && !c.inlineParam(pi.types[last], map[types.TypeID]bool{})
 }
 
 // inlineParam reports whether t, or a type inline in it, is a type

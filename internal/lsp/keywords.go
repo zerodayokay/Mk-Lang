@@ -92,12 +92,12 @@ var universeDocs = map[string]keywordDoc{
 	"AlignOf":   {Section: "reference: Types and kinds", Text: "`SizeOf[T]()` and `AlignOf[T]()` give a type's size and alignment in bytes, as an `int`."},
 	"ok":        {Section: "reference: Errors", Text: "`match e { ok(v) { ... } err(x) { ... } }`: Handle both cases, or each error separately"},
 	"err":       {Section: "reference: Errors", Text: "`match e { ok(v) { ... } err(x) { ... } }`: Handle both cases, or each error separately"},
-	"Self":      {Section: "reference: Lexical rules", Text: "Contextual: `from into ends fuel packed open self Self result`."},
+	"Self":      {Section: "reference: Lexical rules", Text: "Contextual: `from into ends fuel packed plain open self Self result`."},
 }
 
 // ruleWords are names that are not keywords but whose hover is a rule:
 // the receiver, the optional's two forms, and the declaration modifiers.
-var ruleWords = setOf("self some none fields naked packed align open cpu section true false Assert Panic Cast Trunc SizeOf AlignOf Target Plain Send Share Fields EvalArena Self i8 i16 i32 i64 u8 u16 u32 u64 int uint f32 f64 bool char void never str")
+var ruleWords = setOf("self some none fields naked packed plain align open cpu section true false Assert Panic Cast Trunc SizeOf AlignOf Target Plain Send Share Fields EvalArena Self i8 i16 i32 i64 u8 u16 u32 u64 int uint f32 f64 bool char void never str")
 
 // operatorHover answers a hover on an operator outside strings and
 // comments with its rule, or nil.

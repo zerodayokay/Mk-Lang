@@ -233,6 +233,8 @@ func (qx *queryIndex) declHead(e qEntry, withOpen bool) string {
 		head = "struct " + e.name + qx.genericsString(d.Generics, d.Generics)
 		if d.MutView {
 			head = "mut view " + head
+		} else if d.PlainView {
+			head = "plain view " + head
 		} else if d.View {
 			head = "view " + head
 		}

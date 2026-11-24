@@ -359,7 +359,7 @@ export linear struct OK {
 			t.Errorf("E0410 at %s: fixes %+v", w.lc(d.At), d.Fixes)
 		}
 	}
-	if got["1:15"] != "[view] [name]" || got["5:15"] != "[linear] [r]" {
+	if got["1:15"] != "[plain view] [name]" || got["5:15"] != "[linear] [r]" {
 		t.Errorf("E0410 facts %v", got)
 	}
 }
@@ -631,4 +631,108 @@ func TestE0303_DefaultDiscriminant(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPlainView_InvariantAAndExports(t *testing.T) {
+	t.Run("good phantom and slice handles", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t, true)
+		checkCodes(t, w, "m", opt{}, "", `export plain view struct Ref[T] {
+	idx: u32
+}
+
+export plain view struct Span[T] {
+	data: []T
+	lo: u32
+	hi: u32
+}
+
+export plain view struct Pair[T] {
+	a: Ref[T]
+	b: str
+}
+
+export linear struct Res {
+	fd: int
+}
+
+export F(r: Ref[Res], s: Span[Mutex[?&i32]]): (a: Ref[Res], b: Ref[Res]) from r {
+	_ = s
+	return (a: r, b: r)
+}
+`)
+	})
+	t.Run("rejects non-plain or non-freeze fields", func(t *testing.T) {
+		t.Parallel()
+		cases := []struct {
+			name string
+			src  string
+			want string
+		}{
+			{"raw ptr", "plain view struct S {\n\tp: *u8\n}\n", "E0408@2:2"},
+			{"mut ref", "plain view struct S {\n\tp: mut i32\n}\n", "E0408@2:2"},
+			{"cell", "plain view struct S {\n\tc: Cell[u32]\n}\n", "E0408@2:2"},
+			{"mutex", "plain view struct S {\n\tm: Mutex[u32]\n}\n", "E0408@2:2"},
+			{"chan", "plain view struct S {\n\tch: Chan[u32]\n}\n", "E0408@2:2"},
+			{"arena", "plain view struct S {\n\ta: Arena\n}\n", "E0408@2:2"},
+			{"mut view", "mut view struct MV {\n\tx: int\n}\n\nplain view struct S {\n\tmv: MV\n}\n", "E0408@6:2"},
+			{"non-plain view", "view struct V {\n\tx: int\n}\n\nplain view struct S {\n\tv: V\n}\n", "E0408@6:2"},
+			{"type param by value", "plain view struct S[T] {\n\tx: T\n}\n", "E0408@2:2"},
+			{"plain-bounded type param by value", "plain view struct S[T: Plain] {\n\tx: T\n}\n", "E0408@2:2"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				w := newWorld(t, true)
+				checkCodes(t, w, "m", opt{}, tc.want, tc.src)
+			})
+		}
+	})
+	t.Run("E0410 recommends plain view vs view", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t, true)
+		b := checkCodes(t, w, "m", opt{unsafe: true}, "E0410@12:15 E0410@1:15 E0410@7:15", `export struct SpanStr {
+	buf: str
+	lo: u32
+	hi: u32
+}
+
+export struct GenericByVal[T] {
+	export v: T
+	buf: str
+}
+
+export struct RawAndCarrier {
+	p: *u8
+	buf: str
+}
+
+export plain view struct OKPlain {
+	buf: str
+	lo: u32
+	hi: u32
+}
+`)
+		got := map[string]string{}
+		for _, d := range b.diags() {
+			got[w.lc(d.At)] = fact(d, "needs")
+		}
+		if got["1:15"] != "[plain view]" || got["7:15"] != "[view]" || got["12:15"] != "[view]" {
+			t.Fatalf("E0410 needs = %v", got)
+		}
+	})
+	t.Run("rejects unsafe impl Send and Share on plain view", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t, true)
+		checkCodes(t, w, "m", opt{unsafe: true}, "E0704@5:8 E0704@8:8", `export plain view struct Handle {
+	idx: u32
+}
+
+unsafe impl Send for Handle {
+}
+
+unsafe impl Share for Handle {
+}
+`)
+	})
 }

@@ -32,11 +32,12 @@ type walker struct {
 	envF  func(types.TypeID) types.Facts
 	reads *types.ReadSet
 
-	facts   map[types.TypeID]types.Facts
-	fields  map[types.TypeID][]types.TypeID
-	view    map[types.TypeID]memoBit
-	mutexNP map[types.TypeID]memoBit
-	walk    map[types.TypeID]memoBit
+	facts        map[types.TypeID]types.Facts
+	fields       map[types.TypeID][]types.TypeID
+	view         map[types.TypeID]memoBit
+	nonPlainView map[types.TypeID]memoBit
+	mutexNP      map[types.TypeID]memoBit
+	walk         map[types.TypeID]memoBit
 	// walkExact holds walkFrom's answers that hold in every walk: t's walk
 	// met no type recur counts and every successor walked was itself exact
 	// (answered here or by an exact walk), so the answer is plain
@@ -73,18 +74,19 @@ type refInfo struct {
 
 func newWalker(env *Env, reads *types.ReadSet) *walker {
 	w := &walker{
-		tab:       env.Types,
-		known:     env.Known,
-		envF:      env.Facts,
-		reads:     reads,
-		facts:     make(map[types.TypeID]types.Facts),
-		fields:    make(map[types.TypeID][]types.TypeID),
-		view:      make(map[types.TypeID]memoBit),
-		mutexNP:   make(map[types.TypeID]memoBit),
-		walk:      make(map[types.TypeID]memoBit),
-		walkExact: make(map[types.TypeID]bool),
-		refs:      make(map[types.TypeID]*refInfo),
-		readDecl:  make(map[types.ItemID]bool),
+		tab:          env.Types,
+		known:        env.Known,
+		envF:         env.Facts,
+		reads:        reads,
+		facts:        make(map[types.TypeID]types.Facts),
+		fields:       make(map[types.TypeID][]types.TypeID),
+		view:         make(map[types.TypeID]memoBit),
+		nonPlainView: make(map[types.TypeID]memoBit),
+		mutexNP:      make(map[types.TypeID]memoBit),
+		walk:         make(map[types.TypeID]memoBit),
+		walkExact:    make(map[types.TypeID]bool),
+		refs:         make(map[types.TypeID]*refInfo),
+		readDecl:     make(map[types.ItemID]bool),
 	}
 	if env.Types != nil {
 		w.items = env.Types.Items()
@@ -285,6 +287,30 @@ func (w *walker) holdsView(t types.TypeID) bool {
 	return r
 }
 
+// holdsNonPlainView reports whether some type in inline(t) is a non-plain view
+// (`view struct` or `mut view struct`, excluding `plain view struct`).
+func (w *walker) holdsNonPlainView(t types.TypeID) bool {
+	switch w.nonPlainView[t] {
+	case memoTrue:
+		return true
+	case memoFalse, memoBusy:
+		return false
+	}
+	w.nonPlainView[t] = memoBusy
+	f := w.factsOf(t)
+	r := f.View && !f.PlainView
+	if !r {
+		for _, fd := range w.inlineFields(t) {
+			if w.holdsNonPlainView(fd) {
+				r = true
+				break
+			}
+		}
+	}
+	w.nonPlainView[t] = bitOf(r)
+	return r
+}
+
 // writableByType reports whether stepping into t through a shared reference
 // restores loan-store writability: t is or holds inline a `mut view struct`,
 // Arena, Scope, or a Cell/Mutex/Chan whose payload is a carrier.
@@ -402,7 +428,7 @@ func (w *walker) firstTakes(t types.TypeID, gen genMode, seen map[firstKey]bool,
 		if f.MutView && !w.isKnown(t, func(k *types.KnownItems) types.ItemID { return k.Scope }) {
 			return true
 		}
-		if f.View {
+		if f.View && !f.PlainView {
 			if behindShared {
 				for _, a := range ty.Args {
 					if !a.IsConst && (w.carrier(a.Type) && (w.writableByType(a.Type) || w.firstTakes(a.Type, gen, seen, r, true)) ||
@@ -557,7 +583,7 @@ func (w *walker) mayWritable(t types.TypeID, seen map[types.TypeID]bool) bool {
 	if w.writableByType(t) {
 		return true
 	}
-	if ty := w.tab.Get(t); ty.Kind == types.KNamed && w.factsOf(t).View {
+	if ty := w.tab.Get(t); ty.Kind == types.KNamed && w.factsOf(t).View && !w.factsOf(t).PlainView {
 		for _, a := range ty.Args {
 			if !a.IsConst && w.mayWritable(a.Type, seen) {
 				return true
@@ -738,7 +764,7 @@ func (w *walker) refSteps(t types.TypeID) *refInfo {
 			f := w.factsOf(t)
 			if f.MutView {
 				r.add(refStep{excl: true, any: true})
-			} else if f.View {
+			} else if f.View && !f.PlainView {
 				if f.LoanInterior {
 					r.add(refStep{excl: true, any: true})
 				} else {

@@ -175,8 +175,8 @@ func (p *parser) asmDirection(op *ast.AsmOperand) {
 }
 
 // alignModifier decides Aligned at item position: align "(" Int ")" followed
-// by struct, linear, view, mut view or packed. Any other align "(" is a
-// function named align (LL(3) after align, then one more).
+// by struct, linear, view, mut view, plain or packed. Any other align "(" is
+// a function named align (LL(3) after align, then one more).
 func (p *parser) alignModifier() bool {
 	if !p.atWord("align") || p.peekKind(1) != ast.TokLParen || p.peekKind(2) != ast.TokInt || p.peekKind(3) != ast.TokRParen {
 		return false
@@ -184,9 +184,9 @@ func (p *parser) alignModifier() bool {
 	switch k := p.peekKind(4); {
 	case k == ast.TokStruct || k == ast.TokLinear || k == ast.TokView:
 		return true
-	case k == ast.TokMut && (p.peekKind(5) == ast.TokView || p.peekKind(5) == ast.TokStruct):
+	case k == ast.TokMut && (p.peekKind(5) == ast.TokView || p.peekKind(5) == ast.TokStruct || p.peekWord(5, "plain")):
 		return true
-	case p.peekWord(4, "packed"):
+	case p.peekWord(4, "plain") || p.peekWord(4, "packed"):
 		return true
 	}
 	return false

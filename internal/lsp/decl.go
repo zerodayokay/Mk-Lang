@@ -124,7 +124,7 @@ func itemDecl(text string, ct []token, a, b int) (decl, bool) {
 			d.Exported = true
 			j++
 			continue
-		case "linear", "mut", "view", "naked", "unsafe", "open":
+		case "linear", "mut", "plain", "view", "naked", "unsafe", "open":
 			j++
 			continue
 		case "packed", "align":

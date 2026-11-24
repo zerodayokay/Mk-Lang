@@ -172,7 +172,7 @@ func (w *walker) closureTakes(t types.TypeID, gen genMode) bool {
 			}
 			switch d := w.items.Get(ty.Item).Decl.(type) {
 			case *types.StructDecl:
-				return d.MutView || (d.View && len(d.Generics) > 0)
+				return d.MutView || (d.View && !d.PlainView && len(d.Generics) > 0)
 			case *types.EnumDecl:
 				return false
 			}

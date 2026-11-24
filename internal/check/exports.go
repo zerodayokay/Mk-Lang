@@ -203,7 +203,7 @@ func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, 
 	floor := kindWord{}
 	if d.Linear {
 		floor.kind = types.Linear
-	} else if d.View {
+	} else if d.View && !d.PlainView {
 		floor.kind = types.Unique
 	}
 	floor.carrier = d.View
@@ -245,7 +245,11 @@ func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, 
 	if needMutView {
 		needs = append(needs, "mut view")
 	} else if !d.View && (all.carrier && !exp.carrier || unique && exp.kind == types.Plain) {
-		needs = append(needs, "view")
+		if !d.Linear && !needLinear && all.kind == types.Plain && m.canBePlainView(it, d) {
+			needs = append(needs, "plain view")
+		} else {
+			needs = append(needs, "view")
+		}
 	}
 	if len(needs) == 0 {
 		return
@@ -284,6 +288,25 @@ func structToken(fx *fileIndex, n *ast.StructDecl, k ast.TokenKind) (source.Span
 		}
 	}
 	return source.Span{}, false
+}
+
+// canBePlainView reports whether every field of d satisfies Invariant A
+// (Plain and Freeze) under d's own generic parameters.
+func (m *Module) canBePlainView(it *types.Item, d *types.StructDecl) bool {
+	c := m.c
+	env := c.NewEnv(d.Generics)
+	rec := m.rec(it)
+	for _, f := range d.Fields {
+		if f.Type == types.Poison {
+			return false
+		}
+		c.shapeReads(env, f.Type, rec)
+		xf := c.FactsIn(env, f.Type)
+		if xf.Kind != types.Plain || !xf.Freeze {
+			return false
+		}
+	}
+	return true
 }
 
 // isAtomic reports whether t is `std.raw.Atomic[..]`

@@ -255,7 +255,7 @@ func (w *factsWalk) compute(t types.TypeID) (types.Facts, int) {
 		return f, low
 	case types.KArray, types.KOptional, types.KErrorUnion:
 		e, low := w.facts(ty.Elem)
-		e.Allocator, e.SliceImpl, e.IsFn, e.View, e.MutView = false, false, false, false, false
+		e.Allocator, e.SliceImpl, e.IsFn, e.View, e.MutView, e.PlainView = false, false, false, false, false, false
 		return e, low
 	case types.KRecord:
 		f, low := plain, noLow
@@ -341,17 +341,18 @@ func (w *factsWalk) named(t types.TypeID, ty *types.Type) (types.Facts, int) {
 		}
 		if d.Linear {
 			f.Kind = types.Linear
-		} else if d.View {
+		} else if d.View && !d.PlainView {
 			f.Kind = max(f.Kind, types.Unique)
 		}
 		f.View = d.View
 		f.MutView = d.MutView
+		f.PlainView = d.PlainView
 		f.Carrier = f.Carrier || d.View
 		if d.MutView {
 			f.Interior = true
 			f.LoanInterior = true
 			f.Freeze = false
-		} else if d.View {
+		} else if d.View && !d.PlainView {
 			// A plain view struct cannot accept loan stores into its own
 			// storage through `&self`, but its elements (type arguments) may
 			// be loan-interior-writable (e.g. `Box[Mutex[?&i32]]`,

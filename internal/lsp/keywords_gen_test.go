@@ -34,7 +34,7 @@ func hoverTerms() []string {
 			out = append(out, w)
 		}
 	}
-	out = append(out, "some", "none", "fields", "naked", "packed", "align", "open", "cpu", "section", "Scope")
+	out = append(out, "some", "none", "fields", "naked", "packed", "plain", "align", "open", "cpu", "section", "Scope")
 	// asm operand words, which mean something only inside asm(...).
 	for w := range asmWords {
 		out = append(out, w)
@@ -277,7 +277,7 @@ func pinned(t *testing.T, rows []mdRow, term, text string) mdRow {
 }
 
 // loanTerms also get the memory model's row.
-var loanTerms = map[string]bool{"from": true, "into": true, "ends": true, "view": true, "linear": true, "mut": true, "&": true}
+var loanTerms = map[string]bool{"from": true, "into": true, "ends": true, "view": true, "plain": true, "linear": true, "mut": true, "&": true}
 
 func generateKeywordTable(t *testing.T) []byte {
 	ref := readRows(t, "../../doc/reference.md", "reference")

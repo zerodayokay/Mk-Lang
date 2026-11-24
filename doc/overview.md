@@ -1025,7 +1025,7 @@ Rises(xs: []int): int { // Rises([1, 3, 2, 5, 8][..]) is 3
 }
 ```
 
-A struct that keeps its memory behind a private pointer, as `List` and `Map` do, is declared `view struct`. A view struct may borrow, is unique, and cannot store loans through a shared `&` reference; one whose `&` methods write loans through interior state or raw pointers, such as `Arena`, is declared `mut view struct`. An exported struct whose private fields borrow or take loan stores through `&` must declare `view` or `mut view` (E0410), so that its users can see those properties.
+A struct that holds a handle or keeps its memory behind a private pointer, as `List` and `Map` do, is declared `view struct` (unique) or `plain view struct` (copyable when all fields are `Plain` and `Freeze`). A `view struct` may borrow and cannot store loans through a shared `&` reference; one whose `&` methods write loans through interior state or raw pointers, such as `Arena`, is declared `mut view struct`. An exported struct whose private fields borrow or take loan stores through `&` must declare `plain view`, `view`, or `mut view` (E0410), so that its users can see those properties.
 
 [The memory model](memory.md) covers the rest, each rule with accepted and rejected examples: per-field loans, reborrowing, temporaries, `Cell` for shared mutation, and `ends` for arenas holding cycles.
 

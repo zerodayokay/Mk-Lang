@@ -378,6 +378,45 @@ func TestReadShapeMutView(t *testing.T) {
 	}
 }
 
+// TestReadShapePlainView: toggling PlainView on a struct's shape or term
+// invalidates a recorded ReadShape, and toggling PlainView on a StructDecl
+// invalidates a recorded ReadSignature (Decl hash).
+func TestReadShapePlainView(t *testing.T) {
+	f := newWorldFixture()
+	point := f.id("geo.Point")
+	d := f.items.Get(point).Decl.(*types.StructDecl)
+	d.View = true
+	rec := func(key string, kind types.ReadKind) types.Read {
+		r := types.Read{Kind: kind, Key: types.KeyFromString(key)}
+		h, ok := f.world("app", types.X86_64Windows).Part(r)
+		if !ok {
+			t.Fatalf("no part for %v", r)
+		}
+		r.Hash = h
+		return r
+	}
+	valid := func(r types.Read) bool {
+		ok, _ := Valid(f.world("app", types.X86_64Windows), []types.Read{r})
+		return ok
+	}
+	f.layouts["geo.Point"] = &types.Layout{Shape: types.Shape{Size: 4, Align: 4, Kind: types.Plain, Carrier: true, View: true, Freeze: true}}
+	rDecl := rec("geo.Point", types.ReadSignature)
+	rShape := rec("geo.Point", types.ReadShape)
+	rTerm := rec("geo.Wrap", types.ReadShape)
+	d.PlainView = true
+	if valid(rDecl) {
+		t.Error("toggling StructDecl.PlainView left ReadSignature valid")
+	}
+	f.layouts["geo.Point"] = &types.Layout{Shape: types.Shape{Size: 4, Align: 4, Kind: types.Plain, Carrier: true, View: true, PlainView: true, Freeze: true}}
+	if valid(rShape) {
+		t.Error("toggling Shape.PlainView left ReadShape valid")
+	}
+	f.items.Get(f.id("geo.Wrap")).Decl.(*types.StructDecl).Shape.PlainView = true
+	if valid(rTerm) {
+		t.Error("toggling ShapeTerm.PlainView left ReadShape valid")
+	}
+}
+
 func TestReadShape(t *testing.T) {
 	f := newWorldFixture()
 	r := f.record(t, types.ReadShape, "geo.Wrap", "")

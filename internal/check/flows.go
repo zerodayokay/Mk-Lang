@@ -37,6 +37,7 @@ type flowClauses struct {
 	fields []fieldSrcClause
 	stores []storeClause
 	ends   []types.ParamIndex
+	endsAt []source.Span
 }
 
 // fieldSrcClause is one `f: a, b.c` of a per-field clause: the field's
@@ -540,6 +541,17 @@ func (c *Checker) signatureFlows(fn flowFn, cl *flowClauses) (types.Flows, []*di
 		fl.Sources, ds = c.automaticSources(fn, p, r, ds)
 		fl.Ambiguous = len(ds) > 0
 	}
+	for _, pr := range sig.Params {
+		if pr.Into == types.NoParam || int(pr.Into) > len(sig.Params) {
+			continue
+		}
+		pt := sig.Param(pr.Into).Type
+		if c.holdsPlainView(pt) && !c.writableTarget(pt) {
+			name := c.cfg.Interner.Str(sig.Param(pr.Into).Name)
+			ds = append(ds, diag.New(diag.E0507, pr.Span, "`"+name+"` holds a `plain view struct` and cannot be written through, so nothing can be stored into it").
+				In(diag.PhaseTypes).Text("place", name).Text("reason", "store-target").Alt("make `"+name+"` a `mut` parameter"))
+		}
+	}
 	for _, st := range cl.stores {
 		if d := c.storeClauseCheck(fn, st); d != nil {
 			ds = append(ds, d)
@@ -547,7 +559,21 @@ func (c *Checker) signatureFlows(fn flowFn, cl *flowClauses) (types.Flows, []*di
 		}
 		fl.Stores = appendStore(fl.Stores, types.Store{From: st.from, Into: st.into})
 	}
-	for _, e := range cl.ends {
+	for i, e := range cl.ends {
+		pt := sig.Param(e).Type
+		if c.cfg.Types.Kind(pt) == types.KMut {
+			pt = c.cfg.Types.Get(pt).Elem
+		}
+		if c.holdsPlainView(pt) {
+			at := fn.at
+			if i < len(cl.endsAt) {
+				at = cl.endsAt[i]
+			}
+			name := c.cfg.Interner.Str(sig.Param(e).Name)
+			ds = append(ds, diag.New(diag.E0507, at, "`"+name+"` is a `plain view struct` (copied on use), so it cannot appear in `ends`").
+				In(diag.PhaseTypes).Text("place", name).Text("reason", "ends-plain-view"))
+			continue
+		}
 		fl.Ends = appendParam(fl.Ends, e)
 	}
 	return fl, ds
@@ -930,10 +956,13 @@ func (c *Checker) reachesInterior(t types.TypeID, seen map[types.TypeID]bool, r 
 		if seen[t] {
 			return false
 		}
-		switch d := c.cfg.Items.Get(ty.Item).Decl.(type) {
+		switch d := c.declOfItem(c.cfg.Items.Get(ty.Item)).(type) {
 		case *types.StructDecl:
 			if d.MutView {
 				return true
+			}
+			if d.PlainView {
+				return false
 			}
 			seen[t] = true
 			if stop, leave := r.enter(t); stop {
@@ -1057,4 +1086,60 @@ func sigInto(sig *types.Signature) []types.ParamIndex {
 		out[i] = p.Into
 	}
 	return out
+}
+
+// holdsPlainView reports whether t is a `plain view struct` or reaches one
+// inline or through shared references or slices (never through `mut`).
+func (c *Checker) holdsPlainView(t types.TypeID) bool {
+	return c.holdsPlainViewSeen(t, map[types.TypeID]bool{}, newRecur(c.cfg.Types))
+}
+
+func (c *Checker) holdsPlainViewSeen(t types.TypeID, seen map[types.TypeID]bool, r *recur) bool {
+	ty := c.cfg.Types.Get(t)
+	switch ty.Kind {
+	case types.KMut, types.KMutSlice:
+		return false
+	case types.KOptional, types.KArray, types.KErrorUnion, types.KRef, types.KSlice:
+		return c.holdsPlainViewSeen(ty.Elem, seen, r)
+	case types.KRecord:
+		for _, f := range ty.Fields {
+			if c.holdsPlainViewSeen(f.Type, seen, r) {
+				return true
+			}
+		}
+		return false
+	case types.KNamed:
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		if stop, leave := r.enter(t); stop {
+			return false
+		} else if leave != nil {
+			defer leave()
+		}
+		switch d := c.declOfItem(c.cfg.Items.Get(ty.Item)).(type) {
+		case *types.StructDecl:
+			if d.PlainView {
+				return true
+			}
+			if d.View {
+				return false
+			}
+			for _, f := range d.Fields {
+				if c.holdsPlainViewSeen(c.subst(f.Type, ty.Args, types.NoType), seen, r) {
+					return true
+				}
+			}
+		case *types.EnumDecl:
+			for _, v := range d.Variants {
+				for _, f := range v.Fields {
+					if c.holdsPlainViewSeen(c.subst(f.Type, ty.Args, types.NoType), seen, r) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }

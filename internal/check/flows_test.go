@@ -360,3 +360,50 @@ Good(e: &CarrierEnum, x: &i32) *x into e {
 }
 `)
 }
+
+func TestPlainView_InvariantB(t *testing.T) {
+	w := newWorld(t, true)
+	checkCodes(t, w, "m", opt{unsafe: true}, "E0507@17:24 E0507@21:25 E0507@25:34 E0507@29:35 E0507@33:49 E0507@38:24 E0507@41:28", `plain view struct Ref[T] {
+	idx: u32
+}
+
+plain view struct Span[T] {
+	xs: []T
+}
+
+Ref.OKCopy(&self, x: &i32): i32 {
+	return *x
+}
+
+Ref.OKMutInto(mut self, x: &i32 into self) {
+	_ = x
+}
+
+Ref.BadIntoByVal(self, x: &i32 into self) {
+	_ = x
+}
+
+Ref.BadIntoByRef(&self, x: &i32 into self) {
+	_ = x
+}
+
+Ref.BadStoreByVal(self, q: &i32) *q into self {
+	_ = q
+}
+
+Ref.BadStoreByRef(&self, q: &i32) *q into self {
+	_ = q
+}
+
+BadStoreSpanCell(s: &Span[Cell[&i32]], q: &i32) *q into s {
+	_ = s
+	_ = q
+}
+
+Ref.BadEndsByVal(self) ends self {
+}
+
+Ref.BadEndsByMut(mut self) ends self {
+}
+`)
+}

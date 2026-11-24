@@ -144,7 +144,7 @@ func (p *parser) parseItemInner() ast.Item {
 		it = p.parseGen(start)
 	case k == ast.TokTest:
 		it = p.parseTest(start)
-	case k == ast.TokLinear || k == ast.TokView || k == ast.TokMut || k == ast.TokStruct || (k == ast.TokIdent && (p.packedModifier() || p.alignModifier())):
+	case k == ast.TokLinear || k == ast.TokView || k == ast.TokMut || k == ast.TokStruct || (k == ast.TokIdent && (p.packedModifier() || p.alignModifier() || p.plainModifier())):
 		it = p.parseStruct(start)
 	case k == ast.TokEnum:
 		it = p.parseEnum(start)
@@ -214,7 +214,7 @@ func (p *parser) parseItemInner() ast.Item {
 }
 
 // packedModifier decides whether an Ident packed at item position is the
-// modifier when struct, linear, view, mut view or packed follows, or "(" Int.
+// modifier when struct, linear, view, mut view, plain or packed follows, or "(" Int.
 func (p *parser) packedModifier() bool {
 	if !p.atWord("packed") {
 		return false
@@ -222,13 +222,31 @@ func (p *parser) packedModifier() bool {
 	switch k := p.peekKind(1); {
 	case k == ast.TokStruct || k == ast.TokLinear || k == ast.TokView:
 		return true
-	case k == ast.TokMut && (p.peekKind(2) == ast.TokView || p.peekKind(2) == ast.TokStruct):
+	case k == ast.TokMut && (p.peekKind(2) == ast.TokView || p.peekKind(2) == ast.TokStruct || p.peekWord(2, "plain")):
+		return true
+	case p.peekWord(1, "plain"):
 		return true
 	case p.peekWord(1, "packed"):
 		return true
 	case p.peekWord(1, "align") && p.peekKind(2) == ast.TokLParen:
 		return true // packed align(n) struct
 	case k == ast.TokLParen && p.peekKind(2) == ast.TokInt:
+		return true
+	}
+	return false
+}
+
+// plainModifier decides whether an Ident plain at item or struct-modifier
+// position is the contextual `plain` modifier rather than an ordinary
+// identifier (`plain(x: int)`, `plain: int`, `plain := 1`).
+func (p *parser) plainModifier() bool {
+	if !p.atWord("plain") {
+		return false
+	}
+	switch k := p.peekKind(1); {
+	case k == ast.TokStruct || k == ast.TokLinear || k == ast.TokView || k == ast.TokMut:
+		return true
+	case p.peekWord(1, "plain") || p.peekWord(1, "packed") || p.peekWord(1, "align"):
 		return true
 	}
 	return false
@@ -306,11 +324,13 @@ func (p *parser) parseTest(start uint32) ast.Item {
 	return n
 }
 
-// parseStruct reads { "linear" | [ "mut" ] "view" | Packed | Aligned }
+// parseStruct reads { "linear" | [ "mut" | "plain" ] "view" | Packed | Aligned }
 // "struct" Name [ TypeParams ] "{" { Member Term } "}".
 func (p *parser) parseStruct(start uint32) ast.Item {
 	n := &ast.StructDecl{}
 	p.itemStart(&n.Base, start)
+	var plainSpan source.Span
+	var hasPlainSpan bool
 	for {
 		switch {
 		case p.at(ast.TokLinear):
@@ -323,6 +343,13 @@ func (p *parser) parseStruct(start uint32) ast.Item {
 		case p.at(ast.TokMut):
 			mutSpan := p.curSpan()
 			p.next()
+			if p.plainModifier() {
+				if n.MutView {
+					p.syntaxErr(mutSpan, "`mut` written twice")
+				}
+				n.MutView = true
+				continue
+			}
 			if !p.at(ast.TokView) {
 				p.syntaxErr(mutSpan, "`mut` on a struct applies only to `view`: write `mut view struct`")
 				continue
@@ -332,6 +359,20 @@ func (p *parser) parseStruct(start uint32) ast.Item {
 			}
 			n.View = true
 			n.MutView = true
+			p.next()
+			continue
+		case p.plainModifier():
+			sp := p.curSpan()
+			if n.PlainView {
+				p.errHere("`plain` written twice")
+			} else {
+				plainSpan = sp
+				hasPlainSpan = true
+			}
+			if n.View && !n.PlainView {
+				p.syntaxErr(sp, "`plain` must appear before `view`: write `plain view struct`")
+			}
+			n.PlainView = true
 			p.next()
 			continue
 		case p.at(ast.TokView):
@@ -355,6 +396,22 @@ func (p *parser) parseStruct(start uint32) ast.Item {
 			continue
 		}
 		break
+	}
+	if n.PlainView {
+		switch {
+		case n.Linear:
+			p.syntaxErr(plainSpan, "`plain` and `linear` cannot both be written on a struct")
+			n.PlainView = false
+		case n.MutView:
+			p.syntaxErr(plainSpan, "`plain` and `mut` cannot both be written on a `view struct`")
+			n.PlainView = false
+		case !n.View:
+			if !hasPlainSpan {
+				plainSpan = p.curSpan()
+			}
+			p.syntaxErr(plainSpan, "`plain` only modifies a `view struct`: write `plain view struct` for a copyable view, or remove `plain` (a struct without `view` is already plain when its fields are)")
+			n.PlainView = false
+		}
 	}
 	p.expect(ast.TokStruct)
 	n.Name = p.parseDeclName(declItem)
@@ -388,7 +445,7 @@ func (p *parser) parsePacked() *ast.Packed {
 		}
 		p.expect(ast.TokRParen)
 		switch {
-		case p.at(ast.TokStruct), p.at(ast.TokLinear), p.at(ast.TokView), p.at(ast.TokMut), p.atWord("packed"), p.atWord("align"):
+		case p.at(ast.TokStruct), p.at(ast.TokLinear), p.at(ast.TokView), p.at(ast.TokMut), p.atWord("packed"), p.atWord("align"), p.atWord("plain"):
 		default:
 			p.expected("`struct`")
 		}

@@ -270,14 +270,14 @@ func (k *kit) computeFacts(t types.TypeID) types.Facts {
 		return types.Facts{Kind: types.Linear, Carrier: true}
 	case types.KArray, types.KOptional:
 		f := k.facts(ty.Elem)
-		f.View, f.MutView, f.Allocator, f.IsFn = false, false, false, false
+		f.View, f.MutView, f.PlainView, f.Allocator, f.IsFn = false, false, false, false, false
 		return f
 	case types.KErrorUnion:
 		if ty.Elem == types.Void {
 			return plain
 		}
 		f := k.facts(ty.Elem)
-		f.View, f.MutView, f.Allocator, f.IsFn = false, false, false, false
+		f.View, f.MutView, f.PlainView, f.Allocator, f.IsFn = false, false, false, false, false
 		return f
 	case types.KRecord:
 		f := plain
@@ -311,9 +311,13 @@ func (k *kit) namedFacts(t types.TypeID, ty *types.Type) types.Facts {
 	if sd, ok := it.Decl.(*types.StructDecl); ok {
 		if sd.View {
 			f.View, f.Carrier = true, true
-			f.Kind = max(f.Kind, types.Unique)
+			if !sd.PlainView {
+				f.Kind = max(f.Kind, types.Unique)
+			}
 		}
-		if sd.MutView {
+		if sd.PlainView {
+			f.PlainView = true
+		} else if sd.MutView {
 			f.MutView, f.Interior, f.LoanInterior, f.Freeze = true, true, true, false
 		} else if sd.View {
 			for _, a := range ty.Args {

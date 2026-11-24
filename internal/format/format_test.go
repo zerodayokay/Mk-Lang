@@ -506,11 +506,12 @@ func TestPerFieldClauseLayout(t *testing.T) {
 	}
 }
 
-// TestFormatMutViewStruct: `mut view struct` and `linear mut view struct`
-// format with canonical single-space spacing and stay idempotent.
+// TestFormatMutViewStruct: `mut view struct`, `linear mut view struct`, and
+// `plain view struct` format with canonical single-space spacing and stay
+// idempotent.
 func TestFormatMutViewStruct(t *testing.T) {
-	in := "mut   view  struct A {\n    x: int\n}\n\nexport  linear  mut   view  struct B {\n    y: int\n}\n\npacked(4)  mut  view  struct C {\n    z: u32\n}\n"
-	want := "mut view struct A {\n    x: int\n}\n\nexport linear mut view struct B {\n    y: int\n}\n\npacked(4) mut view struct C {\n    z: u32\n}\n"
+	in := "mut   view  struct A {\n    x: int\n}\n\nexport  linear  mut   view  struct B {\n    y: int\n}\n\npacked(4)  mut  view  struct C {\n    z: u32\n}\n\nexport   align(8)   packed(4)   plain   view   struct D {\n    idx: u32\n}\n"
+	want := "mut view struct A {\n    x: int\n}\n\nexport linear mut view struct B {\n    y: int\n}\n\npacked(4) mut view struct C {\n    z: u32\n}\n\nexport align(8) packed(4) plain view struct D {\n    idx: u32\n}\n"
 	got, err := Source("t.mk", []byte(in))
 	if err != nil {
 		t.Fatal(err)

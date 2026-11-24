@@ -222,7 +222,7 @@ func (c *Checker) termOf(t types.TypeID) types.ShapeTerm {
 		it := c.cfg.Items.Get(ty.Item)
 		switch d := it.Decl.(type) {
 		case *types.StructDecl:
-			out := types.ShapeTerm{Kind: types.TermStruct, Packed: d.Packed, Align: d.Align, View: d.View, MutView: d.MutView, Linear: d.Linear, Marks: c.marks(it)}
+			out := types.ShapeTerm{Kind: types.TermStruct, Packed: d.Packed, Align: d.Align, View: d.View, MutView: d.MutView, PlainView: d.PlainView, Linear: d.Linear, Marks: c.marks(it)}
 			for _, f := range d.Fields {
 				out.Fields = append(out.Fields, c.termOf(c.subst(f.Type, ty.Args, types.NoType)))
 			}

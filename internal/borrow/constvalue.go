@@ -100,7 +100,7 @@ func (w *walker) inlineTakes(t types.TypeID, seen map[types.TypeID]bool) bool {
 		if f.MutView {
 			return true
 		}
-		if f.View {
+		if f.View && !f.PlainView {
 			for _, a := range ty.Args {
 				if !a.IsConst && w.carrier(a.Type) && (w.writableByType(a.Type) || w.inlineTakes(a.Type, seen)) {
 					return true

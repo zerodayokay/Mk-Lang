@@ -56,16 +56,17 @@ type Aligned struct {
 	Align *BasicLit
 }
 
-// StructDecl is { "linear" | [ "mut" ] "view" | Packed | Aligned } "struct" Name
+// StructDecl is { "linear" | [ "mut" | "plain" ] "view" | Packed | Aligned } "struct" Name
 // [ TypeParams ] "{" { Member Term } "}". Packed and Align may come in either
 // order, and Walk visits them in source order; both at once is check's
-// error. MutView implies View.
+// error. MutView and PlainView each imply View and are mutually exclusive.
 type StructDecl struct {
 	Base
 	ItemInfo
 	Linear     bool
 	View       bool
 	MutView    bool
+	PlainView  bool
 	Packed     *Packed // nil when absent
 	Name       *Ident
 	TypeParams *TypeParams // nil when absent

@@ -502,7 +502,7 @@ func strLit(raw string) string {
 
 // declStruct is the struct row.
 func (m *Module) declStruct(it *types.Item, x *tctx, n *ast.StructDecl) {
-	d := &types.StructDecl{View: n.View || n.MutView, MutView: n.MutView, Linear: n.Linear}
+	d := &types.StructDecl{View: n.View || n.MutView || n.PlainView, MutView: n.MutView, PlainView: n.PlainView, Linear: n.Linear}
 	d.Align = m.structAlign(x, n)
 	if n.Packed != nil {
 		d.Packed = 1
@@ -531,6 +531,30 @@ func (m *Module) declStruct(it *types.Item, x *tctx, n *ast.StructDecl) {
 				d.Invariants = append(d.Invariants, inv)
 			}
 		}
+	}
+	if d.PlainView {
+		m.later(it, func() { m.plainViewFields(x, d) })
+	}
+}
+
+// plainViewFields enforces Invariant A on a `plain view struct`: every field
+// must be Kind == Plain and Freeze == true under the struct's own generic
+// bounds, because plain views are bitwise copied on use.
+func (m *Module) plainViewFields(x *tctx, d *types.StructDecl) {
+	env := m.c.NewEnv(d.Generics)
+	for _, fd := range d.Fields {
+		if fd.Type == types.Poison {
+			continue
+		}
+		m.c.shapeReads(env, fd.Type, x.rec)
+		f := m.c.FactsIn(env, fd.Type)
+		if f.Kind == types.Plain && f.Freeze {
+			continue
+		}
+		name := m.c.cfg.Interner.Str(fd.Name)
+		x.errorf(diag.E0408, fd.Span, "field `"+name+"` of a `plain view struct` must be plain, freeze data (it is copied on use)").
+			Text("field", name).Text("type", x.str(fd.Type)).Text("reason", "plain-view-field").
+			Alt("remove `plain` to declare a unique `view struct`, or store a `&T` / `[]T` handle instead")
 	}
 }
 
@@ -722,6 +746,9 @@ func (m *Module) registerImpl(it *types.Item, d *types.ImplDecl) {
 	}
 	ctor := tab.Get(d.For).Item
 	if m.c.cfg.Items.Get(ctor).Module != m.ID {
+		return
+	}
+	if sd, ok := m.c.cfg.Items.Get(ctor).Decl.(*types.StructDecl); ok && sd.PlainView {
 		return
 	}
 	switch {
