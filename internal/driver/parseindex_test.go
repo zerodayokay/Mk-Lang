@@ -644,7 +644,7 @@ func TestParseIndexPopulatedOnColdBuild(t *testing.T) {
 	if err != nil || len(r.Report.Diags) > 0 || len(paths) != 1 {
 		t.Fatalf("cold build: err %v paths %v\n%s", err, paths, r.Report.Text(r.Sources))
 	}
-	rc := frontCheck(t, Config{Root: dir, CacheDir: cdir})
+	rc := frontCheck(t, Config{Root: dir, CacheDir: cdir, LazyStd: true})
 	clean(t, rc)
 	if len(rc.Trace.FilesParsed) > 0 {
 		t.Errorf("warm check after cold build parsed %q, want nothing", rc.Trace.FilesParsed)

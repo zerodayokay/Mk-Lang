@@ -411,7 +411,10 @@ func (s *Session) run(p *pipeline, stdT, pkgT *srcTree, stdMan, pkgMan *Manifest
 	lazyCaller := s.forBuild || s.testing || s.prop || s.cfg.LazyStd
 	fullStd := !lazyCaller || s.fullStd || s.cfg.StdTests != "" || s.cfg.BrowseStd || s.cfg.KeepSyntax || s.root.kind == rootNone || (!s.forBuild && s.cfg.StdDir != "")
 	s.lastFullStd = fullStd
-	stdB.skipStdTests = !fullStd
+	// A std directory of the caller's (MK_STD, --std) may carry test
+	// fixtures (tests_*.mk) its programs use, so only the embedded std,
+	// which carries none a program can reach, skips its test files.
+	stdB.skipStdTests = !fullStd && s.cfg.StdDir == ""
 	p.lazyStd = !fullStd
 	p.testing = s.testing
 	if err := stdB.listStd(stdT, stdMan); err != nil {
