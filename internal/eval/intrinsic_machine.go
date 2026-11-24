@@ -48,6 +48,12 @@ func init() {
 		refuse(types.RefusePointerBytes, "rt.FramePointer: no frame chain")
 	}
 	nothing := func(*Machine, *frame, *mir.Terminator, types.FnRef) {}
+	passBool := func(m *Machine, f *frame, t *mir.Terminator, _ types.FnRef) {
+		m.store(m.dest(f, t), m.argU(f, t, 0)&1)
+	}
+	intrinsics["std.runtime.Cold"] = nothing
+	intrinsics["std.runtime.Likely"] = passBool
+	intrinsics["std.runtime.Unlikely"] = passBool
 	intrinsics["std.mem.Prefetch"] = nothing
 	intrinsics["std.atomic.Pause"] = nothing
 	intrinsics["std.raw.AtomicCopy"] = copyRaw

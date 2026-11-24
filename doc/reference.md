@@ -11200,7 +11200,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.tls` | `Client Server Connector Acceptor Conn Config DefaultConfig Identity Version Error`, Experimental |
 | `std.csv` | `Records Record Options DefaultOptions WriteRecord Codec Error` |
 | `std.dl` | `Open Library Search Error`, Provisional |
-| `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
+| `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
 | `std.testing` | `Fuzz Bench` |
@@ -13232,6 +13232,9 @@ runtime.Thread(io: Io, f: fn(Io)): Joined
 Joined.Join(self, io: Io): Canceled!void
 runtime.TaskIo(): ?Io
 runtime.Cycles(): u64
+runtime.Likely(cond: bool): bool
+runtime.Unlikely(cond: bool): bool
+runtime.Cold()
 error Unsupported
 error OsError(code: i64)
 type Error = Unsupported | OsError

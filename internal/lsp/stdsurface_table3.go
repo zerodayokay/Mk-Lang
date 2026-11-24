@@ -4,6 +4,9 @@
 package lsp
 
 var surfaceDocs3 = map[string]surfaceDoc{
+	"str.AsBytes":                {Module: "", Lines: []string{"str.AsBytes(self): []u8"}},
+	"str.Byte":                   {Module: "", Lines: []string{"str.Byte(self, i: int): u8"}},
+	"str.EndsWith":               {Module: "", Lines: []string{"str.EndsWith(self, suffix: str): bool"}},
 	"str.Find":                   {Module: "", Lines: []string{"str.Find(self, sub: str): ?int"}},
 	"str.From":                   {Module: "", Lines: []string{"str.From(bytes: []u8): Utf8Error!str"}},
 	"str.FromC":                  {Module: "", Lines: []string{"str.FromC(p: *u8): str"}},

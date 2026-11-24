@@ -161,7 +161,7 @@ func (fg *fnGen) callTerm(t *mir.Terminator) {
 			fg.trapCall(fn)
 			return
 		}
-		fg.finishCall(t, fn.Ref(), fn.Type(), ls, args, destT, fg.soleCallAttr(t, fi, callAttrs(fn)))
+		fg.finishCall(t, fn.Ref(), fn.Type(), ls, args, destT, fg.coldCallAttrs(fg.soleCallAttr(t, fi, callAttrs(fn))))
 	case mir.CallValue:
 		fv := fg.operand(t.Callee.Value)
 		ft := g.tt.Get(fv.t)
@@ -174,7 +174,7 @@ func (fg *fnGen) callTerm(t *mir.Terminator) {
 		}
 		ls := g.lowerSig(params, len(params), false, g.tt.ReturnType(ft.Fn.Result, ft.Fn.Errors))
 		fnTy := g.m.FuncType(ls.ret, ls.ltypes, false)
-		fg.finishCall(t, fv.v, fnTy, ls, args, destT, llvm.Attrs{}.Flag("nounwind"))
+		fg.finishCall(t, fv.v, fnTy, ls, args, destT, fg.coldCallAttrs(llvm.Attrs{}.Flag("nounwind")))
 	case mir.CallBuiltin:
 		if t.Callee.Builtin == mir.BuiltinEvalArena {
 			msg := fg.strValue("EvalArena outside compile-time evaluation")
@@ -259,6 +259,17 @@ func (fg *fnGen) checkArgs(ls *lsig, args []value) {
 				g.tt.TypeString(v.t, nil), g.tt.TypeString(ls.params[i], nil))
 		}
 	}
+}
+
+func (fg *fnGen) coldCallAttrs(attrs llvm.Attrs) llvm.Attrs {
+	if !fg.coldBlock[mir.BlockID(fg.bi)] {
+		return attrs
+	}
+	attrs = attrs.Without("alwaysinline")
+	if !attrs.Has("cold") {
+		attrs = attrs.Flag("cold")
+	}
+	return attrs
 }
 
 // finishCall makes the call and continues at the target. A fallible call

@@ -349,6 +349,9 @@ type fnGen struct {
 	// coldGuard maps each loop-versioning guard block to its cold fallback header
 	// so unprofiled codegen can attach cold branch weights (term.go).
 	coldGuard map[int]mir.BlockID
+	// coldBlock marks blocks on std.runtime.Cold() paths for cold branch
+	// weights and cold call attributes (term.go, call.go).
+	coldBlock map[mir.BlockID]bool
 }
 
 // addr is a memory address and the alignment known for it.
@@ -382,8 +385,11 @@ func (g *packGen) emitFunc(fi int) {
 		fg.subprogram(f.Key, bodySpan(f))
 	}
 	fg.checkImmutParams() // immutarg.go
-	if !g.cfg.Debug && fg.pgo == nil && !g.ctModule(fi) {
-		fg.coldGuard = findColdGuards(fg.b)
+	if !g.cfg.Debug && !g.ctModule(fi) {
+		fg.coldBlock = findColdBlocks(fg.b, g.items)
+		if fg.pgo == nil {
+			fg.coldGuard = findColdGuards(fg.b)
+		}
 	}
 	fg.emitBlocks()
 }

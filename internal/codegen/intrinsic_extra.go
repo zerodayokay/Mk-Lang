@@ -62,7 +62,10 @@ var extraSigs = map[string]string{
 	"std.math.SubBorrow":   "(u64, u64, u64): (diff: u64, borrow: u64)",
 	"std.mem.OffsetOf":     "[T](str): int",
 	"std.mem.Prefetch":     "[T](&T, bool)",
+	"std.runtime.Cold":     "()",
 	"std.runtime.Cycles":   "(): u64",
+	"std.runtime.Likely":   "(bool): bool",
+	"std.runtime.Unlikely": "(bool): bool",
 	"std.atomic.Pause":     "()",
 	"std.raw.FnFromAddr":   "[F](uint): F",
 	"std.raw.AtomicCopy":   "[T](*T, *T, int)",
@@ -88,7 +91,14 @@ var extraLowerings = map[string]targetLowering{
 	},
 	"std.mem.OffsetOf":   (*fnGen).offsetOf,
 	"std.mem.Prefetch":   (*fnGen).prefetch,
+	"std.runtime.Cold":   func(fg *fnGen, t *mir.Terminator, _ []value) { fg.targetDone(t) },
 	"std.runtime.Cycles": (*fnGen).cycles,
+	"std.runtime.Likely": func(fg *fnGen, t *mir.Terminator, a []value) {
+		fg.expectBool(t, a, 1, "std.runtime.Likely")
+	},
+	"std.runtime.Unlikely": func(fg *fnGen, t *mir.Terminator, a []value) {
+		fg.expectBool(t, a, 0, "std.runtime.Unlikely")
+	},
 	"std.atomic.Pause":   (*fnGen).pause,
 	"std.raw.FnFromAddr": (*fnGen).fnFromAddr,
 	"std.raw.AtomicCopy": (*fnGen).atomicCopy,
@@ -321,6 +331,14 @@ func (fg *fnGen) prefetch(t *mir.Terminator, args []value) {
 // cycles is llvm.readcyclecounter.
 func (fg *fnGen) cycles(t *mir.Terminator, _ []value) {
 	fg.retScalar(t, fg.cur.CallFunc(fg.g.m.IntrinsicFn("readcyclecounter"), nil))
+}
+
+// expectBool is llvm.expect.i1(cond, expected).
+func (fg *fnGen) expectBool(t *mir.Terminator, args []value, expected uint64, key string) {
+	cond := fg.scalarArg(t, key, args, 0)
+	m := fg.g.m
+	i1 := m.I(1)
+	fg.retScalar(t, fg.cur.CallFunc(m.IntrinsicFn("expect", i1), []llvm.Value{cond.v, m.ConstInt(i1, expected)}))
 }
 
 // pause is the spin-wait hint.

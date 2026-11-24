@@ -160,7 +160,7 @@ func (u *Unit) soleCallsOf() *soleCalls {
 // file comment's rule.
 func (fg *fnGen) soleCallAttr(t *mir.Terminator, fi int, attrs llvm.Attrs) llvm.Attrs {
 	g := fg.g
-	if !g.cfg.Profile.Optimized() || fi == fg.fi || fg.fi < 0 || t.Spawn != mir.NoLocal || attrs.Has("alwaysinline") {
+	if !g.cfg.Profile.Optimized() || fi == fg.fi || fg.fi < 0 || t.Spawn != mir.NoLocal || attrs.Has("alwaysinline") || fg.coldBlock[mir.BlockID(fg.bi)] {
 		return attrs // the last: a small callee's definition mark, repeated by callAttrs
 	}
 	f := &g.u.Funcs[fi]

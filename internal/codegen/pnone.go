@@ -227,7 +227,7 @@ func pnonePackFacts(ag *packGen, p int, h *source.Hasher) {
 	if !pnoneEnabled(ag.cfg) {
 		return
 	}
-	h.String("pnone.v1")
+	h.String("pnone.v2")
 	s := ag.pnoneSetOf()
 	for _, fi := range ag.u.Packs[p] {
 		on := s != nil && s.funcs[fi]
@@ -424,9 +424,6 @@ func (g *packGen) computePnoneSet() *pnoneSet {
 			}
 		}
 	}
-	if len(cands) == 0 {
-		return &pnoneSet{}
-	}
 	escaped := map[types.ItemID]bool{}
 	binfo := make([]pnoneBodyInfo, len(u.Funcs))
 	for fi := range u.Funcs {
@@ -437,10 +434,8 @@ func (g *packGen) computePnoneSet() *pnoneSet {
 	for id := range escaped {
 		delete(cands, id)
 	}
-	if len(cands) == 0 {
-		return &pnoneSet{}
-	}
-	// Forward closure from table elements along direct TermTailCall edges.
+	// Forward closure from table elements and direct-tail handlers along
+	// direct TermTailCall edges.
 	funcs := map[int]bool{}
 	var work []int
 	for _, tb := range cands {
@@ -449,6 +444,12 @@ func (g *packGen) computePnoneSet() *pnoneSet {
 				funcs[fi] = true
 				work = append(work, fi)
 			}
+		}
+	}
+	for fi := range u.Funcs {
+		if len(binfo[fi].directTails) > 0 && !funcs[fi] && g.pnoneFuncEligible(fi) {
+			funcs[fi] = true
+			work = append(work, fi)
 		}
 	}
 	for len(work) > 0 {
@@ -462,7 +463,8 @@ func (g *packGen) computePnoneSet() *pnoneSet {
 		}
 	}
 	// Greatest fixed point: prune invalid functions, invalid/unused tables,
-	// and functions no longer reachable from any surviving table.
+	// and functions no longer reachable from any surviving table or direct
+	// tail cycle.
 	for changed := true; changed; {
 		changed = false
 		for fi := range funcs {
@@ -506,22 +508,25 @@ func (g *packGen) computePnoneSet() *pnoneSet {
 		}
 		reach := map[int]bool{}
 		var q []int
+		addReach := func(fi int) {
+			if funcs[fi] && !reach[fi] {
+				reach[fi] = true
+				q = append(q, fi)
+			}
+		}
 		for _, tb := range cands {
 			for _, fi := range tb.elems {
-				if funcs[fi] && !reach[fi] {
-					reach[fi] = true
-					q = append(q, fi)
-				}
+				addReach(fi)
 			}
+		}
+		for _, fi := range directTailCycles(funcs, binfo) {
+			addReach(fi)
 		}
 		for len(q) > 0 {
 			fi := q[len(q)-1]
 			q = q[:len(q)-1]
 			for _, gi := range binfo[fi].directTails {
-				if funcs[gi] && !reach[gi] {
-					reach[gi] = true
-					q = append(q, gi)
-				}
+				addReach(gi)
 			}
 		}
 		for fi := range funcs {
@@ -531,7 +536,7 @@ func (g *packGen) computePnoneSet() *pnoneSet {
 			}
 		}
 	}
-	if len(cands) == 0 || len(funcs) == 0 {
+	if len(funcs) == 0 {
 		return &pnoneSet{}
 	}
 	bodyTables := make(map[int][]types.ItemID, len(funcs))

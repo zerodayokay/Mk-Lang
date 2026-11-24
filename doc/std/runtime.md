@@ -30,6 +30,7 @@ import std.runtime
 | Count processors and carrier threads | `Processors`, `Carriers` |
 | Check the stack before recursing deeper | `StackBounds`, `StackRemaining` |
 | Read the CPU's cycle counter | `Cycles` |
+| Hint branch prediction and cold paths | `Likely`, `Unlikely`, `Cold` |
 | Run a C call that blocks its thread | `Blocking` |
 | Wake a task from any thread | `Waker`: `New`, `Wait`, `Wake` |
 | Run code on one OS thread | `Dedicated`, or `Thread` and `Joined.Join` |
@@ -462,6 +463,16 @@ export Carriers(): int
 The number of carrier threads in use: MK_CARRIERS, a library's start
 option, or the processor count; 1 in a program with no task. O(1);
 allocates nothing.
+
+### `Cold`
+
+```
+export Cold()
+```
+
+Hints that the current execution path is cold. Marks the enclosing basic
+block path cold for branch prediction and outgoing calls; no-op at compile
+time. O(1); allocates nothing.
 
 ### `Cycles`
 
@@ -925,6 +936,15 @@ a failed Chan.Send leaves the value with the sender, to Join again, for
 instance from a NoCancel Io. Off a task it is panic 16. O(1) besides
 the wait; allocates nothing.
 
+### `Likely`
+
+```
+export Likely(cond: bool): bool
+```
+
+Hints that `cond` is usually true and returns `cond` unchanged. Lowers
+inline to `llvm.expect.i1`; no-op at compile time. O(1); allocates nothing.
+
 ### `OsError`
 
 ```
@@ -1056,6 +1076,15 @@ Panics (code 8) when all 256 carrier records are in use or the OS
 refuses the thread. A spawn through f's Io after the carrier ended
 panics (code 8). O(1) system calls; takes a 16 MiB task slot, waiting
 for one as a spawn does, and reserves an 8 MiB system stack.
+
+### `Unlikely`
+
+```
+export Unlikely(cond: bool): bool
+```
+
+Hints that `cond` is usually false and returns `cond` unchanged. Lowers
+inline to `llvm.expect.i1`; no-op at compile time. O(1); allocates nothing.
 
 ### `Unsupported`
 

@@ -132,7 +132,7 @@ func (s *support) intrinsicBodies(u *Unit, env Env) { s.rtBodies(u, env) }
 func (fg *fnGen) supportCall(fi int, t *mir.Terminator, args []value) {
 	g := fg.g
 	fn := g.funcDecl(fi)
-	fg.finishCall(t, fn.Ref(), fn.Type(), g.funcSigOf(fi), args, fg.b.PlaceType(t.Dest), callAttrs(fn))
+	fg.finishCall(t, fn.Ref(), fn.Type(), g.funcSigOf(fi), args, fg.b.PlaceType(t.Dest), fg.coldCallAttrs(callAttrs(fn)))
 }
 
 // intrinsicCall inlines a call of the std intrinsic item, stores its

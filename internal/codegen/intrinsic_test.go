@@ -30,7 +30,7 @@ var intrinsicFiles = map[string]string{
 	"sys/nutshell/syscall.mk": "std.sys", "sys/windows/teb.mk": "std.sys", "task/context.mk": "std.task", "core/core_slice.mk": "std.core",
 	"core/core_str.mk": "std.core", "core/io_io.mk": "std.core", "dyn/erased/erased.mk": "std.dyn.erased",
 	// The intrinsics of std.math, std.mem, std.runtime and std.atomic.
-	"math/intrinsics.mk": "std.math", "mem/intrinsics.mk": "std.mem", "runtime/cycles.mk": "std.runtime",
+	"math/intrinsics.mk": "std.math", "mem/intrinsics.mk": "std.mem", "runtime/cycles.mk": "std.runtime", "runtime/hints.mk": "std.runtime",
 	"atomic/pause.mk": "std.atomic",
 	// The trapped call (trapform.go): std.sys.TrapEntry.
 	"sys/windows/fault.mk": "std.sys",

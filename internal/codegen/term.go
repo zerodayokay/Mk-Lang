@@ -102,6 +102,10 @@ func (fg *fnGen) switchTerm(t *mir.Terminator) {
 				return counts[j]
 			}
 			w = fg.weights([]uint64{at(tj), at(fj)}) // br: true, then false
+		} else if fg.coldBlock[tMir] && !fg.coldBlock[fMir] {
+			w = []llvm.Attach{fg.trapWeights(true)}
+		} else if fg.coldBlock[fMir] && !fg.coldBlock[tMir] {
+			w = []llvm.Attach{fg.trapWeights(false)}
 		} else if cold, ok := fg.coldGuard[fg.bi]; ok {
 			if tMir == cold && fMir != cold {
 				w = []llvm.Attach{fg.trapWeights(true)}
@@ -118,7 +122,7 @@ func (fg *fnGen) switchTerm(t *mir.Terminator) {
 		def.Unreachable()
 	} else if counts != nil {
 		dc = counts[len(cases)]
-	} else if fg.tryBitmaskSwitch(on.v, cases, t.Default, def) {
+	} else if !fg.hasMixedColdSwitch(cases, t.Default) && fg.tryBitmaskSwitch(on.v, cases, t.Default, def) {
 		return
 	}
 	var lc []llvm.Case
@@ -128,6 +132,8 @@ func (fg *fnGen) switchTerm(t *mir.Terminator) {
 	var w []llvm.Attach
 	if counts != nil {
 		w = fg.weights(append([]uint64{dc}, counts[:len(cases)]...)) // switch: default, then the cases
+	} else if fg.hasMixedColdSwitch(cases, t.Default) {
+		w = fg.coldSwitchWeights(cases, t.Default)
 	}
 	fg.cur.Switch(on.v, def, lc, w...)
 }
@@ -435,4 +441,130 @@ func mirDominators(nb int, succ, preds [][]int) (idom, pos []int32) {
 		}
 	}
 	return idom, pos
+}
+
+// findColdBlocks returns every MIR block that exclusively lies on or
+// unconditionally leads into a call to `std.runtime.Cold()`.
+func findColdBlocks(b *mir.Body, items *types.Items) map[mir.BlockID]bool {
+	if b == nil || items == nil || len(b.Blocks) == 0 {
+		return nil
+	}
+	nb := len(b.Blocks)
+	isSeed := make([]bool, nb)
+	anySeed := false
+	for i := range nb {
+		t := &b.Blocks[i].Term
+		if t.Kind == mir.TermCall && t.Callee.Kind == mir.CallDirect {
+			if it := items.Get(t.Callee.Fn.Item); it != nil && it.Key.String() == "std.runtime.Cold" {
+				isSeed[i] = true
+				anySeed = true
+			}
+		}
+	}
+	if !anySeed {
+		return nil
+	}
+	succ := make([][]int, nb)
+	for i := range nb {
+		for _, s := range b.Successors(mir.BlockID(i), nil) {
+			succ[i] = append(succ[i], int(s))
+		}
+	}
+	hotReachable := make([]bool, nb)
+	var q []int
+	if !isSeed[0] {
+		hotReachable[0] = true
+		q = append(q, 0)
+	}
+	for len(q) > 0 {
+		u := q[len(q)-1]
+		q = q[:len(q)-1]
+		for _, v := range succ[u] {
+			if !isSeed[v] && !hotReachable[v] {
+				hotReachable[v] = true
+				q = append(q, v)
+			}
+		}
+	}
+	cold := make([]bool, nb)
+	var cq []int
+	for i := range nb {
+		if isSeed[i] {
+			cold[i] = true
+			cq = append(cq, i)
+		}
+	}
+	for len(cq) > 0 {
+		u := cq[len(cq)-1]
+		cq = cq[:len(cq)-1]
+		for _, v := range succ[u] {
+			if !hotReachable[v] && !cold[v] {
+				cold[v] = true
+				cq = append(cq, v)
+			}
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for i := range nb {
+			if cold[i] || len(succ[i]) == 0 {
+				continue
+			}
+			all := true
+			for _, v := range succ[i] {
+				if !cold[v] {
+					all = false
+					break
+				}
+			}
+			if all {
+				cold[i] = true
+				changed = true
+			}
+		}
+	}
+	out := make(map[mir.BlockID]bool)
+	for i, c := range cold {
+		if c {
+			out[mir.BlockID(i)] = true
+		}
+	}
+	return out
+}
+
+func (fg *fnGen) hasMixedColdSwitch(cases []mir.SwitchCase, def mir.BlockID) bool {
+	if len(fg.coldBlock) == 0 {
+		return false
+	}
+	hasCold, hasHot := false, false
+	mark := func(b mir.BlockID) {
+		if b == mir.NoBlock {
+			return
+		}
+		if fg.coldBlock[b] {
+			hasCold = true
+		} else {
+			hasHot = true
+		}
+	}
+	mark(def)
+	for _, c := range cases {
+		mark(c.Target)
+	}
+	return hasCold && hasHot
+}
+
+func (fg *fnGen) coldSwitchWeights(cases []mir.SwitchCase, def mir.BlockID) []llvm.Attach {
+	ws := make([]uint64, 1+len(cases))
+	wOf := func(b mir.BlockID) uint64 {
+		if b != mir.NoBlock && fg.coldBlock[b] {
+			return 1
+		}
+		return 1048575
+	}
+	ws[0] = wOf(def)
+	for j, c := range cases {
+		ws[1+j] = wOf(c.Target)
+	}
+	return fg.weights(ws)
 }
