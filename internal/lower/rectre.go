@@ -141,41 +141,8 @@ func elimAccTailRec(cfg *Config, b *mir.Body, opt VersionOptions) *mir.Body {
 	if len(active) == 0 {
 		return b
 	}
-	if writesImmutAggregateParam(b, tab, active) {
-		return b
-	}
 
 	return rewriteAccTailRec(b, active, chosen, retT, retIn, ovfSpan)
-}
-
-// writesImmutAggregateParam reports whether any active tail-call site updates
-// a non-var parameter whose type may travel Indirect in the ABI. Codegen marks
-// such parameters readonly (immutarg.go) and rejects direct writes to them.
-func writesImmutAggregateParam(b *mir.Body, tab *types.Table, sites []tailRecSite) bool {
-	for _, s := range sites {
-		t := &b.Blocks[s.callBlk].Term
-		args := b.Args[t.Args.Start:t.Args.End()]
-		for i := range int(b.ParamCount) {
-			p := mir.LocalID(i + 1)
-			l := b.Locals[p]
-			if l.Var || isDirectScalarParam(tab, l.Type) {
-				continue
-			}
-			if !argUnchanged(args[i], p) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isDirectScalarParam(tab *types.Table, tid types.TypeID) bool {
-	switch tab.Kind(tid) {
-	case types.KInt, types.KIntPtr, types.KFloat, types.KBool, types.KChar, types.KRef, types.KMut, types.KRawPtr, types.KVoid:
-		return true
-	default:
-		return false
-	}
 }
 
 // isDirectSelfCall reports whether t is a direct non-fallible, non-spawned
@@ -636,6 +603,15 @@ func proveNonNeg(cfg *Config, b *mir.Body, g *vcfg, sites []tailRecSite) bool {
 					changed = true
 				}
 			case mir.TermCall:
+				if t.HasErr {
+					errBuf := slices.Clone(buf)
+					if t.Err.Error != mir.NoLocal && int(t.Err.Error) < nl {
+						errBuf[t.Err.Error] = nnTop
+					}
+					if propagate(t.Err.Block, errBuf) {
+						changed = true
+					}
+				}
 				if t.Dest.Proj.Len == 0 {
 					dl := t.Dest.Local
 					dt := b.Locals[dl].Type
@@ -700,10 +676,14 @@ func proveNonNeg(cfg *Config, b *mir.Body, g *vcfg, sites []tailRecSite) bool {
 		}
 	}
 
-	// Verify condition 1: every reachable TermReturn has _0 >= 0.
+	// Verify condition 1: every reachable TermReturn has _0 >= 0 (fail closed
+	// if any RPO-reachable block was never reached by dataflow).
 	for _, bi := range g.rpo {
-		if in[bi] == nil || b.Blocks[bi].Term.Kind != mir.TermReturn {
+		if b.Blocks[bi].Term.Kind != mir.TermReturn {
 			continue
+		}
+		if in[bi] == nil {
+			return false
 		}
 		copy(buf, in[bi])
 		stepBlock(bi, buf)
@@ -719,7 +699,7 @@ func proveNonNeg(cfg *Config, b *mir.Body, g *vcfg, sites []tailRecSite) bool {
 			continue
 		}
 		if in[s.callBlk] == nil {
-			continue
+			return false
 		}
 		copy(buf, in[s.callBlk])
 		stepBlock(s.callBlk, buf)
@@ -828,6 +808,9 @@ func rewriteAccTailRec(b *mir.Body, sites []tailRecSite, chosen accOp, retT type
 			if t.Target == mir.EntryBlock {
 				t.Target = loopHdr
 			}
+			if t.HasErr && t.Err.Block == mir.EntryBlock {
+				t.Err.Block = loopHdr
+			}
 		case mir.TermSwitch:
 			for ci := t.Cases.Start; ci < t.Cases.End(); ci++ {
 				if out.Cases[ci].Target == mir.EntryBlock {
@@ -853,34 +836,55 @@ func rewriteAccTailRec(b *mir.Body, sites []tailRecSite, chosen accOp, retT type
 		return out.AddLocal(mir.Local{Type: t, Kind: mir.LocalTemp, Loop: mir.NoLoop, Span: sp})
 	}
 
+	// Shadow any updated non-var parameter into a fresh LocalTemp in the
+	// prologue so codegen's readonly ABI attribute on Indirect non-var params
+	// (immutarg.go) is never violated by loop-back parameter assignments.
+	var shadow map[mir.LocalID]mir.LocalID
+	var proStmts []mir.Statement
+	for _, s := range sites {
+		bi := s.callBlk
+		if bi == mir.EntryBlock {
+			bi = loopHdr
+		}
+		t := &out.Blocks[bi].Term
+		args := out.Args[t.Args.Start:t.Args.End()]
+		for i := range int(out.ParamCount) {
+			p := mir.LocalID(i + 1)
+			if out.Locals[p].Var || shadow[p] != 0 || argUnchanged(args[i], p) {
+				continue
+			}
+			if shadow == nil {
+				shadow = map[mir.LocalID]mir.LocalID{}
+			}
+			sh := newTemp(out.Locals[p].Type, entrySpan)
+			shadow[p] = sh
+			proStmts = append(proStmts, mir.Statement{
+				Kind:   mir.StAssign,
+				Place:  mir.LocalPlace(sh),
+				Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Move(mir.LocalPlace(p)), Type: out.Locals[p].Type},
+				Span:   entrySpan,
+			})
+		}
+	}
+	if len(shadow) > 0 {
+		sites = remapShadowParams(out, sites, shadow)
+	}
+
 	// Build prologue in EntryBlock.
 	var acc, mask, ovf mir.LocalID
-	var proStmts []mir.Statement
 	if chosen != accNone {
 		acc = newTemp(retT, entrySpan)
-		proStmts = append(proStmts, mir.Statement{
-			Kind:   mir.StAssign,
-			Place:  mir.LocalPlace(acc),
-			Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Imm(retT, accIdentity(chosen, retIn)), Type: retT},
-			Span:   entrySpan,
-		})
+		proStmts = append(proStmts, mir.Statement{Kind: mir.StAssign, Place: mir.LocalPlace(acc),
+			Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Imm(retT, accIdentity(chosen, retIn)), Type: retT}, Span: entrySpan})
 		if chosen == accAddChecked {
 			if retIn.signed {
 				mask = newTemp(retT, entrySpan)
-				proStmts = append(proStmts, mir.Statement{
-					Kind:   mir.StAssign,
-					Place:  mir.LocalPlace(mask),
-					Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Imm(retT, 0), Type: retT},
-					Span:   entrySpan,
-				})
+				proStmts = append(proStmts, mir.Statement{Kind: mir.StAssign, Place: mir.LocalPlace(mask),
+					Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Imm(retT, 0), Type: retT}, Span: entrySpan})
 			} else {
 				ovf = newTemp(types.Bool, entrySpan)
-				proStmts = append(proStmts, mir.Statement{
-					Kind:   mir.StAssign,
-					Place:  mir.LocalPlace(ovf),
-					Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Imm(types.Bool, 0), Type: types.Bool},
-					Span:   entrySpan,
-				})
+				proStmts = append(proStmts, mir.Statement{Kind: mir.StAssign, Place: mir.LocalPlace(ovf),
+					Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Imm(types.Bool, 0), Type: types.Bool}, Span: entrySpan})
 			}
 		}
 	}
@@ -960,7 +964,8 @@ func rewriteAccTailRec(b *mir.Body, sites []tailRecSite, chosen accOp, retT type
 			}
 		}
 
-		// Step B & C: parallel update of changed parameters.
+		// Step B & C: parallel update of changed parameters (writing to shadow
+		// temps for non-var params so readonly ABI params stay unwritten).
 		type paramUpd struct {
 			param mir.LocalID
 			arg   mir.Arg
@@ -969,6 +974,9 @@ func rewriteAccTailRec(b *mir.Body, sites []tailRecSite, chosen accOp, retT type
 		var upds []paramUpd
 		for i := range int(out.ParamCount) {
 			p := mir.LocalID(i + 1)
+			if sh := shadow[p]; sh != 0 {
+				p = sh
+			}
 			a := args[i]
 			if argUnchanged(a, p) {
 				continue
@@ -997,14 +1005,10 @@ func rewriteAccTailRec(b *mir.Body, sites []tailRecSite, chosen accOp, retT type
 			}
 			for _, u := range upds {
 				pt := out.Locals[u.param].Type
-				op := mir.Copy(mir.LocalPlace(u.tmp))
-				if u.arg.Mode == mir.ArgMove {
-					op = mir.Move(mir.LocalPlace(u.tmp))
-				}
 				blk.Stmts = append(blk.Stmts, mir.Statement{
 					Kind:   mir.StAssign,
 					Place:  mir.LocalPlace(u.param),
-					Rvalue: mir.Rvalue{Kind: mir.RvUse, A: op, Type: pt},
+					Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Move(mir.LocalPlace(u.tmp)), Type: pt},
 					Span:   callSpan,
 				})
 			}
@@ -1127,4 +1131,57 @@ func rewriteAccTailRec(b *mir.Body, sites []tailRecSite, chosen accOp, retT type
 		Span:     entrySpan,
 	})
 	return out
+}
+
+// remapShadowParams rewrites references to shadowed non-var params in blocks
+// 1.., flat side slices, and site terms to their prologue shadow temps.
+func remapShadowParams(out *mir.Body, sites []tailRecSite, sh map[mir.LocalID]mir.LocalID) []tailRecSite {
+	mapL := func(l mir.LocalID) mir.LocalID {
+		if r := sh[l]; r != 0 {
+			return r
+		}
+		return l
+	}
+	mapOp := func(o *mir.Operand) {
+		if o.Kind == mir.OpCopy || o.Kind == mir.OpMove {
+			o.Place.Local = mapL(o.Place.Local)
+		}
+	}
+	out.Projections = slices.Clone(out.Projections)
+	for i := range out.Projections {
+		if out.Projections[i].Kind == mir.ProjIndex {
+			out.Projections[i].A = uint32(mapL(mir.LocalID(out.Projections[i].A)))
+		}
+	}
+	out.Operands = slices.Clone(out.Operands)
+	for i := range out.Operands {
+		mapOp(&out.Operands[i])
+	}
+	out.Args = slices.Clone(out.Args)
+	for i := range out.Args {
+		mapOp(&out.Args[i].Operand)
+	}
+	for bi := 1; bi < len(out.Blocks); bi++ {
+		blk := &out.Blocks[bi]
+		blk.Stmts = slices.Clone(blk.Stmts)
+		for si := range blk.Stmts {
+			st := &blk.Stmts[si]
+			st.Place.Local, st.Local, st.Rvalue.Place.Local = mapL(st.Place.Local), mapL(st.Local), mapL(st.Rvalue.Place.Local)
+			mapOp(&st.Rvalue.A)
+			mapOp(&st.Rvalue.B)
+		}
+		t := &blk.Term
+		mapOp(&t.On)
+		mapOp(&t.Callee.Value)
+		mapOp(&t.Msg)
+		t.Dest.Local, t.Err.Error, t.Spawn, t.Value = mapL(t.Dest.Local), mapL(t.Err.Error), mapL(t.Spawn), mapL(t.Value)
+	}
+	outSites := slices.Clone(sites)
+	for i := range outSites {
+		outSites[i].terms = slices.Clone(outSites[i].terms)
+		for j := range outSites[i].terms {
+			mapOp(&outSites[i].terms[j])
+		}
+	}
+	return outSites
 }

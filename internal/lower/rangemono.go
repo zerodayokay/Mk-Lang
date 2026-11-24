@@ -188,7 +188,7 @@ func (x *vctx) matchMonoLoop(l *vloop) *monoLoop {
 			case mir.StAsm, mir.StJoin:
 				return nil
 			case mir.StAssign:
-				if st.Rvalue.Kind == mir.RvRef && st.Rvalue.Origin == mir.OriginLoopHolder {
+				if (st.Rvalue.Kind == mir.RvRef || st.Rvalue.Kind == mir.RvSlice) && st.Rvalue.Origin != mir.OriginPlain {
 					return nil
 				}
 				if st.Place.Proj.Len == 0 || !sliceLike(x.tab, b.Locals[st.Place.Local].Type) {

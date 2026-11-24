@@ -392,8 +392,8 @@ func (l *vloop) shape(g *vcfg, tab *types.Table) bool {
 			case mir.StAsm, mir.StJoin:
 				return false
 			case mir.StAssign:
-				if st.Rvalue.Kind == mir.RvRef && st.Rvalue.Origin == mir.OriginLoopHolder {
-					return false // a holder loan is made once (a MIR verifier rule)
+				if (st.Rvalue.Kind == mir.RvRef || st.Rvalue.Kind == mir.RvSlice) && st.Rvalue.Origin != mir.OriginPlain {
+					return false // loop holder/element loans cannot be cloned outside their loop (M9)
 				}
 				if st.Place.Proj.Len == 0 || !sliceLike(tab, b.Locals[st.Place.Local].Type) {
 					// A write through a slice's index is an element's,

@@ -156,7 +156,7 @@ func (fg *fnGen) ret() {
 // 2-word constant bitmask test. This eliminates indirect jump tables on
 // character-class matches and keeps small predicates inlineable by LLVM.
 func (fg *fnGen) tryBitmaskSwitch(on llvm.Value, cases []mir.SwitchCase, defID mir.BlockID, def *llvm.Block) bool {
-	if fg.pgo != nil || fg.g.cfg.Cover || fg.g.cfg.Debug || fg.g.ctModule(fg.fi) {
+	if fg.pgo != nil || fg.g.cfg.Cover || fg.g.cfg.Debug || fg.fi < 0 || fg.g.ctModule(fg.fi) {
 		return false
 	}
 	if def == nil || len(cases) < 4 {

@@ -324,6 +324,31 @@ H(): int {
 			wantSelf:  2,
 			wantLoops: 0,
 		},
+		{
+			name: "fallible-call-err-edge-negative-return-must-not-panic",
+			src: pvV + `
+error ZeroErr
+FailZero(n: int): ZeroErr!int {
+	if n == 0 { fail ZeroErr }
+	return 1
+}
+F(n: int): int {
+	if n <= 0 {
+		_ = FailZero(n) else {
+			return -1
+		}
+		return 0
+	}
+	return 1 + F(n - 1)
+}
+H(): int {
+	return F(V(0))
+}
+`,
+			fn:        "F",
+			wantSelf:  1,
+			wantLoops: 0,
+		},
 	}
 
 	for _, tc := range cases {
