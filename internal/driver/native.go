@@ -154,6 +154,7 @@ func (s *Session) Build(out string) (Result, []string, error) {
 		s.p.diags = append(s.p.diags, d)
 		return s.p.result(s.w, s.cfg.MaxDiags), nil, nil
 	}
+	defer s.startFastSnapshot(bins)()
 	var paths []string
 	var ds []*diag.Diagnostic
 	fastOuts := make([]fastBinOut, len(bins))

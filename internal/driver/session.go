@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 
+	"mk/internal/cache"
 	"mk/internal/diag"
 	"mk/internal/source"
 	"mk/std"
@@ -99,6 +100,13 @@ type Session struct {
 	// customReadFile is true when the caller supplied a non-nil Config.ReadFile
 	// before normalize filled the os.ReadFile default (fastbuild.go).
 	customReadFile bool
+	// preStore and preBuildID carry a store/buildID already opened during a
+	// tryFastBuild miss into runCheck's world (fastbuild.go).
+	preStore   *cache.Store
+	preBuildID source.Hash
+	// fastSnap is the background input-directory/file snapshot overlapped with
+	// native stages on Session.Build (fastbuild.go).
+	fastSnap *fastSnapshot
 }
 
 // NewSession validates the config and finds the root. The error is a
@@ -323,6 +331,10 @@ func (s *Session) runCheck() Result {
 	p := &pipeline{w: w, deferWalk: s.deferWalk}
 	s.p, s.pkgB, s.pkgMan, s.deps, s.depBs = p, nil, nil, nil, nil
 	p.guard("check "+s.root.name, func() {
+		if s.preStore != nil {
+			w.seedStore(s.preStore, s.preBuildID)
+			s.preStore, s.preBuildID = nil, source.Hash{}
+		}
 		w.startFront(s.cacheDir())
 		if w.front != nil {
 			w.front.deferWrites = s.deferWalk

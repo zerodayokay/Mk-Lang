@@ -239,10 +239,12 @@ func (s *Session) tryFastBuild(out string) (Result, []string, bool) {
 	if err != nil {
 		return Result{}, nil, false
 	}
+	s.preStore = st
 	buildID, ok := s.fastBuildID(st)
 	if !ok || buildID.IsZero() {
 		return Result{}, nil, false
 	}
+	s.preBuildID = buildID
 	tools, d := s.tools()
 	if d != nil {
 		return Result{}, nil, false
@@ -491,36 +493,236 @@ func (s *Session) verifyFastInputs(st *cache.Store, rec *fastBuildRec) bool {
 	return true
 }
 
-// recordFastBuild saves a whole-build fingerprint record after a clean Build.
-// Errors are silently ignored (the cache is purely an optimization).
-func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Result) {
-	if !s.fastBuildEligible() || s.w == nil || len(bins) == 0 || len(bins) != len(outs) {
-		return
+// fastSnapshot holds the tracked directory signatures, input file hashes, and
+// absent paths computed concurrently with the native stages on Session.Build.
+type fastSnapshot struct {
+	done   chan struct{}
+	ok     bool
+	dirs   []fastDirEntry
+	files  []fastFileEntry
+	absent []string
+}
+
+// startFastSnapshot launches directory and input-file snapshotting on a
+// guarded background goroutine right after runCheck succeeds so it overlaps
+// codegen, clang, and linking. Returns a cleanup closure that joins the
+// goroutine before Session.Build returns.
+func (s *Session) startFastSnapshot(bins []binTarget) func() {
+	if !s.fastBuildEligible() || s.w == nil || len(bins) == 0 {
+		return func() {}
 	}
 	// Skip builds with external deps, C imports, named links, data-file reads,
 	// or code generators (their extra dependencies are tracked by the normal
 	// incremental front/native caches).
 	if len(s.deps) > 0 || s.w.cimports != nil || len(s.w.depCImports) > 0 || len(s.w.links) > 0 {
-		return
+		return func() {}
 	}
 	s.w.data.mu.Lock()
 	hasData := len(s.w.data.m) > 0
 	s.w.data.mu.Unlock()
-	if hasData {
-		return
-	}
-	if s.pkgB == nil {
-		return
+	if hasData || s.pkgB == nil {
+		return func() {}
 	}
 	for _, m := range s.pkgB.mods {
 		if m.gen != nil || len(m.genRuns) > 0 || m.genLines > 0 {
-			return
+			return func() {}
 		}
 	}
 	for _, b := range bins {
 		if b.script != "" || b.kind != "" {
-			return
+			return func() {}
 		}
+	}
+	st := s.w.store.st
+	if st == nil {
+		return func() {}
+	}
+
+	// Capture all immutable inputs on the main goroutine before spawning.
+	rkind, rdir, rfile := s.root.kind, s.root.dir, s.root.file
+	jobs := max(1, s.cfg.Jobs)
+	fileSet := map[string]bool{}
+	var filePaths []string
+	addFile := func(abs string) {
+		if abs != "" && !fileSet[abs] {
+			fileSet[abs] = true
+			filePaths = append(filePaths, abs)
+		}
+	}
+	var skipped []string
+	var targetDirs []string
+	switch rkind {
+	case rootFile:
+		addFile(filepath.Join(rdir, filepath.FromSlash(rfile)))
+	case rootPackage:
+		addFile(filepath.Join(rdir, "pkg.mk"))
+		if s.pkgMan != nil {
+			skipped = s.pkgMan.walkSkipped()
+			osName := targetOS(s.cfg.Target)
+			for _, sel := range s.pkgMan.Targets {
+				if sel.OS != osName {
+					continue
+				}
+				for _, ms := range sel.Modules {
+					targetDirs = append(targetDirs, filepath.Join(rdir, filepath.FromSlash(ms.Dir)))
+				}
+			}
+		}
+	}
+	for _, m := range s.pkgB.mods {
+		if m.tree == nil || m.tree.osRoot == "" {
+			return func() {}
+		}
+		for _, f := range m.files {
+			addFile(filepath.Join(m.tree.osRoot, filepath.FromSlash(f.rel)))
+		}
+	}
+	var stdModDirs []string
+	if s.cfg.StdDir != "" && s.stdB != nil {
+		addFile(filepath.Join(s.cfg.StdDir, "pkg.mk"))
+		seenStd := map[string]bool{}
+		for _, m := range s.stdB.mods {
+			if m.tree == nil || m.tree.osRoot == "" {
+				return func() {}
+			}
+			dir := filepath.Join(m.tree.osRoot, filepath.FromSlash(m.dir))
+			if !seenStd[dir] {
+				seenStd[dir] = true
+				stdModDirs = append(stdModDirs, dir)
+			}
+			for _, f := range m.files {
+				addFile(filepath.Join(m.tree.osRoot, filepath.FromSlash(f.rel)))
+			}
+		}
+	}
+	for _, o := range s.cfg.ExtraObjects {
+		addFile(o)
+	}
+	optProfile := s.cfg.Profile.Optimized()
+	pgoMode := s.cfg.PGO
+	pgoFile := s.cfg.PGOFile
+
+	snap := &fastSnapshot{done: make(chan struct{})}
+	s.fastSnap = snap
+	go func() {
+		defer close(snap.done)
+		_ = source.Guard("fastbuild snapshot", source.Span{}, func() {
+			var dirs []fastDirEntry
+			var absent []string
+			switch rkind {
+			case rootDir:
+				sig, ok := computeDirSig(rdir, false, nil, nil)
+				if !ok {
+					return
+				}
+				dirs = append(dirs, fastDirEntry{path: rdir, recursive: false, sig: sig})
+			case rootPackage:
+				if !collectPackageDirSigsParallel(rdir, skipped, jobs, &dirs) {
+					return
+				}
+				for _, dir := range targetDirs {
+					sig, ok := computeDirSig(dir, false, nil, nil)
+					if !ok {
+						return
+					}
+					dirs = append(dirs, fastDirEntry{path: dir, recursive: false, sig: sig})
+				}
+			}
+			for _, dir := range stdModDirs {
+				sig, ok := computeDirSig(dir, false, nil, nil)
+				if !ok {
+					return
+				}
+				dirs = append(dirs, fastDirEntry{path: dir, recursive: false, sig: sig})
+			}
+			if optProfile {
+				switch pgoMode {
+				case PGOUse:
+					if pgoFile != "" {
+						addFile(pgoFile)
+					}
+				case PGODefault:
+					p := filepath.Join(rdir, "default.mkprof")
+					if isRegular(p) {
+						addFile(p)
+					} else {
+						absent = append(absent, p)
+					}
+				}
+			}
+
+			slices.Sort(filePaths)
+			hints := st.LoadHints(rdir)
+			statAt := st.Now()
+			files := make([]fastFileEntry, len(filePaths))
+			var failed atomic.Bool
+			var hintsDirty atomic.Bool
+			wjobs := min(jobs, max(1, len(filePaths)))
+			var next atomic.Int64
+			var wg sync.WaitGroup
+			for range wjobs {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if ie := source.Guard("fastbuild hash files", source.Span{}, func() {
+						for !failed.Load() {
+							i := int(next.Add(1) - 1)
+							if i >= len(filePaths) {
+								break
+							}
+							p := filePaths[i]
+							fi, err := os.Lstat(p)
+							if err != nil {
+								failed.Store(true)
+								return
+							}
+							if fi.Mode().IsRegular() {
+								if h, ok := hints.Lookup(p, fi); ok {
+									files[i] = fastFileEntry{path: p, hash: h}
+									continue
+								}
+							}
+							b, err := os.ReadFile(p)
+							if err != nil {
+								failed.Store(true)
+								return
+							}
+							h := source.HashBytes(fastBuildFileDom, b)
+							files[i] = fastFileEntry{path: p, hash: h}
+							if fi.Mode().IsRegular() {
+								hints.Record(p, fi, statAt, h)
+								hintsDirty.Store(true)
+							}
+						}
+					}); ie != nil {
+						failed.Store(true)
+					}
+				}()
+			}
+			wg.Wait()
+			if failed.Load() {
+				return
+			}
+			if hintsDirty.Load() {
+				_ = hints.Save()
+			}
+			slices.SortFunc(dirs, func(a, b fastDirEntry) int { return strings.Compare(a.path, b.path) })
+			slices.Sort(absent)
+			snap.dirs, snap.files, snap.absent, snap.ok = dirs, files, absent, true
+		})
+	}()
+	return func() {
+		<-snap.done
+		s.fastSnap = nil
+	}
+}
+
+// recordFastBuild saves a whole-build fingerprint record after a clean Build.
+// Errors are silently ignored (the cache is purely an optimization).
+func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Result) {
+	snap := s.fastSnap
+	if snap == nil || s.w == nil || len(bins) == 0 || len(bins) != len(outs) {
+		return
 	}
 	st := s.w.store.st
 	if st == nil || s.w.buildID().IsZero() || s.cfg.Tools == nil {
@@ -530,8 +732,16 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 	if !ok {
 		return
 	}
+	<-snap.done
+	if !snap.ok {
+		return
+	}
 
-	var rec fastBuildRec
+	rec := fastBuildRec{
+		dirs:   snap.dirs,
+		files:  snap.files,
+		absent: snap.absent,
+	}
 
 	// Collect stored bin entries (reusing hashes captured during copyOutHash).
 	for i, o := range outs {
@@ -565,167 +775,6 @@ func (s *Session) recordFastBuild(bins []binTarget, outs []fastBinOut, res Resul
 		}
 		rec.bins = append(rec.bins, be)
 	}
-
-	hints := st.LoadHints(s.root.dir)
-	statAt := st.Now()
-	fileSet := map[string]bool{}
-	var filePaths []string
-	addFile := func(abs string) {
-		if abs != "" && !fileSet[abs] {
-			fileSet[abs] = true
-			filePaths = append(filePaths, abs)
-		}
-	}
-
-	// Collect tracked package directories and files.
-	switch s.root.kind {
-	case rootFile:
-		addFile(filepath.Join(s.root.dir, filepath.FromSlash(s.root.file)))
-	case rootDir:
-		sig, ok := computeDirSig(s.root.dir, false, nil, nil)
-		if !ok {
-			return
-		}
-		rec.dirs = append(rec.dirs, fastDirEntry{path: s.root.dir, recursive: false, sig: sig})
-	case rootPackage:
-		addFile(filepath.Join(s.root.dir, "pkg.mk"))
-		// Walk every non-skipped directory under s.root.dir and snapshot its
-		// listing (skipping nested packages that hold their own pkg.mk, and
-		// target-selected directories for other OSes just like packageDirs).
-		var skipped []string
-		if s.pkgMan != nil {
-			skipped = s.pkgMan.walkSkipped()
-		}
-		if !collectPackageDirSigsParallel(s.root.dir, skipped, max(1, s.cfg.Jobs), &rec.dirs) {
-			return
-		}
-		// Also snapshot target-selected directories active for this OS.
-		if s.pkgMan != nil {
-			osName := targetOS(s.cfg.Target)
-			for _, sel := range s.pkgMan.Targets {
-				if sel.OS != osName {
-					continue
-				}
-				for _, ms := range sel.Modules {
-					dir := filepath.Join(s.root.dir, filepath.FromSlash(ms.Dir))
-					sig, ok := computeDirSig(dir, false, nil, nil)
-					if !ok {
-						return
-					}
-					rec.dirs = append(rec.dirs, fastDirEntry{path: dir, recursive: false, sig: sig})
-				}
-			}
-		}
-	}
-	for _, m := range s.pkgB.mods {
-		if m.tree == nil || m.tree.osRoot == "" {
-			return
-		}
-		for _, f := range m.files {
-			addFile(filepath.Join(m.tree.osRoot, filepath.FromSlash(f.rel)))
-		}
-	}
-
-	// If std comes from disk (MK_STD), also track std/pkg.mk and every loaded
-	// std module's directory and files so any std edit invalidates the build.
-	if s.cfg.StdDir != "" && s.stdB != nil {
-		addFile(filepath.Join(s.cfg.StdDir, "pkg.mk"))
-		stdDirs := map[string]bool{}
-		for _, m := range s.stdB.mods {
-			if m.tree == nil || m.tree.osRoot == "" {
-				return
-			}
-			dir := filepath.Join(m.tree.osRoot, filepath.FromSlash(m.dir))
-			if !stdDirs[dir] {
-				stdDirs[dir] = true
-				sig, ok := computeDirSig(dir, false, nil, nil)
-				if !ok {
-					return
-				}
-				rec.dirs = append(rec.dirs, fastDirEntry{path: dir, recursive: false, sig: sig})
-			}
-			for _, f := range m.files {
-				addFile(filepath.Join(m.tree.osRoot, filepath.FromSlash(f.rel)))
-			}
-		}
-	}
-
-	// Extra objects and PGO profile file (or its absence).
-	for _, o := range s.cfg.ExtraObjects {
-		addFile(o)
-	}
-	if s.cfg.Profile.Optimized() {
-		switch s.cfg.PGO {
-		case PGOUse:
-			if s.cfg.PGOFile != "" {
-				addFile(s.cfg.PGOFile)
-			}
-		case PGODefault:
-			p := filepath.Join(s.root.dir, "default.mkprof")
-			if isRegular(p) {
-				addFile(p)
-			} else {
-				rec.absent = append(rec.absent, p)
-			}
-		}
-	}
-
-	slices.Sort(filePaths)
-	rec.files = make([]fastFileEntry, len(filePaths))
-	var failed atomic.Bool
-	var hintsDirty atomic.Bool
-	wjobs := min(max(1, s.cfg.Jobs), max(1, len(filePaths)))
-	var next atomic.Int64
-	var wg sync.WaitGroup
-	for range wjobs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if ie := source.Guard("fastbuild hash files", source.Span{}, func() {
-				for !failed.Load() {
-					i := int(next.Add(1) - 1)
-					if i >= len(filePaths) {
-						break
-					}
-					p := filePaths[i]
-					fi, err := os.Lstat(p)
-					if err != nil {
-						failed.Store(true)
-						return
-					}
-					if fi.Mode().IsRegular() {
-						if h, ok := hints.Lookup(p, fi); ok {
-							rec.files[i] = fastFileEntry{path: p, hash: h}
-							continue
-						}
-					}
-					b, err := os.ReadFile(p)
-					if err != nil {
-						failed.Store(true)
-						return
-					}
-					h := source.HashBytes(fastBuildFileDom, b)
-					rec.files[i] = fastFileEntry{path: p, hash: h}
-					if fi.Mode().IsRegular() {
-						hints.Record(p, fi, statAt, h)
-						hintsDirty.Store(true)
-					}
-				}
-			}); ie != nil {
-				failed.Store(true)
-			}
-		}()
-	}
-	wg.Wait()
-	if failed.Load() {
-		return
-	}
-	if hintsDirty.Load() {
-		_ = hints.Save()
-	}
-
-	slices.SortFunc(rec.dirs, func(a, b fastDirEntry) int { return strings.Compare(a.path, b.path) })
-	slices.Sort(rec.absent)
 
 	if res.Trace != nil {
 		packs := append(slices.Clone(res.Trace.PacksCompiled), res.Trace.PacksFromCache...)

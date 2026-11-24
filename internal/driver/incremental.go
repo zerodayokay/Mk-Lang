@@ -62,22 +62,47 @@ func (w *world) openStore(dir string) *cache.Store {
 			w.store.id = w.cfg.BuildID
 			return
 		}
-		done := make(chan struct{})
-		w.store.idDone = done
-		go func() {
-			defer close(done)
-			_ = source.Guard("build id", source.Span{}, func() {
-				exe, err := os.Executable()
-				if err != nil {
-					return
-				}
-				if h, err := st.FileHash(exe); err == nil {
-					w.store.id = iface.BuildIDFrom(h)
-				}
-			})
-		}()
+		w.startBuildID(st)
 	})
 	return w.store.st
+}
+
+// seedStore pre-populates w.store with an already-opened store and build ID
+// (e.g. from a tryFastBuild miss) so openStore avoids reopening hints.db and
+// re-hashing the compiler executable.
+func (w *world) seedStore(st *cache.Store, id source.Hash) {
+	if st == nil || w.cfg.NoCache {
+		return
+	}
+	w.store.once.Do(func() {
+		w.store.st = st
+		if !w.cfg.BuildID.IsZero() {
+			w.store.id = w.cfg.BuildID
+			return
+		}
+		if !id.IsZero() {
+			w.store.id = id
+			return
+		}
+		w.startBuildID(st)
+	})
+}
+
+func (w *world) startBuildID(st *cache.Store) {
+	done := make(chan struct{})
+	w.store.idDone = done
+	go func() {
+		defer close(done)
+		_ = source.Guard("build id", source.Span{}, func() {
+			exe, err := os.Executable()
+			if err != nil {
+				return
+			}
+			if h, err := st.FileHash(exe); err == nil {
+				w.store.id = iface.BuildIDFrom(h)
+			}
+		})
+	}()
 }
 
 // buildID is the world's build ID; zero until openStore succeeded (or if
