@@ -103,19 +103,25 @@ export str.Replace(self, a: &Arena, old: str, new: str): OutOfMemory!str from a 
     return TextInto(t)
 }
 
+// GrowFor grows self's buffer to hold at least used + n bytes. Outlined from
+// PushBytes so the common fast path (no growth) inlines cleanly.
+Text.GrowFor(mut self, n: int): OutOfMemory!void {
+    c := NextCap(self.cap, self.used + n)
+    p := GrowBytes(self.alloc, self.ptr, self.used, self.cap, c, false)
+    if raw.IsNull(p) {
+        fail OutOfMemory
+    }
+    self.ptr = p
+    self.cap = c
+}
+
 // Room makes room for n more bytes, growing as PushBytes does: to
 // NextCap(cap, used + n), which on an empty text is max(4, n). Unlike
 // Reserve's exact growth, a text that is appended to again keeps its
 // amortized cost.
 Text.Room(mut self, n: int): OutOfMemory!void {
-    if n > self.cap - self.used {
-        c := NextCap(self.cap, self.used + n)
-        p := GrowBytes(self.alloc, self.ptr, self.used, self.cap, c, false)
-        if raw.IsNull(p) {
-            fail OutOfMemory
-        }
-        self.ptr = p
-        self.cap = c
+    if n > self.cap -% self.used {
+        try self.GrowFor(n)
     }
 }
 
@@ -126,17 +132,11 @@ Text.PushBytes(mut self, b: []u8): OutOfMemory!void {
     if n == 0 {
         return
     }
-    if n > self.cap - self.used {
-        c := NextCap(self.cap, self.used + n)
-        p := GrowBytes(self.alloc, self.ptr, self.used, self.cap, c, false)
-        if raw.IsNull(p) {
-            fail OutOfMemory
-        }
-        self.ptr = p
-        self.cap = c
+    if n > self.cap -% self.used {
+        try self.GrowFor(n)
     }
     CopyBytes(ByteAt(self.ptr, self.used), raw.Data(b), n) // used + n <= cap
-    self.used += n
+    self.used = self.used +% n
 }
 
 // Reserve makes room for n more bytes with one growth to exactly
@@ -249,6 +249,8 @@ TextRunValid(b: []u8): bool {
                     hi = hi | LoadWord(b, 16)
                 }
             }
+        } else if n >= 4 {
+            hi = u64(b[0] | b[1] | b[2] | b[3] | b[n -% 4] | b[n -% 3] | b[n -% 2] | b[n -% 1])
         } else {
             for c in b {
                 hi = hi | u64(c)

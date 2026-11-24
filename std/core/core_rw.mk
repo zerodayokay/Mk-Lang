@@ -128,7 +128,7 @@ export Writer.Str(mut self, s: str): WriteError!void {
 /// on the same bytes.
 export Writer.Bytes(mut self, b: []u8): WriteError!void {
     n := b.Len()
-    if n > self.cap - self.used {
+    if n > self.cap -% self.used {
         if self.used == 0 {
             write := self.table.write
             try write(self, b)
@@ -143,7 +143,7 @@ export Writer.Bytes(mut self, b: []u8): WriteError!void {
     unsafe "buf holds cap bytes and used + n <= cap" {
         raw.Copy(raw.Offset(self.buf, self.used), raw.Data(b), n)
     }
-    self.used += n
+    self.used = self.used +% n
 }
 
 // BytesSlow is Bytes when b does not fit what is free, by Go bufio.Writer's
