@@ -293,10 +293,12 @@ func FuzzInlineAgrees(f *testing.F) {
 var piKernelWant = map[string]string{
 	"binarytrees/mk":  "inlined 0 | off add=9 sub=0 mul=0 nowrap=6 casts=0 bounds=4/4 | on add=9 sub=0 mul=0 nowrap=6 casts=0 bounds=4/4",
 	"fannkuch/mk":     "inlined 0 | off add=4 sub=3 mul=1 nowrap=5 casts=0 bounds=5/17 | on add=4 sub=3 mul=1 nowrap=5 casts=0 bounds=5/17",
+	"fasta/mk":        "inlined 0 | off add=8 sub=0 mul=5 nowrap=10 casts=0 bounds=9/12 | on add=8 sub=0 mul=5 nowrap=10 casts=0 bounds=9/12",
 	"fmtints/mk":      "inlined 0 | off add=2 sub=0 mul=1 nowrap=6 casts=1 bounds=7/11 | on add=2 sub=0 mul=1 nowrap=6 casts=1 bounds=7/11",
 	"intsum/mk":       "inlined 0 | off add=1 sub=0 mul=0 nowrap=1 casts=1 bounds=4/6 | on add=1 sub=0 mul=0 nowrap=1 casts=1 bounds=4/6",
 	"intsum/mkwrap":   "inlined 0 | off add=0 sub=0 mul=0 nowrap=0 casts=1 bounds=4/6 | on add=0 sub=0 mul=0 nowrap=0 casts=1 bounds=4/6",
 	"jsonscan/mk":     "inlined 0 | off add=1 sub=1 mul=0 nowrap=11 casts=0 bounds=2/10 | on add=1 sub=1 mul=0 nowrap=11 casts=0 bounds=2/10",
+	"knucleotide/mk":  "inlined 0 | off add=9 sub=8 mul=5 nowrap=0 casts=5 bounds=12/19 | on add=9 sub=8 mul=5 nowrap=0 casts=5 bounds=12/19",
 	"mandelbrot/mk":   "inlined 0 | off add=4 sub=3 mul=8 nowrap=1 casts=0 bounds=1/1 | on add=4 sub=3 mul=8 nowrap=1 casts=0 bounds=1/1",
 	"matmul/mk":       "inlined 0 | off add=6 sub=0 mul=11 nowrap=0 casts=2 bounds=10/10 | on add=6 sub=0 mul=11 nowrap=0 casts=2 bounds=10/10",
 	"nbody/mk":        "inlined 0 | off add=13 sub=10 mul=29 nowrap=2 casts=1 bounds=6/49 | on add=13 sub=10 mul=29 nowrap=2 casts=1 bounds=6/49",
