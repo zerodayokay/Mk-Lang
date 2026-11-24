@@ -19,10 +19,10 @@ Read(s: Sym): u32 {
 
 Bad(): u32 {
     var copy: ?Sym = none
-    {
+    if true {
         t := Table(tag: 1)
-        h := Intern(&t) // <- E0505
-        copy = some(h)
+        h := Intern(&t)
+        copy = some(h) // <- E0505
     }
     if s := copy {
         return Read(s)
