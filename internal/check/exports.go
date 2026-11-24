@@ -200,6 +200,9 @@ func (m *Module) exportedKind(it *types.Item, fx *fileIndex, n *ast.StructDecl, 
 			return
 		}
 	}
+	if d.PlainView {
+		return
+	}
 	floor := kindWord{}
 	if d.Linear {
 		floor.kind = types.Linear

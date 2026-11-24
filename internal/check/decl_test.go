@@ -735,4 +735,27 @@ unsafe impl Share for Handle {
 }
 `)
 	})
+	t.Run("records Slice impl on plain view struct", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t, true)
+		b := checkCodes(t, w, "m", opt{}, "", `export plain view struct Span[T] {
+	data: []T
+}
+
+impl[T] Slice[T] for Span[T] {
+}
+`)
+		spanInt := w.tab.Named(b.item("Span"), []types.GenericArg{types.TypeArg(types.Int)})
+		if !w.c.Facts(spanInt).SliceImpl {
+			t.Fatalf("expected SliceImpl on plain view struct Span[int]")
+		}
+	})
+	t.Run("skips E0410 when export plain view fails Invariant A", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t, true)
+		checkCodes(t, w, "m", opt{}, "E0408@2:2", `export plain view struct Bad {
+	c: Cell[u32]
+}
+`)
+	})
 }

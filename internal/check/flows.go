@@ -561,10 +561,7 @@ func (c *Checker) signatureFlows(fn flowFn, cl *flowClauses) (types.Flows, []*di
 	}
 	for i, e := range cl.ends {
 		pt := sig.Param(e).Type
-		if c.cfg.Types.Kind(pt) == types.KMut {
-			pt = c.cfg.Types.Get(pt).Elem
-		}
-		if c.holdsPlainView(pt) {
+		if c.isPlainViewTarget(pt) {
 			at := fn.at
 			if i < len(cl.endsAt) {
 				at = cl.endsAt[i]
@@ -1086,6 +1083,24 @@ func sigInto(sig *types.Signature) []types.ParamIndex {
 		out[i] = p.Into
 	}
 	return out
+}
+
+// isPlainViewTarget reports whether t (unwrapping mut or &) is directly a
+// `plain view struct`. Owning structs that merely contain a copyable handle
+// field are not plain views and may appear in `ends`.
+func (c *Checker) isPlainViewTarget(t types.TypeID) bool {
+	for {
+		ty := c.cfg.Types.Get(t)
+		switch ty.Kind {
+		case types.KMut, types.KRef:
+			t = ty.Elem
+		case types.KNamed:
+			d, ok := c.declOfItem(c.cfg.Items.Get(ty.Item)).(*types.StructDecl)
+			return ok && d.PlainView
+		default:
+			return false
+		}
+	}
 }
 
 // holdsPlainView reports whether t is a `plain view struct` or reaches one

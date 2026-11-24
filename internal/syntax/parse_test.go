@@ -106,6 +106,8 @@ func TestStructs(t *testing.T) {
 		{name: "mut plain view", src: "mut plain view struct S { }\n", codes: "E0101", msg: "`plain` and `mut` cannot both be written on a `view struct`"},
 		{name: "plain without view", src: "plain struct S { }\n", codes: "E0101", msg: "`plain` only modifies a `view struct`"},
 		{name: "view plain order", src: "view plain struct S { }\n", codes: "E0101", msg: "`plain` must appear before `view`"},
+		{name: "plain before packed", src: "plain packed(4) view struct S { }\n", codes: "E0101", msg: "`plain` must immediately precede `view`"},
+		{name: "plain before align", src: "plain align(8) view struct S { }\n", codes: "E0101", msg: "`plain` must immediately precede `view`"},
 		{name: "bare mut struct", src: "mut struct S { }\n", codes: "E0101", msg: "`mut` on a struct applies only to `view`: write `mut view struct`"},
 		{name: "mut view view", src: "mut view view struct S { }\n", codes: "E0101", msg: "`view` written twice"},
 		{name: "repeated modifier", src: "linear linear struct S { }\n", codes: "E0101", msg: "`linear` written twice"},

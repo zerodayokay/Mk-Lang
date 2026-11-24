@@ -331,6 +331,7 @@ func (p *parser) parseStruct(start uint32) ast.Item {
 	p.itemStart(&n.Base, start)
 	var plainSpan source.Span
 	var hasPlainSpan bool
+	var plainNotAdj bool
 	for {
 		switch {
 		case p.at(ast.TokLinear):
@@ -374,6 +375,9 @@ func (p *parser) parseStruct(start uint32) ast.Item {
 			}
 			n.PlainView = true
 			p.next()
+			if !n.View && (p.packedModifier() || p.alignModifier()) {
+				plainNotAdj = true
+			}
 			continue
 		case p.at(ast.TokView):
 			if n.View {
@@ -410,6 +414,9 @@ func (p *parser) parseStruct(start uint32) ast.Item {
 				plainSpan = p.curSpan()
 			}
 			p.syntaxErr(plainSpan, "`plain` only modifies a `view struct`: write `plain view struct` for a copyable view, or remove `plain` (a struct without `view` is already plain when its fields are)")
+			n.PlainView = false
+		case plainNotAdj:
+			p.syntaxErr(plainSpan, "`plain` must immediately precede `view`: write `plain view struct`")
 			n.PlainView = false
 		}
 	}

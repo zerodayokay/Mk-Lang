@@ -748,15 +748,14 @@ func (m *Module) registerImpl(it *types.Item, d *types.ImplDecl) {
 	if m.c.cfg.Items.Get(ctor).Module != m.ID {
 		return
 	}
-	if sd, ok := m.c.cfg.Items.Get(ctor).Decl.(*types.StructDecl); ok && sd.PlainView {
-		return
-	}
+	sd, isStruct := m.c.cfg.Items.Get(ctor).Decl.(*types.StructDecl)
+	plainView := isStruct && sd.PlainView
 	switch {
-	case d.Unsafe && d.Bound.Kind == types.BoundSend:
+	case d.Unsafe && d.Bound.Kind == types.BoundSend && !plainView:
 		p := m.asserts[ctor]
 		p.send = it.ID
 		m.asserts[ctor] = p
-	case d.Unsafe && d.Bound.Kind == types.BoundShare:
+	case d.Unsafe && d.Bound.Kind == types.BoundShare && !plainView:
 		p := m.asserts[ctor]
 		p.share = it.ID
 		m.asserts[ctor] = p

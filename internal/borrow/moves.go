@@ -252,10 +252,21 @@ func (c *checker) hasBareParamByValue(t types.TypeID, seen map[types.TypeID]bool
 		}
 	case types.KNamed:
 		it := c.tab.Items().Get(ty.Item)
-		if sd, ok := it.Decl.(*types.StructDecl); ok && !sd.View {
-			for _, f := range sd.Fields {
-				if c.hasBareParamByValue(f.Type, seen) {
-					return true
+		switch d := it.Decl.(type) {
+		case *types.StructDecl:
+			if !d.View {
+				for _, f := range d.Fields {
+					if c.hasBareParamByValue(c.w.subst(f.Type, ty.Args), seen) {
+						return true
+					}
+				}
+			}
+		case *types.EnumDecl:
+			for _, v := range d.Variants {
+				for _, f := range v.Fields {
+					if c.hasBareParamByValue(c.w.subst(f.Type, ty.Args), seen) {
+						return true
+					}
 				}
 			}
 		}
@@ -298,6 +309,9 @@ func (c *checker) viewHasOnlyCopyableMethods(structID types.ItemID) bool {
 			im, ok := mit.Decl.(*types.ImplDecl)
 			if !ok || c.tab.Kind(im.For) != types.KNamed || c.tab.Get(im.For).Item != structID {
 				continue
+			}
+			if im.Unsafe && (im.Bound.Kind == types.BoundSend || im.Bound.Kind == types.BoundShare) {
+				return false
 			}
 			for _, mthID := range im.Methods {
 				c.readSig(mthID)

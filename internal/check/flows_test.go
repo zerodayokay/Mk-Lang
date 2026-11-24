@@ -363,7 +363,7 @@ Good(e: &CarrierEnum, x: &i32) *x into e {
 
 func TestPlainView_InvariantB(t *testing.T) {
 	w := newWorld(t, true)
-	checkCodes(t, w, "m", opt{unsafe: true}, "E0507@17:24 E0507@21:25 E0507@25:34 E0507@29:35 E0507@33:49 E0507@38:24 E0507@41:28", `plain view struct Ref[T] {
+	checkCodes(t, w, "m", opt{unsafe: true}, "E0507@17:24 E0507@21:25 E0507@25:34 E0507@29:35 E0507@33:49 E0507@38:24 E0507@41:28 E0507@44:25", `plain view struct Ref[T] {
 	idx: u32
 }
 
@@ -404,6 +404,17 @@ Ref.BadEndsByVal(self) ends self {
 }
 
 Ref.BadEndsByMut(mut self) ends self {
+}
+
+Ref.BadEndsByRef(&self) ends self {
+}
+
+linear struct Owner {
+	ar: Arena
+	r: Ref[i32]
+}
+
+Owner.Close(mut self) ends self {
 }
 `)
 }

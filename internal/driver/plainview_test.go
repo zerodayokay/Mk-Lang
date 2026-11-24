@@ -227,6 +227,67 @@ F() {
     _ = v
 }
 `, false)
+
+	checkAlt(t, "concrete generic struct wrapper gets note", `struct Wrap[T] {
+    v: T
+}
+
+view struct ConcreteWrap {
+    w: Wrap[&i32]
+}
+
+ConcreteWrap.Take(self) {
+    _ = self
+}
+
+F(x: &i32) {
+    v := ConcreteWrap(w: Wrap(v: x))
+    w := v
+    _ = w
+    v.Take()
+}
+`, true)
+
+	checkAlt(t, "enum wrapper with bare type param by value gets no note", `enum Boxed[T] {
+    Val(v: T)
+    Empty
+}
+
+view struct EnumParamView[T] {
+    b: Boxed[T]
+}
+
+EnumParamView.Take(self) {
+    _ = self
+}
+
+F(x: &i32) {
+    v: EnumParamView[&i32] = EnumParamView(b: Boxed.Val(v: x))
+    w := v
+    _ = w
+    v.Take()
+}
+`, false)
+
+	checkAlt(t, "unsafe impl Send view gets no note", `view struct SendView {
+    id: u32
+}
+
+unsafe impl Send for SendView {
+}
+
+SendView.Val(&self): u32 {
+    return self.id
+}
+
+F(): u32 {
+    s := SendView(id: 1)
+    a := s.Val()
+    b := s
+    _ = b
+    return a +% s.Val()
+}
+`, false)
 }
 
 func TestPlainViewCrossModuleCache(t *testing.T) {
