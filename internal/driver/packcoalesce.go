@@ -56,9 +56,15 @@ const (
 	userCoalesceThreshold = 16
 
 	// userPackBuckets is the target bucket count across small user modules in
-	// large multi-module builds: cuts clang process spawns ~5x while keeping
-	// balanced 8-core scheduling and compact 1-module edit buckets.
+	// optimized (ThinLTO) multi-module builds: keeps ThinLTO backend spawns low
+	// while preserving balanced 8-core scheduling.
 	userPackBuckets = 16
+
+	// devUserPackBuckets is the target bucket count for dev (non-LTO) builds:
+	// with direct clang -cc1 invocation, 32 buckets (~1-2 modules each on a
+	// 50-module build) slash 1-function edit recompilation while preserving
+	// fast clean builds and compact link inputs.
+	devUserPackBuckets = 32
 
 	// maxBucketModOps is the maximum total MIR ops of a single user module
 	// eligible for cross-module bucketing. Larger modules (e.g. a hub main
@@ -140,7 +146,11 @@ func (w *world) coalescePacks(in *mono.Instances, packs []mono.Pack) []mono.Pack
 			}
 		}
 
-		if len(small) <= userPackBuckets {
+		targetBuckets := userPackBuckets
+		if !w.cfg.Profile.Optimized() {
+			targetBuckets = devUserPackBuckets
+		}
+		if len(small) <= targetBuckets {
 			// Already at or below the bucket budget: emit one pack per small module.
 			for _, g := range small {
 				out = append(out, mergePacks(g.packs))
@@ -165,8 +175,8 @@ func (w *world) coalescePacks(in *mono.Instances, packs []mono.Pack) []mono.Pack
 				}
 			}
 
-			// Split userPackBuckets proportionally between shared and leaf tiers.
-			sharedB, leafB := splitBuckets(len(shared), len(leaves), userPackBuckets)
+			// Split targetBuckets proportionally between shared and leaf tiers.
+			sharedB, leafB := splitBuckets(len(shared), len(leaves), targetBuckets)
 
 			emitTier := func(tier []modGroup, nb int, byParent bool) {
 				if len(tier) == 0 {

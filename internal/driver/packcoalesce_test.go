@@ -19,7 +19,11 @@ import (
 )
 
 func makeTestWorldWithMods(paths []string) (*world, map[string]types.ModuleID) {
-	w := newWorld(Config{Jobs: 4})
+	return makeTestWorldWithProfile(paths, types.Release)
+}
+
+func makeTestWorldWithProfile(paths []string, prof types.Profile) (*world, map[string]types.ModuleID) {
+	w := newWorld(Config{Jobs: 4, Profile: prof})
 	ids := make(map[string]types.ModuleID, len(paths))
 	for _, p := range paths {
 		ids[p] = w.items.AddModule(&types.Module{Path: p, Std: isStdPath(p)})
@@ -187,5 +191,18 @@ func TestCoalescePacks_LargeBuildEditLocality(t *testing.T) {
 	}
 	if len(m25Packs) != 1 {
 		t.Fatalf("m25 spans %d coalesced packs, want 1", len(m25Packs))
+	}
+
+	// Dev profile uses finer devUserPackBuckets (32) while keeping shared/leaf
+	// stratification and single-bucket edit locality.
+	wDev, modsDev := makeTestWorldWithProfile(paths, types.Dev)
+	for i := 1; i < 50; i++ {
+		child := wDev.items.Module(modsDev[fmt.Sprintf("m%d", i)])
+		child.Imports = []types.ModuleID{modsDev[fmt.Sprintf("m%d", (i-1)/2)]}
+	}
+	inDev, packsDev := makeSynthInstances(modsDev, specs)
+	gotDev := wDev.coalescePacks(inDev, packsDev)
+	if len(gotDev) <= len(got) || len(gotDev) > 48 {
+		t.Fatalf("dev profile got %d packs (release %d), want (%d..48]", len(gotDev), len(got), len(got))
 	}
 }
