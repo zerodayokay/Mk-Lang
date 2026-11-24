@@ -209,9 +209,10 @@ func TestProvenOnlyWhereCatalogueSaysProven(t *testing.T) {
 
 func TestDriverEmitsOnlyItsCodes(t *testing.T) {
 	// E0904: the gen/ view (genview.go).
+	// E0213: cross-target pkg.Select API parity (alltargets.go).
 	// E0214 to E0216: dependency rules (deps_internal.go, deps_grants.go,
 	// manifest_min.go).
-	allowed := []string{"E0000", "E0001", "E0101", "E0202", "E0205", "E0206", "E0214", "E0215", "E0216", "E0904", "E1102"}
+	allowed := []string{"E0000", "E0001", "E0101", "E0202", "E0205", "E0206", "E0213", "E0214", "E0215", "E0216", "E0904", "E1102"}
 	files, _ := filepath.Glob("*.go")
 	// A comparison (`d.Code == diag.E0305`: a fix attached to another
 	// package's diagnostic) constructs nothing, and neither does an applied
