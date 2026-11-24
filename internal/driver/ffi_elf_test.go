@@ -835,6 +835,14 @@ func TestFFI_LibcBuildCache(t *testing.T) {
 		want []string
 		hit  bool // std.sys from the cache: only a build of the same mode stored it
 	}{{static, []string{"ThreadMain"}, false}, {libc, pth, false}, {static, []string{"ThreadMain"}, true}, {libc, pth, true}} {
+		if i == 2 {
+			// A comment-only edit bypasses the whole-build fingerprint fast path
+			// while keeping every token/anchor hash identical, so this white-box
+			// test still exercises frontCache and walkCache directly.
+			if err := os.WriteFile(filepath.Join(static, "app", "main.mk"), []byte(tasks+"// warm\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 		s, err := NewSession(Config{Root: c.root, StdDir: ffiStd(), Target: linuxT, Profile: types.Dev, Tools: tools, CacheDir: cache, Jobs: 4})
 		if err != nil {
 			t.Fatal(err)
