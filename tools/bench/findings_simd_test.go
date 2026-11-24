@@ -466,6 +466,10 @@ func TestFillBaseline(t *testing.T) {
 	}
 }
 
+// simdOffsetRe is the measured arena offset a labelled alignment exception
+// states; TestArenaOffsetsAsLabelled checks its value against a probe.
+var simdOffsetRe = regexp.MustCompile(`at \d+ mod 64`)
+
 // TestSimdBuffersAligned: every program of a GB/s SIMD row puts
 // its buffers on a 64-byte boundary and refuses to run otherwise, so no
 // cell measures its allocator's alignment. Mk code cannot read an address
@@ -514,8 +518,9 @@ func TestSimdBuffersAligned(t *testing.T) {
 				// TestArenaOffsetsAsLabelled checks that offset and the
 				// cost the notes give it against a probe.
 				label := "labelled alignment exception"
-				if !strings.Contains(strings.ReplaceAll(code, "\n// ", " "), label) || !strings.Contains(strings.Join(r.Notes, " "), label) || !strings.Contains(strings.Join(r.Notes, " "), "16 mod 64") {
-					t.Errorf("%s (%s): an Mk vector cell without aligned buffers must name %q in its source and in the row's notes with the measured offset (\"16 mod 64\")", p, lang, label)
+				notes := strings.Join(r.Notes, " ")
+				if !strings.Contains(strings.ReplaceAll(code, "\n// ", " "), label) || !strings.Contains(notes, label) || !simdOffsetRe.MatchString(notes) {
+					t.Errorf("%s (%s): an Mk vector cell without aligned buffers must name %q in its source and in the row's notes with the measured offset (\"at <k> mod 64\")", p, lang, label)
 				}
 				continue
 			}
