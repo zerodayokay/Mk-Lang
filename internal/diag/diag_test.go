@@ -366,6 +366,25 @@ func TestEarliestPhaseKeepsCauses(t *testing.T) {
 	}
 }
 
+// TestCapKeepsLaterPhaseCause: the cap cuts only the failing phase's
+// diagnostics; a cause of a later phase that sorts after its consequences
+// survives it, and so do the kept consequences' links to it.
+func TestCapKeepsLaterPhaseCause(t *testing.T) {
+	sm, a, b := fixture()
+	cause := New(E0903, at(b, 1, 1, 1), "generator failed")
+	ds := []*Diagnostic{cause}
+	for line := uint32(40); line <= 42; line++ {
+		ds = append(ds, New(E0201, at(a, line, 1, 1), "unknown name").ConsequenceOf(E0903, at(b, 1, 1, 1)))
+	}
+	r := Order(ds, sm, 2)
+	if r.Phase != PhaseNames || len(r.Diags) != 3 || r.Omitted != 1 || r.Diags[2].Diag != cause {
+		t.Fatalf("phase %v, %d kept, %d omitted:\n%s", r.Phase, len(r.Diags), r.Omitted, r.Text(sm))
+	}
+	if r.Diags[0].Root != 3 || r.Diags[1].Root != 3 || r.Diags[2].Root != 3 {
+		t.Fatalf("roots %d %d %d, want 3 3 3", r.Diags[0].Root, r.Diags[1].Root, r.Diags[2].Root)
+	}
+}
+
 // TestInternalAlwaysEmitted: E0000 survives the phase rule and the cap.
 func TestInternalAlwaysEmitted(t *testing.T) {
 	sm, a, _ := fixture()

@@ -115,38 +115,57 @@ func TestGenCodes(t *testing.T) {
 }
 
 // TestGenFailRootOfUnknownNames: a gen line whose generator fails emits
-// nothing, so a file of its module naming what it would have declared, and an
-// importer naming it as `out.Made`, get E0201 (names). The E0903 (types) is
-// still reported, as the root of each E0201, which cites the gen line; the
-// earliest-phase rule used to hide it behind the E0201s. With the module
-// cache on, the warm report equals the cold one.
+// nothing, so what names its output gets E0201 (names): a file of its module,
+// also when another module exports the spelling and the E0201 offers it; an
+// importer's `out.Made`; and, as an E0905, another gen line's output. The
+// E0903 (types) is reported with them, as the root of each, and an E0201
+// cites the gen line. A member miss on a module whose lines all ran is not
+// linked. With the module cache on, the warm report equals the cold one.
 func TestGenFailRootOfUnknownNames(t *testing.T) {
-	const fail = "export Make(g: mut Gen) {\n    g.Fail(\"planted\")\n    made := g.Ident(\"Made\")\n" +
-		"    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n"
+	const gn = "export Make(g: mut Gen) {\n    g.Fail(\"planted\")\n    made := g.Ident(\"Made\")\n" +
+		"    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n\n" +
+		"export Use(g: mut Gen) {\n    g.Emit(quote {\n        export UseMade(): int {\n            return Made + 1\n        }\n    })\n}\n"
+	const other = "export const Made: int = 2\n"
 	for _, c := range []struct {
-		name  string
-		files map[string]string
-		want  []string
+		name   string
+		files  map[string]string
+		want   []string
+		linked bool
 	}{
 		{"same module", map[string]string{"out/use.mk": "export UseMade(): int {\n    return Made + 1\n}\n"},
-			[]string{"out/out.mk:3:1:E0903", "out/use.mk:2:12:E0201"}},
+			[]string{"out/out.mk:3:1:E0903", "out/use.mk:2:12:E0201"}, true},
 		{"importer", map[string]string{"use/use.mk": "import out\n\nexport UseMade(): int {\n    return out.Made + 1\n}\n"},
-			[]string{"out/out.mk:3:1:E0903", "use/use.mk:4:16:E0201"}},
+			[]string{"out/out.mk:3:1:E0903", "use/use.mk:4:16:E0201"}, true},
+		{"spelling exported elsewhere", map[string]string{"other/other.mk": other,
+			"out/use.mk": "export UseMade(): int {\n    return Made + 1\n}\n"},
+			[]string{"out/out.mk:3:1:E0903", "out/use.mk:2:12:E0201"}, true},
+		{"spelling exported by an import", map[string]string{"other/other.mk": other,
+			"out/use.mk": "import other\n\nexport UseMade(): int {\n    return Made + other.Made\n}\n"},
+			[]string{"out/out.mk:3:1:E0903", "out/use.mk:4:12:E0201"}, true},
+		{"another gen line", map[string]string{"out/out.mk": "import gn\n\ngen gn.Make()\n\ngen gn.Use()\n"},
+			[]string{"out/out.mk:3:1:E0903", "out/out.mk:5:1:E0905"}, true},
+		{"member miss elsewhere", map[string]string{"other/other.mk": other,
+			"out/use.mk": "import other\n\nexport UseTypo(): int {\n    return other.Typo\n}\n"},
+			[]string{"out/use.mk:4:18:E0201"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			files := map[string]string{"pkg.mk": libManifest(), "gn/gn.mk": fail, "out/out.mk": "import gn\n\ngen gn.Make()\n"}
+			files := map[string]string{"pkg.mk": libManifest(), "gn/gn.mk": gn, "out/out.mk": "import gn\n\ngen gn.Make()\n"}
 			for p, text := range c.files {
 				files[p] = text
 			}
 			cfg := Config{Root: writeTree(t, files), CacheDir: t.TempDir()}
 			cold := frontCheck(t, cfg)
 			expectLines(t, cold, c.want...)
-			if len(cold.Report.Diags) == 2 {
-				e := cold.Report.Diags[1]
-				gl, ok := e.Diag.FactValue("gen_line")
-				if e.Root != 1 || !ok || diag.Location(cold.Sources, gl.At) != "out/out.mk:3:1" {
-					t.Errorf("E0201 root %d, gen_line %v; want root 1 citing out/out.mk:3:1\n%s", e.Root, ok,
-						cold.Report.Text(cold.Sources))
+			for i, e := range cold.Report.Diags {
+				root := i + 1
+				if c.linked {
+					root = 1
+				}
+				gl, cites := e.Diag.FactValue("gen_line")
+				if e.Root != root || cites != (c.linked && e.Diag.Code == diag.E0201) ||
+					(cites && diag.Location(cold.Sources, gl.At) != "out/out.mk:3:1") {
+					t.Errorf("%v: root %d, gen_line %v; want root %d, and gen_line out/out.mk:3:1 on a linked E0201\n%s",
+						e.Diag.Code, e.Root, cites, root, cold.Report.Text(cold.Sources))
 				}
 			}
 			if warm := frontCheck(t, cfg); string(jsonOf(t, warm)) != string(jsonOf(t, cold)) {

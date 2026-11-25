@@ -155,12 +155,12 @@ func (m *modNode) genWrap(ds []*diag.Diagnostic) []*diag.Diagnostic {
 
 // noteGen marks an unknown-name E0201 of m that a gen line may cause: the
 // name may be one the line's output would have declared, and the output is
-// empty. A line of m that failed with its own error makes the E0201 its
-// consequence, so the report holds that error whatever its phase
+// empty. The line is m's, or dep's for a member miss `dep.X`
+// (resolve.MissedIn). A line that failed with its own error makes the E0201
+// its consequence, so the report holds that error whatever its phase
 // (diag.Order); a line of m whose run ended in poison is only cited, since
 // its cause (a type the generator read and the stage-4 view could not see)
-// may have no diagnostic of its own. An E0201 `dep has no item` for an
-// imported dep whose gen line failed is that line's consequence too.
+// may have no diagnostic of its own.
 func (m *modNode) noteGen(d *diag.Diagnostic) {
 	if d.Code != diag.E0201 {
 		return
@@ -169,10 +169,10 @@ func (m *modNode) noteGen(d *diag.Diagnostic) {
 		return
 	}
 	owner, at := m, "this module"
-	if f, ok := d.FactValue("module"); ok && f.Str != m.path {
+	if p := resolve.MissedIn(d); p != "" {
 		owner = nil
 		for _, dep := range m.deps {
-			if dep.path == f.Str {
+			if dep.path == p {
 				owner, at = dep, "`"+dep.path+"`"
 				break
 			}

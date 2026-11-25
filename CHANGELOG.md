@@ -6,7 +6,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Diagnostics
 
-- A `gen` line whose generator fails (E0903, or any error of its own that makes it emit nothing) is reported even when a name its output would have declared is used: that E0201, in this module or an importer's `m has no item`, is now its consequence, cites the gen line, and no longer hides it under the earliest-phase rule. The rule now keeps every error a reported error names as its cause, whatever its phase.
+- A `gen` line whose generator fails (E0903, or any error of its own that makes it emit nothing) is reported even when a name its output would have declared is used: that E0201 (in its module, also when another module exports the spelling, or an importer's `m has no item`) and the E0905 of another gen line's output that names it are now its consequences and no longer hide it under the earliest-phase rule; an E0201 cites the gen line. The rule now keeps every error a reported error names as its cause, whatever its phase, and `--max-diagnostics` never cuts such a cause.
 
 ## 0.6.0 (2026-11-24)
 

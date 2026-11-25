@@ -39,7 +39,7 @@ With no path, a command works on the current directory. `mk help` lists the comm
 | Flag | Does |
 |---|---|
 | `--json` | Print diagnostics as the JSON document of [section 3](#3-diagnostics) |
-| `--max-diagnostics n` | Print at most `n` diagnostics. 0 means no cap. The default is no cap for JSON, 50 for text |
+| `--max-diagnostics n` | Print at most `n` diagnostics of the failing phase, plus every internal error and every later-phase error one of them follows from ([section 3](#3-diagnostics)). 0 means no cap. The default is no cap for JSON, 50 for text |
 | `--target name` | Build for this target, such as `x86_64-linux` or `x86_64-windows`. The default is the host |
 | `--offline` | Never fetch. Dependencies come from the cache or `vendor/`. `MK_OFFLINE=1` does the same |
 | `--locked` | Refuse a dependency version that `pkg.sum` has no line for, and never write `pkg.sum` |

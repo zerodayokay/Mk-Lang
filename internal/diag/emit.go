@@ -7,9 +7,9 @@
 //
 // How: Order keeps internal errors, the lowest failing phase and the causes
 // those name, sorts by a total key (span, code, message, then the rendered
-// rest), drops duplicates, resolves each Cause to a root index, then applies
-// the cap. Diagnostics are collected and sorted before the cut, never cut on
-// arrival.
+// rest), drops duplicates, resolves each Cause to a root index, then cuts the
+// lowest phase's diagnostics to the cap. Diagnostics are collected and
+// sorted before the cut, never cut on arrival.
 
 package diag
 
@@ -32,8 +32,9 @@ type Emitted struct {
 
 // Report is what the driver prints: the diagnostics of the earliest failing
 // phase plus every E0000 and the causes they name, sorted, deduplicated,
-// roots resolved, then cut to the cap. The same set of input diagnostics
-// always gives the same Report, whatever order they arrived in.
+// roots resolved, then the phase's diagnostics cut to the cap. The same set
+// of input diagnostics always gives the same Report, whatever order they
+// arrived in.
 type Report struct {
 	// Phase is the earliest non-internal phase present, or PhaseInternal when
 	// only internal errors are present. HasPhase is false when there are none.
@@ -41,8 +42,8 @@ type Report struct {
 	HasPhase bool
 	// Diags are the kept diagnostics in emission order.
 	Diags []Emitted
-	// Omitted is how many diagnostics the cap dropped (internal errors are
-	// never dropped).
+	// Omitted is how many diagnostics the cap dropped (internal errors and
+	// causes of a later phase are never dropped).
 	Omitted int
 }
 
@@ -67,8 +68,10 @@ const DefaultTextCap = 50
 //     of a run of duplicates the first in that total order is kept.
 //  4. Resolve each Cause to the 1-based index of the first kept diagnostic
 //     with that code and span; a missing cause makes the diagnostic its own root.
-//  5. Keep the first max diagnostics (max <= 0 keeps all), plus every internal
-//     error; a kept diagnostic whose root was dropped becomes its own root.
+//  5. Keep the first max diagnostics of the lowest phase (max <= 0 keeps
+//     all), plus every internal error and every cause of a later phase, which
+//     may sort after its consequences; a kept diagnostic whose root was
+//     dropped becomes its own root.
 //
 // It does not modify the diagnostics. sm resolves paths and positions.
 func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
@@ -116,10 +119,14 @@ func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
 	}
 	// Step 5 before step 4's numbering: choose the survivors, then number them.
 	var final []*Diagnostic
+	capped := 0
 	for _, d := range dedup {
-		if max > 0 && d.Phase != PhaseInternal && countNonInternal(final) >= max {
-			r.Omitted++
-			continue
+		if d.Phase == lowest {
+			if max > 0 && capped >= max {
+				r.Omitted++
+				continue
+			}
+			capped++
 		}
 		final = append(final, d)
 	}
@@ -149,11 +156,9 @@ func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
 // turn: a consequence is never reported without its root (a failed gen line's
 // E0903, in types, behind the unknown names its discarded output leaves).
 func keepCauses(ds, kept []*Diagnostic) []*Diagnostic {
-	var by map[Cause][]*Diagnostic // built on the first Cause: most reports have none
-	in := make(map[*Diagnostic]bool, len(kept))
-	for _, d := range kept {
-		in[d] = true
-	}
+	// Built on the first Cause: most reports have none.
+	var by map[Cause][]*Diagnostic
+	var in map[*Diagnostic]bool
 	for i := 0; i < len(kept); i++ {
 		c := kept[i].Cause
 		if c == nil {
@@ -165,6 +170,10 @@ func keepCauses(ds, kept []*Diagnostic) []*Diagnostic {
 				k := Cause{Code: d.Code, At: d.At}
 				by[k] = append(by[k], d)
 			}
+			in = make(map[*Diagnostic]bool, len(kept))
+			for _, d := range kept {
+				in[d] = true
+			}
 		}
 		for _, d := range by[*c] {
 			if !in[d] {
@@ -174,16 +183,6 @@ func keepCauses(ds, kept []*Diagnostic) []*Diagnostic {
 		}
 	}
 	return kept
-}
-
-func countNonInternal(ds []*Diagnostic) int {
-	n := 0
-	for _, d := range ds {
-		if d.Phase != PhaseInternal {
-			n++
-		}
-	}
-	return n
 }
 
 // sortKey is the precomputed order of one diagnostic.

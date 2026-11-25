@@ -3,9 +3,10 @@
 // and a bracket after a name may be generic arguments or an index.
 //
 // What: the walker's expression and type methods: qualified, member,
-// memberMiss, fieldChain, path, the bracket rule decide with index, args
-// and the slot walkers (typeSlot, slotExpr, slotAny), typAt, fnType, expr,
-// recordField and quoteRoots.
+// memberMiss (and MissedIn, which tells its E0201 from others), fieldChain,
+// path, the bracket rule decide with index, args and the slot walkers
+// (typeSlot, slotExpr, slotAny), typAt, fnType, expr, recordField and
+// quoteRoots.
 //
 // How: a module binding's items resolve here (E0204 for a private one,
 // E0201 with a folded fallback over the module's exports); member tails are
@@ -194,12 +195,27 @@ func (w *walker) memberMiss(rec *modRecord, x *ast.Ident, p pos) Ref {
 		w.report(d, source.NoSymbol)
 		return itemRef(cands[0])
 	}
-	d := diag.New(diag.E0201, x.Span(), "`"+rec.path+"` has no item `"+spell+"`").Text("name", spell).Text("module", rec.path)
+	d := diag.New(diag.E0201, x.Span(), missMessage(rec.path, spell)).Text("name", spell).Text("module", rec.path)
 	for _, id := range cands {
 		d.Alt("`" + w.m.str(items.Get(id).Name) + "`")
 	}
 	w.report(d, x.Name)
 	return poisonRef
+}
+
+func missMessage(path, spell string) string { return "`" + path + "` has no item `" + spell + "`" }
+
+// MissedIn is the module a member miss's E0201 looked its name up in (`m`
+// of `m.X`), "" for any other diagnostic. The `module` fact alone does not
+// tell: an unknown bare name's is the one module that exports the spelling,
+// offered as an import.
+func MissedIn(d *diag.Diagnostic) string {
+	mod, ok := d.FactValue("module")
+	name, named := d.FactValue("name")
+	if d.Code != diag.E0201 || !ok || !named || d.Message != missMessage(mod.Str, name.Str) {
+		return ""
+	}
+	return mod.Str
 }
 
 // fieldChain resolves a FieldExpr chain whose root is a name.
