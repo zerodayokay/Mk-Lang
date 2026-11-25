@@ -24,7 +24,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Loan checker
 
-- A store through a local or temporary goes on through the loans it holds only when its type can write a loan below its own bytes (R11). A view built over one field of a `mut` parameter, whose field leads to memory with no carrier, no longer makes `*self into self` store the parameter's own loan into the parameter (a false `E0604` whose suggested clause then locked every caller). The walk of a stored value's own loans does not take this cut, since it guards against an `unsafe` or `extern` body that writes past its signature: a view that holds an arena's `List` of non-carriers beside another borrowed piece, passed with `*h into h`, still makes the arena take that piece's loan (`E0504` where the piece is used while the arena lives).
+- A store through a local or temporary goes on through the loans it holds only when its type can write a loan below its own bytes (R11). A view built over one field of a `mut` parameter, whose field leads to memory with no carrier, no longer makes `*self into self` store the parameter's own loan into the parameter (a false `E0604` whose suggested clause then locked every caller). The walk of a stored value's own loans, and a spawn's store of its arguments through a `&Scope`, do not take this cut, since they guard against an `unsafe` or `extern` body that writes past its signature: a view that holds an arena's `List` of non-carriers beside another borrowed piece, passed with `*h into h`, still makes the arena take that piece's loan (`E0504` where the piece is used while the arena lives).
 
 ## 0.6.0 (2026-11-24)
 
