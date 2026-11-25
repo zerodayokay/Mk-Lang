@@ -10632,7 +10632,7 @@ PASS main "prints"
 ```
 
 - Each line names the module and the test. A failing test shows its output, its panic or error, and its exit status.
-- A test passes when it returns. It fails on a panic (`Assert`, a broken contract, an index out of bounds), on an error that leaves it (exit 1), on a leak, or on a timeout. A test that calls `testing.ExpectPanic(want)` is the other way round: it passes only when it panics after the call, with a report line that contains `want` ([expected panics](std/testing.md#expected-panics)).
+- A test passes when it returns. It fails on a panic (`Assert`, a broken contract, an index out of bounds), on an error that leaves it (exit 1), on a leak, or on a timeout. A test that calls `testing.ExpectPanic(want)` is the other way round: it passes only when it panics after the call, with a report that contains `want` ([expected panics](std/testing.md#expected-panics)).
 - A test may use `try`. An error that leaves the test fails it, and `mk test` prints the error with its trace ([errors in tests](#errors-in-tests-and-tasks)).
 - A test may declare one parameter of type `&System`, usually `(sys: &System)`, for memory, output, files and tasks. A parameter of another type is E0301, and a second parameter E0101.
 - In a test, the heap counts its allocations. Memory still allocated when the test ends fails it with `leak (exit 102)`.

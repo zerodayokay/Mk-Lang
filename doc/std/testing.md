@@ -72,18 +72,18 @@ A benchmark is a function `f: fn(n: int)` that does its work `n` times. One `tes
 
 A kept `Assert` or a contract is code too, and a test can check that it refuses a bad input. `testing.ExpectPanic(want)` in a `test` block turns the test round: it passes only when it panics after the call.
 
-- The panic's report line (`panic: assert at load.mk:4:5`) must contain `want` after its `panic: `. `want` may name the message (`"assert"`, `"contract: requires"`, `"bounds"`), the site (`"load.mk:4:"`), or both; `""` matches any panic. A `want` with a line break never matches.
+- The panic's report (`panic: assert at load.mk:4:5`) must contain `want` after its `panic: ` (after the last `panic: ` when the message itself holds one). `want` may name the message (`"assert"`, `"contract: requires"`, `"bounds"`), the site (`"load.mk:4:"`), or both; `""` matches any panic. Only the report counts, never text the test printed before it.
 - The test fails when its body returns (`returned; testing.ExpectPanic("assert") wanted a panic`), and when the panic does not match (`panic does not contain "overflow" (testing.ExpectPanic): panic: assert at load.mk:4:5`). Its output is printed only when it fails, as for any test.
 - A panic before the call fails the test as any panic does, and so does a panic in a test that never calls it. Call it right before the code that should panic. When a test calls it more than once, the last call counts.
 - `mk test` runs each test in its own process, and a panic ends that process, so nothing after the panic runs: one test checks one refusal.
-- The call writes the line `mkexpectpanic <length of want> <want>` to standard error, from which `mk test` judges the test. Anywhere else, `mk run` included, it only writes that line.
+- Under `mk test` the call writes one line to standard error: `mkexpectpanic`, a token that `mk test` makes for each run, the length of `want`, and `want`. `mk test` judges the test from it and leaves it out of the test's output; the token keeps any text a test prints from passing for the line. Anywhere else, `mk run` included, the call does nothing.
 - A contract is not checked in a release build, so under `mk test --release` a test that expects a `contract` panic fails as returned. `Assert` is checked in every build.
 - Under `mk test --cover` a test that ends in a panic writes no counts, so the report notes that it has none, whether it passes or fails.
-- `mk test --fuzz` and `mk bench` do not read the line: there a panic is a finding.
+- Under `mk test --fuzz` and `mk bench` the call does nothing: there a panic is a finding.
 
 ## Memory and cost
 
-`Fuzz` reads its inputs into memory from the process heap and frees them before it returns. In plain `mk test` it costs one call of `f` per saved input. `Bench` allocates nothing itself. In any other run `Fuzz` costs one check and `Bench` one call of `f(1)`. `ExpectPanic` allocates nothing and writes one line.
+`Fuzz` reads its inputs into memory from the process heap and frees them before it returns. In plain `mk test` it costs one call of `f` per saved input. `Bench` allocates nothing itself. In any other run `Fuzz` costs one check and `Bench` one call of `f(1)`. `ExpectPanic` allocates nothing and, under `mk test`, writes one line.
 
 ## Examples
 
@@ -289,7 +289,6 @@ $ mk test
 PASS main "an aligned offset"
 PASS main "a misaligned offset is refused"
 FAIL main "a misaligned offset that is not refused": returned; testing.ExpectPanic("assert") wanted a panic
-    mkexpectpanic 6 assert
 2 passed, 1 failed
 ```
 
@@ -323,15 +322,17 @@ export ExpectPanic(want: str)
 ```
 
 ExpectPanic makes the test block that calls it pass only if it panics
-after the call, and its panic's report line ("panic: assert at
-main.mk:4:5") contains want; an empty want matches every panic. The
-test then fails if its body returns, and a panic before the call fails
-it as any panic does. The last call wins. It writes the line
-"mkexpectpanic <length of want> <want>" to standard error, from which
-`mk test` judges the child; anywhere else, it writes only that line.
-A want with a line break never matches.
+after the call, and its panic's report ("panic: assert at
+main.mk:4:5") contains want after its "panic: "; an empty want matches
+every panic. The test then fails if its body returns, and a panic
+before the call fails it as any panic does. The last call wins. Under
+`mk test` it writes the line "mkexpectpanic <token> <length of want>
+<want>" to standard error, with the run's token from
+MK_TESTING_EXPECT, and `mk test` judges the child from it and leaves
+the line out of the test's output. Anywhere else, `mk test --fuzz` and
+`mk bench` included, it does nothing.
 
-Allocates nothing; O(want).
+Allocates nothing; O(want + the environment).
 
 ### `Fuzz`
 

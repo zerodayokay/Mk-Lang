@@ -2,13 +2,16 @@
 // in which tests they select and how each test's child runs.
 //
 // What: the std.testing environment variables, FuzzDirName, selectTest,
-// testText, and runTestChild, which picks the child's mode.
+// testText, runTestChild, which picks the child's mode, and
+// judgeExpectedPanic.
 //
 // How: a selected test runs as a plain child (testexec.go's runChild), given
 // its fuzz corpus when testdata/fuzz/<test name>/ holds one, under the
 // mutation loop's watcher (fuzz.go), or as a benchmark's repetitions
 // (bench.go). std.testing (std/testing/testing.mk) is the child's half; the
-// environment variables are the protocol between them.
+// environment variables are the protocol between them, with the lines the
+// child writes back: mkbench's, and ExpectPanic's, which carries the run's
+// token so that no text a test prints passes for it.
 
 package driver
 
@@ -32,11 +35,14 @@ const (
 	TestingItersEnv = "MK_TESTING_ITERS"
 	TestingNanosEnv = "MK_TESTING_NANOS"
 	TestingBenchEnv = "MK_TESTING_BENCH"
+	// TestingExpectEnv is the run's token, which testing.ExpectPanic's line
+	// carries; a plain child's alone (judgeExpectedPanic).
+	TestingExpectEnv = "MK_TESTING_EXPECT"
 )
 
 // testingEnvNames are every variable above: a child gets only the ones its
 // mode sets, never one inherited from mk's own environment.
-var testingEnvNames = []string{TestingFuzzEnv, TestingInputEnv, TestingStateEnv, TestingSeedEnv, TestingItersEnv, TestingNanosEnv, TestingBenchEnv}
+var testingEnvNames = []string{TestingFuzzEnv, TestingInputEnv, TestingStateEnv, TestingSeedEnv, TestingItersEnv, TestingNanosEnv, TestingBenchEnv, TestingExpectEnv}
 
 // FuzzDirName is a test name as the directory of its corpus under
 // testdata/fuzz/: each byte that a Windows file name cannot hold (a
@@ -134,7 +140,8 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 		s.benchRun(out, argv, env, i, opt)
 		return
 	}
-	defer judgeExpectedPanic(out) // after runChild: testing.ExpectPanic's flip
+	defer judgeExpectedPanic(out, opt.expectToken) // after runChild: testing.ExpectPanic's flip
+	env = childEnv(env, via, TestingExpectEnv+"="+opt.expectToken)
 	dir := s.fuzzCorpusDir(tc, opt)
 	note := s.fuzzCorpusNote(tc, opt)
 	defer func() { out.Note = note }() // after runChild, which sets the rest
@@ -186,23 +193,29 @@ func withoutNames(env, names []string, viaRunner bool) []string {
 }
 
 // expectPanicMark starts the line std.testing's ExpectPanic writes to
-// standard error: "mkexpectpanic <length of want> <want>".
+// standard error: "mkexpectpanic <token> <length of want> <want>".
 const expectPanicMark = "mkexpectpanic "
 
 // judgeExpectedPanic flips a plain child's result when its output holds
-// ExpectPanic's line (the last well-formed one counts): a panic whose
-// report line, after the mark, contains the wanted text passes; a panic
-// that does not match fails, and so does a body that returned (exit 0).
-// Any other status, and a child with no mark, is left as runChild set it.
-func judgeExpectedPanic(tc *TestCase) {
-	out := strings.ReplaceAll(tc.Output, "\r\n", "\n")
-	want, after, found := "", 0, false
+// ExpectPanic's line with the run's token (the last well-formed one
+// counts), and takes those lines out of its output: a panic whose report
+// contains the wanted text passes; a panic that does not match fails, and
+// so does a body that returned (exit 0). Any other status, and a child
+// with no such line, keeps what runChild set.
+func judgeExpectedPanic(tc *TestCase, token string) {
+	out, mark := tc.Output, expectPanicMark+token+" "
+	if token == "" || !strings.Contains(out, mark) {
+		return
+	}
+	var kept strings.Builder
+	want, after, from, found := "", 0, 0, false
 	for at := 0; ; {
-		i := strings.Index(out[at:], expectPanicMark)
+		i := strings.Index(out[at:], mark)
 		if i < 0 {
 			break
 		}
-		at += i + len(expectPanicMark)
+		start := at + i
+		at = start + len(mark)
 		sp := strings.IndexByte(out[at:], ' ')
 		if sp < 0 {
 			continue
@@ -213,10 +226,16 @@ func judgeExpectedPanic(tc *TestCase) {
 		}
 		want, after, found = out[at+sp+1:at+sp+1+n], at+sp+1+n, true
 		at = after
+		kept.WriteString(out[from:start])
+		from = after
+		if strings.HasPrefix(out[from:], "\n") { // the line's own end
+			from++
+		}
 	}
 	if !found {
 		return
 	}
+	tc.Output = kept.String() + out[from:]
 	call := "testing.ExpectPanic(" + strconv.Quote(want) + ")"
 	switch tc.Status {
 	case 0:
@@ -226,22 +245,25 @@ func judgeExpectedPanic(tc *TestCase) {
 	default:
 		return
 	}
-	// The report is the output's end: its line, then any backtrace. A
-	// partial line of standard output may precede it on the same line.
+	// std.rt flushes the streams, then writes the report ("panic: ", the
+	// message, which may hold line breaks, and the site) and after it only
+	// the backtrace, from a line that starts "backtrace:". So the text
+	// after the last "panic: " before that line is the report's own,
+	// whatever the test printed before it; a message that itself holds
+	// "panic: " is compared after its last one.
 	rep := out[after:]
-	if b := strings.LastIndex(rep, "\nbacktrace:\n"); b >= 0 {
+	if b := strings.LastIndex(rep, "\nbacktrace:"); b >= 0 {
 		rep = rep[:b]
 	}
-	rep = strings.TrimRight(rep, "\n")
-	line := rep[strings.LastIndexByte(rep, '\n')+1:]
-	p := strings.Index(line, "panic: ")
+	p := strings.LastIndex(rep, "panic: ")
 	if p < 0 {
 		tc.Result, tc.Detail = "fail", "no panic report after "+call
 		return
 	}
-	line = line[p:]
-	if !strings.Contains(line[len("panic: "):], want) {
-		tc.Result, tc.Detail = "fail", "panic does not contain "+strconv.Quote(want)+" (testing.ExpectPanic): "+line
+	report := strings.TrimRight(rep[p:], "\r\n")
+	if !strings.Contains(report[len("panic: "):], want) {
+		first, _, _ := strings.Cut(report, "\n")
+		tc.Result, tc.Detail = "fail", "panic does not contain "+strconv.Quote(want)+" (testing.ExpectPanic): "+first
 		return
 	}
 	tc.Result = "pass"

@@ -3,9 +3,10 @@
 // pass.
 // What: TestMkTestExpectPanic (one build: the outcomes of a real child) and
 // TestExpectedPanicReport (the report parsing, over planted outputs).
-// How: mk test over a package whose tests call testing.ExpectPanic; the
-// planted outputs cover what one build does not (no backtrace, CRLF, a
-// partial line of standard output before the report).
+// How: mk test over a package whose tests call testing.ExpectPanic, or
+// print what could pass for its line or its report; the planted outputs
+// cover what one build does not (no backtrace, a backtrace with frame
+// pointers off, CRLF, another run's token).
 
 package driver
 
@@ -38,8 +39,9 @@ test "the site" {
     _ = Load(9)
 }
 
-test "returns" {
+test "returns" (sys: &System) {
     testing.ExpectPanic("assert")
+    try sys.Print("returned\n")
     _ = Load(8)
 }
 
@@ -68,13 +70,31 @@ test "after a partial line" (sys: &System) {
     try sys.Print("no newline")
     _ = Load(9)
 }
+
+test "a printed line, no call" (sys: &System) {
+    try sys.Print("mkexpectpanic 0 \n")
+    _ = Load(9)
+}
+
+test "a printed report" (sys: &System) {
+    testing.ExpectPanic("assert")
+    try sys.Print("panic: assert")
+    var a: [2]u8 = [0; 2]
+    a[Trunc[int](Load(8))] = 1
+}
+
+test "a message with a line break" {
+    testing.ExpectPanic("first\nsecond")
+    Panic("first\nsecond")
+}
 `
 
 // TestMkTestExpectPanic: a test passes when it panics after
-// testing.ExpectPanic with a report line that contains the wanted text;
-// it fails when its body returns, when the panic does not match, and when
-// it panics before the call or never calls it. A passing test's output is
-// not printed.
+// testing.ExpectPanic with a report that contains the wanted text; it
+// fails when its body returns, when the panic does not match, when it
+// panics before the call or never calls it, and when only text it printed
+// matches. A passing test's output is not printed, and ExpectPanic's line
+// is left out of a failing one's.
 func TestMkTestExpectPanic(t *testing.T) {
 	dir := testPkg(t, map[string]string{"t.mk": expectPanicSource})
 	rep := mkTest(t, Config{Root: filepath.Join(dir, "t.mk")}, TestOptions{})
@@ -88,12 +108,18 @@ func TestMkTestExpectPanic(t *testing.T) {
 		"main no call panic",
 		"main the last call wins pass",
 		"main after a partial line pass",
+		"main a printed line, no call panic",
+		"main a printed report fail",
+		"main a message with a line break pass",
 	}, "\n")
 	if got := results(rep); got != want {
 		t.Fatalf("results:\n%s\nwant:\n%s\noutputs: %+v", got, want, rep.Tests)
 	}
 	if rep.Tests[0].Status != 101 {
 		t.Errorf("refused: status %d, want 101", rep.Tests[0].Status)
+	}
+	if o := rep.Tests[3].Output; o != "returned\n" {
+		t.Errorf("returns: output %q, want only what it printed", o)
 	}
 	var text bytes.Buffer
 	if err := rep.WriteText(&text, false); err != nil {
@@ -102,12 +128,15 @@ func TestMkTestExpectPanic(t *testing.T) {
 	tx := text.String()
 	for _, l := range []string{
 		"PASS main \"refused\"\nPASS main \"any panic\"\nPASS main \"the site\"\n",
-		`FAIL main "returns": returned; testing.ExpectPanic("assert") wanted a panic`,
+		"FAIL main \"returns\": returned; testing.ExpectPanic(\"assert\") wanted a panic\n    returned\nFAIL",
 		`FAIL main "wrong message": panic does not contain "overflow" (testing.ExpectPanic): panic: assert at t.mk:4:5`,
 		`FAIL main "panic before the call": panic (exit 101)`,
 		`FAIL main "no call": panic (exit 101)`,
 		"PASS main \"the last call wins\"\nPASS main \"after a partial line\"\n",
-		"5 passed, 4 failed\n",
+		`FAIL main "a printed line, no call": panic (exit 101)`,
+		`FAIL main "a printed report": panic does not contain "assert" (testing.ExpectPanic): panic: bounds at t.mk:64:5`,
+		"PASS main \"a message with a line break\"\n",
+		"6 passed, 6 failed\n",
 	} {
 		if !strings.Contains(tx, l) {
 			t.Errorf("text report lacks %q:\n%s", l, tx)
@@ -118,35 +147,64 @@ func TestMkTestExpectPanic(t *testing.T) {
 	}
 }
 
-// TestExpectedPanicReport: the report line is found with and without a
-// backtrace, after CRLF line ends and a partial line of standard output,
-// and a frame line naming "panic: " is not taken for it.
+// TestExpectedPanicReport: only a line with the run's token counts, and it
+// is taken out of the output; the text compared is the report's own, with
+// and without a backtrace, after CRLF line ends, after text the test
+// printed, and across a message's line breaks.
 func TestExpectedPanicReport(t *testing.T) {
+	const tok = "TOKEN"
 	for _, c := range []struct {
 		name, out    string
 		status       int
 		result, want string
+		kept         string // the output after the judge; "" when unchanged
 	}{
-		{"backtrace", "mkexpectpanic 6 assert\npanic: assert at a.mk:4:5\nbacktrace:\n  Load (a.mk)\n  test \"panic: x\" (a.mk)\n", 101, "pass", ""},
-		{"no backtrace", "mkexpectpanic 6 assert\npanic: assert at a.mk:4:5\n", 101, "pass", ""},
-		{"crlf", "mkexpectpanic 6 assert\r\npanic: assert at a.mk:4:5\r\nbacktrace:\r\n  Load (a.mk)\r\n", 101, "pass", ""},
-		{"partial line", "mkexpectpanic 6 assert\nhalfpanic: assert at a.mk:4:5\n", 101, "pass", ""},
-		{"frame only", "mkexpectpanic 6 assert\nbacktrace:\n  test \"panic: assert\" (a.mk)\n", 101, "fail", "no panic report after testing.ExpectPanic(\"assert\")"},
-		{"no marker", "panic: assert at a.mk:4:5\n", 101, "panic", ""},
-		{"a line break in the want", "mkexpectpanic 15 x\nmkexpectpanic\npanic: x\n", 101, "fail", "panic does not contain \"x\\nmkexpectpanic\" (testing.ExpectPanic): panic: x"},
-		{"a marker in the want", "mkexpectpanic 20 mkexpectpanic 1 x at\npanic: assert\n", 101, "fail", "panic does not contain \"mkexpectpanic 1 x at\" (testing.ExpectPanic): panic: assert"},
-		{"two markers", "mkexpectpanic 1 x\nmkexpectpanic 6 assert\npanic: assert\n", 101, "pass", ""},
-		{"short marker", "mkexpectpanic 9 x\n", 101, "panic", ""},
-		{"bad length", "mkexpectpanic x\npanic: assert\n", 101, "panic", ""},
-		{"returned", "mkexpectpanic 0 \n", 0, "fail", "returned; testing.ExpectPanic(\"\") wanted a panic"},
-		{"error return", "mkexpectpanic 0 \nerror: Bad\n", 1, "error", ""},
+		{"backtrace", "mkexpectpanic TOKEN 6 assert\npanic: assert at a.mk:4:5\nbacktrace:\n  Load (a.mk)\n  test \"panic: x\" (a.mk)\n", 101, "pass", "",
+			"panic: assert at a.mk:4:5\nbacktrace:\n  Load (a.mk)\n  test \"panic: x\" (a.mk)\n"},
+		{"no backtrace", "mkexpectpanic TOKEN 6 assert\npanic: assert at a.mk:4:5\n", 101, "pass", "", "panic: assert at a.mk:4:5\n"},
+		{"frame pointers off", "mkexpectpanic TOKEN 6 assert\npanic: assert at a.mk:4:5\nbacktrace: frame pointers were off\n", 101, "pass", "",
+			"panic: assert at a.mk:4:5\nbacktrace: frame pointers were off\n"},
+		{"frame pointers off, no match", "mkexpectpanic TOKEN 8 pointers\npanic: assert at a.mk:4:5\nbacktrace: frame pointers were off\n", 101, "fail",
+			"panic does not contain \"pointers\" (testing.ExpectPanic): panic: assert at a.mk:4:5", "panic: assert at a.mk:4:5\nbacktrace: frame pointers were off\n"},
+		{"crlf", "mkexpectpanic TOKEN 6 assert\r\npanic: assert at a.mk:4:5\r\nbacktrace:\r\n  Load (a.mk)\r\n", 101, "pass", "",
+			"\r\npanic: assert at a.mk:4:5\r\nbacktrace:\r\n  Load (a.mk)\r\n"},
+		{"partial line", "a\nmkexpectpanic TOKEN 6 assert\nhalfpanic: assert at a.mk:4:5\n", 101, "pass", "", "a\nhalfpanic: assert at a.mk:4:5\n"},
+		{"printed report", "mkexpectpanic TOKEN 6 assert\npanic: assertpanic: bounds at a.mk:9:5\nbacktrace:\n", 101, "fail",
+			"panic does not contain \"assert\" (testing.ExpectPanic): panic: bounds at a.mk:9:5", "panic: assertpanic: bounds at a.mk:9:5\nbacktrace:\n"},
+		{"frame only", "mkexpectpanic TOKEN 6 assert\nbacktrace:\n  test \"panic: assert\" (a.mk)\n", 101, "fail",
+			"no panic report after testing.ExpectPanic(\"assert\")", "backtrace:\n  test \"panic: assert\" (a.mk)\n"},
+		{"a message with a line break", "mkexpectpanic TOKEN 0 \npanic: first\nsecond at a.mk:4:5\nbacktrace:\n", 101, "pass", "", "panic: first\nsecond at a.mk:4:5\nbacktrace:\n"},
+		{"a want with a line break", "mkexpectpanic TOKEN 12 first\nsecond\npanic: first\nsecond at a.mk:4:5\n", 101, "pass", "", "panic: first\nsecond at a.mk:4:5\n"},
+		{"no match across lines", "mkexpectpanic TOKEN 12 second\nfirst\npanic: first\nsecond at a.mk:4:5\n", 101, "fail",
+			"panic does not contain \"second\\nfirst\" (testing.ExpectPanic): panic: first", "panic: first\nsecond at a.mk:4:5\n"},
+		{"no token", "mkexpectpanic 0 \npanic: assert at a.mk:4:5\n", 101, "panic", "", ""},
+		{"another run's token", "mkexpectpanic OTHER 0 \npanic: assert at a.mk:4:5\n", 101, "panic", "", ""},
+		{"a mark in the want", "mkexpectpanic TOKEN 23 mkexpectpanic TOKEN 1 a\npanic: assert\n", 101, "fail",
+			"panic does not contain \"mkexpectpanic TOKEN 1 a\" (testing.ExpectPanic): panic: assert", "panic: assert\n"},
+		{"two marks", "mkexpectpanic TOKEN 1 x\nmkexpectpanic TOKEN 6 assert\npanic: assert\n", 101, "pass", "", "panic: assert\n"},
+		{"short mark", "mkexpectpanic TOKEN 9 x\n", 101, "panic", "", ""},
+		{"bad length", "mkexpectpanic TOKEN x\npanic: assert\n", 101, "panic", "", ""},
+		{"returned", "mkexpectpanic TOKEN 0 \nout\n", 0, "fail", "returned; testing.ExpectPanic(\"\") wanted a panic", "out\n"},
+		{"error return", "mkexpectpanic TOKEN 0 \nerror: Bad\n", 1, "error", "", "error: Bad\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			tc := TestCase{Status: c.status, Result: resultOf(c.status), Output: c.out}
-			judgeExpectedPanic(&tc)
+			judgeExpectedPanic(&tc, tok)
 			if tc.Result != c.result || tc.Detail != c.want {
 				t.Errorf("result %q detail %q; want %q %q", tc.Result, tc.Detail, c.result, c.want)
 			}
+			kept := c.kept
+			if kept == "" {
+				kept = c.out
+			}
+			if tc.Output != kept {
+				t.Errorf("output %q; want %q", tc.Output, kept)
+			}
 		})
+	}
+	// With no token (a child the driver gave none), nothing is judged.
+	tc := TestCase{Status: 101, Result: "panic", Output: "mkexpectpanic  0 \npanic: assert\n"}
+	if judgeExpectedPanic(&tc, ""); tc.Result != "panic" {
+		t.Errorf("no token: result %q, want panic", tc.Result)
 	}
 }
