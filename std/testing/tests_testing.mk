@@ -1,8 +1,10 @@
 // Why: std.testing must behave in a plain test run and parse its inputs.
 // What: test blocks of Fuzz, Bench, ExpectPanic, the input file's records
 // and Mutate, run by `mk test --std=std.testing`.
-// How: mk test clears the MK_TESTING_ variables, so Fuzz calls nothing and
-// Bench calls f(1); internal/driver/fuzz_test.go runs both modes.
+// How: a plain mk test child with no fuzz corpus gets only
+// MK_TESTING_EXPECT (the run's token) of the MK_TESTING_ variables, so
+// Fuzz calls nothing, Bench calls f(1) and ExpectPanic writes its line;
+// internal/driver/fuzz_test.go runs both modes of Fuzz and Bench.
 
 import std.rt
 

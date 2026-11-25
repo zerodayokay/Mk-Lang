@@ -102,7 +102,7 @@ type TestCase struct {
 	// start.
 	Status int `json:"status"`
 	// Output is the child's standard output and standard error, in the
-	// order written.
+	// order written, less testing.ExpectPanic's lines (judgeExpectedPanic).
 	Output   string        `json:"output"`
 	Duration time.Duration `json:"-"`
 	// coverAcked is whether the child answered the driver's request for
