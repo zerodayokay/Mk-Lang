@@ -1,10 +1,13 @@
 // Why: `mk query sig --member` must list every function a call can name,
 // those a gen line writes included, and nothing a call cannot.
-// What: TestSignatures, over Session.Signatures on a package without a
-// workspace.
+// Every entry, a type's too, must be what `sig <subject>` answers.
+// What: TestSignatures and TestSignaturesAnswerAsSig, over
+// Session.Signatures on a package without a workspace.
 // How: checks a one-module package and compares the entries' names, sigs
 // and gen marks (an error's provided Format among them), and the text
-// form's header.
+// form's header; then, over a three-module package with every item kind,
+// asks a second session `sig <subject>` for each entry and compares the
+// answer line for line.
 
 package driver
 
@@ -140,6 +143,12 @@ export Thing(): int {
     return x
 }
 
+/// Guarded's contracts alone pass the cap.
+export Guarded(x: int): int
+` + strings.Repeat("    requires x != 1000000000000000000\n", 25) + `{
+    return x
+}
+
 gen dyn.Of(Shape)
 `,
 	"src/more/b.mk":   "/// Point is the other point.\nexport struct Point {\n    export y: int\n}\n\n/// Thing is the other Thing.\nexport Thing(): int {\n    return 2\n}\n\n/// Solo is alone.\nexport Solo(): int {\n    return 3\n}\n",
@@ -170,7 +179,7 @@ func TestSignaturesAnswerAsSig(t *testing.T) {
 	}
 	kinds := map[string]bool{}
 	subjects := map[string]string{}
-	cut := false
+	cut, headCut := false, false
 	for i, e := range append(slices.Clone(l.Functions), l.Items...) {
 		if want := i >= len(l.Functions); want != (e.Kind != "func") {
 			t.Errorf("%s: kind %q in the wrong array", e.Name, e.Kind)
@@ -200,6 +209,10 @@ func TestSignaturesAnswerAsSig(t *testing.T) {
 			want = append(want, "module "+e.Module)
 		}
 		want = append(want, e.Doc...)
+		if len(e.Doc) == 0 && e.Truncated > 0 && len(a.Answer) < len(want) {
+			// The cut falls inside the head: the answer is its first lines.
+			want, headCut = want[:len(a.Answer)], true
+		}
 		if !slices.Equal(a.Answer, want) || a.Truncated != e.Truncated {
 			t.Errorf("sig %s answers (%d cut)\n%s\nthe entry (%d cut)\n%s", e.Subject, a.Truncated,
 				strings.Join(a.Answer, "\n"), e.Truncated, strings.Join(want, "\n"))
@@ -212,6 +225,9 @@ func TestSignaturesAnswerAsSig(t *testing.T) {
 	}
 	if !cut {
 		t.Error("no entry's doc is cut: Long's doc is meant to pass the cap")
+	}
+	if !headCut {
+		t.Error("no entry's head is cut: Guarded's contracts are meant to pass the cap")
 	}
 	for k, want := range map[string]string{"src.more Point": "Point", "src Point": "src.Point", "src.more Thing": "Thing",
 		"src Thing": "src.Thing", "src.more Solo": "Solo", "src.x.more Solo": "src.x.more.Solo", "src Box.Get": "Box.Get"} {

@@ -2,7 +2,8 @@
 // text; keeping those renderers apart from the lookup keeps query.go short.
 //
 // What: the answers sig, members, import, kind, shape, flows and errors, and
-// the spellers they share: sigLine, declHead, flowClauses, perFieldClause,
+// the spellers they share: sigHead (sig's lines before its doc, which mk
+// query sig --member reads too), sigLine, declHead, flowClauses, perFieldClause,
 // boundString and genericsString.
 //
 // How: every answer reads the checked tables (Signature, Facts, Layout) and
