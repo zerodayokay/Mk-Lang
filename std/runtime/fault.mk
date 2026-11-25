@@ -170,7 +170,8 @@ FWord(p: *u64): &raw.Atomic[u64] {
 ///
 /// On Linux, a fault in C code outside the image on a thread std did not
 /// make gets the signal's default action, raised again at once, as on
-/// Windows it gets the system's. So does a SIGSEGV, SIGBUS or SIGILL that
+/// Windows it gets the system's (in a program with no task, after the
+/// filters). So does a SIGSEGV, SIGBUS or SIGILL that
 /// another process or thread sends (kill, tgkill): it is not a fault and
 /// is never reported as Mk's. C code that installs a signal handler of its
 /// own replaces std's.

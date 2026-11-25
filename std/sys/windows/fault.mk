@@ -549,8 +549,9 @@ MkStack(sp: uint, top: uint): bool {
     }
 }
 
-/// FaultOwned is Linux's ownership test; here every fault the vectored
-/// handler routes is already Mk's, so it answers true. O(1).
+/// FaultOwned is Linux's ownership test; here the vectored handler's frame
+/// walk (FaultOwner) and stack test (MkStack) decide, so it answers true.
+/// O(1).
 export FaultOwned(pc: uint, sp: uint): bool {
     return true
 }

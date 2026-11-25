@@ -13,9 +13,13 @@
 // 4. RtlMoveMemory from a page protected to None: Watch makes the page
 //    readable and resumes ntdll's copy at its faulting instruction, which
 //    then copies the page's 7;
-// then how many faults Watch saw (4). With "claimed" it adds Claim first,
-// which ends the process with status 71 for a fault in the first page, and
-// copies from address 16 with RtlMoveMemory and no handler; with
+// 5. part 2 on a thread the C source makes, which Mk did not: its fault is
+//    on no stack Mk runs on, so Watch never sees it, and the C __except runs
+//    (1) as it would with no filter;
+// then how many faults Watch saw (4, part 5's not among them). With
+// "claimed" it adds Claim first, which ends the process with status 71 for a
+// fault in the first page, and copies from address 16 with RtlMoveMemory and
+// no handler; with
 // "claimed-seh" it does the same inside the C source's __try: a filter sees
 // the fault before the C code's own __except, so the status is 71 both
 // times. Want hostfault.out and exit 0, or exit 71.
@@ -28,10 +32,11 @@ extern IsBadReadPtr(p: *u8, n: uint): i32
 extern TerminateProcess(h: uint, code: u32): i32
 extern host_copy_try(src: *u8): i32
 extern own_read_try(src: *u8): i32
+extern thread_copy_try(src: *u8): i32
 
 // The filters run on the faulting thread and see only globals: Seen counts
 // the faults Watch saw; Guard is the guard page's base and GuardRegion the
-// address of its Region (part 4); Got0 to Got3 hold the parts' answers.
+// address of its Region (part 4); Got0 to Got4 hold the parts' answers.
 var Seen: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var Guard: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var GuardRegion: raw.Atomic[u64] = raw.Atomic[u64].New(0)
@@ -39,6 +44,7 @@ var Got0: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var Got1: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var Got2: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var Got3: raw.Atomic[u64] = raw.Atomic[u64].New(0)
+var Got4: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 
 // Claim ends the process with status 71 for a fault in the first page, an
 // address it guards, wherever the fault's pc is.
@@ -96,7 +102,7 @@ GuardCopy(): u64 {
     }
 }
 
-// Parts runs the parts of mode (0 all four, 1 claimed, 2 claimed-seh).
+// Parts runs the parts of mode (0 all five, 1 claimed, 2 claimed-seh).
 Parts(mode: int) {
     unsafe "the externs are kernel32's and the package's C; address 16 is never mapped" {
         null16 := raw.FromAddr[u8](16)
@@ -113,6 +119,7 @@ Parts(mode: int) {
         Got1.Store(u64(Cast[u32](host_copy_try(null16))))
         Got2.Store(u64(Cast[u32](own_read_try(null16))))
         Got3.Store(GuardCopy())
+        Got4.Store(u64(Cast[u32](thread_copy_try(null16))))
     }
 }
 
@@ -133,10 +140,10 @@ export Main(sys: &System): WriteError!void {
     if mode != 0 {
         return
     }
-    var g: [4]u64 = [0; 4]
+    var g: [5]u64 = [0; 5]
     var n: u64 = 0
     unsafe "the counters are this process's" {
-        g = [Got0.Load(), Got1.Load(), Got2.Load(), Got3.Load()]
+        g = [Got0.Load(), Got1.Load(), Got2.Load(), Got3.Load(), Got4.Load()]
         n = Seen.Load()
     }
     var out := sys.Stdout()
@@ -144,5 +151,6 @@ export Main(sys: &System): WriteError!void {
     try Print(mut out, "RtlMoveMemory in C's __try: the C __except ran ({r})\n", (r: g[1]))
     try Print(mut out, "a C read in its own __try: the C __except ran ({r})\n", (r: g[2]))
     try Print(mut out, "RtlMoveMemory from a guard page: the filter resumed the copy, which copied {r}\n", (r: g[3]))
+    try Print(mut out, "RtlMoveMemory in C's __try on a C thread: the C __except ran ({r})\n", (r: g[4]))
     try Print(mut out, "the filter saw {n} faults\n", (n: n))
 }
