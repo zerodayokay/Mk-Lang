@@ -93,8 +93,10 @@ func (b *build) stage4(m *modNode, rm *resolve.Module) {
 		if lr.Poisoned {
 			m.evalPoison.Store(true)
 			if i < len(lines) {
-				if len(m.genPoison) == 0 {
-					m.genRoot, m.genRootIn = b.poisonRoot(m, &lines[i])
+				if m.genRoot == nil {
+					if r, in := b.poisonRoot(m, &lines[i]); r != nil {
+						m.genRoot, m.genRootIn, m.genRootAt = r, in, lines[i].Span
+					}
 				}
 				m.genPoison = append(m.genPoison, lines[i].Span)
 			}
@@ -197,7 +199,7 @@ func (m *modNode) noteGen(d *diag.Diagnostic) {
 		d.Loc("gen_line", owner.genFailAt).Text("gen", "a gen line of "+at+" failed and emitted nothing: the name may be one it would have declared")
 	case owner.genRoot != nil:
 		d.ConsequenceOf(owner.genRoot.Code, owner.genRoot.At)
-		d.Loc("gen_line", owner.genPoison[0]).Text("gen", "a gen line of "+at+" emitted nothing: `"+owner.genRootIn+"`, which it depends on, failed to check")
+		d.Loc("gen_line", owner.genRootAt).Text("gen", "a gen line of "+at+" emitted nothing: `"+owner.genRootIn+"`, which it depends on, failed to check")
 	case len(owner.genPoison) > 0:
 		d.Loc("gen_line", owner.genPoison[0]).Text("gen", "a gen line of this module emitted nothing: it read a type that failed to check, or one it cannot see before checking")
 	}
@@ -207,11 +209,12 @@ func (m *modNode) noteGen(d *diag.Diagnostic) {
 // in a walk from the modules the line reads (the generator's, the fuel
 // const's, each argument's; m itself, not yet checked, is not walked)
 // through their imports in path order, that has a diagnostic of its own,
-// and its first. Such a module is done failed, or clean with a body stage 7
-// rejected, and every body a run enters there or in a module importing it
-// is poison. The walk runs only for a poisoned line, after every module it
-// reaches is done. nil when no module has one: the line read a type of its
-// own module it cannot see before checking.
+// and of those the one the report prints first (firstDiag). Such a module is
+// done failed, or clean with a body stage 7 rejected, and every body a run
+// enters there or in a module importing it is poison. The walk runs only
+// for a poisoned line, after every module it reaches is done. nil when no
+// module has one: the line read a type of its own module it cannot see
+// before checking.
 func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 	w, s := b.w, b.w.sem5
 	seen := map[*modNode]bool{m: true}
@@ -221,14 +224,8 @@ func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 			return nil, ""
 		}
 		seen[x] = true
-		for _, ds := range [][]*diag.Diagnostic{x.diags, x.cdiags, x.fdiags} {
-			if len(ds) > 0 {
-				// As checkDiags reports it, so the cause resolves.
-				if x.gen != nil {
-					return gen.Wrap(ds[0], x.gen.out), x.path
-				}
-				return ds[0], x.path
-			}
+		if d := b.firstDiag(x); d != nil {
+			return d, x.path
 		}
 		for _, d := range x.deps {
 			if r, p := walk(d); r != nil {
@@ -250,8 +247,10 @@ func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 		return r, p
 	}
 	for _, a := range l.Args {
-		id := a.Item
+		id := a.Item // ArgInterface, ArgFunction
 		if a.Kind == gen.ArgType {
+			// The named type, or the one under []T, &T, ?T and the
+			// like, which a generator reaches through Type.Elem.
 			id = types.NoItem
 			for t := a.Type; t != types.NoType; {
 				tt := w.tab.Get(t)
@@ -267,6 +266,32 @@ func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 		}
 	}
 	return nil, ""
+}
+
+// firstDiag is the diagnostic of x's own (stages 3, 5 to 7) that the report
+// prints first: by path, line and column, then code and message, as
+// diag.Order sorts, and wrapped as checkDiags reports it, so a Cause naming
+// it resolves. The lists' order differs between a cold check and a cache
+// hit; this order does not. nil when x has none.
+func (b *build) firstDiag(x *modNode) *diag.Diagnostic {
+	var best *diag.Diagnostic
+	var bp source.Position
+	for _, ds := range [][]*diag.Diagnostic{x.diags, x.cdiags, x.fdiags} {
+		for _, d := range ds {
+			if x.gen != nil {
+				d = gen.Wrap(d, x.gen.out)
+			}
+			var p source.Position
+			if d.At.File != source.NoFile {
+				p, _ = b.w.sm.SpanPositions(d.At)
+			}
+			if best == nil || cmp.Or(strings.Compare(p.Path, bp.Path), cmp.Compare(p.Line, bp.Line), cmp.Compare(p.Col, bp.Col),
+				cmp.Compare(d.Code, best.Code), strings.Compare(d.Message, best.Message)) < 0 {
+				best, bp = d, p
+			}
+		}
+	}
+	return best
 }
 
 // genLine translates one of resolve's gen lines (first pass, gen/ empty).

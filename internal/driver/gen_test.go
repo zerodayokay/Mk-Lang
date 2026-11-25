@@ -10,6 +10,7 @@
 package driver
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"slices"
@@ -204,34 +205,60 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 		want  []string
 		root  string // the E0201's root, "" for none
 		in    string // the failed module the note names
+		at    string // the gen line the E0201 cites, when not out/out.mk's first
 	}{
 		{"own module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n    unused := 1\n" + emit},
-			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "gn/gn.mk:2:5", "gn"},
+			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "gn/gn.mk:2:5", "gn", ""},
 		{"generator's import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.One()\n" + emit,
 			"a/a.mk": "import std.math\n\nexport One(): int {\n    return 1\n}\n"},
-			[]string{"a/a.mk:1:1:E0208", "out/use.mk:2:12:E0201"}, "a/a.mk:1:1", "a"},
+			[]string{"a/a.mk:1:1:E0208", "out/use.mk:2:12:E0201"}, "a/a.mk:1:1", "a", ""},
 		{"type argument's module", map[string]string{"gn/gn.mk": reflect + emit,
 			"a/a.mk":     "export interface Marker {\n    Get(&self): [1 + true]u8\n}\n",
 			"out/out.mk": "import a\nimport gn\n\ngen gn.Make(a.Marker)\n"},
-			[]string{"a/a.mk:2:22:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:2:22", "a"},
+			[]string{"a/a.mk:2:22:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:2:22", "a", ""},
 		{"fuel const's module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n" + emit,
 			"a/a.mk":     "export const F: u64 = 1 + true\n",
 			"out/out.mk": "import a\nimport gn\n\ngen gn.Make() fuel a.F\n"},
-			[]string{"a/a.mk:1:27:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:1:27", "a"},
+			[]string{"a/a.mk:1:27:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:1:27", "a", ""},
 		{"type error in a table read", map[string]string{"gn/gn.mk": "import tbl\n\nexport Make(g: mut Gen) {\n" +
 			"    made := g.Ident(\"Made\")\n    g.Emit(quote {\n        export const $made: int = $(tbl.RowOf(1))\n    })\n}\n",
 			"tbl/tbl.mk": "Mark(r: int): int {\n    return r\n}\n\nexport RowOf(k: int): int {\n    return Mark(true) + k\n}\n"},
-			[]string{"out/use.mk:2:12:E0201", "tbl/tbl.mk:6:17:E0301"}, "tbl/tbl.mk:6:17", "tbl"},
+			[]string{"out/use.mk:2:12:E0201", "tbl/tbl.mk:6:17:E0301"}, "tbl/tbl.mk:6:17", "tbl", ""},
 		{"importer", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n    unused := 1\n" + emit,
 			"use/use.mk": "import out\n\nexport UseMade(): int {\n    return out.Made + 1\n}\n"},
-			[]string{"gn/gn.mk:2:5:E0208", "use/use.mk:4:16:E0201"}, "gn/gn.mk:2:5", "gn"},
+			[]string{"gn/gn.mk:2:5:E0208", "use/use.mk:4:16:E0201"}, "gn/gn.mk:2:5", "gn", ""},
 		{"two errors", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n    unused := 1\n    unused2 := 2\n" + emit},
-			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "gn/gn.mk:2:5", "gn"},
+			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "gn/gn.mk:2:5", "gn", ""},
 		{"flow error", map[string]string{"gn/gn.mk": flow + "\nexport Make(g: mut Gen) {\n    Twice()\n" + emit},
-			[]string{"gn/gn.mk:4:5:E0501", "out/use.mk:2:12:E0201"}, "gn/gn.mk:4:5", "gn"},
+			[]string{"gn/gn.mk:4:5:E0501", "out/use.mk:2:12:E0201"}, "gn/gn.mk:4:5", "gn", ""},
+		{"type read from the generator's module", map[string]string{"gn/gn.mk": "import a\n\nexport struct Marker {\n    export n: int\n}\n\n" +
+			"export Two(): int {\n    return a.One() + 1\n}\n\nexport Make(g: mut Gen, t: Type) {\n    _ = t\n" + emit,
+			"a/a.mk":     "import std.math\n\nexport One(): int {\n    return 1\n}\n",
+			"out/out.mk": "import gn\n\ngen gn.Make(gn.Marker)\n"},
+			[]string{"a/a.mk:1:1:E0208", "out/use.mk:2:12:E0201"}, "a/a.mk:1:1", "a", ""},
+		{"struct argument", map[string]string{"gn/gn.mk": reflect + emit,
+			"a/a.mk":     "export struct S {\n    export n: int\n}\n\nexport S.Get(&self): [1 + true]u8 {\n    return [0; 2]\n}\n",
+			"out/out.mk": "import a\nimport gn\n\ngen gn.Make(a.S)\n"},
+			[]string{"a/a.mk:5:27:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:5:27", "a", ""},
+		{"element of a slice argument", map[string]string{"gn/gn.mk": strings.Replace(reflect, "t.Methods()", "t.Elem().Methods()", 1) + emit,
+			"a/a.mk":     "export struct S {\n    export n: int\n}\n\nexport S.Get(&self): [1 + true]u8 {\n    return [0; 2]\n}\n",
+			"out/out.mk": "import a\nimport gn\n\ngen gn.Make([]a.S)\n"},
+			[]string{"a/a.mk:5:27:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:5:27", "a", ""},
+		{"errors in two files and stages", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.One()\n" + emit,
+			"a/a.mk": "export One(): int {\n    return true\n}\n", "a/b.mk": "export Two(x: [1 + true]u8): int {\n    return 2\n}\n"},
+			[]string{"a/a.mk:2:12:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:2:12", "a", ""},
+		{"error in the read module's gen output", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.One()\n" + emit,
+			"g2/g2.mk": "export Bad(g: mut Gen) {\n    g.Emit(quote {\n        export Wrong(): int {\n            return true\n        }\n    })\n}\n",
+			"a/a.mk":   "import g2\n\ngen g2.Bad()\n\nexport One(): int {\n    return 1\n}\n"},
+			[]string{"a/a.mk:3:1:E0905", "out/use.mk:2:12:E0201"}, "a/a.mk:3:1", "a", ""},
+		{"a later line with a root", map[string]string{"gn/gn.mk": reflect + emit,
+			"g2/g2.mk":   "export Make(g: mut Gen) {\n    unused := 1\n    made := g.Ident(\"Made2\")\n    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n",
+			"out/out.mk": "import g2\nimport gn\n\ninterface Local {\n    Get(&self): [2 * 2]u8\n}\n\ngen gn.Make(Local)\n\ngen g2.Make()\n",
+			"out/use.mk": "export UseMade(): int {\n    return Made2 + 1\n}\n"},
+			[]string{"g2/g2.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "g2/g2.mk:2:5", "g2", "out/out.mk:10:1"},
 		{"own type", map[string]string{"gn/gn.mk": reflect + emit,
 			"out/out.mk": "import gn\n\ninterface Local {\n    Get(&self): [2 * 2]u8\n}\n\ngen gn.Make(Local)\n"},
-			[]string{"out/use.mk:2:12:E0201"}, "", ""},
+			[]string{"out/use.mk:2:12:E0201"}, "", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			files := map[string]string{"pkg.mk": libManifest(), "out/out.mk": "import gn\n\ngen gn.Make()\n", "out/use.mk": use}
@@ -251,8 +278,8 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 				}
 				g, _ := d.FactValue("gen")
 				gl, cites := d.FactValue("gen_line")
-				if !cites || !strings.HasPrefix(diag.Location(cold.Sources, gl.At), "out/out.mk:") {
-					t.Errorf("E0201 cites a gen line: %v, want out/out.mk's", cites)
+				if want := cmp.Or(c.at, "out/out.mk:"); !cites || !strings.HasPrefix(diag.Location(cold.Sources, gl.At), want) {
+					t.Errorf("E0201 cites a gen line: %v, want %s", cites, want)
 				}
 				if c.root == "" {
 					if e.Root != i+1 || d.Cause != nil || !strings.Contains(g.Str, "cannot see before checking") {
