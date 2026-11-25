@@ -2,7 +2,7 @@
 // constant element step, which codegen and the evaluator place by the
 // element's size; a wrong offset passes the checker and prints the wrong
 // values.
-// What: TestArrayDestructureRuns.
+// What: TestArrayDestructureRuns and TestArrayDestructureLoansRuns.
 // How: a program takes linear and plain arrays apart at run time and in a
 // const evaluated at compile time, through a generic function and a nested
 // array, and is judged by what it prints.
@@ -70,5 +70,40 @@ export Main(sys: &System): WriteError!void {
 `)
 	if code != 0 || strings.TrimSpace(out) != "110 7 8 1230 1230 57 7 9" {
 		t.Errorf("exit %d, stdout %q, stderr %q; want 110 7 8 1230 1230 57 7 9", code, out, errOut)
+	}
+}
+
+// TestArrayDestructureLoansRuns: elements that carry loans (`&int`,
+// `mut int`, `[]u8`, `str`) keep them through an array destructure, and a
+// destructure inside a `fn` literal works as one in a function.
+func TestArrayDestructureLoansRuns(t *testing.T) {
+	t.Parallel()
+	out, errOut, code := buildRunText(t, `Len2(xs: [2]str): int {
+    [a, b] := xs
+    return a.Len() + b.Len()
+}
+
+export Main(sys: &System): WriteError!void {
+    var x := 1
+    var y := 2
+    [p, q] := [&x, &y]
+    s := *p + *q
+    [m, n] := [mut x, mut y]
+    *m += 10
+    *n += 20
+    one := [u8(1), 2]
+    two := [u8(3)]
+    bufs := [one[..], two[..]]
+    [u, v] := bufs
+    f := fn(k: int): int {
+        [c, d] := [k, k + 1]
+        return c * d
+    }
+    l := Len2(["ab", "cde"])
+    try sys.Print("{s} {x} {y} {lu} {lv} {r} {l}\n", (s, x, y, lu: u.Len(), lv: v.Len(), r: f(3), l))
+}
+`)
+	if code != 0 || strings.TrimSpace(out) != "3 11 22 2 1 12 5" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 3 11 22 2 1 12 5", code, out, errOut)
 	}
 }

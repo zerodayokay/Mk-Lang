@@ -186,10 +186,10 @@ func (u *unit) structPat(path *ast.Path, p *ast.RecordPat, t types.TypeID) ([]ty
 	}
 	if r.Kind != resolve.RefItem {
 		if u.matchPatternPath(path, r) {
-			// An enum variant, `some`, `ok` or `err`: only a record or a
-			// struct pattern destructures, so the pattern is one that a
-			// `match` takes.
-			d := u.err(diag.E0306, p.Span(), "only a record or a struct pattern destructures: take `"+u.str(t)+"` apart with `match`").
+			// An enum variant, `some`, `ok` or `err`: only a record, a
+			// struct or an array pattern destructures, so the pattern is
+			// one that a `match` takes.
+			d := u.err(diag.E0306, p.Span(), "only a record, a struct or an array pattern destructures: take `"+u.str(t)+"` apart with `match`").
 				Text("reason", "refutable").Alt("use `match`")
 			if u.tab.Kind(t) == types.KOptional {
 				d.Alt("use `if v := e` for an optional")
