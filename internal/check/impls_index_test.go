@@ -279,7 +279,7 @@ func TestImplIndexEqualsScan(t *testing.T) {
 		}
 	}
 	// The cross-module order is pinned: Point's impl methods as b sees them
-	// are a's Tag, then b's Size. lib's Name collides with Point's field
+	// are a's Tag, then b's Size. lib's Name collides with Point.Name
 	// and b's Name with lib's: both are shadowed (E0206), so left out.
 	b := w.c.module(ids[3])
 	pt := w.tab.Named(w.mods["lib"].item("Point"), nil)

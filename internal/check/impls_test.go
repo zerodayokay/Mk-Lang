@@ -442,9 +442,9 @@ struct Use {
 }
 
 func TestMemberNamespace_E0206(t *testing.T) {
-	t.Run("impl method collides with a field", func(t *testing.T) {
+	t.Run("impl method and a field that fold alike are two members", func(t *testing.T) {
 		w := newWorld(t, true)
-		b := checkCodes(t, w, "m", opt{}, "E0206@10:2", `struct S {
+		b := checkBody(t, w, "", `struct S {
 	area: f64
 }
 
@@ -454,16 +454,62 @@ interface Shape {
 
 impl Shape for S {
 	Area(&self): f64 {
-		return 1.0
+		return self.area
 	}
 }
+
+Use(s: &S): f64 {
+	return s.area + s.Area()
+}
 `)
-		d := b.m.Diags[0]
-		if d.Phase != diag.PhaseTypes {
-			t.Errorf("phase %v", d.Phase)
+		var got []string
+		for _, mb := range w.c.Members(w.tab.Named(b.item("S"), nil)) {
+			got = append(got, w.in.Str(mb.Name))
 		}
-		if f, ok := d.FactValue("first"); !ok || w.lc(f.At) != "2:2" {
-			t.Errorf("first %s", dump(w, b.m.Diags))
+		if strings.Join(got, " ") != "Area area" {
+			t.Errorf("members %v", got)
+		}
+	})
+	t.Run("Type.Name method and a field that fold alike are two members", func(t *testing.T) {
+		w := newWorld(t, true)
+		checkBody(t, w, "", `struct M {
+	cpu: int
+	max_len: int
+}
+
+M.Cpu(&self): int {
+	return self.cpu
+}
+
+M.MaxLen(&self): int {
+	return self.max_len
+}
+
+Use(m: &M): int {
+	return m.cpu + m.Cpu() + m.max_len + m.MaxLen()
+}
+`)
+	})
+	t.Run("a folded misspelling picks the field or the method by its use", func(t *testing.T) {
+		w := newWorld(t, true)
+		b := checkBody(t, w, "E0207@10:11 E0207@10:21", `struct M {
+	cpu: int
+}
+
+M.Cpu(&self): int {
+	return self.cpu
+}
+
+Use(m: &M): int {
+	return m.CPU() + m.CPU
+}
+`)
+		var want []string
+		for _, d := range b.bodyDiags(t) {
+			want = append(want, fact(d, "expected"))
+		}
+		if strings.Join(want, " ") != "Cpu cpu" {
+			t.Errorf("expected spellings %v", want)
 		}
 	})
 	t.Run("two impls in one module", func(t *testing.T) {

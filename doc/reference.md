@@ -424,7 +424,7 @@ export Main(sys: &System): WriteError!void {
 - A name in the wrong case is E0207. The message gives the right spelling: `` `do_thing` should be PascalCase: `DoThing` ``.
 - A name cannot start with `_`: `_x` is E0207. `_` alone is the blank, as in `_ = F()`.
 - Lookup is exact. When nothing matches, the compiler ignores case and underscores to find what you meant: `.len()` and `userCount` are E0207, and the message names `Len` and `user_count`. `mk fix` applies the correction.
-- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A local cannot shadow another local or a parameter ([bindings](#bindings)).
+- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A type's fields are one scope and its variants and methods another, so a field `cpu` and a method `Cpu` may stand side by side ([structs](#structs)). A local cannot shadow another local or a parameter ([bindings](#bindings)).
 - An `extern` function's or var's name is its C symbol. It is used as written and is outside the case rule: `extern strlen(s: *u8): uint`.
 
 A local spelled differently from its declaration:
@@ -2140,7 +2140,22 @@ export Main(sys: &System): WriteError!void {
 - `s.f` reads a field. You change a field through a `var` binding or a `mut` reference ([section 5](#5-statements)).
 - A struct has no `==` and no `Format` of its own (E0308, E0706). After `import std.derive`, `gen derive.Eq(Vec2)` and `gen derive.Format(Vec2)` write both for you ([section 11](#11-compile-time)): then `a.Eq(&b)` compares two values and `{a}` prints `Vec2(x: 1, y: 2)`.
 - A struct cannot hold itself by value, directly or through other structs (E0907). Hold it through a reference, `next: ?&Chain`, or a `Box`.
-- Field names are `snake_case` (E0207). A field and a method of one type cannot have names that differ only in case and underscores (E0206), so a field `name` and a method `Name` conflict.
+- Field names are `snake_case` (E0207). A field and a method of one type may have names that differ only in case and underscores: a field `cpu` and a method `Cpu` are two members, and `m.cpu` reads one while `m.Cpu()` calls the other. Two fields, or two methods, or a method and a variant, that differ only in case and underscores are E0206, as is a field spelled exactly as a method.
+
+```mk
+// verdict: ok
+struct Machine {
+    cpu: int
+}
+
+Machine.Cpu(&self): int { // a method beside the field `cpu`
+    return self.cpu * 2
+}
+
+Load(m: &Machine): int {
+    return m.cpu + m.Cpu()
+}
+```
 - `invariant c` among the fields states a condition every value must meet ([section 15](#15-contracts-and-tests)).
 
 A struct may take type parameters. Construction infers them from the fields, or you write them:
@@ -2736,7 +2751,7 @@ packed align(8) struct Both { // <- E0706
 |---|---|---|
 | E0101 | syntax | `.Quit` as an expression; a tag type on an enum with fields; two variants on one line; `packed(n)` with another `n` |
 | E0203 | unknown-member | A variant's field read with a dot ([enums](#enums)) |
-| E0206 | duplicate-name | Two items, two variants' tags, or a field and a method whose names differ only in case ([functions](#functions-and-methods), [tags](#enum-tags)) |
+| E0206 | duplicate-name | Two items, two variants' tags, two fields or two methods whose names differ only in case, or a field spelled exactly as a method ([functions](#functions-and-methods), [structs](#structs), [tags](#enum-tags)) |
 | E0207 | naming | A field not in `snake_case`, a function not in `PascalCase` |
 | E0301 | type-mismatch | A tag type that is not an integer; an assignment to a constant |
 | E0302 | no-conversion | A number from an enum without a tag type ([tags](#enum-tags)) |

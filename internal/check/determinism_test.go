@@ -205,7 +205,7 @@ func TestPhase_E0204MemberIsTypes(t *testing.T) {
 func TestNoDuplicateEmitters(t *testing.T) {
 	t.Run("resolve and check", func(t *testing.T) {
 		w := newWorld(t, true)
-		b := w.add("m", opt{}, "str.Shout(self): str {\n\treturn self\n}\n\ntest \"x\" {\n}\n\ntest \"x\" {\n}\n\nstruct S {\n\tlen: int\n}\n\nS.Len(&self): int {\n\treturn 1\n}\n")
+		b := w.add("m", opt{}, "str.Shout(self): str {\n\treturn self\n}\n\ntest \"x\" {\n}\n\ntest \"x\" {\n}\n\nenum S {\n\tLen\n}\n\nS.Len(&self): int {\n\treturn 1\n}\n")
 		var all []*diag.Diagnostic
 		all = append(all, b.rdiags...)
 		all = append(all, b.m.Diags...)

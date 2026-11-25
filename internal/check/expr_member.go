@@ -93,7 +93,10 @@ func (u *unit) memberLookup(t types.TypeID, name *ast.Ident, v *valueSite) (Memb
 		u.ambiguous(t, name, cands)
 		return Member{}, false
 	}
-	if folded && len(cands) > 1 {
+	if folded && len(cands) > 1 && v != nil {
+		cands = foldedByUse(cands, v.call)
+	}
+	if folded && len(cands) != 1 {
 		u.missAt(t, name, v)
 		return Member{}, false
 	}
@@ -110,6 +113,19 @@ func (u *unit) memberLookup(t types.TypeID, name *ast.Ident, v *valueSite) (Memb
 	}
 	u.privateMethod(name.Span(), mb)
 	return mb, true
+}
+
+// foldedByUse narrows a folded miss on a value (field `cpu` and method `Cpu`
+// both fold to `x.CPU`) by its use: a call keeps the members that are not
+// fields, a read the fields.
+func foldedByUse(cands []Member, call bool) []Member {
+	var out []Member
+	for _, mb := range cands {
+		if (mb.Kind == MemberField) != call {
+			out = append(out, mb)
+		}
+	}
+	return out
 }
 
 // privateMethod is E0204 for a `Type.Name` function without `export` named
