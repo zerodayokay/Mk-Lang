@@ -61,6 +61,20 @@ A `CodeRegion` is memory for code that the program generates, enforcing W^X on e
 - `Entry` panics with code 2 for an offset outside `[0, Size())`.
 - On Windows a code region is a pagefile-backed section mapped twice (the writable view read-only outside `Edit`, the executable view read-execute throughout); on Linux a memfd mapped twice the same way; on arm64 macOS a `MAP_JIT` mapping whose write-vs-execute mode switches per thread through `pthread_jit_write_protect_np` when the host supports it (other threads stay in execute mode while one thread edits), falling back to a private anonymous mapping toggled between read-write during `Edit` and read-execute outside it via `mprotect` (as on x86_64 macOS) when per-thread JIT write protection is unavailable or `MAP_JIT` is refused by policy.
 
+## Tasks
+
+A reservation or a code mapping belongs to the process, not to a thread, on every target, so the owners cross tasks ([R17](../memory.md#r17-tasks)):
+
+| Type | `Send` | `Share` | Why |
+|---|---|---|---|
+| `Region` | yes | yes | Derived: it keeps its addresses as `uint`, and its commit bitmap is atomic. Tasks that change overlapping ranges at once exclude each other themselves |
+| `CodeRegion` | yes | yes | Asserted, since it holds the views as raw pointers. Every change takes `mut self` or `self`, and `Size` and `Entry`, its `&self` methods, only read. So a code space can sit behind a `Mutex` or `atomic.Spin` that compile tasks share, and many tasks can run its code through a `&` |
+| `CodeWriter` | no | no | It holds a raw pointer to its region and asserts nothing, so it stays on the task that opened it (E1001, E1002), since arm64 macOS's JIT write mode belongs to the thread |
+| `Prot`, `Error` | yes | yes | Plain values |
+
+- `w.Bytes()` is a `mut []u8`, which may go to a task. On arm64 macOS with `MAP_JIT` only the thread that opened the window can write it, and a write from another thread faults, so write the bytes on the task that holds the `CodeWriter`.
+- While one task edits a region, others may still run code at entries they took before. On Windows, Linux and arm64 macOS with `MAP_JIT` the code stays executable throughout. On x86_64 macOS and the arm64 `mprotect` fallback, the edited pages are read-write and not executable until `Done`, so a call into them faults: exclude the callers there for the length of the window.
+
 ## Errors
 
 `vm.Error` has four members:
@@ -263,6 +277,10 @@ read-execute outside it via mprotect (as on x86_64 macOS) when it does not.
 A region from New is committed whole; one from Reserve has no page
 committed until Commit takes it. Linear: end it with Release.
 
+Send and Share: a task may own it, edit it and release it, and several
+tasks may run its code through a & while none edits. A CodeWriter is
+neither, so it stays on the task that opened it.
+
 ### `CodeRegion.Commit`
 
 ```
@@ -415,7 +433,11 @@ with Flush, and end the window with Done.
 Linear: every path must close it with Done (use `defer w.Done()`). Do not
 hold a CodeWriter across an Io wait or task suspension: on arm64 macOS
 JIT write protection belongs to the calling OS thread, so resuming on
-another carrier would leave the original carrier write-enabled.
+another carrier would leave the original carrier write-enabled. For the
+same reason it is neither Send nor Share (its raw pointer to the region
+asserts nothing), so it never passes to another task. Its Bytes may, but
+on arm64 macOS with MAP_JIT only the thread that opened the window can
+write them; a write from another thread faults.
 
 ### `CodeWriter.Bytes`
 
@@ -524,7 +546,10 @@ export linear struct Region
 
 Reserved address space: size bytes from Base, with no access until
 Commit. It is linear: end it with Release, which gives back the whole
-range.
+range. Send and Share, derived from its fields: the reservation is the
+process's, its commit bitmap is read and written atomically, and two
+tasks that commit, decommit or protect overlapping ranges at once exclude
+each other themselves.
 
 ### `Region.Base`
 
