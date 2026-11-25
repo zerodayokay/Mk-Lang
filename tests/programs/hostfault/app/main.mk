@@ -16,13 +16,17 @@
 // 5. part 2 on a thread the C source makes, which Mk did not: its fault is
 //    on no stack Mk runs on, so Watch never sees it, and the C __except runs
 //    (1) as it would with no filter;
-// then how many faults Watch saw (4, part 5's not among them). With
+// 6. part 1 on a blocking-pool thread (runtime.Blocking), a thread std
+//    started but no carrier: Watch sees the fault and passes it, and
+//    IsBadReadPtr's __except answers 1;
+// then how many faults Watch saw (5, part 5's not among them). With
 // "claimed" it adds Claim first, which ends the process with status 71 for a
 // fault in the first page, and copies from address 16 with RtlMoveMemory and
 // no handler; with
 // "claimed-seh" it does the same inside the C source's __try: a filter sees
 // the fault before the C code's own __except, so the status is 71 both
-// times. Want hostfault.out and exit 0, or exit 71.
+// times; with "claimed-pool" it does the copy with no handler on a
+// blocking-pool thread, also 71. Want hostfault.out and exit 0, or exit 71.
 import std.raw
 import std.runtime
 import std.vm
@@ -36,7 +40,7 @@ extern thread_copy_try(src: *u8): i32
 
 // The filters run on the faulting thread and see only globals: Seen counts
 // the faults Watch saw; Guard is the guard page's base and GuardRegion the
-// address of its Region (part 4); Got0 to Got4 hold the parts' answers.
+// address of its Region (part 4); Got0 to Got5 hold the parts' answers.
 var Seen: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var Guard: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var GuardRegion: raw.Atomic[u64] = raw.Atomic[u64].New(0)
@@ -45,6 +49,7 @@ var Got1: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var Got2: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var Got3: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 var Got4: raw.Atomic[u64] = raw.Atomic[u64].New(0)
+var Got5: raw.Atomic[u64] = raw.Atomic[u64].New(0)
 
 // Claim ends the process with status 71 for a fault in the first page, an
 // address it guards, wherever the fault's pc is.
@@ -102,8 +107,28 @@ GuardCopy(): u64 {
     }
 }
 
-// Parts runs the parts of mode (0 all five, 1 claimed, 2 claimed-seh).
-Parts(mode: int) {
+// PoolRead runs on a blocking-pool thread: with how 0 it is part 1, and
+// with 1 it copies from address 16 with RtlMoveMemory and no handler.
+PoolRead(how: int): int {
+    unsafe "kernel32's; address 16 is never mapped" {
+        if how == 1 {
+            var dst: u64 = 0
+            RtlMoveMemory(raw.PtrCast[u64, u8](raw.OfMut(mut dst)), raw.FromAddr[u8](16), 8)
+            return 0
+        }
+        return int(IsBadReadPtr(raw.FromAddr[u8](16), 8))
+    }
+}
+
+// Parts runs the parts of mode (0 all six, 1 claimed, 2 claimed-seh, 3
+// claimed-pool).
+Parts(io: Io, mode: int) {
+    if mode == 3 {
+        _ = runtime.Blocking(io, 1, PoolRead) else {
+            return
+        }
+        return
+    }
     unsafe "the externs are kernel32's and the package's C; address 16 is never mapped" {
         null16 := raw.FromAddr[u8](16)
         if mode == 1 {
@@ -121,12 +146,18 @@ Parts(mode: int) {
         Got3.Store(GuardCopy())
         Got4.Store(u64(Cast[u32](thread_copy_try(null16))))
     }
+    r := runtime.Blocking(io, 0, PoolRead) else {
+        return
+    }
+    unsafe "the counters are this process's" {
+        Got5.Store(Cast[u64](r))
+    }
 }
 
 export Main(sys: &System): WriteError!void {
     var mode := 0
     if sys.args.Len() > 1 {
-        mode = if sys.args[1] == "claimed" { 1 } else { 2 }
+        mode = if sys.args[1] == "claimed" { 1 } else if sys.args[1] == "claimed-seh" { 2 } else { 3 }
     }
     unsafe "AddFaultFilter is unsafe only" {
         if mode != 0 {
@@ -135,15 +166,15 @@ export Main(sys: &System): WriteError!void {
         _ = runtime.AddFaultFilter(Watch)
     }
     scope s := sys.io.Scope() {
-        s.go Parts(mode)
+        s.go Parts(sys.io, mode)
     }
     if mode != 0 {
         return
     }
-    var g: [5]u64 = [0; 5]
+    var g: [6]u64 = [0; 6]
     var n: u64 = 0
     unsafe "the counters are this process's" {
-        g = [Got0.Load(), Got1.Load(), Got2.Load(), Got3.Load(), Got4.Load()]
+        g = [Got0.Load(), Got1.Load(), Got2.Load(), Got3.Load(), Got4.Load(), Got5.Load()]
         n = Seen.Load()
     }
     var out := sys.Stdout()
@@ -152,5 +183,6 @@ export Main(sys: &System): WriteError!void {
     try Print(mut out, "a C read in its own __try: the C __except ran ({r})\n", (r: g[2]))
     try Print(mut out, "RtlMoveMemory from a guard page: the filter resumed the copy, which copied {r}\n", (r: g[3]))
     try Print(mut out, "RtlMoveMemory in C's __try on a C thread: the C __except ran ({r})\n", (r: g[4]))
+    try Print(mut out, "IsBadReadPtr on a blocking-pool thread: kernelbase's own __except answered {r}\n", (r: g[5]))
     try Print(mut out, "the filter saw {n} faults\n", (n: n))
 }

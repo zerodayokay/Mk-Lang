@@ -100,7 +100,7 @@ Which faults reach the filters depends on the target:
 
 | Target | Faults the filters see |
 |---|---|
-| Windows | A stack overflow (in a library, one in its own code or on a stack Mk made); an access or illegal-instruction fault in Mk code; any fault whose `pc` is in a code region; any other access or illegal-instruction fault on a task's or a carrier's stack (in a program with no task, every one), whatever its `pc`, C code's or a system DLL's. The filters see it before the C code's own `__try`, and one they all pass goes on to that handler or the system, as without filters. |
+| Windows | A stack overflow (in a library, one in its own code or on a stack Mk made); an access or illegal-instruction fault in Mk code; any fault whose `pc` is in a code region; any other access or illegal-instruction fault on a thread std started (a carrier, a blocking-pool thread) or on a task's or a carrier's stack (in a program with no task, every one), whatever its `pc`, C code's or a system DLL's. The filters see it before the C code's own `__try`, and one they all pass goes on to that handler or the system, as without filters. |
 | Linux, macOS | A `SIGSEGV`, `SIGBUS` or `SIGILL` that Mk owns: its `pc` in the executable's image, on the main thread or a thread std started, or on a task's or a carrier's stack; any fault in a code region. A fault in C code outside the image on a foreign thread, and a signal another process or thread sends, get the signal's default action, raised again at once. |
 
 - `FaultKind.Stack` is an access to a guard page the runtime knows, a task's or a carrier's, and is reported as a stack overflow wherever its `pc` is.
@@ -407,11 +407,12 @@ process with `panic: fault in a fault filter`, status 101.
 Which faults reach the filters differs by target. On Windows: a stack
 overflow, an access or illegal-instruction fault in Mk code, any fault
 whose pc is in a std.vm code region, and any other access or
-illegal-instruction fault whose stack is a task's or a carrier's (in a
+illegal-instruction fault whose thread is one std started (a carrier, a
+blocking-pool thread) or whose stack is a task's or a carrier's (in a
 program with no task, every one), whatever its pc: C code's, a system
 DLL's. The filters see such a fault before the C code's own handler
 (`__try`), and one they all pass goes on to it, or to the system, as
-it would without filters; it is never Mk's report. On Linux: a
+it would without filters. On Linux: a
 SIGSEGV, SIGBUS or SIGILL that Mk owns, which is one whose pc is in
 the executable's image, whose thread is the main thread or one std
 started, or whose stack is a task's or a carrier's; and any fault whose
@@ -532,12 +533,15 @@ export enum FaultAction
 ```
 
 A filter's answer: Resume at the context it edited, which the handler
-installs, or Pass to the next filter and then to Mk's own report.
+installs, or Pass to the next filter and after the last on as with no
+filter: to Mk's own report, or, for a fault in C code on Windows, to
+the C code's own handler or the system (AddFaultFilter).
 
 Variants:
 
 - `Resume(ctx: FaultContext)`: Resume at ctx, the context the filter edited.
-- `Pass`: Pass the fault to the next filter, and then to Mk's own report.
+- `Pass`: Pass the fault to the next filter, and after the last on as with no
+  filter.
 
 ### `FaultContext`
 

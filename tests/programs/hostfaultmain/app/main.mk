@@ -1,6 +1,7 @@
 // hostfault's parts 1 and 4 and its "claimed" case in a program with no
-// task (nothing here spawns, so Main runs on the main thread's stack and the
-// externs are called there directly). With no argument it adds Watch and
+// task (nothing here spawns, so Main runs on the main thread, on the stack
+// std maps for it, and the externs are called there directly). With no
+// argument it adds Watch and
 // prints: kernelbase's IsBadReadPtr of address 16 answers 1 from its own
 // __except after Watch passed the fault; ntdll's RtlMoveMemory from a page
 // protected to None copies 7 after Watch made the page readable and resumed

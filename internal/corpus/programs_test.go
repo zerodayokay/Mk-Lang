@@ -311,8 +311,8 @@ func strictProgram(program string) bool {
 	// each passed before it was named here, and failed without its fix.
 	case ProgramsDir + "/alignframe.mk", ProgramsDir + "/staticalign":
 		return true
-	// Windows only (MKH-493): both Windows leaves of each passed before it
-	// was named here, and its filter cases failed without the fix.
+	// Windows only: both Windows leaves of each passed before it was named
+	// here, and its filter cases failed without the fix.
 	case ProgramsDir + "/hostfault", ProgramsDir + "/hostfaultmain":
 		return true
 	// Each but linuxsyscall passed its Windows dev and release leaves
