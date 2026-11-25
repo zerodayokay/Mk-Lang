@@ -696,6 +696,9 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Sink.New":                   {Module: "std.text", Lines: []string{"Sink[S].New(write: fn(mut S, []u8): WriteError!void): Sink[S]"}},
 	"Sink.Warn":                  {Module: "std.log", Lines: []string{"Sink.Warn[A: Fields[Format] + Plain](&self, io: Io, const f: str, args: A): WriteError!void"}},
 	"Sink.Writer":                {Module: "std.text", Lines: []string{"Sink[S].Writer(&self, s: mut S, buf: mut []u8): Writer from self, s, buf"}},
+	"Sip13State.Bytes":           {Module: "std.hash", Lines: []string{"Sip13State.Bytes(mut self, data: []u8)"}},
+	"Sip13State.New":             {Module: "std.hash", Lines: []string{"Sip13State.New(key: HashKey): Sip13State"}},
+	"Sip13State.Sum":             {Module: "std.hash", Lines: []string{"Sip13State.Sum(self): u64"}},
 	"Skipped":                    {Module: "std.time", Lines: []string{"error Skipped"}},
 	"Slice":                      {Module: "", Lines: []string{"interface Slice[T]"}},
 	"Slice.Chunks":               {Module: "", Lines: []string{"Slice[T].Chunks(&self, n: int): Chunks[T] from self"}},
@@ -901,7 +904,4 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Xx64State.Sum":              {Module: "std.hash", Lines: []string{"Xx64State.Sum(self): u64"}},
 	"Zone.Fixed":                 {Module: "std.time", Lines: []string{"Zone.Fixed(offset_seconds: i32): Zone"}},
 	"Zone.FromTzif":              {Module: "std.time", Lines: []string{"Zone.FromTzif(a: &Arena, name: str, data: []u8): time.Error|OutOfMemory!Zone from a"}},
-	"Zone.Load":                  {Module: "std.time", Lines: []string{"Zone.Load(a: &Arena, io: Io, name: str, embedded: ?Database): time.Error|OutOfMemory!Zone from a"}},
-	"Zone.Local":                 {Module: "std.time", Lines: []string{"Zone.Local(a: &Arena, io: Io): time.Error|OutOfMemory!Zone from a"}},
-	"Zone.Utc":                   {Module: "std.time", Lines: []string{"Zone.Utc(): Zone"}},
 }

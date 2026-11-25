@@ -27,7 +27,7 @@ import std.hash
 | Checksum for gzip, PNG or ZIP | `Crc32` |
 | Cryptographic digest | `Sha256`, `Sha384`, `Sha512`, `Blake3` |
 | A digest a format requires (WebSocket, Git) | `Sha1` |
-| Hash input that arrives in pieces | `Sha256State`, `Sha384State`, `Sha512State`, `Sha1State`, `Blake3State`, `Crc32State`, `Xx64State` |
+| Hash input that arrives in pieces | `Sha256State`, `Sha384State`, `Sha512State`, `Sha1State`, `Blake3State`, `Crc32State`, `Xx64State`, `Sip13State` |
 
 Each function takes a `[]u8` and returns the hash by value: a `u64` or `u32`, or a byte array. The arrays are `[32]u8` for SHA-256 and BLAKE3, `[48]u8` for SHA-384, `[64]u8` for SHA-512 and `[20]u8` for SHA-1. To hash a `str`, pass `s.AsBytes()`. To print a digest in hex, use `encoding.HexEncode`.
 
@@ -54,8 +54,8 @@ A state hashes input that arrives in pieces: make one with `New`, pass each piec
 
 - `Sum` takes the state by value and works on a copy, so the state can keep absorbing after it. Read a running digest, add more input, and read again.
 - `Crc32State` holds the finished CRC, so its zero value is the state of the empty input: a zero-filled `Crc32State` is a fresh one.
-- The other states are not zero-valid: a zero-filled `Sha256State`, `Blake3State` or `Xx64State` is not the start of a hash. Make them with `New`. Asking an arena for a slice of them, as `a.Slice[Sha256State](n)` would, is refused at compile time (E0701).
-- `Xx64State.New` takes the seed. `Sip13` and `Xx` have no streaming state.
+- The other states are not zero-valid: a zero-filled `Sha256State`, `Blake3State`, `Xx64State` or `Sip13State` is not the start of a hash. Make them with `New`. Asking an arena for a slice of them, as `a.Slice[Sha256State](n)` would, is refused at compile time (E0701).
+- `Xx64State.New` takes the seed and `Sip13State.New` the `HashKey`. `Xx` has no streaming state.
 
 The cookbook shows a whole file hashed through one fixed buffer: [Hash a file in pieces](../cookbook.md#hash-a-file-in-pieces).
 
@@ -63,7 +63,7 @@ The cookbook shows a whole file hashed through one fixed buffer: [Hash a file in
 
 Every function in `std.hash` is total: it cannot fail and never panics. None allocates; states live wherever you put them, usually on the stack.
 
-- Every hash is O(n) in its input. `Sum` costs one or two block compressions for the SHA states, O(1) for `Crc32State` and `Xx64State`, and one compression per level of its stack for `Blake3State`.
+- Every hash is O(n) in its input. `Sum` costs one or two block compressions for the SHA states, O(1) for `Crc32State`, `Xx64State` and `Sip13State` (its four final rounds), and one compression per level of its stack for `Blake3State`.
 - `Blake3State` holds a stack of up to 54 chaining values (1,728 bytes), enough for 2^64 bytes of input. `Blake3` builds no state, so a short input does not pay for that stack.
 - `Xx` takes one of five fixed paths for inputs of up to 240 bytes and reads longer inputs in 64-byte stripes. It is small enough to inline.
 
@@ -149,6 +149,10 @@ export Main(sys: &System): Canceled|WriteError!void {
     try sys.Print("same key, same hash: {same}\n", (same: a == b))
     fixed := HashKey.Of(1, 2) // a fixed key gives reproducible values
     try sys.Print("sip13 {v:x}\n", (v: hash.Sip13("user:alice".AsBytes(), fixed)))
+    var st := hash.Sip13State.New(fixed) // the same hash, fed in pieces
+    st.Bytes("user:".AsBytes())
+    st.Bytes("alice".AsBytes())
+    try sys.Print("pieces same: {same}\n", (same: st.Sum() == hash.Sip13("user:alice".AsBytes(), fixed)))
     try sys.Print("xxh64 {v:x}\n", (v: hash.Xx64("user:alice".AsBytes(), 7)))
 }
 ```
@@ -157,6 +161,7 @@ export Main(sys: &System): Canceled|WriteError!void {
 $ mk run keyed.mk
 same key, same hash: true
 sip13 dafe9f4b07bb2747
+pieces same: true
 xxh64 dccb6e2bb4421736
 ```
 
@@ -467,6 +472,47 @@ while the key stays secret. SipHash-1-3 is the reduced-round variant for
 hash tables; to authenticate messages, use crypto.Hmac256. Cannot fail.
 O(data.Len()); allocates nothing. Inputs of up to 16 bytes take a short
 path with no loop.
+
+### `Sip13State`
+
+```
+export struct Sip13State
+```
+
+Sip13State is a SipHash-1-3 hash in progress under a HashKey, for input
+that arrives in pieces. It is not zero-valid: a zero-filled state does
+not hold the key's starting words, and Arena.Slice[Sip13State] is E0701.
+Make one with New.
+
+### `Sip13State.Bytes`
+
+```
+export Sip13State.Bytes(mut self, data: []u8)
+```
+
+Absorbs data. Bytes in any split gives the same value as Sip13 of the
+concatenation. Whole 8-byte words are read from data in place; a
+partial word of up to 7 bytes waits in the state. O(data.Len());
+allocates nothing.
+
+### `Sip13State.New`
+
+```
+export Sip13State.New(key: HashKey): Sip13State
+```
+
+Returns the state of the empty message under key. O(1); allocates
+nothing.
+
+### `Sip13State.Sum`
+
+```
+export Sip13State.Sum(self): u64
+```
+
+Returns SipHash-1-3 of everything absorbed under the state's key; the
+state can keep absorbing. O(1): the last word and the four final
+rounds. It allocates nothing.
 
 ### `Xx`
 

@@ -4,6 +4,12 @@
 package lsp
 
 var surfaceDocs3 = map[string]surfaceDoc{
+	"sqlite.Stmt.BindInt":        {Module: "std.db.sqlite", Lines: []string{"Stmt.BindInt(mut self, i: int, v: i64): sqlite.Error!void"}},
+	"sqlite.Stmt.BindText":       {Module: "std.db.sqlite", Lines: []string{"Stmt.BindText(mut self, i: int, s: str): sqlite.Error!void"}},
+	"sqlite.Stmt.Close":          {Module: "std.db.sqlite", Lines: []string{"Stmt.Close(self)"}},
+	"sqlite.Stmt.Int":            {Module: "std.db.sqlite", Lines: []string{"Stmt.Int(&self, col: int): i64"}},
+	"sqlite.Stmt.Reset":          {Module: "std.db.sqlite", Lines: []string{"Stmt.Reset(mut self)"}},
+	"sqlite.Stmt.Step":           {Module: "std.db.sqlite", Lines: []string{"Stmt.Step(mut self, io: Io): sqlite.Error!bool"}},
 	"sqlite.Stmt.Str":            {Module: "std.db.sqlite", Lines: []string{"Stmt.Str(&self, col: int): str from self"}},
 	"str.AsBytes":                {Module: "", Lines: []string{"str.AsBytes(self): []u8"}},
 	"str.Byte":                   {Module: "", Lines: []string{"str.Byte(self, i: int): u8"}},
