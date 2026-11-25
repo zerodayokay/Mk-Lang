@@ -223,6 +223,11 @@ type modNode struct {
 	// genPoison: the spans of the gen lines whose run ended in poison and
 	// emitted nothing; an unknown name in the module points at them.
 	genPoison []source.Span
+	// genFail: the first gen line whose own error made it emit nothing,
+	// and that error (gen.LineResult.Fail); an unknown name in the module,
+	// or an importer's `m has no item`, is its consequence (noteGen).
+	genFailAt source.Span
+	genFail   *diag.Diagnostic
 	// parsed: files of the module parsed at stage 3 (ensureParsed), for
 	// Trace.FilesParsed
 	parsed []string

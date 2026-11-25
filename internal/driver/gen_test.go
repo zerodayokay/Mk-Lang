@@ -2,7 +2,8 @@
 // check, be visible to importers and keep gen's diagnostics.
 // What: TestGenExportUsedByImporter, TestGenDeriveEqChecks,
 // TestE0704_GeneratedImplAtGenLine, TestGenCodes (E0903, E0905, E0906),
-// TestGenDeriveEqGolden, TestGenBoolArgument and TestGenFlowDiagWrapped.
+// TestGenFailRootOfUnknownNames, TestGenDeriveEqGolden, TestGenBoolArgument
+// and TestGenFlowDiagWrapped.
 // How: checks small packages with the real std generators and compares
 // diagnostics, and derive.Eq's output with internal/gen's golden.
 
@@ -109,6 +110,48 @@ func TestGenCodes(t *testing.T) {
 			dir := writeTree(t, map[string]string{"pkg.mk": libManifest(), "gens/g.mk": c.gens, "app/a.mk": c.app})
 			r := check(t, Config{Root: dir})
 			expectLines(t, r, c.want)
+		})
+	}
+}
+
+// TestGenFailRootOfUnknownNames: a gen line whose generator fails emits
+// nothing, so a file of its module naming what it would have declared, and an
+// importer naming it as `out.Made`, get E0201 (names). The E0903 (types) is
+// still reported, as the root of each E0201, which cites the gen line; the
+// earliest-phase rule used to hide it behind the E0201s. With the module
+// cache on, the warm report equals the cold one.
+func TestGenFailRootOfUnknownNames(t *testing.T) {
+	const fail = "export Make(g: mut Gen) {\n    g.Fail(\"planted\")\n    made := g.Ident(\"Made\")\n" +
+		"    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n"
+	for _, c := range []struct {
+		name  string
+		files map[string]string
+		want  []string
+	}{
+		{"same module", map[string]string{"out/use.mk": "export UseMade(): int {\n    return Made + 1\n}\n"},
+			[]string{"out/out.mk:3:1:E0903", "out/use.mk:2:12:E0201"}},
+		{"importer", map[string]string{"use/use.mk": "import out\n\nexport UseMade(): int {\n    return out.Made + 1\n}\n"},
+			[]string{"out/out.mk:3:1:E0903", "use/use.mk:4:16:E0201"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			files := map[string]string{"pkg.mk": libManifest(), "gn/gn.mk": fail, "out/out.mk": "import gn\n\ngen gn.Make()\n"}
+			for p, text := range c.files {
+				files[p] = text
+			}
+			cfg := Config{Root: writeTree(t, files), CacheDir: t.TempDir()}
+			cold := frontCheck(t, cfg)
+			expectLines(t, cold, c.want...)
+			if len(cold.Report.Diags) == 2 {
+				e := cold.Report.Diags[1]
+				gl, ok := e.Diag.FactValue("gen_line")
+				if e.Root != 1 || !ok || diag.Location(cold.Sources, gl.At) != "out/out.mk:3:1" {
+					t.Errorf("E0201 root %d, gen_line %v; want root 1 citing out/out.mk:3:1\n%s", e.Root, ok,
+						cold.Report.Text(cold.Sources))
+				}
+			}
+			if warm := frontCheck(t, cfg); string(jsonOf(t, warm)) != string(jsonOf(t, cold)) {
+				t.Errorf("warm --json %s, cold %s", jsonOf(t, warm), jsonOf(t, cold))
+			}
 		})
 	}
 }

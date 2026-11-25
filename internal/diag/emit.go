@@ -5,10 +5,11 @@
 // What: Order, which turns every diagnostic of a build into a Report; Emitted;
 // WriteJSON and WriteDiagnostic for the JSON envelope; Text for a terminal.
 //
-// How: Order keeps internal errors and the lowest failing phase, sorts by a
-// total key (span, code, message, then the rendered rest), drops duplicates,
-// resolves each Cause to a root index, then applies the cap. Diagnostics are
-// collected and sorted before the cut, never cut on arrival.
+// How: Order keeps internal errors, the lowest failing phase and the causes
+// those name, sorts by a total key (span, code, message, then the rendered
+// rest), drops duplicates, resolves each Cause to a root index, then applies
+// the cap. Diagnostics are collected and sorted before the cut, never cut on
+// arrival.
 
 package diag
 
@@ -30,9 +31,9 @@ type Emitted struct {
 }
 
 // Report is what the driver prints: the diagnostics of the earliest failing
-// phase plus every E0000, sorted, deduplicated, roots resolved, then cut to
-// the cap. The same set of input diagnostics always gives the same Report,
-// whatever order they arrived in.
+// phase plus every E0000 and the causes they name, sorted, deduplicated,
+// roots resolved, then cut to the cap. The same set of input diagnostics
+// always gives the same Report, whatever order they arrived in.
 type Report struct {
 	// Phase is the earliest non-internal phase present, or PhaseInternal when
 	// only internal errors are present. HasPhase is false when there are none.
@@ -56,7 +57,8 @@ const DefaultTextCap = 50
 // Order applies the phase rule and the ordering of doc/tools.md
 // and doc/compiler.md to every diagnostic of a build:
 //
-//  1. Keep every PhaseInternal diagnostic and those of the lowest other phase.
+//  1. Keep every PhaseInternal diagnostic and those of the lowest other phase,
+//     and every diagnostic a kept one names as its Cause, whatever its phase.
 //  2. Sort by (file path bytewise, start line, start column, code, message),
 //     then by end position, then by the rest of the rendered diagnostic
 //     (facts, fixes, alternatives, phase) and its cause, so the order is
@@ -87,6 +89,7 @@ func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
 			kept = append(kept, d)
 		}
 	}
+	kept = keepCauses(ds, kept)
 	switch {
 	case lowest != numPhases:
 		r.Phase, r.HasPhase = lowest, true
@@ -139,6 +142,38 @@ func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
 		r.Diags[i] = Emitted{Root: root, Diag: d}
 	}
 	return r
+}
+
+// keepCauses appends to kept, once each, the diagnostics of ds that a kept
+// diagnostic names as its Cause but the phase rule left out, and theirs in
+// turn: a consequence is never reported without its root (a failed gen line's
+// E0903, in types, behind the unknown names its discarded output leaves).
+func keepCauses(ds, kept []*Diagnostic) []*Diagnostic {
+	var by map[Cause][]*Diagnostic // built on the first Cause: most reports have none
+	in := make(map[*Diagnostic]bool, len(kept))
+	for _, d := range kept {
+		in[d] = true
+	}
+	for i := 0; i < len(kept); i++ {
+		c := kept[i].Cause
+		if c == nil {
+			continue
+		}
+		if by == nil {
+			by = make(map[Cause][]*Diagnostic, len(ds))
+			for _, d := range ds {
+				k := Cause{Code: d.Code, At: d.At}
+				by[k] = append(by[k], d)
+			}
+		}
+		for _, d := range by[*c] {
+			if !in[d] {
+				in[d] = true
+				kept = append(kept, d)
+			}
+		}
+	}
+	return kept
 }
 
 func countNonInternal(ds []*Diagnostic) int {

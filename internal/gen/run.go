@@ -168,6 +168,11 @@ type LineResult struct {
 	// itself, so the driver reads this, not its own Eval shim, to keep
 	// the module out of the cache.
 	Poisoned bool
+	// Fail is the line's first diagnostic when the line emitted nothing
+	// because of an error of its own (binding, fuel, the run, g.Fail), nil
+	// otherwise. A name its output would have declared is then unknown,
+	// and the driver makes that E0201 a consequence of Fail.
+	Fail *diag.Diagnostic
 }
 
 // slot is one line's work: bound arguments, then the run's outcome.
@@ -222,6 +227,9 @@ func (c *Context) Run(module types.ModuleID, lines []Line) *Output {
 	}
 	wg.Wait()
 	for i := range slots {
+		if len(slots[i].diags) > 0 {
+			slots[i].res.Fail = slots[i].diags[0]
+		}
 		out.Lines = append(out.Lines, slots[i].res)
 		out.Diags = append(out.Diags, slots[i].diags...)
 		out.pending = append(out.pending, slots[i].wait...)

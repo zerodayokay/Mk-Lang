@@ -2,6 +2,12 @@
 
 Every user-visible change to Mk, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). What a 0.x release may change, at each stability level, is in [stability](doc/std/README.md#9-stability).
 
+## Unreleased
+
+### Diagnostics
+
+- A `gen` line whose generator fails (E0903, or any error of its own that makes it emit nothing) is reported even when a name its output would have declared is used: that E0201, in this module or an importer's `m has no item`, is now its consequence, cites the gen line, and no longer hides it under the earliest-phase rule. The rule now keeps every error a reported error names as its cause, whatever its phase.
+
 ## 0.6.0 (2026-11-24)
 
 ### Language
