@@ -271,22 +271,10 @@ func TestMemberUsage(t *testing.T) {
 	}
 }
 
-// TestSchemaDocumented: the "### 5.1" part of doc/tools.md names every
-// field of the document and every kind.
+// TestSchemaDocumented: the "Member-wide panic sites" section of
+// doc/tools.md names every field of the document and every kind.
 func TestSchemaDocumented(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "doc", "tools.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc := string(raw)
-	i := strings.Index(doc, "### 5.1")
-	if i < 0 {
-		t.Fatal("doc/tools.md has no query API section")
-	}
-	sec := doc[i:]
-	if j := strings.Index(sec, "\n## "); j >= 0 {
-		sec = sec[:j]
-	}
+	sec := toolsSection(t, "Member-wide panic sites")
 	names := append(driver.PanicSiteKinds(), "version", "query", "member", "functions", "complete", "missing", "sites",
 		"file", "line", "col", "kind", "code", "explicit", "function", "module", "generic", "test")
 	for _, n := range names {

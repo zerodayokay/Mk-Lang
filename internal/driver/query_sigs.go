@@ -9,7 +9,8 @@
 // How: one Check of the member, then every function and method of its
 // modules from the checked items, never capped: generated ones included,
 // impl methods named Type.Method. A function whose check failed is named in
-// Missing. Each entry's sig is the line `sig Name` answers first.
+// Missing. Each entry's sig is spelled by sigLine, as `sig Name`'s first
+// line is.
 
 package driver
 
@@ -111,9 +112,11 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 	qx := &queryIndex{s: s, w: s.w}
 	l := &SigList{Version: SigListVersion, Query: "sig", Member: member, Complete: true,
 		Missing: []string{}, Functions: []SigEntry{}}
-	mods := qx.s.nonStdMods()
-	if qx.s.pkgB != nil {
-		mods = qx.s.pkgB.mods
+	var mods []*modNode
+	if s.pkgB != nil {
+		mods = s.pkgB.mods
+	} else {
+		mods = s.nonStdMods()
 	}
 	for _, m := range mods {
 		if m.mod == nil {
@@ -129,7 +132,10 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 				continue // a contract predicate or an invariant
 			}
 			sig := qx.funcSig(id)
-			if sig == nil {
+			if sig == nil || name == "" {
+				if name == "" {
+					name = it.Key.String()
+				}
 				l.Complete = false
 				l.Missing = append(l.Missing, name)
 				continue
@@ -156,17 +162,10 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 			l.Functions = append(l.Functions, e)
 		}
 	}
-	if len(s.depRoot) > 0 {
-		// A dependency's names as the root spells them, as sig Name's.
-		names := s.displayNames(nil)
-		for i := range l.Functions {
-			e := &l.Functions[i]
-			e.Sig = localizeText(e.Sig, names)
-			for j, c := range e.Contracts {
-				e.Contracts[j] = localizeText(c, names)
-			}
-		}
-	}
+	// Entries are not localized (localizeText) as sig Name's answer is: a
+	// sig spells types by their names alone and a contract as its source
+	// writes it, so neither holds a dependency's canonical id, and a rewrite
+	// would only rename a parameter spelled as one.
 	slices.SortFunc(l.Functions, func(a, b SigEntry) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Col, b.Col),
 			cmp.Compare(a.Name, b.Name))
@@ -177,14 +176,15 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 
 // sigName is the listing's name for function item it, and for an impl
 // method its interface; ok is false for an item no call names (a contract
-// predicate, an invariant).
+// predicate, an invariant). The name is "" for a method of an impl that did
+// not check, which has no type to be named after.
 func (qx *queryIndex) sigName(it *types.Item) (name, impl string, ok bool) {
 	if it.Owner != types.NoItem {
 		o := qx.w.items.Get(it.Owner)
 		if o.Kind == types.KindImpl {
 			im, checked := o.Decl.(*types.ImplDecl)
 			if !checked || im.For == types.NoType {
-				return it.Key.String(), "", true // unchecked: listed as missing
+				return "", "", true
 			}
 			// Named as the type's own methods are, Box.Area for an impl
 			// for Box[T]; an impl for an error is keyed by its set of one.

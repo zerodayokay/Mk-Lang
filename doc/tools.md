@@ -540,7 +540,7 @@ Without `--json`, the listing is a header line, then one line per site: `kind  f
 
 `mk query sig --member <name> [--json] [--root path]` lists every function and method of one workspace member's modules, each with its signature as `sig Name` spells it. The member is named, found and checked as for [section 5.1](#51-member-wide-panic-sites), and the exit status is the same. `sig Name` still takes one name.
 
-The listing is complete: never capped and never paged. It holds functions, methods, impl methods and `extern` functions, and the functions a `gen` line writes, which no declaration in the source shows. Contract predicates, invariants, `fn` literals and test blocks are not listed. Functions of the standard library and of dependencies are not listed.
+The listing is complete: never capped and never paged. It holds functions, methods, impl methods and `extern` functions, and the functions a `gen` line writes, which no declaration in the source shows. It also holds an error's built-in `Format` ([the reference](reference.md#how-errors-print)), located at the error's name. Contract predicates, invariants, `fn` literals and test blocks are not listed. Functions of the standard library and of dependencies are not listed.
 
 The `--json` document, version 1, is one object and a newline (shown wrapped, with one function):
 
@@ -558,8 +558,8 @@ The `--json` document, version 1, is one object and a newline (shown wrapped, wi
   - `name` is the name `sig` takes: `Collect`, or `Heap.Grow` for a method. An impl method, which `sig` does not answer, is named after its type too, `Square.Area`, also for an impl for a generic type (`Box.Area` for `impl[T] Shape for Box[T]`), and `impl` names its interface, `Shape`; `impl` is `""` for any other function.
   - `module` is the module path.
   - `file`, `line` and `col` locate the function's name, as diagnostics print it. A generated function's `file` is its module's gen view, `src/gen/<target>/gen.mk`, which a query does not write.
-  - `sig` is the first line `sig Name` answers, `export` included (spelled the same way for an impl method), and `contracts` are its `requires` and `ensures` clauses. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart.
-  - `exported` is true for an exported function.
+  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart.
+  - `exported` is true for an exported function. An impl method is never `exported`: its type and its interface decide who can call it.
   - `generated` is true for a function a `gen` line wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
 
 Without `--json`, the listing is a header line, then one line per function, `sig  file:line:col`, followed by `(gen file:line:col)` for a generated one, and each contract on a line of its own.
