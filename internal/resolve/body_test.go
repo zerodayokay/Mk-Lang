@@ -315,14 +315,47 @@ func TestBareOkIsE0101(t *testing.T) {
 	b.want(t, "E0101@3:9")
 }
 
-func TestPascalBindingDeferred(t *testing.T) {
+// A pattern binding that is not snake_case is E0207, at the top of an arm
+// or in a payload, used or not, with no proven recase: the arm it stands in
+// matches every value. A const or a snake_case binding stays as it was.
+func TestPascalBindingIsE0207(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, false)
-	b := w.add("main", opt{}, "enum Color { Red\n Green }\nF(c: Color) {\n    match c {\n        Red { }\n        other { _ = other }\n    }\n}\n")
-	b.want(t, "E0208@5:9")
-	body := itemInfo(b, "main.F").Body
-	if !body.Locals[2].Pascal || body.Locals[3].Pascal {
-		t.Errorf("locals %+v", body.Locals)
+	b := w.add("main", opt{}, "enum Color { Red\n Green }\nconst Limit = 3\nF(c: Color, x: int, y: ?int): int {\n    match c {\n        Red { }\n        other { _ = other }\n    }\n    match y {\n        some(Lmit) { return Lmit }\n        none { }\n    }\n    return match x {\n        Limit { 1 }\n        Color { Color }\n    }\n}\n")
+	b.want(t, "E0207@6:9", "E0207@10:14", "E0207@15:9")
+	for _, d := range b.info.Diags {
+		if len(d.Fixes) != 0 && d.Fixes[0].Class == diag.Proven {
+			t.Errorf("%s: a proven fix %+v", d.Message, d.Fixes[0])
+		}
+	}
+}
+
+// A binding spelled as a const generic in scope is E0206, a pattern's with
+// no proven rename. A binding that differs from it in case only is no
+// shadow, nor is one spelled as a type parameter.
+func TestBindingShadowsConstParam(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, false)
+	b := w.add("main", opt{}, "F[const N: int, const k: int, T](x: int, t: T): int {\n    n := x\n    match x {\n        N { return N }\n        _ { }\n    }\n    k := n\n    _ = t\n    return k\n}\nG[const k: int](k: int) { }\n")
+	b.want(t, "E0206@4:9", "E0206@7:5", "E0206@11:17")
+	for _, d := range b.info.Diags {
+		if d.At.Start == b.info.Diags[0].At.Start && len(d.Fixes) != 0 && d.Fixes[0].Class == diag.Proven {
+			t.Errorf("pattern E0206 has a proven fix %+v", d.Fixes[0])
+		}
+	}
+}
+
+// A destructure cannot fail: a binding of one, nested or not, keeps a
+// local's E0207 with its proven recase.
+func TestDestructureBindingKeepsRecase(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, false)
+	b := w.add("main", opt{}, "struct P { x: int\n y: int }\nF(p: P, q: (a: int, b: P)): int {\n    P(X, y) := p\n    (a, b: P(x: Z, y: _)) := q\n    return X + y + a + Z\n}\n")
+	b.want(t, "E0207@4:7", "E0207@5:17")
+	for _, d := range b.info.Diags {
+		if len(d.Fixes) == 0 || d.Fixes[0].Class != diag.Proven {
+			t.Errorf("%s: no proven recase", d.Message)
+		}
 	}
 }
 

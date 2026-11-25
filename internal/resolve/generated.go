@@ -238,6 +238,14 @@ func (m *Module) Settle() (diags, generated []*diag.Diagnostic) {
 				break
 			}
 		}
+		for _, p := range t.casePend {
+			_, inModule := m.rec.names.Get(p.sym)
+			_, inPrelude := m.preludeName(p.sym)
+			if inModule || inPrelude {
+				rerun[t] = true
+				break
+			}
+		}
 	}
 	var again []*task
 	for _, t := range m.tasks {
@@ -266,6 +274,10 @@ func (m *Module) Settle() (diags, generated []*diag.Diagnostic) {
 		if rerun[t] || t.failed {
 			continue
 		}
+		for _, p := range t.casePend {
+			out = append(out, p.d)
+		}
+		t.casePend = nil
 		pend := t.pending
 		t.pending = nil
 		for _, p := range pend {

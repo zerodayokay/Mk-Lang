@@ -3,13 +3,14 @@
 //
 // What: the walker's statement and pattern methods: block, stmt, ifStmt,
 // cond, forStmt, labelUse, recordPat, pattern, patFields, declarePattern
-// and namePattern.
+// namePattern and patternCase.
 //
 // How: one switch per statement kind. A declaration resolves its initializer
 // before it declares its names, so x := x + 1 reads an outer x. A bare name
 // in a pattern is an error test, a value test (a const, true, false), E0101
 // or a fresh binding, decided by what it names; in an alternative it never
-// binds.
+// binds. A binding outside a destructure must be snake_case, so a name in a
+// const's place that is no const never quietly matches every value.
 
 package resolve
 
@@ -273,10 +274,12 @@ type destrCtx struct {
 
 // declarePattern declares a binding of a pattern: LocalPattern in a match,
 // if or for, LocalDestr with the statement's `var` inside a destructure. A
-// name that is not snake_case is left to check (Local.Pascal).
+// destructure cannot fail, so its bindings take a local's case rule; a
+// refutable pattern's name is namePattern's to judge (patternCase), and a
+// field written alone is check's (E0309).
 func (w *walker) declarePattern(id *ast.Ident) {
 	if w.destr != nil {
-		w.declareLocal(id, LocalDestr, w.destr.isVar, w.destr.stmt, true)
+		w.declareLocal(id, LocalDestr, w.destr.isVar, w.destr.stmt, false)
 		return
 	}
 	w.declareLocal(id, LocalPattern, false, nil, true)
@@ -376,6 +379,37 @@ func (w *walker) namePattern(p *ast.NamePattern, inAlt bool) {
 		w.patchPending(r, []holder{{node: p.ID(), covers: 1}}, nil)
 		return
 	}
+	shadows := len(w.t.diags)
 	w.declarePattern(id)
 	w.fs.setRef(p.ID(), w.fs.fi.Refs[id.ID()])
+	if w.destr == nil && len(w.t.diags) == shadows {
+		w.patternCase(id, ok)
+	}
+}
+
+// patternCase is the E0207 of a refutable pattern's binding that is not
+// snake_case: a name in a const's place that names no const in scope (a
+// misspelled one, another module's written bare, a variant without its dot)
+// would bind and match every value. No recase is proven, since a recased
+// binding still matches everything. In a module whose gen lines are still
+// unsettled, a name found nowhere may yet be generated: Settle reports it
+// then (casePend), or re-resolves the item when the name has appeared.
+func (w *walker) patternCase(id *ast.Ident, found bool) {
+	name := w.m.str(id.Name)
+	if IsSnake(name) {
+		return
+	}
+	// One diagnostic for the one mistake: no E0208 besides.
+	w.markUsed(w.fs.fi.Refs[id.ID()])
+	want := ToSnake(name)
+	d := naming(id.Span(), name, want, "snake_case")
+	d.Message = "`" + name + "` names no const in scope, so it binds and matches every value: a binding should be snake_case: `" + want + "`"
+	d.Alt("write `." + name + "` for a variant")
+	d.Alt("name a const in scope, or qualify another module's as `m." + name + "`")
+	d.Alt("rename the binding `" + want + "`")
+	if !found && w.m.missesPend() {
+		w.t.casePend = append(w.t.casePend, casePend{sym: id.Name, d: d})
+		return
+	}
+	w.t.diags = append(w.t.diags, d)
 }

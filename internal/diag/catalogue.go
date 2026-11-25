@@ -160,7 +160,7 @@ var catalogue = [...]Entry{
 	{E0204, "not-exported", "Alternatives"},
 	{E0205, "import-cycle", "Alternatives"},
 	{E0206, "duplicate-name", "Proven: rename; two imports of one last segment: alternatives `import <name> = <path>`"},
-	{E0207, "naming", "Proven: recase, and `e else { x }` for a literal, name or field default; compiles otherwise"},
+	{E0207, "naming", "Proven: recase, and `e else { x }` for a literal, name or field default; alternatives for a `match` pattern's name; compiles otherwise"},
 	{E0208, "unused", "Proven: remove"},
 	{E0209, "unused-result", "Proven: `_ =`"},
 	{E0213, "target-api-mismatch", "Alternatives"},

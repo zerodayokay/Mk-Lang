@@ -424,7 +424,7 @@ export Main(sys: &System): WriteError!void {
 - A name in the wrong case is E0207. The message gives the right spelling: `` `do_thing` should be PascalCase: `DoThing` ``.
 - A name cannot start with `_`: `_x` is E0207. `_` alone is the blank, as in `_ = F()`.
 - Lookup is exact. When nothing matches, the compiler ignores case and underscores to find what you meant: `.len()` and `userCount` are E0207, and the message names `Len` and `user_count`. `mk fix` applies the correction.
-- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A type's fields are one scope and its variants and methods another, so a field `cpu` and a method `Cpu` may stand side by side ([structs](#structs)). A local cannot shadow another local or a parameter ([bindings](#bindings)).
+- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A type's fields are one scope and its variants and methods another, so a field `cpu` and a method `Cpu` may stand side by side ([structs](#structs)). A local cannot shadow another local, a parameter or a const generic ([bindings](#bindings)).
 - An `extern` function's or var's name is its C symbol. It is used as written and is outside the case rule: `extern strlen(s: *u8): uint`.
 
 A local spelled differently from its declaration:
@@ -2906,7 +2906,7 @@ ada 1 -3 97 some
 - A literal binds as `int` or `f64` unless you give a type: `one: i32 = 1`. Every other value keeps the type it has. See [how a literal gets its type](#how-a-literal-gets-its-type).
 - `x: T` declares `x` with no value. You assign it before each use, on every path (E0403). Without `var`, it is assigned once.
 - Every local must be used (E0208). Drop a value with `_ = e`; `_ := e` is E0101. In a pattern or a loop header, `_` stands for a part you do not need: `for _ in 0..2`.
-- A local cannot shadow another local of the same function, even in an inner block (E0206). It may hide a name from outside the function, such as an imported module's. A module-level name may hide a prelude name: a `struct Arena` of your own replaces the prelude's `Arena` in its module.
+- A local cannot shadow another local of the same function, even in an inner block, nor a const generic of its declaration: `n := 0` under `[const n: int]` is E0206. The test for a const generic is exact, so a local `n` under `[const N: int]` is not one. A local may hide a name from outside the function, such as an imported module's. A module-level name may hide a prelude name: a `struct Arena` of your own replaces the prelude's `Arena` in its module.
 - Loop variables and `if x := e` bindings follow the same rules: they cannot be assigned.
 
 A binding without `var` is fixed once it has its value:
@@ -3811,10 +3811,10 @@ quit
 - Fields are named, never positional. `dx` alone binds the field `dx`, `dx: step` binds it to `step`, and `dx: 0` matches it against a pattern. A name that is not a field is E0309.
 - Fields may be left out, in any number. A left-out field matches anything. `..` is not written in a `match` (E0101).
 - `.Move` leaves out the enum, which the scrutinee's type gives. `Cmd.Move` names it.
-- A bare name with no dot is a [binding](#bindings-and-wildcards), not a variant. `Quit { ... }` matches every value and binds it to `Quit`. The compiler reports the unused binding (E0208), which catches the missing dot.
+- A bare name with no dot is a [binding](#bindings-and-wildcards), not a variant, and a binding is `snake_case`. So `Quit { ... }`, which would match every value, is E0207: the message offers `.Quit` for the variant.
 
 ```mk
-// verdict: reject E0208
+// verdict: reject E0207
 enum Cmd {
     Move(dx: int, dy: int)
     Quit
@@ -3822,7 +3822,7 @@ enum Cmd {
 
 Steps(c: Cmd): int {
     match c {
-        Quit { // <- E0208
+        Quit { // <- E0207
             return 0
         }
         .Move(dx) {
@@ -3940,7 +3940,7 @@ export Main(sys: &System): WriteError!void {
 - A negative integer is written with its `-`: `-1`.
 - A float is not a pattern (E0308). Compare floats with `if`.
 - A literal of a type other than the value's is E0301.
-- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does. Its value is needed before the module's own functions are ready, so a const that calls one of them is E0908 there ([the stage rule](#the-stage-rule)). Outside an alternative, a name that is no const in scope is a [binding](#bindings-and-wildcards): a misspelled const, or another module's const written without its module, matches every value, and is E0208 when its arm does not use it. In an alternative, where a name never binds, an unknown one is E0201.
+- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does. Its value is needed before the module's own functions are ready, so a const that calls one of them is E0908 there ([the stage rule](#the-stage-rule)). Outside an alternative, a name that is no const in scope is a [binding](#bindings-and-wildcards), which must be `snake_case`: a misspelled const, or another module's const written without its module, would match every value, and is E0207. In an alternative, where a name never binds, an unknown one is E0201.
 
 ```mk
 // verdict: ok
@@ -4094,11 +4094,31 @@ Dx(c: Cmd): int {
 
 ### Bindings and wildcards
 
-A name in a pattern matches anything and binds the value there. `_` matches anything and binds nothing.
+A name in a pattern matches anything and binds the value there, unless it names a const, an error or `true` or `false` ([literals](#literal-patterns)). `_` matches anything and binds nothing.
 
 - A binding has the type of the value it stands for. At the top of an arm, `other` has the scrutinee's whole type.
 - A binding must be used (E0208). Write `_` for a part you do not need, as in `.Move(dx: _)`.
-- A binding cannot shadow a local or a parameter (E0206).
+- A binding is `snake_case`. A name in a `match` that is not, and names no const in scope, is E0207, with no fix applied for you: it is a variant without its dot, a misspelled const or another module's const written bare, and as a binding its arm would match every value. In a destructure, which cannot fail, it is the plain case rule of a local, and `mk fix` recases it.
+- A binding cannot shadow a local, a parameter or a const generic (E0206). `N { ... }` in a function generic over `const N` would bind, not compare: compare with `if x == N`.
+
+```mk
+// verdict: reject E0208
+enum Cmd {
+    Move(dx: int, dy: int)
+    Quit
+}
+
+Steps(c: Cmd): int {
+    match c {
+        .Move(dx, dy) { // <- E0208
+            return dx
+        }
+        .Quit {
+            return 0
+        }
+    }
+}
+```
 
 ```mk
 // verdict: reject E0206
@@ -4458,8 +4478,9 @@ Name(b: Bag): str {
 |---|---|---|
 | E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
-| E0206 | duplicate-name | A binding that shadows a local ([bindings](#bindings-and-wildcards)) |
-| E0208 | unused | A binding that is never used, often a variant written without its dot ([variants](#variant-patterns)) |
+| E0206 | duplicate-name | A binding that shadows a local, a parameter or a const generic ([bindings](#bindings-and-wildcards)) |
+| E0207 | naming | A binding that is not `snake_case`, often a variant written without its dot or a const that is not in scope ([variants](#variant-patterns), [bindings](#bindings-and-wildcards)) |
+| E0208 | unused | A binding that is never used ([bindings](#bindings-and-wildcards)) |
 | E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")`; a const of a type a literal cannot have ([literals](#literal-patterns)); an array pattern on a value that is not an array of known length, or a record pattern on an array ([destructuring](#destructuring)) |
 | E0305 | field-names | A destructure that neither names every field nor ends with `..`; an array pattern that does not name every element ([destructuring](#destructuring)) |
 | E0306 | non-exhaustive | A `match` that misses values; a destructure that can fail ([exhaustiveness](#exhaustiveness)) |
