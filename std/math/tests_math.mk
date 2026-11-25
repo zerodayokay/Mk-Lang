@@ -2,7 +2,7 @@
 // everywhere, exact where exact, correctly rounded where promised.
 // What: test blocks for Min, Max, Abs, Sqrt, the float remainder, the
 // constants, NaN bits, rounding, Fma, FrExp, Gcd, the rotations, the
-// double-double functions and large-argument trig.
+// double-double functions, large-argument trig and ShortestDigitsInto.
 // How: run by `mk test --std=std.math` with contracts on and the counting
 // heap; each compares exact bits.
 
@@ -176,4 +176,66 @@ test "Sin, Cos and Tan at the f64 nearest a multiple of pi/2" {
     Assert(Tan(x).Bits() == 0xC3BD9BA9A7975636)
     Assert(Sin(-x).Bits() == 0xBFF0000000000000)
     Assert(Tan(-x).Bits() == 0x43BD9BA9A7975636)
+}
+
+// TdNext is a seeded splitmix64 step, so the block's inputs are fixed.
+TdNext(s: mut u64): u64 {
+    *s = *s +% 0x9E37_79B9_7F4A_7C15
+    var z: u64 = *s
+    z = (z ^ (z >> 30)) *% 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) *% 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
+}
+
+// TdSame reports whether a and b hold the same bytes.
+TdSame(a: []u8, b: []u8): bool {
+    if a.Len() != b.Len() {
+        return false
+    }
+    for i in 0..a.Len() {
+        if a[i] != b[i] {
+            return false
+        }
+    }
+    return true
+}
+
+// TdInto reports whether ShortestDigitsInto, into exactly 17 bytes, gives
+// ShortestDigits's digits and exponent for x.
+TdInto(x: f64): bool {
+    var buf: [17]u8 = [0xAA; 17]
+    r := ShortestDigitsInto(mut buf[..], x)
+    d := ShortestDigits(x)
+    return r.len == d.len && r.exp == d.exp && TdSame(buf[0..r.len], d.digits[0..d.len])
+}
+
+// TdIs reports whether ShortestDigitsInto gives exactly the digits want
+// and the exponent exp for x.
+TdIs(x: f64, want: str, exp: int): bool {
+    var buf: [17]u8 = [0; 17]
+    r := ShortestDigitsInto(mut buf[..], x)
+    return r.exp == exp && TdSame(buf[0..r.len], want.AsBytes())
+}
+
+test "ShortestDigitsInto fits any f64 in 17 bytes and agrees with ShortestDigits" {
+    Assert(TdIs(-1.7976931348623157e308, "17976931348623157", 308))
+    Assert(TdIs(2.2250738585072014e-308, "22250738585072014", -308))
+    Assert(TdIs(f64.FromBits(1), "5", -324))
+    Assert(TdIs(0.1, "1", -1))
+    Assert(TdIs(1e21, "1", 21))
+    Assert(TdIs(123456789012345680.0, "12345678901234568", 17))
+    Assert(TdIs(0.0, "", 0) && TdIs(-0.0, "", 0))
+    Assert(TdIs(f64.FromBits(0x7FF8000000000000), "", 0))
+    Assert(TdIs(f64.FromBits(0x7FF0000000000000), "", 0) && TdIs(f64.FromBits(0xFFF0000000000000), "", 0))
+    var big: [40]u8 = [0; 40]
+    r := ShortestDigitsInto(mut big[3..40], 2.5)
+    Assert(r.len == 2 && r.exp == 0 && big[3] == 0x32 && big[4] == 0x35 && big[0] == 0)
+    var s: u64 = 288
+    for _ in 0..200000 {
+        Assert(TdInto(f64.FromBits(TdNext(mut s))))
+    }
+    // Each exponent's power of two (the skewed interval) and largest mantissa.
+    for e in 0..2047 {
+        Assert(TdInto(f64.FromBits(Trunc[u64](e) << 52)) && TdInto(f64.FromBits((Trunc[u64](e) << 52) | 0xF_FFFF_FFFF_FFFF)))
+    }
 }
