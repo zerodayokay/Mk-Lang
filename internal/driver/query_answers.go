@@ -196,10 +196,15 @@ func (qx *queryIndex) flowClauses(s *types.Signature) string {
 
 // sig is the full signature, its contracts, and the item's /// doc lines.
 func (qx *queryIndex) sig(e qEntry) []string {
-	it := qx.w.items.Get(e.id)
+	return append(qx.sigHead(e), qx.doc(qx.w.items.Get(e.id))...)
+}
+
+// sigHead is sig's lines before the doc lines: a function's signature, its
+// contracts and its module, or another item's head (declLine).
+func (qx *queryIndex) sigHead(e qEntry) []string {
 	s := qx.funcSig(e.id)
 	if s == nil {
-		return append([]string{qx.declLine(e)}, qx.doc(it)...)
+		return []string{qx.declLine(e)}
 	}
 	out := []string{qx.sigLine(e.name, s)}
 	for _, c := range s.Contracts {
@@ -209,8 +214,7 @@ func (qx *queryIndex) sig(e qEntry) []string {
 		}
 		out = append(out, "    "+w+c.Text)
 	}
-	out = append(out, "module "+e.mod+classSuffix(e.mod))
-	return append(out, qx.doc(it)...)
+	return append(out, "module "+e.mod+classSuffix(e.mod))
 }
 
 // declLine spells a non-function item's head: kind, name, generics, and
