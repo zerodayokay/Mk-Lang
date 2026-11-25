@@ -87,7 +87,8 @@ type TestCase struct {
 	Module string `json:"module"`
 	Name   string `json:"name"`
 	// Result is pass, fail, panic, leak, error or timeout; under --prop
-	// pass, fail or skip.
+	// pass, fail or skip. After testing.ExpectPanic (testing.go's
+	// judgeExpectedPanic) a pass has Status 101 and a fail may have 0.
 	Result string `json:"result"`
 	// Detail is a --prop contract's reason: the finding's kind, or why it
 	// was skipped.

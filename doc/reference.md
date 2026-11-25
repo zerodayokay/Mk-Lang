@@ -11430,7 +11430,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
-| `std.testing` | `Fuzz Bench` |
+| `std.testing` | `Fuzz Bench ExpectPanic` |
 | `std.build` | `File Profile ProfileKind`, read at compile time only |
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
