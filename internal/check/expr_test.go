@@ -136,6 +136,8 @@ func TestConstConversion(t *testing.T) {
 		{"identity", "F(x: u16): u16 {\n\treturn u16(x)\n}\n", ""},
 		{"literal too big", "F(): u8 {\n\treturn u8(300)\n}\n", "E0303@2:9"},
 		{"bool from int", "F(): bool {\n\treturn bool(1)\n}\n", "E0302@2:9"},
+		{"float const exact in f32", "const Half: f64 = 0.5\n\nconst Quarter = -0.25\n\nF(): f32 {\n\treturn f32(Half) + f32(Quarter)\n}\n", ""},
+		{"float operator over literals", "F(): f32 {\n\treturn f32(0.25 + 0.25)\n}\n", "E0303@2:9"},
 	})
 }
 

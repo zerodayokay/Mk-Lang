@@ -4,7 +4,8 @@
 //
 // What: unary and binary (with vector operators and Target folds),
 // sameOperands and adaptTo, derefType, conversion and convert (`T(x)`,
-// `Cast[T](x)`, `Trunc[T](x)`: E0303, E0302), constFits and constFolder,
+// `Cast[T](x)`, `Trunc[T](x)`: E0303, E0302), constFits, floatConstFitsF32
+// and constFolder,
 // unhandledOperand (E0802), noOperator (E0308, E0703).
 //
 // How: a lossy conversion is E0303 unless the operand is a constant whose
@@ -14,6 +15,8 @@
 package check
 
 import (
+	"math"
+
 	"mk/internal/ast"
 	"mk/internal/diag"
 	"mk/internal/resolve"
@@ -662,9 +665,13 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 		if r.Kind != resolve.RefItem {
 			return false
 		}
-		d, ok := u.c.cfg.Items.Get(types.ItemID(r.A)).Decl.(*types.ConstDecl)
+		it := u.c.cfg.Items.Get(types.ItemID(r.A))
+		d, ok := it.Decl.(*types.ConstDecl)
 		if !ok {
 			return false
+		}
+		if u.isFloat(from) {
+			return to == types.F32 && u.floatConstFitsF32(it, a.Span())
 		}
 		var x int64
 		if d.HasValue {
@@ -725,4 +732,21 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 		return !neg && (v < 0xD800 || (v > 0xDFFF && v <= 0x10FFFF))
 	}
 	return false
+}
+
+// floatConstFitsF32 judges `f32(K)` of a named float const K by its value,
+// requested as a const argument's is (constValueArg): it fits when the
+// value is exactly an f32. A const whose value cannot be had is accepted,
+// as an integer one is: its own evaluation, or E0908 at the use, says why.
+func (u *unit) floatConstFitsF32(it *types.Item, at source.Span) bool {
+	a, ok := u.m.constValueArg(u.x, it, at)
+	if !ok || a.Kind != types.CAValue {
+		return true
+	}
+	v := u.c.cfg.Consts.Get(a.Value)
+	if v.Type != types.F64 || len(v.Bytes) != 8 {
+		return false
+	}
+	f := math.Float64frombits(types.LoadUint(v.Bytes, 8))
+	return f != f || float64(float32(f)) == f
 }
