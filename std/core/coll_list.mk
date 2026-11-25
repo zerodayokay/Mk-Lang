@@ -141,8 +141,9 @@ export List[T].Extend(mut self, xs: []T): OutOfMemory!void *xs into self {
     }
     // ptr has room for n + k elements; the last k are written, not read.
     // One CopyFrom (one memmove), not an element loop, which LLVM leaves a
-    // copy per element; as in HeapList.Extend, none of the replaced checks
-    // could fail, and the sum in Grow's argument still comes first.
+    // copy per element (HeapList.Extend says why). The range and CopyFrom's
+    // length compare cannot fail: n + k is at most cap, and the one sum
+    // that can overflow, Grow's argument, is checked first.
     d := SlotViewMut(self.ptr, self.n + k)
     (mut d[self.n..self.n + k]).CopyFrom(xs)
     self.n += k

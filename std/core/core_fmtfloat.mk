@@ -230,9 +230,10 @@ FmtDigitsF(w: mut Writer, neg: bool, s: []u8, dp: int, prec: int): WriteError!vo
 // n-1 and 'f' with n), 3 and 4 as 1 and 2 with ties away from zero
 // (ECMA-262's toPrecision, toExponential and toFixed). n is at least 1 for
 // modes 1 and 3 and at least 0 for 2 and 4 (std.math checks). Mode 0 needs
-// an out of 17 bytes: FpShortest's d is below 10 * 2^53 < 10^17 for an f64
-// (its scaled interval is at least one unit wide), so it has at most 17
-// digits. The other modes need 768, an f64's longest exact expansion.
+// an out of 17 bytes: FpShortest scales x's ulp into [1, 10) (into
+// [4/3, 40/3) just above a power of two, whose mantissa is 2^52), so its d
+// is below 10 * 2^53 < 10^17 and has at most 17 digits. The other modes
+// need 768, an f64's longest exact expansion.
 // O(1) through one 128-bit scaling (Go 1.27's fixedWidthFloat) when the
 // result has at most 18 digits, else the exact Decimal: O(767) digits,
 // as Go's slow path. Allocates nothing.

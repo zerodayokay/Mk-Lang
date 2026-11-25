@@ -764,3 +764,21 @@ test "List.Extend out of memory leaves the list unchanged" (sys: &System) {
         Assert(l[i] == xs[i])
     }
 }
+
+// A zero-size element copies no byte, and n still counts every element.
+test "List.Extend of zero-size elements counts them" (sys: &System) {
+    var ar := try Arena.New(sys.heap)
+    defer ar.Free()
+    var z := List[TlZ].New(&ar)
+    zs: [1000]TlZ = [TlZ(); 1000]
+    try z.Extend(zs[0..0])
+    Assert(z.Len() == 0)
+    try z.Extend(zs[..])
+    try z.Push(TlZ())
+    try z.Extend(zs[0..7])
+    var n := 0
+    for _ in z.Items() {
+        n += 1
+    }
+    Assert(z.Len() == 1008 && n == 1008)
+}

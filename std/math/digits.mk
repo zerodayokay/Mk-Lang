@@ -6,7 +6,7 @@
 // sign), DigitMode, ShortestDigits, ShortestDigitsInto (the shortest digits
 // into a caller's buffer of 17 bytes) and ExactDigits.
 //
-// How: both run std.core's float formatting (core_fmtfloat.mk's
+// How: all three run std.core's float formatting (core_fmtfloat.mk's
 // FloatDigits): Go's unrounded scaling (R. Cox, "Floating-Point Printing
 // and Parsing Can Be Simple And Fast") for the shortest digits and for at
 // most 18 digits, else the exact multiprecision Decimal. Nothing allocates.
