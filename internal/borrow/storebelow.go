@@ -31,11 +31,12 @@ import "mk/internal/types"
 
 // storesBelow reports whether a write through a value of type t, below t's
 // own bytes, may store a loan: the writable walk passes no store on through
-// the loans a root of such a type holds when it does not. A type whose
-// answer is no holds no raw pointer but the exempt ones (above), so a store
-// can reach memory only through its references, and every one of them leads
-// to memory with no carrier slot, or past a shared step to memory that takes
-// no store through `&`.
+// the loans a root of such a type holds when it does not, except under
+// csrConst (the self-reach and spawn walks do not trust a holder's type). A
+// type whose answer is no holds no raw pointer but the exempt ones (above),
+// so a store can reach memory only through its references, and every one of
+// them leads to memory with no carrier slot, or past a shared step to memory
+// that takes no store through `&`.
 func (w *walker) storesBelow(t types.TypeID) bool {
 	if b, ok := w.below[t]; ok {
 		return b

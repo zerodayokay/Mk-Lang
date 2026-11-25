@@ -1,5 +1,5 @@
-// verdict: ok
-// note: `*h into h` on a view holding an arena-backed List[u64] beside another borrowed piece: a List of non-carriers can write no loan into its arena's storage (its raw storage holds its type argument; its `&Alloc` is a shared step to memory that takes no store), so the arena does not receive the loan of `piece`, and `piece` can be released before the arena. Before, the walk hopped from the list to its arena and the arena held `piece` (E0504 at the defer)
+// verdict: reject E0504
+// note: `*h into h` on a view holding an arena-backed List[u64] beside another borrowed piece. The store walk of R11 cuts at the list (a List of non-carriers writes no loan into its arena), but the walk of a stored value's own loans does not trust a holder's type (it guards against an unsafe or extern body that writes past its signature, and for that reason reads no shallow mark either: csr-sh1): it hops from the list to its arena, the arena takes `piece`'s loan, and `piece` cannot be released before the arena (E0504 at the defer). A walk that takes the cut there checks this clean, and accepts csr-sh1 too
 struct Piece {
     n: int
 }
@@ -37,7 +37,7 @@ export Main(sys: &System) {
     }
     defer a.Free()
     var piece := Piece(n: 1)
-    defer piece.Close()
+    defer piece.Close() // <- E0504
     var cells := List[u64].New(&a)
     cells.Push(0) else {}
     var h := Heap(cells: mut cells, piece: mut piece)

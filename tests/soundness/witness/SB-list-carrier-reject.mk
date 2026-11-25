@@ -1,5 +1,5 @@
 // verdict: reject E0505
-// note: a List whose type argument holds loans takes them into its arena's storage, so a holder of a List[&i32] passes a store on; only a List of non-carriers is cut (SB-arena-list-ok)
+// note: a List whose type argument holds loans takes them into its arena's storage, so a holder of a List[&i32] passes a store on; the store walk cuts only a List of non-carriers (SB-arena-list-reject)
 view struct LV {
     l: mut List[&i32]
 }
