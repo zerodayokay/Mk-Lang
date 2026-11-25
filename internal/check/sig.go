@@ -108,7 +108,7 @@ func (x *tctx) signature(item types.ItemID, name source.Symbol, s *ast.Signature
 
 // spelled spells type expression n, whose type is t, as TypeString spells
 // t, but each alias n names (x.aliases) by its name and arguments, as the
-// declaration writes it (MKH-303). The walk follows TypeString's prefix
+// declaration writes it. The walk follows TypeString's prefix
 // operators, a named type's arguments and E!T; any other shape, a fn type
 // or a record, is spelled resolved, aliases and all.
 func (x *tctx) spelled(n ast.Node, t types.TypeID, gs []types.GenericParam) string {

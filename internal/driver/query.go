@@ -199,6 +199,42 @@ func (qx *queryIndex) modPath(p string) string {
 	return name + "." + rest
 }
 
+// keyText is an item key spelled with modPath. A key starts with its
+// module's path, which is a dependency's canonical id alone for the module
+// at its package root, and every other dotted run in it starts with a
+// module path too (an impl's interface and type:
+// `u.src#impl(u.src.Shape for u.src.Box):Area`). A member's or an impl
+// method's name is a run without a dot, and a test's quoted name is the
+// source's text, so both stay as they are.
+func (qx *queryIndex) keyText(k types.Key) string {
+	s := k.String()
+	if len(qx.local) == 0 {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == '"' {
+			b.WriteString(s[i:])
+			break
+		}
+		j := i
+		for j < len(s) && (identByte(s[j]) || s[j] == '.') {
+			j++
+		}
+		switch run := s[i:j]; {
+		case j == i:
+			b.WriteByte(s[i])
+			j++
+		case i == 0 || strings.Contains(run, "."):
+			b.WriteString(qx.modPath(run))
+		default:
+			b.WriteString(run)
+		}
+		i = j
+	}
+	return b.String()
+}
+
 func newQueryIndex(s *Session) *queryIndex { return newQueryIndexOf(s, false) }
 
 // newQueryIndexOf is newQueryIndex; with deps, the exported items of the

@@ -1,7 +1,8 @@
 // Why: `mk query sig --member` must list every function a call can name,
 // those a gen line writes included, and nothing a call cannot.
 // What: TestSignatures, over Session.Signatures on a package without a
-// workspace, and TestSignatures_SpellsAliases (MKH-303).
+// workspace, and TestSignatures_SpellsAliases, over a package whose
+// signatures name aliases.
 // How: checks a one-module package and compares the entries' names, sigs
 // and gen marks (an error's provided Format among them), and the text
 // form's header.
@@ -68,7 +69,7 @@ func TestSignatures(t *testing.T) {
 // sigAliasFiles is a package whose signatures name aliases: of a primitive
 // (Value), of another module's type (w.Word), a generic one (Opt[T]), one of
 // an error set (AB), nested under prefix operators and a generic struct's
-// argument, and in a function a gen line writes (MKH-303).
+// argument, and in a function a gen line writes.
 var sigAliasFiles = map[string]string{
 	"pkg.mk": manifest(nil),
 	"w/w.mk": "export type Word = u64\n",
