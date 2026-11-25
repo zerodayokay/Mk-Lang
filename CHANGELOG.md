@@ -14,6 +14,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Checker
 
+- `f32(x)` of a float literal whose value is exactly an `f32` compiles, as `u8(200)` does for an integer: `f32(0.5)`, `f32(-1.5e3)`. It was E0303 (`f32(f64)` can lose information), since the literal took `f64` and `T(x)` judged only integer constants by value. A literal that rounds or overflows in `f32` (`f32(0.1)`, `f32(1e39)`) is still E0303; `x: f32 = 0.1` and `Cast[f32](0.1)` round it.
 - A call infers a function's const generic from an array argument's length: `Total[const N: int](xs: &[N]int)` called as `Total(&xs)`, alone or beside a type parameter (`First[T, const N: int](xs: [N]T)`). Every such call was an internal compiler error in check (`types.Table.Intern(array): ... length kind 0`), so the length had to be written in brackets. Arguments that disagree on the length are E0301, and a const generic no argument names is still E0711.
 
 ### Diagnostics

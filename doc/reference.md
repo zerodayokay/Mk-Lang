@@ -1091,6 +1091,7 @@ backtrace:
 
 - `int` and `uint` count as 64 bits, so `int(x)` takes an `i64` or a `u32`, and `int(u)` of a `uint` is E0303.
 - A constant whose value fits passes `T(x)`: `u8(200)`, `i32(Max)` for a `const Max: int = 100`.
+- A float literal whose value is exactly an `f32` passes `f32(x)`: `f32(0.5)`, `f32(-1.5e3)`. `f32(0.1)` and `f32(1e39)` would round or overflow, so they are E0303: write `x: f32 = 0.1`, where the literal takes `f32` and is rounded once, or `Cast[f32](0.1)`.
 - `Cast` to an integer truncates a float toward zero, and panics on NaN, an infinity or a value out of range.
 - `Cast` from an integer to a float rounds to the nearest value, ties to even, and never panics: `Cast[f64](n)`.
 - `Cast` from `f64` to `f32` rounds to nearest-even. It panics only when a finite value rounds to an infinity; NaN and the infinities pass through.

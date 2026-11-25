@@ -643,6 +643,9 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 	var v uint64
 	switch a := arg.(type) {
 	case *ast.BasicLit:
+		if a.Kind == ast.TokFloat {
+			return to == types.F32 && floatLitFitsF32(a.Raw)
+		}
 		if a.Kind != ast.TokInt {
 			return false
 		}
