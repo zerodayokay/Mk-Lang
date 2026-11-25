@@ -6937,6 +6937,36 @@ Run(var k: int): int {
 - Inside a `fn` literal, a captured `const` parameter is an ordinary value, not a const argument (E0705).
 - A `const f: str` passed on as the format of `Print` or `Arena.Fmt` is checked at each call against that call's text ([formatting](std/core.md#formatting-and-printing)).
 
+**Inferring a const generic.** A call may leave out a function's const generic when an argument's type names it, as it may leave out a type parameter: the length of an array argument gives the `N` of a `[N]T` parameter. A const generic that no argument's type names is written in brackets (E0711 otherwise), and two arguments that give different values are E0301.
+
+```mk
+// verdict: ok
+Total[const N: int](xs: &[N]int): int {
+    var sum := 0
+    for i in 0..N {
+        sum += xs[i]
+    }
+    return sum
+}
+
+First[T: Plain, const N: int](xs: [N]T): T {
+    return xs[0]
+}
+
+export Main(sys: &System): WriteError!void {
+    xs := [1, 2, 3]
+    ys: [2]u8 = [9, 8]
+    a := Total(&xs)    // N is 3, from the argument's type
+    b := First(ys)     // T is u8 and N is 2
+    c := Total[3](&xs) // or written
+    try sys.Print("{a} {b} {c}\n", (a, b, c))
+}
+```
+
+```text
+6 9 6
+```
+
 ### Const arguments in a generic
 
 Inside a generic body, a const argument, such as an array length, must be simple:
