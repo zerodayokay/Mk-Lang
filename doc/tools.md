@@ -420,7 +420,7 @@ How errors are reported:
 - Every error of the earliest failing phase is reported at once, and nothing from later phases except an error one of them follows from, which is reported as its `root` with its own phase. A failed `gen` line's error is reported this way beside the unknown names its missing output leaves.
 - Errors are grouped by cause. `root` links each consequence to its cause, so fixing the cause clears the group.
 - A borrow conflict names the loan, its holder and the use that keeps it live.
-- E0203 gives the type and its members, and E0201 the module path and import line, so you need no second lookup.
+- E0203 gives the type and the members the module can name there, and E0201 the module path and import line, so you need no second lookup.
 - A habit from another language, such as `v.push(x);`, gives the line rewritten with every rewrite its phase can make. `mk fix` applies the rewrites of later phases in later rounds.
 - An error in generated code cites the generated line, the generator and the `gen` line that ran it.
 
