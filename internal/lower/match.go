@@ -328,6 +328,12 @@ func (bl *builder) patLit(q ast.Pattern) Lit {
 		}
 	}
 	if l.Kind == LitNone {
+		if _, lit := q.(*ast.LiteralPattern); !lit {
+			// A named const whose value check could not read: a poisoned
+			// read (check.Body.PoisonAt), which the const's own
+			// evaluation reports.
+			source.ICEf(q.Span(), "lower: a const pattern with no value and no diagnostic (check gap)")
+		}
 		source.ICEf(q.Span(), "lower: literal pattern with no value")
 	}
 	return l

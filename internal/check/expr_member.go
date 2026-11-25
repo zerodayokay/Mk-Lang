@@ -93,8 +93,9 @@ func (u *unit) memberLookup(t types.TypeID, name *ast.Ident, v *valueSite) (Memb
 		u.ambiguous(t, name, cands)
 		return Member{}, false
 	}
-	if folded && len(cands) > 1 && v != nil {
-		cands = foldedByUse(cands, v.call)
+	if folded && len(cands) > 1 {
+		// A type head and a pattern never name a field.
+		cands = foldedByUse(cands, v == nil || v.call)
 	}
 	if folded && len(cands) != 1 {
 		u.missAt(t, name, v)
@@ -115,9 +116,9 @@ func (u *unit) memberLookup(t types.TypeID, name *ast.Ident, v *valueSite) (Memb
 	return mb, true
 }
 
-// foldedByUse narrows a folded miss on a value (field `cpu` and method `Cpu`
-// both fold to `x.CPU`) by its use: a call keeps the members that are not
-// fields, a read the fields.
+// foldedByUse narrows a folded miss (field `cpu` and method `Cpu` both fold
+// to `CPU`) by its use: a call, a type head or a pattern keeps the members
+// that are not fields, a read on a value the fields.
 func foldedByUse(cands []Member, call bool) []Member {
 	var out []Member
 	for _, mb := range cands {

@@ -100,6 +100,7 @@ func TestEvalAgrees(t *testing.T) {
 		{"else value", "Get(o: ?int): int {\n\treturn o else { 7 }\n}\nH(): int {\n\treturn Get(none) + Get(some(2))\n}\n", 9},
 		{"operands", "Pick(c: bool): int {\n\treturn 1 + if c { 10 } else { 20 } * 2\n}\nH(): int {\n\treturn Pick(true) + Pick(false) * 100 + (match Pick(true) {\n\t\t21 { 5 }\n\t\t_ { 0 }\n\t})\n}\n", 4126},
 		{"left operand read first", "H(): int {\n\tvar x := 10\n\treturn x * 100 + if x > 0 {\n\t\tx = 7\n\t\tx\n\t} else {\n\t\t0\n\t}\n}\n", 1007},
+		{"const patterns", "const Two = 2\nconst Neg: i8 = -1\nP(n: int): int {\n\treturn match n {\n\t\tTwo { 10 }\n\t\t_ { 1 }\n\t}\n}\nQ(s: i8): int {\n\treturn match s {\n\t\tNeg { 100 }\n\t\t..-1 { 200 }\n\t\t_ { 300 }\n\t}\n}\nH(): int {\n\treturn P(2) + P(3) + Q(-1) + Q(-2) + Q(0)\n}\n", 611},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := evalH(t, c.src)

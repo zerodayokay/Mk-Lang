@@ -3904,7 +3904,7 @@ export Main(sys: &System): WriteError!void {
 - A negative integer is written with its `-`: `-1`.
 - A float is not a pattern (E0308). Compare floats with `if`.
 - A literal of a type other than the value's is E0301.
-- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does.
+- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does. Its value is needed before the module's own functions are ready, so a const that calls one of them is E0908 there ([the stage rule](#the-stage-rule)). A name that is no const in scope binds, as anywhere in a pattern: a misspelled const, or another module's const written without its module, matches every value, and is E0208 when its arm does not use it.
 
 ```mk
 // verdict: ok
@@ -7440,7 +7440,7 @@ main.mk:10:7: E0902 fuel-exhausted: compile-time evaluation ran out of fuel afte
 
 ### The stage rule
 
-Some evaluations run before the module's own functions and types are ready: the length in an array type, a const argument, a compile-time `requires`, and a `gen` argument. Such an evaluation may not call a function of the same module, or need the layout of a type of the same module (E0908). The report names the consts and functions the evaluation entered, with the trace.
+Some evaluations run before the module's own functions and types are ready: the length in an array type, a const argument, a compile-time `requires`, a `gen` argument, and a const named in a match pattern. Such an evaluation may not call a function of the same module, or need the layout of a type of the same module (E0908). The report names the consts and functions the evaluation entered, with the trace.
 
 ```mk
 // verdict: reject E0908
@@ -7937,7 +7937,7 @@ See also: [`std.derive`](std/derive.md), [`std.build`](std/build.md) for embedde
 | E0905 | generated-invalid | Generated code that does not compile ([errors in generated code](#errors-in-generated-code)) |
 | E0906 | forbidden-input | A generator that reads the structure of a generated type ([what a generator sees](#what-a-generator-sees)) |
 | E0907 | layout-cycle | A type that contains itself ([the stage rule](#the-stage-rule)) |
-| E0908 | stage-violation | A type, const argument, `requires` or `gen` argument that needs its own module's functions or layouts ([the stage rule](#the-stage-rule)) |
+| E0908 | stage-violation | A type, const argument, `requires`, `gen` argument or const pattern that needs its own module's functions or layouts ([the stage rule](#the-stage-rule)) |
 | E0909 | const-cycle | A const that reads itself ([the stage rule](#the-stage-rule)) |
 | E0910 | file-input | A bad path for `build.File` or `g.Input` ([data files](std/build.md#data-files)) |
 | E1002 | not-share | A const that holds a `Cell` or a raw pointer, such as a `List` ([evaluating constants](#evaluating-constants)) |

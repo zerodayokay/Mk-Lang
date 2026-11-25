@@ -152,7 +152,7 @@ For the borrow and flow codes, [the memory model](memory.md) explains the rules 
 | E0905 | generated-invalid | Generated code fails to check. The report cites the generated line, the generator and the `gen` line | Alternatives |
 | E0906 | forbidden-input | A generator used an input it did not declare, or read the structure of a type that only generated code defines | Alternatives |
 | E0907 | layout-cycle | A type's size depends on itself | Alternatives |
-| E0908 | stage-violation | A compile-time evaluation in a type, a `const` argument, a `requires` or a `gen` argument needs a function body or a type layout from the same module. The report gives the trace | Compiles: move the helper to a submodule |
+| E0908 | stage-violation | A compile-time evaluation in a type, a `const` argument, a `requires`, a `gen` argument or a const named in a match pattern needs a function body or a type layout from the same module. The report gives the trace | Compiles: move the helper to a submodule |
 | E0909 | const-cycle | A const's evaluation reads the const itself | Alternatives |
 | E0910 | file-input | A `build.File` or `Gen.Input` path that is absolute, names a drive or holds `..`; or one that is not a regular file under the calling module's package root, is reached through a link, or is larger than 64 MiB | Alternatives |
 | E1001 | not-send | A `.go` argument is not `Send`, for any reason E1002 does not cover | Alternatives |

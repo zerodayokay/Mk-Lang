@@ -512,6 +512,24 @@ Use(m: &M): int {
 			t.Errorf("expected spellings %v", want)
 		}
 	})
+	t.Run("a folded misspelling in a type head picks the method", func(t *testing.T) {
+		w := newWorld(t, true)
+		b := checkBody(t, w, "E0207@10:11", `struct M {
+	cpu: int
+}
+
+M.Cpu(&self): int {
+	return self.cpu
+}
+
+Use(m: &M): int {
+	return M.CPU(m)
+}
+`)
+		if ds := b.bodyDiags(t); len(ds) != 1 || fact(ds[0], "expected") != "Cpu" {
+			t.Errorf("want the fix to Cpu: %s", dump(w, ds))
+		}
+	})
 	t.Run("two impls in one module", func(t *testing.T) {
 		w := newWorld(t, true)
 		checkCodes(t, w, "m", opt{}, "E0206@20:2", `struct S {

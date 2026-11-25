@@ -62,6 +62,7 @@ var corpusExcepted = map[string]string{
 	"codes/E0902.mk":                                       "fuel exhaustion is the evaluator's; this harness has none",
 	"codes/E0902_default.mk":                               "fuel exhaustion is the evaluator's; this harness has none",
 	"codes/E0902_fuel_named.mk":                            "fuel exhaustion is the evaluator's; this harness has none",
+	"codes/E0908_const_pattern.mk":                         "a const pattern's value is evaluated, and the evaluation reports the stage violation; this harness has no evaluator (mk corpus judges it)",
 	"codes/E0909.mk":                                       "a const cycle is reported by EvalConst, which needs the evaluator; this harness has none",
 	"codes/E0910.mk":                                       "a data file read is the evaluator's (build.File through the Program); this harness has none",
 	"codes/E0704_gen_conflict.mk":                          "the conflicting impl is gen output; this harness runs no generator; mk corpus --all judges it, and TestE0704_GeneratedDuplicateCitesGenLine is check's half",
