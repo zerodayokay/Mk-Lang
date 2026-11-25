@@ -1,7 +1,8 @@
 // Why: each vector form of scan.mk must give exactly its scalar form's result.
 // What: tests at 16, 32 and 64 lanes against the scalar forms, on random and
 // adversarial bytes, every length 0 to 300 at every offset 0 to 63, and
-// 2,000 random lengths up to 5,000.
+// 2,000 random lengths up to 5,000; and Utf16LenBytes, through its
+// dispatch too, against known counts of WTF-8 pieces and of junk.
 // How: the wide forms are called directly (the baseline build legalizes the
 // wide vectors, so they run on any machine). Helper names start with Ts,
 // because every file of std/simd is one module.
@@ -71,13 +72,40 @@ TsCheck(s: []u8, b: u8) {
         TsAt(LastIndexByteN[64](s, b)) == l)
     w := ValidWtf8Scalar(s)
     Assert(ValidWtf8N[16](s) == w && ValidWtf8N[32](s) == w && ValidWtf8N[64](s) == w)
+    // The count is defined on any bytes, and is a decoder's count
+    // on WTF-8.
+    u := Utf16LenScalar(s)
+    Assert(Utf16LenN[16](s) == u && Utf16LenN[32](s) == u && Utf16LenN[64](s) == u)
     if w {
-        u := Utf16LenScalar(s)
-        Assert(Utf16LenN[16](s) == u && Utf16LenN[32](s) == u && Utf16LenN[64](s) == u)
+        Assert(u == TsUtf16Decode(s))
     }
     // ValidUtf8's lookup is ValidWtf8's first half: keep it exact too.
     v := ValidUtf8Scalar(s)
     Assert(ValidUtf8N[16](s) == v && ValidUtf8N[32](s) == v && ValidUtf8N[64](s) == v)
+}
+
+// TsUtf16Decode counts UTF-16 units scalar by scalar, a decoder's count:
+// a lead below 0x80 is one byte, below 0xE0 two, below 0xF0 three (a
+// surrogate's WTF-8 too), else four and two units. s is WTF-8.
+TsUtf16Decode(s: []u8): int {
+    var units := 0
+    var i := 0
+    n := s.Len()
+    for i < n {
+        x := s[i]
+        if x < 0x80 {
+            i += 1
+        } else if x < 0xE0 {
+            i += 2
+        } else if x < 0xF0 {
+            i += 3
+        } else {
+            i += 4
+            units += 1
+        }
+        units += 1
+    }
+    return units
 }
 
 test "string kernels: every length 0 to 300 at every offset: vector forms equal the scalar forms" {
@@ -151,6 +179,7 @@ test "string kernels: long valid text past every counter fold: Utf16Len at 16, 3
             s := buf[0..n]
             u := Utf16LenScalar(s)
             Assert(Utf16LenN[16](s) == u && Utf16LenN[32](s) == u && Utf16LenN[64](s) == u)
+            Assert(Utf16LenBytes(s) == u)
         }
         // The whole buffer is valid (a shorter prefix may cut a scalar).
         Assert(ValidWtf8Scalar(buf[..]) && ValidWtf8N[16](buf[..]) && ValidWtf8N[32](buf[..]) &&
@@ -255,4 +284,60 @@ test "string kernels: a WTF-8 pair at every offset and near the end of every len
 TsWtf8All(s: []u8, want: bool): bool {
     return ValidWtf8Scalar(s) == want && ValidWtf8N[16](s) == want && ValidWtf8N[32](s) == want &&
         ValidWtf8N[64](s) == want && ValidWtf8(s) == want
+}
+
+test "string kernels: Utf16LenBytes counts WTF-8: a lone surrogate, a pair's four bytes and a split pair, at every vector width's edges" {
+    // Each piece and its units: U+D800 and U+DC00 alone (one each), the
+    // trail then the lead (two), U+1F600 (two), and a lead and trail
+    // surrogate written apart, which ValidWtf8 refuses but the count still
+    // takes as two three-byte sequences.
+    pieces: [5][6]u8 = [[0xED, 0xA0, 0x80, 0, 0, 0], [0xED, 0xB0, 0x80, 0, 0, 0], [0xED, 0xB0, 0x80, 0xED, 0xA0, 0x80],
+        [0xF0, 0x9F, 0x98, 0x80, 0, 0], [0xED, 0xA0, 0x80, 0xED, 0xB0, 0x80]]
+    piece_lens: [5]int = [3, 3, 6, 4, 6]
+    piece_units: [5]int = [1, 1, 2, 2, 2]
+    var buf: [600]u8 = [0x61; 600]
+    // Lengths about each width's single vector, its two-vector step, the
+    // avx2 and avx512bw dispatch bounds, and one 64-lane counter fold.
+    for n in [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 600] {
+        for pi in 0..5 {
+            p := pieces[pi][0..piece_lens[pi]]
+            // The piece at the start, in the middle, one byte before the
+            // end, and at the very end, where the tail window ends.
+            for at in [0, n / 2, n - p.Len() - 1, n - p.Len()] {
+                for k in 0..p.Len() {
+                    buf[at + k] = p[k]
+                }
+                s := buf[0..n]
+                want := n - p.Len() + piece_units[pi]
+                Assert(Utf16LenBytes(s) == want && Utf16LenScalar(s) == want && Utf16LenN[16](s) == want &&
+                    Utf16LenN[32](s) == want && Utf16LenN[64](s) == want)
+                for k in 0..p.Len() {
+                    buf[at + k] = 0x61
+                }
+            }
+        }
+    }
+    // The bytes alone, below every vector width.
+    for pi in 0..5 {
+        Assert(Utf16LenBytes(pieces[pi][0..piece_lens[pi]]) == piece_units[pi])
+    }
+    Assert(Utf16LenBytes(buf[0..0]) == 0)
+    // Bytes that are not WTF-8 count the same on every path: a
+    // continuation byte nothing, another byte below 0xF0 one, and a byte
+    // from 0xF0 on two.
+    junk: [6]u8 = [0x80, 0xBF, 0xF8, 0xC0, 0xFF, 0xF0]
+    junk_units: [6]int = [0, 0, 2, 1, 2, 2]
+    Assert(Utf16LenBytes(junk[..]) == 7 && Utf16LenScalar(junk[..]) == 7)
+    // Junk repeated through each width's vectors, steps and tail window,
+    // and past both dispatch bounds.
+    for n in [16, 17, 63, 64, 65, 255, 256, 257, 600] {
+        var want := 0
+        for k in 0..n {
+            buf[k] = junk[k % 6]
+            want += junk_units[k % 6]
+        }
+        s := buf[0..n]
+        Assert(Utf16LenBytes(s) == want && Utf16LenScalar(s) == want && Utf16LenN[16](s) == want &&
+            Utf16LenN[32](s) == want && Utf16LenN[64](s) == want)
+    }
 }

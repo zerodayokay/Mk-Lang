@@ -11174,7 +11174,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.coll` | `Deque HeapDeque PriorityQueue BTree HeapBTree BTreeIter Bitset` |
 | `std.text` | `Graphemes Clusters Normalize Form FoldCase Width ToUtf16 FromUtf16 WordBounds SentenceBounds Bounds ParagraphBounds BidiLevels Levels Run Direction Mirror LineBreaks Breaks Capped Sink CategoryOf Category ScriptOf Script ScriptExtensions Has Property UnicodeVersion` |
 | `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ExactDigits Digits DigitMode` |
-| `std.simd` | `Vec Mask Lane CpuFeatures Choice Cpu Lanes Lookup16 Dispatch IndexByte IndexAny Count Equal Compare ValidUtf8 ValidWtf8 IsAscii Utf16Len LastIndexByte Dot Sum` |
+| `std.simd` | `Vec Mask Lane CpuFeatures Choice Cpu Lanes Lookup16 Dispatch IndexByte IndexAny Count Equal Compare ValidUtf8 ValidWtf8 IsAscii Utf16Len Utf16LenBytes LastIndexByte Dot Sum` |
 | `std.free` | `PanicInfo`, `Heap`, on the freestanding target only |
 | `std.libc` | No Mk names: C-callable functions that a package's C sources link against, written in Mk and exported with `export extern`: the memory and string functions, `malloc`, `calloc`, `realloc` and `free` over the `Heap`, and what sqlite needs as `SQLITE_OS_OTHER`; on `x86_64-windows` also `__C_specific_handler`, the language handler a C source's `__try`, `__except` and `__finally` need, forwarded to ntdll's |
 | `std.hash` | `Xx Xx64 Crc32 Sip13 Sha256 Sha512 Blake3 Crc32State Xx64State Sha256State Sha512State Blake3State Sha1 Sha1State Sha384 Sha384State` |
@@ -12268,6 +12268,7 @@ simd.ValidUtf8(s: []u8): bool
 simd.ValidWtf8(s: []u8): bool
 simd.IsAscii(s: []u8): bool
 simd.Utf16Len(s: str): int
+simd.Utf16LenBytes(b: []u8): int
 simd.LastIndexByte(s: []u8, b: u8): ?int
 simd.Dot[T: Lane](a: []T, b: []T): T
 simd.Sum[T: Lane](xs: []T): T
