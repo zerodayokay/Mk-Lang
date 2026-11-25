@@ -187,10 +187,11 @@ func TestGenFailRootOfUnknownNames(t *testing.T) {
 // 7) in the generator's module. That module's first error, of a later
 // phase, is reported with the E0201s on the names the output would have
 // declared (in the module, or an importer's `out.Made`), as their root, and
-// each E0201 cites the gen line and names the module. A second error of the
-// module waits for the first to be fixed; a poisoned line with no failed
-// module keeps the old note with no root. With the module cache on, the
-// warm report equals the cold one.
+// each E0201 cites the gen line and names the module. A borrow error, which
+// leaves its module clean, is the root only when no module the line reads
+// has another error. A second error of the module waits for the first to
+// be fixed; a poisoned line with no failed module keeps the old note with
+// no root. With the module cache on, the warm report equals the cold one.
 func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 	const emit = "    made := g.Ident(\"Made\")\n    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n"
 	const use = "export UseMade(): int {\n    return Made + 1\n}\n"
@@ -231,6 +232,21 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "gn/gn.mk:2:5", "gn", ""},
 		{"flow error", map[string]string{"gn/gn.mk": flow + "\nexport Make(g: mut Gen) {\n    Twice()\n" + emit},
 			[]string{"gn/gn.mk:4:5:E0501", "out/use.mk:2:12:E0201"}, "gn/gn.mk:4:5", "gn", ""},
+		// A borrow error leaves its module clean: the failed module is the
+		// root, whatever the walk meets first.
+		{"borrow error in a module before the failed one", map[string]string{"gn/gn.mk": "import a\nimport z\n\n" +
+			"export Two(): int {\n    return a.One() + 1\n}\n\nexport Make(g: mut Gen) {\n    _ = z.Z()\n" + emit,
+			"a/a.mk": "export One(): int {\n    return 1\n}\n\n" + flow, "z/z.mk": "export Z(): int {\n    return true\n}\n"},
+			[]string{"out/use.mk:2:12:E0201", "z/z.mk:2:12:E0301"}, "z/z.mk:2:12", "z", ""},
+		{"borrow error before the failed module's own", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.One()\n" + emit,
+			"a/a.mk": flow + "\nexport One(): int {\n    return true\n}\n"},
+			[]string{"a/a.mk:10:12:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:10:12", "a", ""},
+		{"borrow error below the generator, failed type argument", map[string]string{
+			"gn/gn.mk":   "import b\n\nexport Two(): int {\n    return b.One() + 1\n}\n\n" + reflect + emit,
+			"b/b.mk":     "export One(): int {\n    return 1\n}\n\n" + flow,
+			"a/a.mk":     "export interface Marker {\n    Get(&self): [1 + true]u8\n}\n",
+			"out/out.mk": "import a\nimport gn\n\ngen gn.Make(a.Marker)\n"},
+			[]string{"a/a.mk:2:22:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:2:22", "a", ""},
 		{"type read from the generator's module", map[string]string{"gn/gn.mk": "import a\n\nexport struct Marker {\n    export n: int\n}\n\n" +
 			"export Two(): int {\n    return a.One() + 1\n}\n\nexport Make(g: mut Gen, t: Type) {\n    _ = t\n" + emit,
 			"a/a.mk":     "import std.math\n\nexport One(): int {\n    return 1\n}\n",

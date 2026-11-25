@@ -3,8 +3,10 @@
 // file to the module, and map later diagnostics back to the gen line.
 //
 // What: stage 4 of the module pipeline (stage4, settleGen, genWrap): the
-// gen.Line translation of resolve's first pass (genLine, genArg), the World
-// over check's stage-4 view (genWorld with Decl, Func and Funcs),
+// note on a name a line that emitted nothing may have declared (noteGen),
+// the error that made a poisoned line emit nothing (poisonRoot, firstDiag),
+// the gen.Line translation of resolve's first pass (genLine, genArg), the
+// World over check's stage-4 view (genWorld with Decl, Func and Funcs),
 // AddGenerated, Finish, and Wrap over every later diagnostic of the module.
 //
 // How: stage 4 runs between resolve's Finish and Settle, after every module
@@ -164,8 +166,8 @@ func (m *modNode) genWrap(ds []*diag.Diagnostic) []*diag.Diagnostic {
 // (resolve.MissedIn). A line that failed with its own error makes the E0201
 // its consequence, so the report holds that error whatever its phase
 // (diag.Order). A line whose run ended in poison because a module it
-// depends on failed to check makes the E0201 a consequence of that
-// module's first error (genRoot, which stageDiags reports); with no such
+// depends on failed to check makes the E0201 a consequence of the error
+// poisonRoot names (genRoot, which stageDiags reports); with no such
 // module (a type of m the stage-4 view could not see, which may have no
 // diagnostic of its own) a line of m is only cited. A label, type
 // parameter or parameter is local to its function, so no gen line declares
@@ -205,47 +207,29 @@ func (m *modNode) noteGen(d *diag.Diagnostic) {
 	}
 }
 
-// poisonRoot finds why a poisoned line emitted nothing: the first module,
-// in a walk from the modules the line reads (the generator's, the fuel
-// const's, each argument's; m itself, not yet checked, is not walked)
-// through their imports in path order, that has a diagnostic of its own,
-// and of those the one the report prints first (firstDiag). Such a module is
-// done failed, or clean with a body stage 7 rejected, and every body a run
-// enters there or in a module importing it is poison. The walk runs only
-// for a poisoned line, after every module it reaches is done. nil when no
-// module has one: the line read a type of its own module it cannot see
-// before checking.
+// poisonRoot finds why a poisoned line emitted nothing. It walks from the
+// modules the line reads (the generator's, the fuel const's, each
+// argument's; m itself, not yet checked, is not walked) through their
+// imports in path order, twice. The first walk stops at a module that failed
+// to check, with an error before stage 7: it taints every module above it,
+// so every body a run enters there is poison. Only when no module has one
+// does the second stop at a module with a borrow error (stage 7), which
+// rejects only its own body and leaves the module clean; the walk cannot
+// tell which rejected body the run entered. The root is that module's error
+// of that kind the report prints first (firstDiag). It runs only for a
+// poisoned line, after every module it reaches is done. nil when no module
+// has one: the line read a type of its own module it cannot see before
+// checking.
 func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 	w, s := b.w, b.w.sem5
-	seen := map[*modNode]bool{m: true}
-	var walk func(x *modNode) (*diag.Diagnostic, string)
-	walk = func(x *modNode) (*diag.Diagnostic, string) {
-		if x == nil || seen[x] {
-			return nil, ""
+	var from []*modNode
+	read := func(id types.ItemID) {
+		if id != types.NoItem {
+			from = append(from, s.module(w.items.Get(id).Module))
 		}
-		seen[x] = true
-		if d := b.firstDiag(x); d != nil {
-			return d, x.path
-		}
-		for _, d := range x.deps {
-			if r, p := walk(d); r != nil {
-				return r, p
-			}
-		}
-		return nil, ""
 	}
-	from := func(id types.ItemID) (*diag.Diagnostic, string) {
-		if id == types.NoItem {
-			return nil, ""
-		}
-		return walk(s.module(w.items.Get(id).Module))
-	}
-	if r, p := from(l.Generator); r != nil {
-		return r, p
-	}
-	if r, p := from(l.FuelItem); r != nil {
-		return r, p
-	}
+	read(l.Generator)
+	read(l.FuelItem)
 	for _, a := range l.Args {
 		id := a.Item // ArgInterface, ArgFunction
 		if a.Kind == gen.ArgType {
@@ -261,33 +245,60 @@ func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 				t = tt.Elem
 			}
 		}
-		if r, p := from(id); r != nil {
-			return r, p
+		read(id)
+	}
+	for _, flow := range []bool{false, true} {
+		seen := map[*modNode]bool{m: true}
+		var walk func(x *modNode) (*diag.Diagnostic, string)
+		walk = func(x *modNode) (*diag.Diagnostic, string) {
+			if x == nil || seen[x] {
+				return nil, ""
+			}
+			seen[x] = true
+			ds := [][]*diag.Diagnostic{x.diags, x.cdiags}
+			if flow {
+				ds = [][]*diag.Diagnostic{x.fdiags}
+			}
+			if d := b.firstDiag(x, ds); d != nil {
+				return d, x.path
+			}
+			for _, d := range x.deps {
+				if r, p := walk(d); r != nil {
+					return r, p
+				}
+			}
+			return nil, ""
+		}
+		for _, x := range from {
+			if r, p := walk(x); r != nil {
+				return r, p
+			}
 		}
 	}
 	return nil, ""
 }
 
-// firstDiag is the diagnostic of x's own (stages 3, 5 to 7) that the report
-// prints first: by path, line and column, then code and message, as
-// diag.Order sorts, and wrapped as checkDiags reports it, so a Cause naming
-// it resolves. The lists' order differs between a cold check and a cache
-// hit; this order does not. nil when x has none.
-func (b *build) firstDiag(x *modNode) *diag.Diagnostic {
+// firstDiag is the diagnostic of ds, x's own, that the report prints first:
+// by path, line and column, code, message, then end, as diag.Order sorts,
+// and wrapped as checkDiags reports it, so a Cause naming it resolves. The
+// lists' order differs between a cold check and a cache hit; this order
+// does not. nil when ds holds none.
+func (b *build) firstDiag(x *modNode, ds [][]*diag.Diagnostic) *diag.Diagnostic {
 	var best *diag.Diagnostic
-	var bp source.Position
-	for _, ds := range [][]*diag.Diagnostic{x.diags, x.cdiags, x.fdiags} {
-		for _, d := range ds {
+	var bs, be source.Position
+	for _, l := range ds {
+		for _, d := range l {
 			if x.gen != nil {
 				d = gen.Wrap(d, x.gen.out)
 			}
-			var p source.Position
+			var s, e source.Position
 			if d.At.File != source.NoFile {
-				p, _ = b.w.sm.SpanPositions(d.At)
+				s, e = b.w.sm.SpanPositions(d.At)
 			}
-			if best == nil || cmp.Or(strings.Compare(p.Path, bp.Path), cmp.Compare(p.Line, bp.Line), cmp.Compare(p.Col, bp.Col),
-				cmp.Compare(d.Code, best.Code), strings.Compare(d.Message, best.Message)) < 0 {
-				best, bp = d, p
+			if best == nil || cmp.Or(strings.Compare(s.Path, bs.Path), cmp.Compare(s.Line, bs.Line), cmp.Compare(s.Col, bs.Col),
+				cmp.Compare(d.Code, best.Code), strings.Compare(d.Message, best.Message),
+				cmp.Compare(e.Line, be.Line), cmp.Compare(e.Col, be.Col)) < 0 {
+				best, bs, be = d, s, e
 			}
 		}
 	}
