@@ -834,6 +834,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"simd.Mask.Select":                  {Module: "std.simd", Lines: []string{"Mask[T, N].Select(self, a: Vec[T, N], b: Vec[T, N]): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Sum":                          {Module: "std.simd", Lines: []string{"simd.Sum[T: Lane](xs: []T): T"}},
 	"simd.Utf16Len":                     {Module: "std.simd", Lines: []string{"simd.Utf16Len(s: str): int"}},
+	"simd.Utf16LenBytes":                {Module: "std.simd", Lines: []string{"simd.Utf16LenBytes(b: []u8): int"}},
 	"simd.ValidUtf8":                    {Module: "std.simd", Lines: []string{"simd.ValidUtf8(s: []u8): bool"}},
 	"simd.ValidWtf8":                    {Module: "std.simd", Lines: []string{"simd.ValidWtf8(s: []u8): bool"}},
 	"simd.Vec.Abs":                      {Module: "std.simd", Lines: []string{"Vec[T, N].Abs(self): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
@@ -903,5 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"sqlite.Stmt.Close":                 {Module: "std.db.sqlite", Lines: []string{"Stmt.Close(self)"}},
 	"sqlite.Stmt.Int":                   {Module: "std.db.sqlite", Lines: []string{"Stmt.Int(&self, col: int): i64"}},
 	"sqlite.Stmt.Reset":                 {Module: "std.db.sqlite", Lines: []string{"Stmt.Reset(mut self)"}},
-	"sqlite.Stmt.Step":                  {Module: "std.db.sqlite", Lines: []string{"Stmt.Step(mut self, io: Io): sqlite.Error!bool"}},
 }

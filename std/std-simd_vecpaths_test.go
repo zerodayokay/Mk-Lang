@@ -53,6 +53,36 @@ func std10Utf16Len(b []byte) int {
 	return n
 }
 
+// std10Utf16LenBytes models simd.Utf16LenBytes: on WTF-8, a decoder's
+// count (a surrogate's three bytes are one unit); on other bytes, the
+// count the routine defines, one unit per byte that is not a continuation
+// byte and one more per byte from 0xF0 on.
+func std10Utf16LenBytes(b []byte) int {
+	n := 0
+	if std10Wtf8(b) {
+		for i := 0; i < len(b); {
+			if b[i] == 0xED && i+2 < len(b) && b[i+1] >= 0xA0 {
+				n++
+				i += 3
+				continue
+			}
+			r, w := utf8.DecodeRune(b[i:])
+			n += utf16.RuneLen(r)
+			i += w
+		}
+		return n
+	}
+	for _, x := range b {
+		if x&0xC0 != 0x80 {
+			n++
+		}
+		if x >= 0xF0 {
+			n++
+		}
+	}
+	return n
+}
+
 func std10SimdInputs() [][]byte {
 	r := rand.New(rand.NewSource(98))
 	pieces := [][]byte{{0x41}, {0xC3, 0xA9}, {0xE2, 0x82, 0xAC}, {0xF0, 0x9F, 0x98, 0x80}, {0xED, 0xA0, 0x80},
@@ -141,7 +171,7 @@ export Main(sys: &System): ReadError|WriteError|OutOfMemory!void {
             u := try text.ToUtf16(&ar, s)
             t16 = u.Len()
         }
-        try Print(mut w, "{a} {l} {w} {v} {u} {t}\n", (a: simd.IsAscii(b), l: at, w: simd.ValidWtf8(b), v: simd.ValidUtf8(b), u: units, t: t16))
+        try Print(mut w, "{a} {l} {w} {v} {u} {t} {b}\n", (a: simd.IsAscii(b), l: at, w: simd.ValidWtf8(b), v: simd.ValidUtf8(b), u: units, t: t16, b: simd.Utf16LenBytes(b)))
         ar.Reset()
     }
     try w.Flush()
@@ -180,13 +210,13 @@ func std10SimdWant(b []byte) string {
 		units = std10Utf16Len(b)
 		t16 = len(utf16.Encode([]rune(string(b))))
 	}
-	return fmt.Sprintf("%t %d %t %t %d %d", ascii, bytes.LastIndexByte(b, key), std10Wtf8(b), utf8.Valid(b), units, t16)
+	return fmt.Sprintf("%t %d %t %t %d %d %d", ascii, bytes.LastIndexByte(b, key), std10Wtf8(b), utf8.Valid(b), units, t16, std10Utf16LenBytes(b))
 }
 
 // TestStd_SimdMatchesGo: through the public entry points, so the cpu
 // dispatch this machine takes (avx2 from 64 bytes, avx512bw from 256 when
-// Cpu() reports them) is what runs: simd.IsAscii, Utf16Len, LastIndexByte and
-// ValidWtf8 against Go models, dev and release, and text.ToUtf16 (whose sizing
+// Cpu() reports them) is what runs: simd.IsAscii, Utf16Len, Utf16LenBytes (on
+// every input, WTF-8 or not), LastIndexByte and ValidWtf8 against Go models, dev and release, and text.ToUtf16 (whose sizing
 // pass is simd.Utf16Len) against unicode/utf16. The bit-for-bit comparison of
 // each vector width with its scalar form is std/simd/tests_scan.mk's, run by
 // TestStd_SimdTestBlocks.
@@ -260,7 +290,7 @@ func TestStd_SimdTestBlocks(t *testing.T) {
 				args = append(args, "--release")
 			}
 			out, status := mkCmd(t, root, stdDir, args...)
-			if status != 0 || !strings.Contains(out, "5 passed, 0 failed") {
+			if status != 0 || !strings.Contains(out, "6 passed, 0 failed") {
 				t.Fatalf("mk test: exit %d\n%s", status, out)
 			}
 		})
