@@ -21688,6 +21688,74 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
+== reference.md, ok block 41
+body m.Main generics=0 params=1 {
+  let _0: WriteError!void // return
+  let _1: &System // param 1 sys
+  let _2: Stats // temp
+  let _3: Stats // var s
+  let _4: WriteError // temp
+  let _5: int // temp
+  let _6: uint // temp
+  let _7: int // temp
+  let _8: uint // temp
+  let _9: bool // temp
+  let _10: (b: u32, c: int) // temp
+  let _11: void // temp
+  bb0:
+    _2 = call std.mem.Zeroed[Stats]() -> bb1
+  bb1:
+    _3 = copy _2
+    scope_end _2
+    _3.0 = Add(copy _3.0, int 1)
+    _5 = int 7
+    _6 = Trunc[uint](copy _5)
+    _7 = Len(_3.3)
+    _8 = Trunc[uint](copy _7)
+    _9 = Lt(copy _6, copy _8)
+    switch copy _9 [0: bb3, _: bb4]
+  bb2:
+    _0 = err(copy _4)
+    scope_end _11
+    scope_end _10
+    scope_end _9
+    scope_end _8
+    scope_end _7
+    scope_end _6
+    scope_end _5
+    scope_end _4
+    scope_end _3
+    return try
+  bb3:
+    panic bounds
+  bb4:
+    _10 = (b: u32, c: int)(copy _3.3[_5], copy _3.0)
+    _11 = call std.core.System:Print[(b: u32, c: int)](copy _1, const str "{c} {b}\n", copy _10) -> bb5 err try _4 -> bb2
+  bb5:
+    scope_end _11
+    scope_end _10
+    scope_end _9
+    scope_end _8
+    scope_end _7
+    scope_end _6
+    scope_end _5
+    scope_end _4
+    _0 = ok()
+    scope_end _3
+    return normal
+}
+body m.Use generics=1 params=1 {
+  let _0: void // return
+  let _1: &$0 // param 1 x
+  bb0:
+    return normal
+}
+body m.UseMut generics=1 params=1 {
+  let _0: void // return
+  let _1: mut $0 // param 1 x
+  bb0:
+    return normal
+}
 == reference.md, ok block 42
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
