@@ -60,6 +60,12 @@ func (m *Machine) place(f *frame, p mir.Place) loc {
 			if pr.FieldLoop {
 				source.ICEf(b.Spans[0], "eval: fields-loop step in an instance body")
 			}
+			if down == nil && cur.ti.ty.Kind == types.KArray {
+				// A constant element step: element A of the array.
+				ti := f.code.projTI[i]
+				cur = loc{a: cur.a, off: elemOff(cur.off, uint64(pr.A), ti.size), tag: cur.tag, ti: ti}
+				break
+			}
 			fl := m.fieldLayout(cur, down, pr.A)
 			cur = loc{a: cur.a, off: cur.off + uint32(fl.Offset), tag: cur.tag, ti: f.code.projTI[i]}
 		case mir.ProjDeref:

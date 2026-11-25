@@ -120,7 +120,9 @@ const (
 type ProjKind uint8
 
 const (
-	// ProjField: field FieldRef{Loop: FieldLoop, Index: A}.
+	// ProjField: field FieldRef{Loop: FieldLoop, Index: A}. On a fixed
+	// array [N]T it is element A < N, a constant index that is a place of
+	// its own for overlap (an array destructure's step).
 	ProjField ProjKind = iota
 	// ProjDeref: through &T, mut T or *T.
 	ProjDeref

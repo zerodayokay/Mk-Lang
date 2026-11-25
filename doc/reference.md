@@ -1264,6 +1264,7 @@ backtrace:
 - Array literals, `[e; N]` and indexing: see [array literals](#array-record-and-struct-literals) and [indexing](#indexing-and-slices).
 - An array is not a slice. Pass `a[..]` where a `[]T` is expected, and `mut a[..]` where a `mut []T` is.
 - An array has the kind of its element, and its size is `N` times the element's.
+- `[a, b] := xs` takes an array apart, each element into its own binding; it is how an array of linear values is consumed ([destructuring](#destructuring)).
 - In a `const` initializer an array literal may also be a `[]T` over static data ([section 11](#compile-time-arenas-and-static-slices)).
 
 ```mk
@@ -2824,7 +2825,7 @@ Sum(m: &Map[str, int]): int {
 | Statement | Meaning |
 |---|---|
 | `x := e`, `var x := e`, `x: T = e`, `x: T` | Bind a local ([bindings](#bindings)) |
-| `(a, b) := r`, `Point(x, y) := p` | Take a record or struct apart ([destructuring](#destructuring)) |
+| `(a, b) := r`, `Point(x, y) := p`, `[a, b] := xs` | Take a record, struct or array apart ([destructuring](#destructuring)) |
 | `p = e`, `p += e` | Assign ([assignment](#assignment)) |
 | `F(x)`, `_ = e` | Call for the effect, or drop a value ([expression statements](#expression-statements)) |
 | `if c { } else { }`, `if x := e { }` | Choose ([`if`](#if)) |
@@ -2912,7 +2913,7 @@ Twice(n: int): int {
 }
 ```
 
-**Destructuring.** A binding can take a record or a struct apart: `(lo, hi) := r`, `Point(x, y) := p`, `var Point(x, y) := p`. The pattern names every field or ends with `..`. Taking a struct apart consumes it. See [destructuring](#destructuring) in section 6 for the rules.
+**Destructuring.** A binding can take a record, a struct or a fixed array apart: `(lo, hi) := r`, `Point(x, y) := p`, `var Point(x, y) := p`, `[a, b] := xs`. A record or struct pattern names every field or ends with `..`; an array pattern names every element. Taking a struct or array apart consumes it. See [destructuring](#destructuring) in section 6 for the rules.
 
 See also: [kinds](#kinds) for what a binding copies or moves, [the memory model](memory.md#r3-assignment-before-use) for assignment before use.
 
@@ -3670,7 +3671,7 @@ Pick(c: bool, n: i32): i32 {
 
 ## 6. Patterns
 
-A pattern describes the shape of a value and names its parts. Patterns appear in three places: the arms of a `match`, a destructuring binding `p := e`, and, with a record pattern, the head of a `for` loop.
+A pattern describes the shape of a value and names its parts. Patterns appear in three places: the arms of a `match`, a destructuring binding `p := e`, and, with a record pattern, the head of a `for` loop. An array pattern `[a, b]` appears only in a destructuring binding.
 
 ```mk
 // verdict: ok
@@ -4273,7 +4274,7 @@ The error names the gap, `200..`.
 
 ### Destructuring
 
-A binding `p := e` takes a record or a struct apart. Its pattern must match every value of the type: it cannot fail.
+A binding `p := e` takes a record, a struct or a fixed array apart. Its pattern must match every value of the type: it cannot fail.
 
 ```mk
 // verdict: ok
@@ -4315,9 +4316,62 @@ export Main(sys: &System): WriteError!void {
 - Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct.
 - `var` before the pattern makes every binding `var`.
 - A pattern that can fail, such as a literal, is E0306. Use `match`.
-- Only a record or a struct pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
+- Only a record, a struct or an array pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
 - Outside the struct's module, a struct with private fields cannot be destructured (E0204).
 - A `for` loop may destructure each element with a record pattern: `for (key, value) in m.Iter()`. A struct pattern there is E0101. See [`for`](#for-loops).
+
+An array pattern `[a, b] := xs` takes a fixed array `[N]T` apart by position: the i-th name binds element i. It is how a function consumes an array of [linear](#linear-and-view-structs) values, whose elements cannot be moved out one at a time (`xs[0]` is E0409, see [R4](memory.md#r4-places-and-moves-out-of-them)).
+
+```mk
+// verdict: ok
+linear struct Conn {
+    id: int
+}
+
+Conn.Close(self): int {
+    Conn(id) := self
+    return id
+}
+
+Ends(): [2]Conn {
+    return [Conn(id: 1), Conn(id: 2)]
+}
+
+export Main(sys: &System): WriteError!void {
+    ends := Ends()
+    [near, far] := ends // moves ends; each element into its own binding
+    n := far.Close() * 10 + near.Close()
+    [x, y, z] := [4, 5, 6] // plain elements are copied
+    try sys.Print("{n} {x} {y} {z}\n", (n, x, y, z))
+}
+```
+
+```text
+21 4 5 6
+```
+
+- An array pattern names every element, one plain name each, so every element is bound exactly once: fewer or more names than `N` is E0305. It takes no `..`, `_` or nested pattern (E0101); to keep only some elements of a plain array, index it.
+- `N` must be known where the destructure is checked: an array whose length is a const generic of the function, `[N]T`, is E0301. Its element type may be generic, as in `Split[T](xs: [2]T)`.
+- Destructuring moves the whole array, or copies it if its elements are plain. `var [a, b] := xs` makes both bindings `var`.
+- `(a, b) := xs` on an array is E0301: a record pattern names fields, and an array has none.
+
+An array pattern that leaves out an element:
+
+```mk
+// verdict: reject E0305
+linear struct Conn {
+    id: int
+}
+
+Conn.Close(self) {
+    Conn(id: _) := self
+}
+
+First(ends: [2]Conn) {
+    [near] := ends // <- E0305
+    near.Close()
+}
+```
 
 A destructure that can fail:
 
@@ -4368,12 +4422,12 @@ Name(b: Bag): str {
 
 | Code | Name | Reported for |
 |---|---|---|
-| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head |
+| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
 | E0206 | duplicate-name | A binding that shadows a local ([bindings](#bindings-and-wildcards)) |
 | E0208 | unused | A binding that is never used, often a variant written without its dot ([variants](#variant-patterns)) |
-| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")`; a const of a type a literal cannot have ([literals](#literal-patterns)) |
-| E0305 | field-names | A destructure that neither names every field nor ends with `..` ([destructuring](#destructuring)) |
+| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")`; a const of a type a literal cannot have ([literals](#literal-patterns)); an array pattern on a value that is not an array of known length, or a record pattern on an array ([destructuring](#destructuring)) |
+| E0305 | field-names | A destructure that neither names every field nor ends with `..`; an array pattern that does not name every element ([destructuring](#destructuring)) |
 | E0306 | non-exhaustive | A `match` that misses values; a destructure that can fail ([exhaustiveness](#exhaustiveness)) |
 | E0308 | no-operator | A float literal or a float const as a pattern ([literals](#literal-patterns)) |
 | E0309 | record-names | A field name the type does not have ([variants](#variant-patterns)) |

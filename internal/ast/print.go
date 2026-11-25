@@ -281,6 +281,7 @@ func Describe(n Node, in *source.Interner) (name, attrs string) {
 	case *RecordPat:
 		name = "RecordPat"
 		flag(n.Rest, "rest")
+		flag(n.Elems, "elems")
 	case *PatField:
 		name = "PatField"
 	case *AltPattern:

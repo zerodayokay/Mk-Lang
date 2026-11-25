@@ -68,10 +68,10 @@ func (c *checker) addVarFix(d *diag.Diagnostic, r rootID) {
 
 // destructureStart is where `var ` goes for a user local declared at decl:
 // decl itself for `x := e`, or the start of the statement for a name bound
-// by a destructuring binding, `Wrap(n, ..) := w` or `(a, b) := r`, which
-// `var` marks as a whole (an edit inside the pattern, `Wrap(var n, ..)`,
-// does not parse). ok is false for any other binding (a match arm's
-// pattern), which gets no fix.
+// by a destructuring binding, `Wrap(n, ..) := w`, `(a, b) := r` or
+// `[a, b] := xs`, which `var` marks as a whole (an edit inside the
+// pattern, `Wrap(var n, ..)`, does not parse). ok is false for any other
+// binding (a match arm's pattern), which gets no fix.
 func (c *checker) destructureStart(decl source.Span) (uint32, bool) {
 	if c.env.File == nil {
 		return decl.Start, true
@@ -93,7 +93,7 @@ func (c *checker) destructureStart(decl source.Span) (uint32, bool) {
 	if strings.HasPrefix(lead, "var ") || !strings.Contains(rest, ":=") {
 		return 0, false
 	}
-	if lead[0] != '(' && (lead[0] < 'A' || lead[0] > 'Z') {
+	if lead[0] != '(' && lead[0] != '[' && (lead[0] < 'A' || lead[0] > 'Z') {
 		return 0, false
 	}
 	return at, true

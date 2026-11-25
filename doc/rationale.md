@@ -119,7 +119,7 @@ An interface takes type parameters instead of associated types. One `impl` per t
 
 ### Why no tuples?
 
-Mk has named records: `(quot: i64, rem: i64)`. Destructuring matches by name, so swapping two fields is a compile error rather than a silent bug. The same form carries `Print`'s arguments.
+Mk has named records: `(quot: i64, rem: i64)`. Destructuring matches by name, so swapping two fields is a compile error rather than a silent bug. The same form carries `Print`'s arguments. Only an array, whose elements are all of one type and have no names, is taken apart by position, with its own brackets: `[a, b] := xs`.
 
 ### Why no shadowing?
 

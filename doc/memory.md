@@ -383,6 +383,24 @@ Leak(p: Both): Res {
 
 Fix: destructure the whole value, as `Release` does. A type with private fields can be destructured only in the module that declares it.
 
+An array of linear values is taken apart whole in the same way, by position: an array pattern names every element, so each is moved into its own binding exactly once ([destructuring](reference.md#destructuring)).
+
+```mk
+// verdict: ok
+ReleaseAll(rs: [2]Res) {
+    [a, b] := rs // take the whole array apart
+    a.Close()
+    b.Close()
+}
+```
+
+```mk
+// verdict: reject E0409
+First(rs: [2]Res): Res {
+    return rs[0] // <- E0409
+}
+```
+
 ### R5. The conflict table
 
 An access to a place conflicts with a live loan when the two places overlap and the table below says so. Two places overlap when one is a prefix of the other: `p` and `p.x` overlap, `p.x` and `p.y` do not. Why: this is the rule that makes data races and use-after-free impossible in safe code; a shared loan allows readers only, an exclusive loan allows no one else.
@@ -524,7 +542,7 @@ Split() {
 }
 ```
 
-This applies to a local, a by-value parameter or a temporary whose type is a struct or record, also under `?T` and `E!T`. It keeps one set per loan-holding field (R9), one level deep: a nested struct counts as one field. While it does, the value is **split**. When it holds one set for all its fields, it is **whole**. A value behind a reference is always whole. A by-value parameter starts split, every field holding the parameter's own loan.
+This applies to a local, a by-value parameter or a temporary whose type is a struct or record, also under `?T` and `E!T`. It keeps one set per loan-holding field (R9), one level deep: a nested struct counts as one field. While it does, the value is **split**. When it holds one set for all its fields, it is **whole**. A value behind a reference is always whole, and so is an array: each binding of an array pattern holds the loans of every element, so after `[p, q] := [&x, &y]`, `x` stays borrowed while `q` lives. A by-value parameter starts split, every field holding the parameter's own loan.
 
 These uses keep `p` split, because each touches only the field it names:
 

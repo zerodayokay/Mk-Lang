@@ -76,8 +76,9 @@ Asm         = "asm" "(" String { "," AsmOperand } [ "," ] ")" .
 AsmOperand  = [ Name ":" ] AsmDir "(" ( Name | String ) ")" ( Expr | "_" ) | [ Name ":" ] "const" Expr | [ Name ":" ] "sym" Path
             | "clobber_abi" "(" String ")" | "options" "(" Name { "," Name } ")" .
 AsmDir      = "in" | "out" | "lateout" | "inout" | "inlateout" .
-Bind        = [ "var" ] Name ( ":=" Value | ":" Type [ "=" Value ] ) | [ "var" ] RecordPat ":=" Value | "_" "=" Value .
+Bind        = [ "var" ] Name ( ":=" Value | ":" Type [ "=" Value ] ) | [ "var" ] ( RecordPat | ArrayPat ) ":=" Value | "_" "=" Value .
 RecordPat   = [ Path ] "(" PatField { "," PatField } [ "," ".." ] [ "," ] ")" .
+ArrayPat    = "[" Name { "," Name } [ "," ] "]" .
 PatField    = Name [ ":" Pattern ] .
 Assign      = Expr AssignOp Value .
 AssignOp    = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "+%=" | "-%=" | "*%=" | "<<=" | ">>=" | "&=" | "|=" | "^=" .
@@ -143,6 +144,7 @@ The parser needs at most three tokens of lookahead (LL(3)): at `Name ":" For`, a
 | Cover | Decided at | Readings |
 |---|---|---|
 | `Point(x, y) := p`, `(a, b) := e` | the `:=` | a call or record literal, or a `RecordPat` |
+| `[a, b] := e` | the `:=` | an array literal, or an `ArrayPat` |
 | `for (a, b) in xs` against `for (c) { ... }` | the `in` | a `RecordPat`, or a parenthesised condition |
 | The brackets after a receiver in `FuncName` | the closing `]` | type arguments of the receiver, or `TypeParams` |
 | `[N]T` | the closing `]` | an array type, or an array literal `[N]` |

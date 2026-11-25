@@ -453,6 +453,10 @@ func TestRecordPatCover(t *testing.T) {
 		{name: "call", src: "F(p: Point) {\n    Point(x, y: py) := p\n}\n", tree: []string{"DestructureStmt reinterpreted\n        RecordPat\n          Path\n            Ident Point\n          PatField\n            Ident x\n          PatField\n            Ident y\n            NamePattern"}},
 		{name: "record", src: "F(e: E) {\n    var (a, b) := e\n}\n", tree: []string{"DestructureStmt var reinterpreted"}},
 		{name: "type args", src: "F(e: E) {\n    Pair[int](a, b) := e\n}\n", codes: "E0101", msg: "a destructure takes no type arguments"},
+		{name: "array", src: "F(xs: [2]int) {\n    [a, b] := xs\n}\n", tree: []string{"DestructureStmt reinterpreted\n        RecordPat elems\n          PatField\n            Ident a\n          PatField\n            Ident b"}},
+		{name: "var array", src: "F(xs: [2]int) {\n    var [a, b] := xs\n}\n", tree: []string{"DestructureStmt var reinterpreted\n        RecordPat elems"}},
+		{name: "array element not a name", src: "F(xs: [2]int) {\n    [a, b.c] := xs\n}\n", codes: "E0101", msg: "an array destructure binds one name per element"},
+		{name: "empty array", src: "F(xs: [0]int) {\n    [] := xs\n}\n", codes: "E0101", msg: "nothing to bind"},
 	})
 }
 
