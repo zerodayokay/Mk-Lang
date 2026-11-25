@@ -34,8 +34,8 @@ Run(): int {
     g := f(&e) // 105
     t := Timeout
     c := Code(n: 2)
-    v := c.Take() // 20, and c is still usable: a payload is plain
+    v := c.Take()                     // 20, and c is still usable: a payload is plain
     w := Work(3) else x { x.Twice() } // 103
-    r := c.Again() else x { x.n } // 2
+    r := c.Again() else x { x.n }     // 2
     return k + g + t.Millis() + v + w + r
 }

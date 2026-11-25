@@ -807,7 +807,9 @@ func TestErrorMethodReceiver(t *testing.T) {
 // compiler's impl method, so a Type.Name Format of the error is E0206 at
 // the method, as beside a struct's written impl; it was silently a second
 // Format that `e.Format(w)` called while `{e}` printed the provided one.
+// An alias of the error is the same owner; another method is not affected.
 func TestErrorFormatMethodCollides(t *testing.T) {
 	w := newWorld(t, true)
 	checkCodes(t, w, "m", opt{}, "E0206@3:5", "error Bad(code: int)\n\nBad.Format(&self, w: mut Writer): WriteError!void {\n\ttry w.Str(\"x\")\n}\n")
+	checkCodes(t, w, "a", opt{}, "E0206@4:3", "error Bad(code: int)\ntype E = Bad\n\nE.Format(&self): int {\n\treturn 1\n}\n\nE.Code(&self): int {\n\treturn self.code\n}\n")
 }
