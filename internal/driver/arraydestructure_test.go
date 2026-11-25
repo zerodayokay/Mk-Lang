@@ -2,10 +2,11 @@
 // constant element step, which codegen and the evaluator place by the
 // element's size; a wrong offset passes the checker and prints the wrong
 // values.
-// What: TestArrayDestructureRuns and TestArrayDestructureLoansRuns.
+// What: TestArrayDestructureRuns, TestArrayDestructureLoansRuns and
+// TestVarArrayDestructureFix.
 // How: a program takes linear and plain arrays apart at run time and in a
 // const evaluated at compile time, through a generic function and a nested
-// array, and is judged by what it prints.
+// array, and is judged by what it prints; mk fix is judged by its text.
 
 package driver
 
@@ -105,5 +106,21 @@ export Main(sys: &System): WriteError!void {
 `)
 	if code != 0 || strings.TrimSpace(out) != "3 11 22 2 1 12 5" {
 		t.Errorf("exit %d, stdout %q, stderr %q; want 3 11 22 2 1 12 5", code, out, errOut)
+	}
+}
+
+// TestVarArrayDestructureFix: the proven "add var" fix on a name bound by
+// an array pattern inserts `var ` before the pattern, as for a record
+// pattern, so mk fix stops clean.
+func TestVarArrayDestructureFix(t *testing.T) {
+	t.Parallel()
+	out := fixToClean(t, `Sum(): int {
+    [a, b] := [1, 2]
+    a += 1
+    return a + b
+}
+`)
+	if !strings.Contains(out, "    var [a, b] := [1, 2]\n") {
+		t.Errorf("fixed text:\n%s", out)
 	}
 }
