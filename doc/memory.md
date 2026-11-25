@@ -383,6 +383,24 @@ Leak(p: Both): Res {
 
 Fix: destructure the whole value, as `Release` does. A type with private fields can be destructured only in the module that declares it.
 
+An array of linear values is taken apart whole in the same way, by position: an array pattern names every element, so each is moved into its own binding exactly once ([destructuring](reference.md#destructuring)).
+
+```mk
+// verdict: ok
+ReleaseAll(rs: [2]Res) {
+    [a, b] := rs // take the whole array apart
+    a.Close()
+    b.Close()
+}
+```
+
+```mk
+// verdict: reject E0409
+First(rs: [2]Res): Res {
+    return rs[0] // <- E0409
+}
+```
+
 ### R5. The conflict table
 
 An access to a place conflicts with a live loan when the two places overlap and the table below says so. Two places overlap when one is a prefix of the other: `p` and `p.x` overlap, `p.x` and `p.y` do not. Why: this is the rule that makes data races and use-after-free impossible in safe code; a shared loan allows readers only, an exclusive loan allows no one else.

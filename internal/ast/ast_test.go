@@ -107,7 +107,7 @@ var grammarNodes = map[string]string{
 	"PrefixType": "RefType MutType MutSliceType OptionalType RawPtrType SliceType ArrayType FnType ParenType PathType",
 	"FnParams":   "", "FnParam": "FnParam", "Record": "RecordType", "TypeOrExpr": "",
 	"Block": "Block", "Stmt": "ExprStmt BreakStmt ContinueStmt ForStmt", "Bind": "BindStmt DestructureStmt DiscardStmt",
-	"RecordPat": "RecordPat", "PatField": "PatField", "Assign": "AssignStmt", "AssignOp": "",
+	"RecordPat": "RecordPat", "ArrayPat": "RecordPat", "PatField": "PatField", "Assign": "AssignStmt", "AssignOp": "",
 	"If": "IfStmt", "Cond": "BindCond IsCond", "For": "ForStmt", "ForHead": "InHead RecordPat",
 	"ForSource": "RangeSource RefSource FieldsSource", "Match": "MatchStmt", "Arm": "Arm",
 	"Pattern":   "AltPattern",

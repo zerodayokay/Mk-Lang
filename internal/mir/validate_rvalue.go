@@ -154,6 +154,15 @@ func (v *validator) field(cur types.TypeID, ty *types.Type, pr *Projection, down
 		fields, known = v.errorFields(types.ItemID(down.A))
 	case down != nil:
 		v.fail("M3", "field of %s after a downcast to %s", v.ts(cur), v.sel(down))
+	case ty.Kind == types.KArray:
+		// A constant element step: element A of [N]T yields T.
+		if n, ok := v.constLen(ty.Len); ok && uint64(pr.A) >= n {
+			v.fail("M3", "element %d of %s", pr.A, v.ts(cur))
+		}
+		if ty.Elem != pr.Type {
+			v.fail("M3", "element %d of %s yields %s", pr.A, v.ts(cur), v.ts(pr.Type))
+		}
+		return
 	case ty.Kind == types.KRecord:
 		if int(pr.A) >= len(ty.Fields) {
 			v.fail("M3", "field %d of %s", pr.A, v.ts(cur))

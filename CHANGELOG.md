@@ -6,6 +6,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Language
 
+- An array pattern takes a fixed array apart by position: `[a, b] := xs` moves element i of a `[N]T` into the i-th binding and consumes the array (or copies it, for plain elements), and `var [a, b] := xs` makes the bindings `var`. An array of linear values, such as `[2]fs.File`, could be built but never consumed, since `xs[0]` is a move out of a place (E0409) and `(a, b) := xs` needed a record (E0301). The pattern names every element (fewer or more names than `N` is E0305), takes only names (E0101), and needs `N` known where it is checked (E0301 for a const generic length) ([destructuring](doc/reference.md#destructuring)).
 - `void` may be written as a type argument of a generic call wherever inference may choose it: `raw.Null[void]()`, `raw.FromAddr[void](a)` and `raw.PtrCast[T, void](p)` build a `*void`, C's `void *`, and `raw.PtrCast[void, T](p)` gives the typed pointer back. The written argument was E0301 (`void` is only a result type), while `raw.Addr(p)` of a `*void` inferred the same argument, so a `void *` parameter of a C function could be passed only what C had returned. `void` as the argument of a generic type (`Box[void]`), in `SizeOf[void]()` and as a local's type is E0301 as before.
 
 ### Runtime

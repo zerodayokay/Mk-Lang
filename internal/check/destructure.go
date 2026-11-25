@@ -1,19 +1,23 @@
-// Why: a destructuring bind (`(a, b) := e`, `(a: x) := e`, `S(a, ..) := e`)
-// must be irrefutable and must not skip a field that needs dropping or
-// reach into another module's private fields.
+// Why: a destructuring bind (`(a, b) := e`, `(a: x) := e`, `S(a, ..) := e`,
+// `[a, b] := arr`) must be irrefutable and must not skip a field or element
+// that needs dropping or reach into another module's private fields.
 //
-// What: destructure, recordPat, structPat, patBind and poisonPat: E0309
-// with a proven rename, E0305 for a missing field, E0306 for a refutable
-// sub-pattern, E0408 for a non-plain field skipped by `..`, E0204 for
-// another module's struct with private fields.
+// What: destructure, recordPat, arrayPat, structPat, patBind and poisonPat:
+// E0309 with a proven rename, E0305 for a missing field or an element count
+// that is not the array's length, E0306 for a refutable sub-pattern, E0408
+// for a non-plain field skipped by `..`, E0204 for another module's struct
+// with private fields.
 //
 // How: the pattern is matched against the value's type field by field; a
 // struct pattern takes the struct's fields with the type's arguments
-// substituted, and every binding becomes a local of its field's type.
+// substituted, and every binding becomes a local of its field's type. An
+// array pattern binds element i to the i-th name and names every element.
 
 package check
 
 import (
+	"strconv"
+
 	"mk/internal/ast"
 	"mk/internal/diag"
 	"mk/internal/resolve"
@@ -39,6 +43,10 @@ func (u *unit) recordPat(p *ast.RecordPat, t types.TypeID) {
 	if p == nil {
 		return
 	}
+	if p.Elems {
+		u.arrayPat(p, t)
+		return
+	}
 	var fs []dfield
 	var syms []types.FieldDecl
 	tname := u.str(t)
@@ -50,8 +58,11 @@ func (u *unit) recordPat(p *ast.RecordPat, t types.TypeID) {
 		}
 	} else if ok {
 		if u.tab.Kind(t) != types.KRecord {
-			u.err(diag.E0301, s0(p), "a destructure without a type name needs a record, found `"+tname+"`").
+			d := u.err(diag.E0301, s0(p), "a destructure without a type name needs a record, found `"+tname+"`").
 				Text("expected", "a record").Text("found", tname)
+			if u.tab.Kind(t) == types.KArray {
+				d.Alt("take an array apart with `[a, b] := e`")
+			}
 			ok = false
 		} else {
 			for _, f := range u.tab.Get(t).Fields {
@@ -118,6 +129,46 @@ func (u *unit) recordPat(p *ast.RecordPat, t types.TypeID) {
 		if !seen[i] && !u.c.satisfies(u.env, f.t, types.Bound{Kind: types.BoundPlain}, u.x.rec) {
 			u.err(diag.E0408, s0(p), "`..` skips field `"+f.name+"`, which is not Plain").Text("reason", "skipped-field").
 				Text("type", u.str(f.t)).Text("field", f.name)
+		}
+	}
+}
+
+// arrayPat matches an array pattern [a, b] against t: t must be a fixed
+// array of known length (E0301), and the pattern names every element, no
+// more and no fewer (E0305), so each element, linear or not, is bound
+// exactly once.
+func (u *unit) arrayPat(p *ast.RecordPat, t types.TypeID) {
+	if t == types.Poison {
+		u.poisonPat(p)
+		return
+	}
+	tname := u.str(t)
+	ty := u.tab.Get(t)
+	if ty.Kind != types.KArray {
+		u.err(diag.E0301, s0(p), "an array destructure needs a fixed array, found `"+tname+"`").
+			Text("expected", "a fixed array").Text("found", tname)
+		u.poisonPat(p)
+		return
+	}
+	n, known := int64(-1), false
+	if ty.Len.Kind == types.CAValue {
+		n, known = u.c.constInt(ty.Len.Value)
+	}
+	if !known {
+		u.err(diag.E0301, s0(p), "an array destructure needs a length known here, found `"+tname+"`").
+			Text("expected", "an array of known length").Text("found", tname)
+		u.poisonPat(p)
+		return
+	}
+	if int64(len(p.Fields)) != n {
+		u.err(diag.E0305, s0(p), "the destructure names every element of `"+tname+"`").
+			Text("expected", strconv.FormatInt(n, 10)+" names").Text("found", strconv.Itoa(len(p.Fields))+" names")
+		u.poisonPat(p)
+		return
+	}
+	for _, f := range p.Fields {
+		if f != nil && f.Name != nil {
+			u.bindName(f.Name, ty.Elem)
 		}
 	}
 }
