@@ -411,30 +411,34 @@ func TestModuleIsNotAValue(t *testing.T) {
 
 // A bare name in a pattern that a gen line may still declare is judged at
 // Settle: a const it then names is a value test, else the binding is
-// E0207, and Finish reports neither early.
+// E0207, and Finish reports neither early. That holds for a name found
+// nowhere (Q) and for one found past the module scope (the prelude's
+// Format), which a generated const hides.
 func TestPatternNameWaitsForSettle(t *testing.T) {
 	t.Parallel()
-	for _, gen := range []string{"", "const Q = 1\n"} {
-		w := newWorld(t, true)
-		w.add("std.derive", opt{std: true}, "export Eq(g: int)\n")
-		b := w.add("main", opt{noSettle: true}, "import std.derive\n\nstruct User {}\ngen derive.Eq(User)\nF(x: int): int {\n    return match x {\n        Q { 1 }\n        _ { 0 }\n    }\n}\n")
-		if len(b.info.Diags) != 0 {
-			t.Fatalf("Finish reported a pattern name a gen line may declare: %s", b.dump())
+	for _, name := range []string{"Q", "Format"} {
+		for _, gen := range []string{"", "const " + name + " = 1\n"} {
+			w := newWorld(t, true)
+			w.add("std.derive", opt{std: true}, "export Eq(g: int)\n")
+			b := w.add("main", opt{noSettle: true}, "import std.derive\n\nstruct User {}\ngen derive.Eq(User)\nF(x: int): int {\n    return match x {\n        "+name+" { 1 }\n        _ { 0 }\n    }\n}\n")
+			if len(b.info.Diags) != 0 {
+				t.Fatalf("Finish reported a pattern name a gen line may declare: %s", b.dump())
+			}
+			var files []GeneratedFile
+			if gen != "" {
+				files = append(files, b.generate(gen))
+			}
+			b.m.AddGenerated(files)
+			b.settle()
+			if gen == "" {
+				b.want(t, "E0207@7:9")
+				continue
+			}
+			b.want(t)
+			if r := b.ref(name, 0); r.Kind != RefItem || types.ItemID(r.A) != w.item("main."+name).ID {
+				t.Errorf("%s after Settle: %+v\n%s", name, r, b.dump())
+			}
+			noPending(t, b)
 		}
-		var files []GeneratedFile
-		if gen != "" {
-			files = append(files, b.generate(gen))
-		}
-		b.m.AddGenerated(files)
-		b.settle()
-		if gen == "" {
-			b.want(t, "E0207@7:9")
-			continue
-		}
-		b.want(t)
-		if r := b.ref("Q", 0); r.Kind != RefItem || types.ItemID(r.A) != w.item("main.Q").ID {
-			t.Errorf("Q after Settle: %+v\n%s", r, b.dump())
-		}
-		noPending(t, b)
 	}
 }

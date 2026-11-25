@@ -353,16 +353,38 @@ func TestBindingShadowsConstParam(t *testing.T) {
 	}
 }
 
-// A destructure cannot fail: a binding of one, nested or not, keeps a
-// local's E0207 with its proven recase.
+// A destructure cannot fail: a binding of one, nested or not, in a
+// statement or a loop head, keeps a local's E0207 with its proven recase,
+// and an unused one in a loop head keeps E0208's hint to write `_`.
 func TestDestructureBindingKeepsRecase(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, false)
-	b := w.add("main", opt{}, "struct P { x: int\n y: int }\nF(p: P, q: (a: int, b: P)): int {\n    P(X, y) := p\n    (a, b: P(x: Z, y: _)) := q\n    return X + y + a + Z\n}\n")
-	b.want(t, "E0207@4:7", "E0207@5:17")
+	b := w.add("main", opt{}, "struct P { x: int\n y: int }\nF(p: P, q: (a: int, b: P), rs: [](c: int, d: int)): int {\n    P(X, y) := p\n    (a, b: P(x: Z, y: _)) := q\n    var s := X + y + a + Z\n    for (c, d: W) in rs {\n        s += c + W\n    }\n    for (c, d: e) in rs {\n        s += c\n    }\n    return s\n}\n")
+	b.want(t, "E0207@4:7", "E0207@5:17", "E0207@7:16", "E0208@10:16")
 	for _, d := range b.info.Diags {
+		if d.Code == diag.E0208 {
+			if len(d.Alternatives) == 0 || !strings.Contains(d.Alternatives[0], "`_`") {
+				t.Errorf("%s: no hint to write `_`: %v", d.Message, d.Alternatives)
+			}
+			continue
+		}
 		if len(d.Fixes) == 0 || d.Fixes[0].Class != diag.Proven {
 			t.Errorf("%s: no proven recase", d.Message)
+		}
+	}
+}
+
+// An `if x := e` binding always binds, so it takes a local's rules: E0207
+// with the proven recase, and over a const generic E0206 with the proven
+// rename.
+func TestIfBindingKeepsCaseRule(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, false)
+	b := w.add("main", opt{}, "F(o: ?int): int {\n    if X := o {\n        return X\n    }\n    return 0\n}\nG[const n: int](o: ?int): int {\n    if n := o {\n        return n\n    }\n    return 0\n}\n")
+	b.want(t, "E0207@2:8", "E0206@8:8")
+	for _, d := range b.info.Diags {
+		if len(d.Fixes) == 0 || d.Fixes[0].Class != diag.Proven {
+			t.Errorf("%s: no proven fix", d.Message)
 		}
 	}
 }

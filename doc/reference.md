@@ -4098,7 +4098,7 @@ A name in a pattern matches anything and binds the value there, unless it names 
 
 - A binding has the type of the value it stands for. At the top of an arm, `other` has the scrutinee's whole type.
 - A binding must be used (E0208). Write `_` for a part you do not need, as in `.Move(dx: _)`.
-- A binding is `snake_case`. A name in a `match` that is not, and names no const or error in scope, is E0207, with no fix applied for you: it is a variant without its dot, a misspelled const or error, or another module's written bare, and as a binding its arm would match every value. In a destructure, which cannot fail, it is the plain case rule of a local, and `mk fix` recases it.
+- A binding is `snake_case`. A name in a `match` that is not, and names no const or error in scope, is E0207, with no fix applied for you: it is a variant without its dot, a misspelled const or error, or another module's written bare, and as a binding its arm would match every value. In a destructure or a loop head, which cannot fail, it is the plain case rule of a local, as for an `if x := e` binding, and `mk fix` recases it.
 - A binding cannot shadow a local, a parameter or a const generic (E0206). `N { ... }` in a function generic over `const N` would bind, not compare: compare with `if x == N`.
 
 ```mk

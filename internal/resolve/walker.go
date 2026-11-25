@@ -187,15 +187,17 @@ func (w *walker) release(mark int) { w.locals = w.locals[:mark] }
 
 // declare adds a local to the current body. The comparison
 // with every visible local is folded; an equal one is E0206 at the new
-// declaration, which is still declared so its uses resolve to it.
+// declaration, which is still declared so its uses resolve to it. Every
+// name it declares always binds, an `if x := e` binding included, so each
+// takes the case rule here.
 func (w *walker) declare(id *ast.Ident, kind LocalKind, isVar bool, stmt ast.Stmt) LocalID {
-	return w.declareLocal(id, kind, isVar, stmt, kind == LocalPattern)
+	return w.declareLocal(id, kind, isVar, stmt, false)
 }
 
-// declareLocal is declare; pattern marks a binding of a refutable pattern,
-// whose case namePattern judges (patternCase). Its E0206 over a const
-// generic, or under a name that is not snake_case, offers no rename:
-// renaming it would keep an arm that matches every value.
+// declareLocal is declare; pattern marks a binding of a refutable pattern
+// (declarePattern), whose case namePattern judges (patternCase). Its E0206
+// over a const generic, or under a name that is not snake_case, offers no
+// rename: renaming it would keep an arm that matches every value.
 func (w *walker) declareLocal(id *ast.Ident, kind LocalKind, isVar bool, stmt ast.Stmt, pattern bool) LocalID {
 	if id == nil || !declarable(id.Name) || len(w.bodies) == 0 {
 		// No body frame: a binding written where no body is, such as an

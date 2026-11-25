@@ -2,15 +2,17 @@
 // and each needs its own scoping rule before check can type it.
 //
 // What: the walker's statement and pattern methods: block, stmt, ifStmt,
-// cond, forStmt, labelUse, recordPat, pattern, patFields, declarePattern
+// cond, forStmt, labelUse, recordPat, pattern, patFields, declarePattern,
 // namePattern and patternCase.
 //
 // How: one switch per statement kind. A declaration resolves its initializer
 // before it declares its names, so x := x + 1 reads an outer x. A bare name
 // in a pattern is an error test, a value test (a const, true, false), E0101
 // or a fresh binding, decided by what it names; in an alternative it never
-// binds. A binding outside a destructure must be snake_case, so a name in a
-// const's place that is no const never quietly matches every value.
+// binds. Every binding is snake_case: in a pattern that can fail, a name that
+// is not is E0207 with no recase, so a name in a const's place that is no
+// const never quietly matches every value; a destructure's, a loop head's
+// included, takes a local's recase.
 
 package resolve
 
@@ -205,7 +207,12 @@ func (w *walker) forStmt(s *ast.ForStmt) {
 				if f.Pat == nil {
 					w.declare(f.Name, LocalLoop, false, nil)
 				} else {
+					// A loop head cannot fail: its sub-patterns bind as
+					// a destructure's do.
+					outer := w.destr
+					w.destr = &destrCtx{kind: LocalLoop}
 					w.pattern(f.Pat, false)
+					w.destr = outer
 				}
 			}
 		}
@@ -258,28 +265,30 @@ func (w *walker) recordPat(p *ast.RecordPat, isVar bool, s ast.Stmt) {
 			// A labeled field's sub-pattern binds, and `var` sets Var on
 			// every binding of the statement, nested ones included.
 			outer := w.destr
-			w.destr = &destrCtx{isVar: isVar, stmt: s}
+			w.destr = &destrCtx{isVar: isVar, stmt: s, kind: LocalDestr}
 			w.pattern(f.Pat, false)
 			w.destr = outer
 		}
 	}
 }
 
-// destrCtx is the destructuring statement whose sub-patterns are being
-// walked: their bindings are LocalDestr and carry the statement's `var`.
+// destrCtx is the destructure whose sub-patterns are being walked: a
+// statement's, whose bindings are LocalDestr and carry its `var`, or a loop
+// head's, whose bindings are LocalLoop.
 type destrCtx struct {
 	isVar bool
 	stmt  ast.Stmt
+	kind  LocalKind
 }
 
 // declarePattern declares a binding of a pattern: LocalPattern in a match,
-// if or for, LocalDestr with the statement's `var` inside a destructure. A
+// the destructure's kind inside a destructure statement or a loop head. A
 // destructure cannot fail, so its bindings take a local's case rule; a
 // refutable pattern's name is namePattern's to judge (patternCase), and a
 // field written alone is check's (E0309).
 func (w *walker) declarePattern(id *ast.Ident) {
 	if w.destr != nil {
-		w.declareLocal(id, LocalDestr, w.destr.isVar, w.destr.stmt, false)
+		w.declareLocal(id, w.destr.kind, w.destr.isVar, w.destr.stmt, false)
 		return
 	}
 	w.declareLocal(id, LocalPattern, false, nil, true)
@@ -383,18 +392,19 @@ func (w *walker) namePattern(p *ast.NamePattern, inAlt bool) {
 	w.declarePattern(id)
 	w.fs.setRef(p.ID(), w.fs.fi.Refs[id.ID()])
 	if w.destr == nil && len(w.t.diags) == shadows {
-		w.patternCase(id, ok)
+		w.patternCase(id, ok && h.step < 4)
 	}
 }
 
 // patternCase is the E0207 of a refutable pattern's binding that is not
 // snake_case: a name in a const's place that names no const or error in
 // scope (a misspelled one, another module's written bare, a variant without
-// its dot)
-// would bind and match every value. No recase is proven, since a recased
-// binding still matches everything. In a module whose gen lines are still
-// unsettled, a name found nowhere may yet be generated: Settle reports it
-// then (casePend), or re-resolves the item when the name has appeared.
+// its dot) would bind and match every value. No recase is proven, since a
+// recased binding still matches everything. found reports a name found
+// within the module scope, which no generated name can hide. In a module
+// whose gen lines are still unsettled, any other name may yet be a
+// generated const: Settle reports it then (casePend), or re-resolves the
+// item when the name has appeared.
 func (w *walker) patternCase(id *ast.Ident, found bool) {
 	name := w.m.str(id.Name)
 	if IsSnake(name) {
