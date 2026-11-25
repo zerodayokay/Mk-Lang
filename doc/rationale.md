@@ -44,7 +44,7 @@ So a signature shows whether a function can allocate. A function can allocate on
 
 ### Why no null, and no zero values?
 
-A reference is never null. A value that may be absent is `?T`, and the compiler makes you handle `none`. A local must be assigned before it is read, so there is no zero value to forget about. Uninitialized memory exists only in `unsafe` code.
+A reference is never null. A value that may be absent is `?T`, and the compiler makes you handle `none`. A local must be assigned before it is read, so there is no zero value to forget about. Uninitialized memory exists only in `unsafe` code. Zeroing is a call you write, `mem.Zeroed[T]()`, and only for a type whose all-zero bytes are a value: a C struct of many fields, never a reference or a `str`.
 
 ## Errors
 

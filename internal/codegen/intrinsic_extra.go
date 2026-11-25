@@ -5,7 +5,7 @@
 //
 // What: extraSigs and extraLowerings, registered in init, and one lowering per
 // intrinsic: std.math's overflow, wrapping, saturating and wide forms,
-// std.mem's OffsetOf and Prefetch, std.runtime's Cycles, std.atomic's
+// std.mem's OffsetOf, Prefetch and Zeroed, std.runtime's Cycles, std.atomic's
 // Pause, and std.raw's FnFromAddr, AtomicCopy and AtomicFill.
 //
 // How: each key is registered with the signature its lowering assumes
@@ -24,6 +24,8 @@
 //   - OffsetOf: the layout's offset as a constant (check has refused a
 //     field a closed T lacks).
 //   - Prefetch: llvm.prefetch (read or write by the argument, locality 3).
+//   - Zeroed: llvm.memset of the destination's size to 0 (check has refused
+//     a T that is not zero-valid); nothing for a zero-size T.
 //   - Cycles: llvm.readcyclecounter. Pause: `pause` (x86_64), `yield`
 //     (aarch64), as inline asm so no feature is needed.
 //   - FnFromAddr: inttoptr.
@@ -62,6 +64,7 @@ var extraSigs = map[string]string{
 	"std.math.SubBorrow":   "(u64, u64, u64): (diff: u64, borrow: u64)",
 	"std.mem.OffsetOf":     "[T](str): int",
 	"std.mem.Prefetch":     "[T](&T, bool)",
+	"std.mem.Zeroed":       "[T](): T",
 	"std.runtime.Cold":     "()",
 	"std.runtime.Cycles":   "(): u64",
 	"std.runtime.Likely":   "(bool): bool",
@@ -91,6 +94,7 @@ var extraLowerings = map[string]targetLowering{
 	},
 	"std.mem.OffsetOf":   (*fnGen).offsetOf,
 	"std.mem.Prefetch":   (*fnGen).prefetch,
+	"std.mem.Zeroed":     (*fnGen).zeroed,
 	"std.runtime.Cold":   func(fg *fnGen, t *mir.Terminator, _ []value) { fg.targetDone(t) },
 	"std.runtime.Cycles": (*fnGen).cycles,
 	"std.runtime.Likely": func(fg *fnGen, t *mir.Terminator, a []value) {
@@ -325,6 +329,18 @@ func (fg *fnGen) prefetch(t *mir.Terminator, args []value) {
 	fg.targetDone(t)
 	fg.cur = rb
 	emit(0)
+	fg.targetDone(t)
+}
+
+// zeroed is Zeroed[T](): the destination's bytes set to 0.
+func (fg *fnGen) zeroed(t *mir.Terminator, _ []value) {
+	g := fg.g
+	m := g.m
+	if size, _ := g.sizeAlign(fg.b.PlaceType(t.Dest)); size > 0 {
+		d, _ := fg.placeAddr(t.Dest)
+		fg.cur.CallFunc(m.IntrinsicFn("memset", m.Ptr(), m.I(64)),
+			[]llvm.Value{d.v, m.ConstInt(m.I(8), 0), m.ConstInt(m.I(64), size), m.ConstInt(m.I(1), 0)})
+	}
 	fg.targetDone(t)
 }
 

@@ -72,6 +72,8 @@ var corpusExcepted = map[string]string{
 	"codes/E0704_math_integer.mk":                          "math.Integer is std.math's, which this harness's prelude does not load; mk corpus judges it",
 	"codes/E0706_atomic_unordered.mk":                      "atomic.Unordered and the CanX clauses are std.atomic's, read through the evaluator; this harness has neither (mk corpus judges it)",
 	"codes/E0701_offsetof_generic.mk":                      "mem.OffsetOf is std.mem's, which this harness's prelude does not load; mk corpus judges it",
+	"codes/E0701_mem_zeroed.mk":                            "mem.Zeroed is std.mem's, which this harness's prelude does not load; mk corpus judges it",
+	"reference.md: return mem.Zeroed[Named]() // <- E0701": "mem.Zeroed is std.mem's, which this harness's prelude does not load; mk corpus judges it",
 	"codes/E0705_offsetof.mk":                              "mem.OffsetOf is std.mem's, which this harness's prelude does not load; mk corpus judges it",
 	"codes/E0901_divwide.mk":                               "math.DivWide's panics are evaluation failures, which need the evaluator; this harness has none (mk corpus judges it)",
 	"codes/E0901_offsetof.mk":                              "mem.OffsetOf's E0901 is an evaluation failure, which needs the evaluator; this harness has none (mk corpus judges it)",

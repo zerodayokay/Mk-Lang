@@ -4,12 +4,13 @@
 // misbehave.
 //
 // What: implicitBounds and atomicTypeBound (the E0701 of a call, fn value or
-// type expression), the recognizers (arenaSlice, poolFree, readUnaligned,
+// type expression), the recognizers (arenaSlice, memZeroed, poolFree, readUnaligned,
 // atomicType, atomicFunc, atomicArith), and the predicates zeroValid and
 // integerArg.
 //
 // How: `Arena.Slice[T]` and `Arena.SliceAligned[T]` zero-fill their
-// elements, so `T` must be zero-valid; `raw.Atomic[T]` and `atomic.Atomic[T]`
+// elements, and `std.mem.Zeroed[T]` is a T of zero bytes, so `T` must be
+// zero-valid; `raw.Atomic[T]` and `atomic.Atomic[T]`
 // need an integer `T` of 1, 2, 4 or 8 bytes or a raw pointer, and their
 // arithmetic (Add, AddOrd to XorOrd, FetchAdd to FetchXor) an integer;
 // `raw.ReadUnaligned[T]` an integer `T`; `Pool[T].Free` a T that is not
@@ -31,6 +32,20 @@ func (c *Checker) arenaSlice(it types.ItemID) bool {
 	}
 	item := c.cfg.Items.Get(it)
 	return item.Owner == c.known.Arena && item.Kind == types.KindFunc && (c.cfg.Interner.Str(item.Name) == "Slice" || c.cfg.Interner.Str(item.Name) == "SliceAligned")
+}
+
+// memZeroed reports whether item it is the free function `std.mem.Zeroed`,
+// whose result is all zero bytes.
+func (c *Checker) memZeroed(it types.ItemID) bool {
+	if it == types.NoItem {
+		return false
+	}
+	item := c.cfg.Items.Get(it)
+	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType || c.cfg.Interner.Str(item.Name) != "Zeroed" {
+		return false
+	}
+	mod := c.cfg.Items.Module(item.Module)
+	return mod != nil && mod.Std && mod.Path == "std.mem"
 }
 
 // poolFree reports whether item it is `std.mem.Pool[T].Free`, which drops
@@ -214,7 +229,7 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 	case c.releaseRowOf(item) != nil: // the release bounds (freebound.go)
 		u.releaseBound(c.releaseRowOf(item), item, at, g)
 		return
-	case c.arenaSlice(item):
+	case c.arenaSlice(item) || c.memZeroed(item):
 		if len(g) == 0 || g[len(g)-1].IsConst {
 			return
 		}
@@ -223,7 +238,11 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 			return
 		}
 		ts := u.str(t)
-		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is not zero-valid: `Arena."+c.cfg.Interner.Str(c.cfg.Items.Get(item).Name)+"` zero-fills its elements").
+		why := "`mem.Zeroed` makes a value of zero bytes"
+		if c.arenaSlice(item) {
+			why = "`Arena." + c.cfg.Interner.Str(c.cfg.Items.Get(item).Name) + "` zero-fills its elements"
+		}
+		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is not zero-valid: "+why).
 			Text("param", "T").Text("bound", boundZeroValid).Text("type", ts))
 		return
 	case c.readUnaligned(item):
