@@ -120,7 +120,8 @@ func TestGenCodes(t *testing.T) {
 // importer's `out.Made`; and, as an E0905, another gen line's output. The
 // E0903 (types) is reported with them, as the root of each, and an E0201
 // cites the gen line. A member miss on a module whose lines all ran is not
-// linked. With the module cache on, the warm report equals the cold one.
+// linked, nor is a label, which no gen line declares. With the module cache
+// on, the warm report equals the cold one.
 func TestGenFailRootOfUnknownNames(t *testing.T) {
 	const gn = "export Make(g: mut Gen) {\n    g.Fail(\"planted\")\n    made := g.Ident(\"Made\")\n" +
 		"    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n\n" +
@@ -147,6 +148,9 @@ func TestGenFailRootOfUnknownNames(t *testing.T) {
 		{"member miss elsewhere", map[string]string{"other/other.mk": other,
 			"out/use.mk": "import other\n\nexport UseTypo(): int {\n    return other.Typo\n}\n"},
 			[]string{"out/use.mk:4:18:E0201"}, false},
+		{"local name", map[string]string{"out/use.mk": "export UseMade(): int {\n    outer: for i in 0..3 {\n" +
+			"        if i == 1 {\n            break outr\n        }\n    }\n    return 1\n}\n"},
+			[]string{"out/use.mk:4:19:E0201"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			files := map[string]string{"pkg.mk": libManifest(), "gn/gn.mk": gn, "out/out.mk": "import gn\n\ngen gn.Make()\n"}

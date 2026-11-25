@@ -160,12 +160,16 @@ func (m *modNode) genWrap(ds []*diag.Diagnostic) []*diag.Diagnostic {
 // its consequence, so the report holds that error whatever its phase
 // (diag.Order); a line of m whose run ended in poison is only cited, since
 // its cause (a type the generator read and the stage-4 view could not see)
-// may have no diagnostic of its own.
+// may have no diagnostic of its own. A label, type parameter or parameter
+// is local to its function, so no gen line declares one.
 func (m *modNode) noteGen(d *diag.Diagnostic) {
 	if d.Code != diag.E0201 {
 		return
 	}
 	if _, ok := d.FactValue("gen_line"); ok {
+		return
+	}
+	if e, ok := d.FactValue("expected"); ok && (e.Str == "label" || e.Str == "type parameter" || e.Str == "parameter") {
 		return
 	}
 	owner, at := m, "this module"
