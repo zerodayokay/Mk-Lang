@@ -31,3 +31,7 @@ Operator(): f32 {
 OperatorToInt(): i64 {
     return i64(Big * Big) // <- E0303
 }
+
+const Early = f32(Late) // <- E0303
+
+const Late: f64 = 0.1
