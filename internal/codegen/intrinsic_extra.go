@@ -334,12 +334,9 @@ func (fg *fnGen) prefetch(t *mir.Terminator, args []value) {
 
 // zeroed is Zeroed[T](): the destination's bytes set to 0.
 func (fg *fnGen) zeroed(t *mir.Terminator, _ []value) {
-	g := fg.g
-	m := g.m
-	if size, _ := g.sizeAlign(fg.b.PlaceType(t.Dest)); size > 0 {
+	if size, _ := fg.g.sizeAlign(fg.b.PlaceType(t.Dest)); size > 0 {
 		d, _ := fg.placeAddr(t.Dest)
-		fg.cur.CallFunc(m.IntrinsicFn("memset", m.Ptr(), m.I(64)),
-			[]llvm.Value{d.v, m.ConstInt(m.I(8), 0), m.ConstInt(m.I(64), size), m.ConstInt(m.I(1), 0)})
+		fg.memset(d, 0, size)
 	}
 	fg.targetDone(t)
 }

@@ -1951,7 +1951,7 @@ Names(a: &Arena): OutOfMemory!int {
 }
 ```
 
-`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
+`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is its result, so it is not an error union either: `mem.Zeroed[E!T]()` is E0701, and `mem.Zeroed[T]()` makes the value. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
 
 ```mk
 // verdict: ok
@@ -2063,7 +2063,7 @@ export Main(sys: &System): WriteError!void {
 | E0507 | mut-through-shared | Writing an element through a `[]T` ([slices](#slices-t-and-mut-t)) |
 | E0508 | mut-of-immutable | `mut x` of a local that is not `var` ([references](#references-t-and-mut-t)) |
 | E0608 | flow-mismatch | A function given as a `fn` type whose clauses do not cover the function's ([function types](#function-types)) |
-| E0701 | bound-unmet | A unique or linear type where `Plain` is needed; `Arena.Slice` or `mem.Zeroed` of a type that is not zero-valid |
+| E0701 | bound-unmet | A unique or linear type where `Plain` is needed; `Arena.Slice` or `mem.Zeroed` of a type that is not zero-valid, or `mem.Zeroed` of an error union |
 | E0704 | impl-conflict | A method through an alias of another module's type ([aliases](#type-aliases)) |
 | E0705 | not-const | An array length that is not a compile-time constant ([arrays](#arrays-nt)) |
 | E0706 | requires-failed | An enum, or a struct with no `Format`, in a format string ([enums](#enum-types)) |
@@ -9760,7 +9760,7 @@ How C declarations appear in Mk:
 - A struct is made by naming every field, or zeroed whole as C's `= {0}` does with [`mem.Zeroed`](#zero-valid-types): `mem.Zeroed[geom.GeomPoint]()`. A C struct's fields (integers, floats, raw pointers, `?fn`, arrays, nested structs, a union's bytes, bitfield units) are all zero-valid, so it needs no `unsafe`.
 - `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
 - `headers` are paths from the package root. `defines` are macros the headers are read with, `NAME` or `NAME=value`.
-- `include_dirs` are directories of the package searched for headers after the package root, for a library whose headers include each other by a name under their own include directory: `pkg.CImport(name: "z", headers: ["vendor/z/include/z.h"], defines: [], macros: [], vendor: false, include_dirs: ["vendor/z/include"])`, where `z.h` has `#include "zconf.h"`. Each is a relative path with `/` separators inside the package, other than the root itself (E0202 otherwise). The field may be left out.
+- `include_dirs` are directories of the package searched for headers after the package root, for a library whose headers include each other by a name under their own include directory: `pkg.CImport(name: "z", headers: ["third_party/z/include/z.h"], defines: [], macros: [], vendor: false, include_dirs: ["third_party/z/include"])`, where `z.h` has `#include "zconf.h"`. Each is a relative path with `/` separators inside the package, other than the root itself (E0202 otherwise). The field may be left out.
 - All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them. So their `include_dirs` form one search path, in the order the imports list them, and the shim and the package's C sources are compiled with the same path.
 - `mk check` runs Clang to translate the C imports, with a minimal environment. It compiles no C source.
 - The bindings are made per target. `mk check --all-targets` translates them for both `x86_64-windows` and `x86_64-linux` and reports an item the package uses whose API differs (E0213). A constant's value is not part of the API. It needs each target's system headers, from `MK_SYSROOT_<target>`, or `vendor: true` to read the committed `gen/<target>/c/` files instead. Without either, it is E0213, `reason: no-sysroot`.

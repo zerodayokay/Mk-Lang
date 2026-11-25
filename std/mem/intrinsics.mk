@@ -10,8 +10,9 @@
 // How: each is bodiless, so check marks it an intrinsic: codegen lowers it
 // by its stable key and the evaluator runs it
 // (internal/eval/intrinsic_machine.go). Each is safe and allocates nothing;
-// Zeroed's T must be zero-valid, an implicit bound check judges (E0701), so
-// no all-zero value of it can break a rule of the language.
+// Zeroed's T must be zero-valid and not an error union, implicit bounds
+// check judges (E0701), so no all-zero value of it can break a rule of the
+// language.
 
 /// The byte offset of the field named field in T's layout, as a
 /// compile-time value; a field T lacks is E0901. It allocates nothing.
@@ -22,6 +23,7 @@ export OffsetOf[T](field: str): int
 export Prefetch[T](p: &T, write: bool)
 /// A T whose bytes are all zero: every integer and float 0, every bool
 /// false, every raw pointer null, every optional none. T must be zero-valid
-/// (E0701 otherwise): a C import's struct of any size, or an array or struct
-/// of such parts. O(size of T); allocates nothing.
+/// and not an error union (E0701 otherwise): a C import's struct of any
+/// size, or an array or struct of such parts. O(size of T); allocates
+/// nothing.
 export Zeroed[T](): T

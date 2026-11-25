@@ -153,7 +153,7 @@ $ mk run layout.mk
 size at 4, next at 8, 16 bytes
 ```
 
-`Zeroed[T]()` is a `T` whose bytes are all zero: every integer and float 0, every `bool` false, every raw pointer null, every optional `none`. It fills a record of many fields without naming each one, as C's `= {0}` does, and is the way to start a C import's struct ([C imports](../reference.md#c-imports)). `T` must be [zero-valid](../reference.md#zero-valid-types), or the call is E0701, so it is safe: a `str`, slice, reference, `fn` value or struct with an `invariant` cannot be zero. O(size of `T`); allocates nothing; also at compile time.
+`Zeroed[T]()` is a `T` whose bytes are all zero: every integer and float 0, every `bool` false, every raw pointer null, every optional `none`. It fills a record of many fields without naming each one, as C's `= {0}` does, and is the way to start a C import's struct ([C imports](../reference.md#c-imports)). `T` must be [zero-valid](../reference.md#zero-valid-types), or the call is E0701, so it is safe: a `str`, slice, reference, `fn` value or struct with an `invariant` cannot be zero. `T` is the result, so it is not an error union (E0701): zero the value type instead. O(size of `T`); allocates nothing; also at compile time.
 
 ```mk
 // verdict: ok
@@ -1085,7 +1085,8 @@ export Zeroed[T](): T
 
 A T whose bytes are all zero: every integer and float 0, every bool
 false, every raw pointer null, every optional none. T must be zero-valid
-(E0701 otherwise): a C import's struct of any size, or an array or struct
-of such parts. O(size of T); allocates nothing.
+and not an error union (E0701 otherwise): a C import's struct of any
+size, or an array or struct of such parts. O(size of T); allocates
+nothing.
 
 <!-- api:end -->

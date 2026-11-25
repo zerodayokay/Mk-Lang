@@ -4,13 +4,14 @@
 // misbehave.
 //
 // What: implicitBounds and atomicTypeBound (the E0701 of a call, fn value or
-// type expression), the recognizers (arenaSlice, memZeroed, poolFree, readUnaligned,
-// atomicType, atomicFunc, atomicArith), and the predicates zeroValid and
-// integerArg.
+// type expression), the recognizers (arenaSlice, memZeroed, poolFree,
+// readUnaligned, atomicType, atomicFunc, atomicArith), and the predicates
+// zeroValid and integerArg.
 //
 // How: `Arena.Slice[T]` and `Arena.SliceAligned[T]` zero-fill their
 // elements, and `std.mem.Zeroed[T]` is a T of zero bytes, so `T` must be
-// zero-valid; `raw.Atomic[T]` and `atomic.Atomic[T]`
+// zero-valid; Zeroed's T is its result, so it is also not an error union
+// (whose call would read as fallible); `raw.Atomic[T]` and `atomic.Atomic[T]`
 // need an integer `T` of 1, 2, 4 or 8 bytes or a raw pointer, and their
 // arithmetic (Add, AddOrd to XorOrd, FetchAdd to FetchXor) an integer;
 // `raw.ReadUnaligned[T]` an integer `T`; `Pool[T].Free` a T that is not
@@ -169,10 +170,11 @@ func (c *Checker) takesOwner(sig *types.Signature, it types.ItemID) bool {
 
 // Bound texts of the implicit bounds (the E0701 `bound` fact).
 const (
-	boundZeroValid = "zero-valid"
-	boundInteger   = "integer"
-	boundAtomicInt = "integer of 1, 2, 4 or 8 bytes or a raw pointer"
-	boundNotLinear = "not linear"
+	boundZeroValid   = "zero-valid"
+	boundInteger     = "integer"
+	boundAtomicInt   = "integer of 1, 2, 4 or 8 bytes or a raw pointer"
+	boundNotLinear   = "not linear"
+	boundNotErrUnion = "not an error union"
 )
 
 // implicitBounds is the E0701 of an instance inst of item (a call, or a fn
@@ -234,7 +236,18 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 			return
 		}
 		t = g[len(g)-1].Type
-		if t == types.Poison || c.zeroValid(u.env, t, u.x.rec, map[types.TypeID]bool{}) {
+		if t == types.Poison {
+			return
+		}
+		if n := narrowed(c.cfg.Types, u.env, t); c.memZeroed(item) && c.cfg.Types.Kind(n) == types.KErrorUnion {
+			// The call's result is its T: an error union there would make a
+			// call whose signature has no errors read as fallible.
+			ts := u.str(t)
+			u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is an error union, and `mem.Zeroed` never fails: zero its value type, `"+u.str(c.cfg.Types.Get(n).Elem)+"`").
+				Text("param", "T").Text("bound", boundNotErrUnion).Text("type", ts))
+			return
+		}
+		if c.zeroValid(u.env, t, u.x.rec, map[types.TypeID]bool{}) {
 			return
 		}
 		ts := u.str(t)
