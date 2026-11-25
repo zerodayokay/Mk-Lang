@@ -186,7 +186,7 @@ On Linux a drive letter and `\` are ordinary bytes: `C:`, `C:\` and `C:a` are ea
 | Look for a value | `Has`, `Index` |
 | Sort and search | `Sort`, `SortStable`, `SortStableInPlace`, `Search` |
 | Cut into views | `SplitAt`, `GetPair`, `Chunks`, `ChunksMut` |
-| Grow | `List[T].New(a)`, `HeapList[T].New(a)`, then `Push`, `Insert`, `Pop`, `Remove`, `Clear`; `List.Truncate` |
+| Grow | `List[T].New(a)`, `HeapList[T].New(a)`, then `Push`, `Insert`, `Pop`, `Remove`, `Clear`; `List.Truncate`, `List.Resize` |
 | Exchange places | `Swap(a, b)`, `Replace(dst, x)` |
 
 - `Len` is O(1). `Get` and `GetMut` return `none` out of range and never panic; indexing `xs[i]` out of range panics (code 2).
@@ -263,10 +263,27 @@ A `List[T]` is a growable array in an arena; `HeapList[T]` is its linear heap fo
 - `New` allocates nothing until the first `Push`. A growth takes the capacity to the largest of 4, twice the old capacity, and what is needed. In an arena it grows in place when the buffer is the arena's last block, and otherwise leaves the old buffer to the arena.
 - `Push` is amortized O(1). `Pop` is O(1). `Insert(i, x)` and `Remove(i)` are O(Len() - i) and panic (code 2) out of range; `Insert` checks before it grows.
 - `List.Truncate(n)` keeps the first `n` elements; an `n` at or above `Len()` changes nothing. It panics (code 2) for a negative `n`. `HeapList` has no `Truncate`.
+- `List.Resize(n, x)` makes the length `n`: it keeps the first `n` elements and appends copies of `x`, growing at most once. `T` must be plain (E0701 otherwise). It panics (code 2) for a negative `n`. It is how a body generic in a plain `T` fills a list with one value: there a second `Push(x)` of the same `x` is E0604, since it would store `x` through the copies already in the list, and a plain `T` may hold a `&Cell` that `Push`'s `x into self` lets it write.
 - `Clear` empties the list and keeps its capacity.
 - `List.Done()` ends the list and returns a `mut []T` that lives as long as the arena.
 - `HeapList.Extend(a, xs)` copies a plain `T` (E0701 otherwise), grows at most once, and leaves the list unchanged on `OutOfMemory`.
 - A list prints as `[a, b, c]`.
+
+```mk
+// verdict: ok
+// Resets l to n copies of val, for any plain T: one Resize stores val once.
+Refill[T: Plain](l: mut List[T], n: int, val: T into l): OutOfMemory!void {
+    l.Clear()
+    try l.Resize(n, val)
+}
+
+export Main(sys: &System): OutOfMemory!void {
+    var words := List[u64].New(sys.arena)
+    try Refill(mut words, 4, 0)
+    var names := List[str].New(sys.arena)
+    try Refill(mut names, 2, "none")
+}
+```
 
 ### Swap and Replace
 
@@ -416,7 +433,7 @@ So a linear value is never dropped behind your back: either the call refuses to 
 | Function | Needs |
 |---|---|
 | `Has`, `Index` | `T: Eq` |
-| `Fill`, `CopyFrom`, `HeapList.Extend` | `T: Plain` |
+| `Fill`, `CopyFrom`, `HeapList.Extend`, `List.Resize` | `T: Plain` |
 | `Arena.Slice[T]`, `Arena.SliceAligned[T]` | A zero-valid `T`: its all-zero bytes are a value of it. Both fill their elements with zeros |
 | `Free`, `Set`, `Ensure`, `Replace`, `Remove` and others | The rules above |
 
@@ -2762,6 +2779,25 @@ export List[T].Remove(mut self, i: int): T
 
 Removes and returns element i, keeping the order of the rest. Panics
 (code 2) unless 0 <= i < Len(). O(Len() - i); allocates nothing.
+
+### `List.Resize`
+
+```
+export List[T].Resize(mut self, n: int, x: T into self): OutOfMemory!void
+```
+
+- Errors: OutOfMemory
+
+Makes the length n: keeps the first n elements and appends copies of x
+up to n, growing at most once. The elements are copies, so T must be
+plain: a call with any other T is E0701. The call stores x once, so a
+body generic in T can fill a list with one value; there a second Push of
+the same value is E0604, since it would store it through the copies
+already in the list.
+Panics (code 2) when n < 0. OutOfMemory when the buffer cannot grow, and
+then the list is unchanged. O(n - Len()) for n above Len(), else O(1),
+plus a copy of Len() elements when the buffer grows; growth allocates
+from the arena.
 
 ### `List.Truncate`
 

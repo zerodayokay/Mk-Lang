@@ -200,7 +200,7 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` "+why+": `Pool.Free` drops the value").
 			Text("param", "T").Text("bound", boundNotLinear).Text("type", ts))
 		return
-	case c.heapListExtend(c.cfg.Items.Get(item)): // T: Plain, the elements are copied
+	case c.listCopies(c.cfg.Items.Get(item)): // T: Plain, the elements are copied
 		d, ok := c.declOfItem(c.cfg.Items.Get(item)).(*types.FuncDecl)
 		if !ok || len(g) == 0 || g[0].IsConst || len(d.Sig.Generics) == 0 {
 			return
