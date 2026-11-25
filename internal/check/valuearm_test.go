@@ -40,6 +40,13 @@ func TestArmShapes(t *testing.T) {
 		{"all arms return", "F(c: bool): int {\n\tx := if c { return 1 } else { return 2 }\n}\n", ""},
 		{"break in a loop", "F(c: bool): int {\n\tvar n := 0\n\tfor {\n\t\tn = if c { break } else { n + 1 }\n\t}\n\treturn n\n}\n", ""},
 		{"if bind", "F(o: ?int): int {\n\treturn if y := o { y } else { 0 }\n}\n", ""},
+		{"binary operand adapts to the other side", "F(c: bool, n: i32): i32 {\n\treturn n + if c { 1 } else { 2 }\n}\n", ""},
+		{"operand with no expected type", "F(c: bool): int {\n\tx := (if c { 1 } else { 2 }) * 3\n\treturn x\n}\n", ""},
+		{"match operand", "F(n: int): int {\n\treturn 1 + match n {\n\t\t0 { 10 }\n\t\t_ { 20 }\n\t}\n}\n", ""},
+		{"index", "F(c: bool, xs: []int): int {\n\treturn xs[if c { 0 } else { 1 }]\n}\n", ""},
+		{"condition", "F(c: bool, n: int): int {\n\tif n == if c { 1 } else { 2 } {\n\t\treturn 1\n\t}\n\treturn 0\n}\n", ""},
+		{"operand without else", "F(c: bool): int {\n\treturn 1 + if c { 1 }\n}\n", "E0311@2:13"},
+		{"operand arms disagree", "F(c: bool, n: i32, m: i64): i32 {\n\treturn n + if c { n } else { m }\n}\n", "E0301@2:31"},
 	})
 }
 

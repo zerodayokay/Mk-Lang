@@ -212,10 +212,12 @@ func scan(text string, toks []ast.Token) ([]item, map[int]bool) {
 }
 
 // operandEnd reports whether a token of kind k (already classified) ends an
-// operand, so that a following - + * & ! is binary.
+// operand, so that a following - + * & ! is binary. A } on the same line
+// ends one: an if or match used as an operand (`match n { .. } + 1`); a
+// block that ends a statement has nothing after it on its line.
 func operandEnd(it *item) bool {
 	switch it.kind {
-	case ast.TokIdent, ast.TokUnderscore, ast.TokLifetime, ast.TokRParen:
+	case ast.TokIdent, ast.TokUnderscore, ast.TokLifetime, ast.TokRParen, ast.TokRBrace:
 		return true
 	case ast.TokRBracket:
 		return !it.typeClose

@@ -269,7 +269,8 @@ func (v *indexer) Visit(n ast.Node) ast.Visitor {
 	x.lo[id], x.hi[id] = id, id
 	v.stack = append(v.stack, id)
 	switch n.(type) {
-	case *ast.ArrayType, *ast.RepeatLit, *ast.ConstDecl, *ast.CallExpr, *ast.Contract, *ast.IndexExpr:
+	case *ast.ArrayType, *ast.RepeatLit, *ast.ConstDecl, *ast.CallExpr, *ast.Contract, *ast.IndexExpr,
+		*ast.NamePattern, *ast.PathPattern:
 		x.early = append(x.early, n)
 	}
 	return v

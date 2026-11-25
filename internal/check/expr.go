@@ -486,8 +486,7 @@ func (u *unit) plainText(e ast.Expr) (string, bool) {
 func (u *unit) exprInner(e ast.Expr, want types.TypeID) types.TypeID {
 	switch e := e.(type) {
 	case *ast.IfStmt, *ast.MatchStmt:
-		// A value construct, which the parser puts only in a value
-		// position.
+		// A value construct: an if or match used as an expression.
 		return u.valueConstruct(e, want)
 	case *ast.BasicLit:
 		return u.literal(e, false, want)

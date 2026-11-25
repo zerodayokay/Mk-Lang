@@ -1,15 +1,15 @@
-// Why: an if with an else, or a match, yields a value in a value position
-// (a binding's right side, an argument, return's operand), but not as an
-// operand inside a larger expression; a for loop may destructure its
-// variable; and `assert e` is a common habit. These need parser support.
+// Why: an if with an else, or a match, yields a value wherever an
+// expression stands; a for loop may destructure its variable; and
+// `assert e` is a common habit. These need parser support.
 //
-// What: parseValue and operandIf for value constructs, loopPatAhead,
-// parseLoopPat and loopPatSource for destructured loop variables, and
-// assertHabit (E1223).
+// What: parseValue and operandConstruct for value constructs,
+// loopPatAhead, parseLoopPat and loopPatSource for destructured loop
+// variables, and assertHabit (E1223).
 //
-// How: parseValue reads if or match as a value only at a value position;
-// a suffix or operator after it is E0101 and the rest is read for
-// recovery. A loop pattern goes through the RecordPat cover.
+// How: an if or match is a primary expression (operandConstruct), so
+// suffixes and operators may follow its closing brace. At the start of a
+// statement it stays a statement (parseStmt reads it first). A loop
+// pattern goes through the RecordPat cover.
 
 package syntax
 
@@ -20,65 +20,25 @@ import (
 	"mk/internal/diag"
 )
 
-// operandIfMsg is E0101 for an if or match standing as an operand.
-const operandIfMsg = " is a value only on the right of a binding or an assignment, after `return`, as an argument, a field or an element; bind it to a local first"
-
-// parseValue reads Value = If | Match | Expr at a value position: the
-// right side of a binding or an assignment, return's operand, a call
-// argument, a record field's value and an array element.
+// parseValue reads Value = Expr at a value position: the right side of a
+// binding or an assignment, return's operand, a call argument, a record
+// field's value and an array element. It is the one place a brace literal
+// habit may be read (braceLitAhead); nowhere else does a '{' after an
+// operand fail.
 func (p *parser) parseValue() ast.Expr {
-	if p.tooDeep || !p.at(ast.TokIf) && !p.at(ast.TokMatch) {
-		// A value position is where a brace literal habit may be read
-		// (braceLitAhead); nowhere else does a '{' after an operand fail.
-		saved := p.litOK
-		p.litOK = true
-		x := p.parseExpr()
-		p.litOK = saved
-		return x
-	}
-	s0 := p.p
-	start := p.curStart()
-	var x ast.Expr
-	if p.at(ast.TokIf) {
-		x = p.parseIf().(*ast.IfStmt)
-	} else {
-		x = p.parseMatch().(*ast.MatchStmt)
-	}
-	if p.valueEnds() {
-		return x
-	}
-	// A suffix or an operator after the construct. Report it at the
-	// token, read the rest of the expression for recovery, and drop it all.
-	p.errHere("an `if` or `match` value ends at its closing brace; bind it to a local first", "bind it to a local first")
-	y := p.parsePostfix(p.badExprFrom(s0), start, false)
-	y = p.parseBinFrom(y, precOr, start)
-	if p.at(ast.TokElse) && !(p.softTerm && p.lineEnd()) {
-		p.parseElse(y, start)
-	}
-	return p.badExprFrom(s0)
+	saved := p.litOK
+	p.litOK = true
+	x := p.parseExpr()
+	p.litOK = saved
+	return x
 }
 
-// valueEnds is true at a token that ends a value: a terminator, a list
-// separator, a closing bracket, or the end of the file.
-func (p *parser) valueEnds() bool {
-	switch p.kind() {
-	case ast.TokTerm, ast.TokComma, ast.TokRParen, ast.TokRBracket, ast.TokRBrace, ast.TokEOF:
-		return true
-	}
-	return p.softTerm && p.lineEnd()
-}
-
-// operandIf reads if or match in operand position: E0101 at the
-// keyword, the construct parsed for recovery and dropped.
-func (p *parser) operandIf() ast.Expr {
-	s0 := p.p
-	p.errHere("`"+p.curText()+"`"+operandIfMsg, "bind it to a local first")
+// operandConstruct reads an if or match as a primary expression.
+func (p *parser) operandConstruct() ast.Expr {
 	if p.at(ast.TokIf) {
-		p.parseIf()
-	} else {
-		p.parseMatch()
+		return p.parseIf().(*ast.IfStmt)
 	}
-	return p.badExprFrom(s0)
+	return p.parseMatch().(*ast.MatchStmt)
 }
 
 // loopPatAhead is true at a destructured loop variable: "(" … ")" "in", or a

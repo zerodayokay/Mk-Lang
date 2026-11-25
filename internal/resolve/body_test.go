@@ -294,13 +294,17 @@ func TestErrorTypeTest(t *testing.T) {
 	}
 }
 
-func TestConstIsE0101(t *testing.T) {
+// TestConstIsAValueTest: a const in a pattern, bare, in an alternative or
+// nested, names the const (a value test), never a binding.
+func TestConstIsAValueTest(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, false)
-	b := w.add("main", opt{}, "const Max = 3\nF(x: int) {\n    match x {\n        Max { }\n        _ { }\n    }\n}\n")
-	b.want(t, "E0101@4:9")
-	if b.diags[0].Phase != diag.PhaseNames {
-		t.Error("phase")
+	b := w.add("main", opt{}, "const Max = 3\nF(x: int, y: ?int) {\n    match x {\n        Max { }\n        1 | Max { }\n        _ { }\n    }\n    match y {\n        some(Max) { }\n        _ { }\n    }\n}\n")
+	b.want(t)
+	for n := 1; n <= 3; n++ {
+		if r := b.ref("Max", n); r.Kind != RefItem {
+			t.Errorf("Max #%d: %+v", n, r)
+		}
 	}
 }
 

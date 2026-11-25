@@ -446,6 +446,16 @@ func TestValueArmLayout(t *testing.T) {
 	}
 }
 
+// TestConstructOperandSpaced: an operator after the closing brace of an if
+// or match used as an operand is binary, spaced on both sides; it was read
+// as a prefix and written `} +1`.
+func TestConstructOperandSpaced(t *testing.T) {
+	wantFixed(t, "F(c: bool, n: int): int {\n    a := if c { 1 } else { 2 } - 1\n    b := match n {\n        0 { 1 }\n        _ { 2 }\n    } + 1\n    return a * b + if c { 3 } else { 4 } * 2\n}\n")
+	if got := mustFormat(t, "F(c: bool): int {\n    return if c { 1 } else { 2 } -1\n}\n"); got != "F(c: bool): int {\n    return if c { 1 } else { 2 } - 1\n}\n" {
+		t.Errorf("got:\n%s", got)
+	}
+}
+
 // TestContinuedIfCondition: a body after a continued condition whose
 // last line closes a bracket is indented from the statement, not from the
 // continuation (std/task/sched.mk's Linger).

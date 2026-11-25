@@ -1,0 +1,4 @@
+# A run test of named consts as match patterns: values of this module and of
+# an imported one, alone, in alternatives and nested; both profiles, both targets.
+case ok
+stdout constpattern.out

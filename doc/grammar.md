@@ -100,7 +100,7 @@ Defer       = ( "defer" | "onerr" ) ( Block | Expr ) .
 Scope       = [ "try" ] "scope" Name ":=" Expr Block .
 Unsafe      = "unsafe" String Block .
 
-Value       = If | Match | Expr .
+Value       = Expr .
 Expr        = Fallback .
 Fallback    = Or [ "else" [ Name ] Block ] .
 Or          = And { "||" And } .
@@ -118,7 +118,7 @@ Suffix      = "." Name | "." "go" Postfix | TypeArgs | "[" [ Expr ] ".." [ Expr 
             | "(" [ Args ] ")" .
 Args        = Arg { "," Arg } [ "," ] .
 Arg         = [ Name ":" ] Value .
-Primary     = Literal | Name | "(" Expr ")" | RecordLit | ArrayLit | FnLit | Quote .
+Primary     = Literal | Name | "(" Expr ")" | RecordLit | ArrayLit | FnLit | Quote | If | Match .
 RecordLit   = "(" [ RecField { "," RecField } [ "," ] ] ")" .
 RecField    = Name ":" Value | Name .
 ArrayLit    = "[" [ Value { "," Value } [ "," ] ] "]" | "[" Expr ";" Expr "]" .
@@ -130,11 +130,11 @@ Quote       = "quote" "{" Tokens "}" .
 
 ### Value position
 
-`Value` marks value position: the right side of a binding or assignment, an argument, a `return`. There an `if` or `match` produces a value.
+`Value` marks value position: the right side of a binding or assignment, an argument, a field or an element, a `return`. It is an `Expr`; it differs only in where a brace literal habit is recognised. An `If` or `Match` is a `Primary`, so it produces a value wherever an expression stands, and suffixes and operators may follow its closing brace: `1 + if c { 2 } else { 3 }`, `xs[if c { 0 } else { 1 }]`, `match k { .. }.Len()`.
 
-- An `If` in value position must have an `else` (E0311).
+- An `If` used as a value must have an `else` (E0311).
 - The last `Stmt` of each arm, and of a `Fallback`'s `Block`, is the arm's value. An arm whose last line is not a value is E0310, or E0803 for an `else` block.
-- An `If` or `Match` is never a `Primary`, so one used as an operand, as in `1 + if c { 2 } else { 3 }`, is E0101. Bind it to a local first.
+- At the start of a statement an `If` or `Match` is the `Stmt`, not an expression, so nothing may follow its closing brace on that line (E0101). Wrap it in parentheses to use it as an expression statement: `(if c { a } else { b }).Close()`.
 
 ### Lookahead and covers
 
@@ -273,13 +273,13 @@ Both(f: fn(x: &A, y: &B): P from (a: x, b: y), n: int) {
 
 `Split(f: fn(a: mut A, b: mut B) *a into b, *b into a)` is E0101: the `,` ends the `fn` type, and `*b` cannot start a `Param`.
 
-An `if` is never an operand, and a destructured loop variable takes its elements by copy:
+An `if` that starts a statement is the statement, and a destructured loop variable takes its elements by copy:
 
 ```mk
 // verdict: reject E0101
-// an if as an operand is a statement, so bind it to a local first
-Add(c: bool): int {
-    return 1 + if c { 2 } else { 3 } // <- E0101
+// an if that starts a statement is the statement: nothing follows its brace
+Show(c: bool, a: str, b: str) {
+    if c { a } else { b }.Len() // <- E0101
 }
 ```
 

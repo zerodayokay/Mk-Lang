@@ -310,7 +310,8 @@ func (bl *builder) unsignedOf(t types.TypeID, at source.Span) types.TypeID {
 	return t
 }
 
-// patLit is a literal pattern's value: check's, or true and false.
+// patLit is a literal pattern's value: check's (a literal's, a named
+// const's), or true and false.
 func (bl *builder) patLit(q ast.Pattern) Lit {
 	l := bl.in.Literal(q.ID())
 	if l.Kind == LitNone {
@@ -318,13 +319,21 @@ func (bl *builder) patLit(q ast.Pattern) Lit {
 		case *ast.LiteralPattern:
 			l = bl.in.Literal(lp.Lit.ID())
 		case *ast.NamePattern:
-			l = Lit{Kind: LitScalar, Type: types.Bool}
-			if lp.Name.Name == source.SymTrue {
-				l.Bits = 1
+			if s := lp.Name.Name; s == source.SymTrue || s == source.SymFalse {
+				l = Lit{Kind: LitScalar, Type: types.Bool}
+				if s == source.SymTrue {
+					l.Bits = 1
+				}
 			}
 		}
 	}
 	if l.Kind == LitNone {
+		if _, lit := q.(*ast.LiteralPattern); !lit {
+			// A named const whose value check could not read: a poisoned
+			// read (check.Body.PoisonAt), which the const's own
+			// evaluation reports.
+			source.ICEf(q.Span(), "lower: a const pattern with no value and no diagnostic (check gap)")
+		}
 		source.ICEf(q.Span(), "lower: literal pattern with no value")
 	}
 	return l

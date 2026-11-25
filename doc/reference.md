@@ -424,7 +424,7 @@ export Main(sys: &System): WriteError!void {
 - A name in the wrong case is E0207. The message gives the right spelling: `` `do_thing` should be PascalCase: `DoThing` ``.
 - A name cannot start with `_`: `_x` is E0207. `_` alone is the blank, as in `_ = F()`.
 - Lookup is exact. When nothing matches, the compiler ignores case and underscores to find what you meant: `.len()` and `userCount` are E0207, and the message names `Len` and `user_count`. `mk fix` applies the correction.
-- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A local cannot shadow another local or a parameter ([bindings](#bindings)).
+- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A type's fields are one scope and its variants and methods another, so a field `cpu` and a method `Cpu` may stand side by side ([structs](#structs)). A local cannot shadow another local or a parameter ([bindings](#bindings)).
 - An `extern` function's or var's name is its C symbol. It is used as written and is outside the case rule: `extern strlen(s: *u8): uint`.
 
 A local spelled differently from its declaration:
@@ -2140,7 +2140,22 @@ export Main(sys: &System): WriteError!void {
 - `s.f` reads a field. You change a field through a `var` binding or a `mut` reference ([section 5](#5-statements)).
 - A struct has no `==` and no `Format` of its own (E0308, E0706). After `import std.derive`, `gen derive.Eq(Vec2)` and `gen derive.Format(Vec2)` write both for you ([section 11](#11-compile-time)): then `a.Eq(&b)` compares two values and `{a}` prints `Vec2(x: 1, y: 2)`.
 - A struct cannot hold itself by value, directly or through other structs (E0907). Hold it through a reference, `next: ?&Chain`, or a `Box`.
-- Field names are `snake_case` (E0207). A field and a method of one type cannot have names that differ only in case and underscores (E0206), so a field `name` and a method `Name` conflict.
+- Field names are `snake_case` (E0207). A field and a method of one type may have names that differ only in case and underscores: a field `cpu` and a method `Cpu` are two members, and `m.cpu` reads one while `m.Cpu()` calls the other. Two fields, or two methods, or a method and a variant, that differ only in case and underscores are E0206, as is a field spelled exactly as a method.
+
+```mk
+// verdict: ok
+struct Machine {
+    cpu: int
+}
+
+Machine.Cpu(&self): int { // a method beside the field `cpu`
+    return self.cpu * 2
+}
+
+Load(m: &Machine): int {
+    return m.cpu + m.Cpu()
+}
+```
 - `invariant c` among the fields states a condition every value must meet ([section 15](#15-contracts-and-tests)).
 
 A struct may take type parameters. Construction infers them from the fields, or you write them:
@@ -2429,7 +2444,7 @@ export Main(sys: &System): WriteError!void {
 - The type must be plain (E0408). `&Limit` is a valid reference that lives as long as the program ([globals](memory.md#r16-globals)).
 - A constant cannot be assigned (E0301).
 - A literal that does not fit the type is E0303. An evaluation that panics, and constants in a cycle, are compile errors ([evaluating constants](#evaluating-constants), [the stage rule](#the-stage-rule)).
-- A constant is not a pattern: compare with `if` ([literal patterns](#literal-patterns)).
+- A constant of an integer, `bool`, `char` or `str` type is a pattern, matched by its value ([literal patterns](#literal-patterns)).
 
 ### Global variables
 
@@ -2736,7 +2751,7 @@ packed align(8) struct Both { // <- E0706
 |---|---|---|
 | E0101 | syntax | `.Quit` as an expression; a tag type on an enum with fields; two variants on one line; `packed(n)` with another `n` |
 | E0203 | unknown-member | A variant's field read with a dot ([enums](#enums)) |
-| E0206 | duplicate-name | Two items, two variants' tags, or a field and a method whose names differ only in case ([functions](#functions-and-methods), [tags](#enum-tags)) |
+| E0206 | duplicate-name | Two items, two variants' tags, two fields or two methods whose names differ only in case, or a field spelled exactly as a method ([functions](#functions-and-methods), [structs](#structs), [tags](#enum-tags)) |
 | E0207 | naming | A field not in `snake_case`, a function not in `PascalCase` |
 | E0301 | type-mismatch | A tag type that is not an integer; an assignment to a constant |
 | E0302 | no-conversion | A number from an enum without a tag type ([tags](#enum-tags)) |
@@ -3039,7 +3054,7 @@ export Main(sys: &System): WriteError!void {
 - `if x := &e` binds a `&T` to the payload, and `if x := mut e` a `mut T` through which you change it.
 - `e` must be an optional (E0307). For an `E!T`, use [`else`](#else) or [`match`](#match-on-a-result).
 - `if T is u8 { }` tests a type parameter at compile time. See [specialization](#specialization-if-t-is).
-- In value position, an `if` with an `else` gives a value. See [below](#if-match-and-else-as-values).
+- Used as an expression, an `if` with an `else` gives a value, as an operand too. See [below](#if-match-and-else-as-values).
 
 ```mk
 // verdict: reject E0307
@@ -3540,7 +3555,7 @@ When a rule fails, `return f(a)` is the same call without the frame reuse.
 
 ### `if`, `match` and `else` as values
 
-In value position, an `if` with an `else` and a `match` give a value: the last line of the arm that runs. An `e else { }` block gives one too ([section 9](#else)), and in parentheses it can also be an operand: `1 + (F() else { 0 })`.
+Used as an expression, an `if` with an `else` and a `match` give a value: the last line of the arm that runs. They stand wherever an expression does, as an operand too: `1 + if c { 2 } else { 3 }`. An `e else { }` block gives one too ([section 9](#else)), and in parentheses it can also be an operand: `1 + (F() else { 0 })`.
 
 ```mk
 // verdict: ok
@@ -3574,12 +3589,30 @@ twenty
 5 20 yes 1
 ```
 
-Value position is:
+An `if` or `match` is a value anywhere an expression stands: the right side of a binding or an assignment, the operand of `return`, an argument, a field or element of a literal, an operand of an operator, an index, a condition, and the last line of an arm that is itself a value. Suffixes and operators may follow its closing brace, and bind to the whole construct: `if c { 1 } else { 2 } * 3` multiplies the chosen value.
 
-- the right side of a binding or an assignment;
-- the operand of `return`;
-- an argument, or a field or element of a literal;
-- the last line of an arm that is itself in value position.
+```mk
+// verdict: ok
+export Main(sys: &System): WriteError!void {
+    c := sys.args.Len() > 0
+    xs := [10, 20, 30]
+    a := 1 + if c { 2 } else { 3 } // an operand
+    b := xs[if c { 0 } else { 2 }] // an index
+    n := match b {
+        10 { "ten" }
+        _ { "other" }
+    }.Len() // a suffix on the whole match
+    var k := 0
+    if a == if c { 3 } else { 4 } { // a condition's operand
+        k = 1
+    }
+    try sys.Print("{a} {b} {n} {k}\n", (a, b, n, k))
+}
+```
+
+```text
+3 10 3 1
+```
 
 The rules:
 
@@ -3587,7 +3620,8 @@ The rules:
 - An arm that does not fall through, because it returns, breaks, continues or fails, needs no value.
 - An arm whose last line is not a value is E0310. An `if` without an `else` is E0311. If an arm cannot end in a value, use the statement form and assign a local in each arm.
 - Under `_ =`, an `else` block may fall through without a value; the error is ignored.
-- Anywhere else, `if` and `match` are statements. As an operand, even in parentheses as in `1 + (if c { 2 } else { 3 })`, they are E0101: bind the value to a local first.
+- Operands are evaluated left to right: in `x + if c { .. } else { .. }` whose arm assigns `x`, the left `x` is read before the arm runs, as it is before a call that changes `x`.
+- At the start of a statement, `if` and `match` are statements, so nothing may follow the closing brace on that line (E0101). Wrap one in parentheses to use its value there: `(if c { a } else { b }).Close()`.
 
 ```mk
 // verdict: reject E0311 E0310
@@ -3665,6 +3699,7 @@ Class(c: char): int {
 | `NotFound(id)`, `NotFound` | An error, in a `match` on an error set |
 | `some(x)`, `none`, `ok(v)`, `err(e)` | An optional or a result |
 | `1`, `-1`, `true`, `"text"`, `'a'` | A literal |
+| `Limit`, `codes.OpAdd` | A named const, by its value ([literals](#literal-patterns)) |
 | `0..10`, `'a'..'{'`, `200..`, `..0` | A half-open range of integers or characters |
 | `A \| B` | Either pattern |
 | `_` | Anything, binding nothing |
@@ -3825,7 +3860,7 @@ elsewhere
 
 ### Literal patterns
 
-An integer, `bool`, `char` or `str` literal matches a value equal to it.
+An integer, `bool`, `char` or `str` literal, or a named const of one of those types, matches a value equal to it.
 
 ```mk
 // verdict: ok
@@ -3869,7 +3904,39 @@ export Main(sys: &System): WriteError!void {
 - A negative integer is written with its `-`: `-1`.
 - A float is not a pattern (E0308). Compare floats with `if`.
 - A literal of a type other than the value's is E0301.
-- A constant is not a pattern (E0101). `match n { Limit { } }` is rejected rather than read as a binding. Compare with `if n == Limit`.
+- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does. Its value is needed before the module's own functions are ready, so a const that calls one of them is E0908 there ([the stage rule](#the-stage-rule)). Outside an alternative, a name that is no const in scope is a [binding](#bindings-and-wildcards): a misspelled const, or another module's const written without its module, matches every value, and is E0208 when its arm does not use it. In an alternative, where a name never binds, an unknown one is E0201.
+
+```mk
+// verdict: ok
+const OpAdd: u8 = 1
+const OpSub: u8 = 2
+const Yes = true
+
+Op(code: u8): str {
+    return match code {
+        OpAdd { "add" } // the value 1
+        OpSub | 3 { "sub" } // a const among literals
+        _ { "?" }
+    }
+}
+
+Halts(b: bool): bool {
+    return match b { // Yes and false cover bool
+        Yes { true }
+        false { false }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    a := Op(2)
+    h := Halts(true)
+    try sys.Print("{a} {h}\n", (a, h))
+}
+```
+
+```text
+sub true
+```
 
 ```mk
 // verdict: reject E0308
@@ -4300,14 +4367,14 @@ Name(b: Bag): str {
 
 | Code | Name | Reported for |
 |---|---|---|
-| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a constant or a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head |
+| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
 | E0206 | duplicate-name | A binding that shadows a local ([bindings](#bindings-and-wildcards)) |
 | E0208 | unused | A binding that is never used, often a variant written without its dot ([variants](#variant-patterns)) |
-| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")` ([literals](#literal-patterns)) |
+| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")`; a const of a type a literal cannot have ([literals](#literal-patterns)) |
 | E0305 | field-names | A destructure that neither names every field nor ends with `..` ([destructuring](#destructuring)) |
 | E0306 | non-exhaustive | A `match` that misses values; a destructure that can fail ([exhaustiveness](#exhaustiveness)) |
-| E0308 | no-operator | A float literal as a pattern ([literals](#literal-patterns)) |
+| E0308 | no-operator | A float literal or a float const as a pattern ([literals](#literal-patterns)) |
 | E0309 | record-names | A field name the type does not have ([variants](#variant-patterns)) |
 | E0315 | empty-range | A range whose low end is not below its high end ([ranges](#range-patterns)) |
 | E0408 | not-plain | A field skipped by `..` that is not plain ([destructuring](#destructuring)) |
@@ -4920,7 +4987,7 @@ These forms are expressions too, each with its own section:
 |---|---|
 | `T(x)`, `Cast[T](x)`, `Trunc[T](x)` | Conversions ([conversions](#conversions)) |
 | `try e`, `e else { }`, `e.Must()` | Handle a failure ([section 9](#9-errors)) |
-| `if c { a } else { b }`, `match e { }` | A value in value position ([values](#if-match-and-else-as-values)) |
+| `if c { a } else { b }`, `match e { }` | A value wherever an expression stands, an operand too ([values](#if-match-and-else-as-values)) |
 | `SizeOf[T]()`, `AlignOf[T]()` | Layout facts at compile time ([section 11](#11-compile-time)) |
 | `quote { ... }` | Code as data, in a generator ([generators](#generators)) |
 
@@ -7373,7 +7440,7 @@ main.mk:10:7: E0902 fuel-exhausted: compile-time evaluation ran out of fuel afte
 
 ### The stage rule
 
-Some evaluations run before the module's own functions and types are ready: the length in an array type, a const argument, a compile-time `requires`, and a `gen` argument. Such an evaluation may not call a function of the same module, or need the layout of a type of the same module (E0908). The report names the consts and functions the evaluation entered, with the trace.
+Some evaluations run before the module's own functions and types are ready: the length in an array type, a const argument, a compile-time `requires`, a `gen` argument, and a const named in a match pattern. Such an evaluation may not call a function of the same module, or need the layout of a type of the same module (E0908). The report names the consts and functions the evaluation entered, with the trace.
 
 ```mk
 // verdict: reject E0908
@@ -7870,7 +7937,7 @@ See also: [`std.derive`](std/derive.md), [`std.build`](std/build.md) for embedde
 | E0905 | generated-invalid | Generated code that does not compile ([errors in generated code](#errors-in-generated-code)) |
 | E0906 | forbidden-input | A generator that reads the structure of a generated type ([what a generator sees](#what-a-generator-sees)) |
 | E0907 | layout-cycle | A type that contains itself ([the stage rule](#the-stage-rule)) |
-| E0908 | stage-violation | A type, const argument, `requires` or `gen` argument that needs its own module's functions or layouts ([the stage rule](#the-stage-rule)) |
+| E0908 | stage-violation | A type, const argument, `requires`, `gen` argument or const pattern that needs its own module's functions or layouts ([the stage rule](#the-stage-rule)) |
 | E0909 | const-cycle | A const that reads itself ([the stage rule](#the-stage-rule)) |
 | E0910 | file-input | A bad path for `build.File` or `g.Input` ([data files](std/build.md#data-files)) |
 | E1002 | not-share | A const that holds a `Cell` or a raw pointer, such as a `List` ([evaluating constants](#evaluating-constants)) |
