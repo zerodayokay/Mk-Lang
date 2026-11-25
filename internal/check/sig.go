@@ -162,6 +162,11 @@ func (m *Module) ownerContext(it *types.Item, x *tctx, s *ast.Signature) []types
 		}
 		x.self = d.Type
 		return d.Generics
+	case types.KindError:
+		// An error takes no type parameters; Self is its type, the set of
+		// that one error, as an expression `E(...)` is typed.
+		x.self = errorType(tab, o.ID)
+		return nil
 	}
 	x.self = types.Poison
 	return nil

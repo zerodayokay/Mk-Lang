@@ -2678,6 +2678,7 @@ export Main(sys: &System): WriteError!void {
 - The prefix supplies the receiver's type, and `self`, `&self` or `mut self` its mode. This is the only way to write a receiver.
 - `c.M(a)` is `Type.M(&c, a)`, `Type.M(mut c, a)` or `Type.M(c, a)`, as the receiver's mode says, and borrows or moves `c` to match. A `mut T` `c` is reborrowed: `mut *c` or `&*c`.
 - A function without `self`, such as `Counter.New`, is called through the type's name. It is how a type offers constructors.
+- A struct, an enum and an [error](#declaring-errors) take methods. An error's `self` is its value, the set of that one error: a payload is plain, so `self` copies it, and `mut self` changes a `var` error in place.
 - A function in a type's namespace must be declared in that type's module. A method on `int` or on another module's type is E0704: write a free function that takes the value.
 - On a generic type, the prefix names the type parameters, `Stack2[T].Push`, and their bounds come from the type.
 - Mark a method `export`, `export Counter.Get(&self): int`, to make it part of the module's public API.
@@ -5365,6 +5366,31 @@ line 4
 - Since an error's `str` is static, reading it gives a `str` that borrows nothing, even through a reference: for `e: &Bad`, `e.msg` outlives `e`. A `match` on a `mut` of the error would bind the field as a `mut str`, which is E0605: bind the error, as `err(e)`, and read `e.msg`.
 - Construction names every field, `BadByte(offset: 3, value: 200)`, as for a struct (E0305).
 - An error has no type parameters.
+- An error takes methods and `Type.Name` functions, declared in its module as for a struct ([methods](#methods)). An error set of more than one error has none but `Format`.
+
+```mk
+// verdict: ok
+error BadByte(offset: int, value: u8)
+
+BadByte.Line(&self, width: int): int { // a method of an error
+    return self.offset / width + 1
+}
+
+Report(data: []u8): int {
+    Check(data) else e {
+        return e.Line(16)
+    }
+    return 0
+}
+
+Check(data: []u8): BadByte!void {
+    for i in 0..data.Len() {
+        if data[i] > 127 {
+            fail BadByte(offset: i, value: data[i])
+        }
+    }
+}
+```
 
 ```mk
 // verdict: reject E0408

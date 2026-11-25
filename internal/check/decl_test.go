@@ -1,8 +1,8 @@
 // Why: declarations and signatures are where most type errors of a program
 // surface first, and their read sets drive incremental rebuilds.
 // What: tests of type expressions, structs, enums, aliases, signatures,
-// Main, E0412, E0410, E0303, E0408 for error payloads and declaration
-// read sets.
+// Main, E0412, E0410, E0303, E0408 for error payloads, an error method's
+// receiver and declaration read sets.
 // How: builds modules from source through syntax and resolve and compares
 // the diagnostics, layouts and read sets.
 
@@ -785,5 +785,20 @@ func TestE0408_ErrorPayload(t *testing.T) {
 			w := newWorld(t, true)
 			checkCodes(t, w, "m", opt{}, tc.want, tc.src)
 		})
+	}
+}
+
+// TestErrorMethodReceiver (MKH-406): a method of an error has the error's
+// type, the set of that one error, as its receiver in each mode. Self was
+// Poison with no diagnostic, so lower raised its check-gap ICE at the
+// method and at every call.
+func TestErrorMethodReceiver(t *testing.T) {
+	w := newWorld(t, true)
+	src := "error Bad(code: int)\n\nBad.Twice(&self): int {\n\treturn self.code + 100\n}\n\nBad.Bump(mut self) {\n\tself.code += 1\n}\n\nBad.Take(self): int {\n\treturn self.code\n}\n\nRun(): int {\n\tvar e := Bad(code: 1)\n\te.Bump()\n\treturn e.Twice() + e.Take()\n}\n"
+	b := checkCodes(t, w, "m", opt{}, "", src)
+	for k, want := range map[string]string{"Bad:Twice": "&Bad", "Bad:Bump": "mut Bad", "Bad:Take": "Bad"} {
+		if got := b.ts(b.sigOf(k).Params[0].Type, nil); got != want {
+			t.Errorf("%s self = %s, want %s", k, got, want)
+		}
 	}
 }
