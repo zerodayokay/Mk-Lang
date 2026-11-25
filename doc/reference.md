@@ -7825,7 +7825,7 @@ Tile(row: 1, col: 2) false
 
 #### Writing a generator
 
-A generator lives in its own module, and the module with the `gen` line imports it. This one, in `src/show/show.mk`, writes a `Describe` method that prints each field as `name=value`:
+A generator lives in its own module, and the module with the `gen` line imports it: a `gen` line that names a function of its own module is E0908, by [the stage rule](#the-stage-rule). This one, in `src/show/show.mk`, writes a `Describe` method that prints each field as `name=value`:
 
 ```mk
 // verdict: ok

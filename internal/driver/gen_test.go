@@ -184,7 +184,10 @@ func TestGenFailRootOfUnknownNames(t *testing.T) {
 // module it depends on failed to check: the generator's own module, a module
 // the generator imports, a module whose function the generator calls, the
 // module of a type argument or of the fuel const, or a borrow error (stage
-// 7) in the generator's module. That module's first error, of a later
+// 7) in the generator's module; or an error before types (E0206) in the
+// generator's module, its import or a function argument's module, which
+// leaves the generator or the function with no declaration (MKH-476: never
+// an E0301 at the line). That module's first error, of a later
 // phase, is reported with the E0201s on the names the output would have
 // declared (in the module, or an importer's `out.Made`), as their root, and
 // each E0201 cites the gen line and names the module. A borrow error, which
@@ -200,6 +203,8 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 	// ends in poison.
 	const reflect = "export Make(g: mut Gen, t: Type) {\n    for m in t.Methods() {\n        _ = m.Result()\n    }\n"
 	const flow = "export Twice() {\n    var n := 1\n    a := mut n\n    b := mut n\n    *a += 1\n    *b += 1\n}\n"
+	// twice declares F twice: E0206 at its line 5, an error before types.
+	const twice = "export F(): int {\n    return 1\n}\n\nF(): int {\n    return 2\n}\n"
 	for _, c := range []struct {
 		name  string
 		files map[string]string
@@ -272,6 +277,18 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 			"out/out.mk": "import g2\nimport gn\n\ninterface Local {\n    Get(&self): [2 * 2]u8\n}\n\ngen gn.Make(Local)\n\ngen g2.Make()\n",
 			"out/use.mk": "export UseMade(): int {\n    return Made2 + 1\n}\n"},
 			[]string{"g2/g2.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "g2/g2.mk:2:5", "g2", "out/out.mk:10:1"},
+		// An error before types (E0206) leaves its module and its importers
+		// unchecked, so the generator or a function argument has no
+		// declaration (MKH-476): the line is poison, never an E0301.
+		{"declaration error in the generator's module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n" + emit + "\n" + twice},
+			[]string{"gn/gn.mk:12:1:E0206", "out/use.mk:2:12:E0201"}, "gn/gn.mk:12:1", "gn", ""},
+		{"declaration error in the generator's import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.F()\n" + emit,
+			"a/a.mk": twice},
+			[]string{"a/a.mk:5:1:E0206", "out/use.mk:2:12:E0201"}, "a/a.mk:5:1", "a", ""},
+		{"declaration error in a function argument's module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen, m: Method) {\n    _ = m\n" + emit,
+			"a/a.mk":     "export G(x: int): int {\n    return x\n}\n" + twice,
+			"out/out.mk": "import a\nimport gn\n\ngen gn.Make(a.G)\n"},
+			[]string{"a/a.mk:8:1:E0206", "out/use.mk:2:12:E0201"}, "a/a.mk:8:1", "a", ""},
 		{"own type", map[string]string{"gn/gn.mk": reflect + emit,
 			"out/out.mk": "import gn\n\ninterface Local {\n    Get(&self): [2 * 2]u8\n}\n\ngen gn.Make(Local)\n"},
 			[]string{"out/use.mk:2:12:E0201"}, "", "", ""},
@@ -315,6 +332,16 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGenGeneratorOfSameModule: a gen line naming a function of its own
+// module is E0908 at the line, the stage rule's, never an E0301 that calls
+// the function not a function (its declaration is not built in stage 4).
+func TestGenGeneratorOfSameModule(t *testing.T) {
+	files := map[string]string{"pkg.mk": libManifest(), "out/gn.mk": "export Make(g: mut Gen) {\n    _ = g\n}\n",
+		"out/out.mk": "gen Make()\n"}
+	cold := frontCheck(t, Config{Root: writeTree(t, files), CacheDir: t.TempDir()})
+	expectLines(t, cold, "out/out.mk:1:1:E0908")
 }
 
 // TestGenDeriveEqGolden (gen derive.Eq output reads like handwritten

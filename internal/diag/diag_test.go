@@ -385,6 +385,27 @@ func TestCapKeepsLaterPhaseCause(t *testing.T) {
 	}
 }
 
+// TestCapKeepsSamePhaseCause: a cause of the failing phase that sorts after
+// the cap survives it too, and so does its own cause (MKH-476: a module's
+// E0206 behind the E0201s of an empty gen line's names, all of phase names);
+// a diagnostic over the cap that no survivor follows from is still omitted.
+func TestCapKeepsSamePhaseCause(t *testing.T) {
+	sm, a, b := fixture()
+	first := New(E0206, at(b, 2, 1, 1), "declared twice")
+	cause := New(E0201, at(b, 1, 1, 1), "unknown name").ConsequenceOf(E0206, at(b, 2, 1, 1))
+	ds := []*Diagnostic{first, cause, New(E0201, at(a, 42, 2, 1), "unrelated")}
+	for line := uint32(40); line <= 42; line++ {
+		ds = append(ds, New(E0201, at(a, line, 1, 1), "unknown name").ConsequenceOf(E0201, at(b, 1, 1, 1)))
+	}
+	r := Order(ds, sm, 2)
+	if r.Phase != PhaseNames || len(r.Diags) != 4 || r.Omitted != 2 || r.Diags[2].Diag != cause || r.Diags[3].Diag != first {
+		t.Fatalf("phase %v, %d kept, %d omitted:\n%s", r.Phase, len(r.Diags), r.Omitted, r.Text(sm))
+	}
+	if r.Diags[0].Root != 3 || r.Diags[1].Root != 3 || r.Diags[2].Root != 4 || r.Diags[3].Root != 4 {
+		t.Fatalf("roots %d %d %d %d, want 3 3 4 4", r.Diags[0].Root, r.Diags[1].Root, r.Diags[2].Root, r.Diags[3].Root)
+	}
+}
+
 // TestInternalAlwaysEmitted: E0000 survives the phase rule and the cap.
 func TestInternalAlwaysEmitted(t *testing.T) {
 	sm, a, _ := fixture()
