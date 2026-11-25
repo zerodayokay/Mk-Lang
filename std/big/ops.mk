@@ -8,10 +8,10 @@
 // result is new words in the arena.
 
 // AddMag is x + y for magnitudes, in a, normalized.
-AddMag(a: &Arena, x: []u64, y: []u64): OutOfMemory![]u64 from a {
-    if x.Len() < y.Len() {
-        return try AddMag(a, y, x)
-    }
+AddMag(a: &Arena, u: []u64, v: []u64): OutOfMemory![]u64 from a {
+    // x is the longer operand, y the shorter.
+    x := if u.Len() < v.Len() { v } else { u }
+    y := if u.Len() < v.Len() { u } else { v }
     n := x.Len()
     m := y.Len()
     z := try a.Slice[u64](n + 1)

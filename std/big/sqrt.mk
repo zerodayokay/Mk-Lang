@@ -65,16 +65,16 @@ TwiceLess1(a: &Arena, x: []u64): OutOfMemory![]u64 from a {
 
 // SqrtRem is the root floor(sqrt(x)) and the remainder x - root^2 of x of
 // 2N words whose top word has one of its two top bits set, both
-// normalized, in a.
-SqrtRem(a: &Arena, x: []u64): OutOfMemory!(root: []u64, rem: []u64) from a {
+// normalized, in a. At depth 0 it takes SqrtNewton.
+SqrtRem(a: &Arena, x: []u64, depth: u8): OutOfMemory!(root: []u64, rem: []u64) from a {
     nn := x.Len() / 2
-    if nn <= SqrtLeafWords {
+    if nn <= SqrtLeafWords || depth == 0 {
         root := try SqrtNewton(a, x)
         return (root: root, rem: try SubMag(a, x, try MulMag(a, root, root)))
     }
     l := nn / 2
     // x = hi B^2l + x1 B^l + x0, B = 2^64, hi of 2h words, normalized.
-    (root: s1, rem: r1) := try SqrtRem(a, x[2 * l..])
+    (root: s1, rem: r1) := try SqrtRem(a, x[2 * l..], depth - 1)
     // (q, u) = (r1 B^l + x1) / (2 s1).
     num := try a.Slice[u64](l + r1.Len())
     Copy(mut num[..l], x[l..2 * l])
@@ -146,7 +146,7 @@ export Int.Sqrt(&self, a: &Arena): OutOfMemory!Int from a {
     } else {
         _ = ShlVU(mut xn[off..], x, 2 * t)
     }
-    (root: r, rem: _) := try SqrtRem(&s, xn[..])
+    (root: r, rem: _) := try SqrtRem(&s, xn[..], DepthLimit)
     z := try a.Slice[u64](r.Len())
     if sh == 0 {
         Copy(mut z[..], r)

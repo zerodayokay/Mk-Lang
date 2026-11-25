@@ -32,6 +32,8 @@ type callSite struct {
 	indirect bool         // a fn value or an interface method
 	at       string       // path:line
 	line     uint32
+	args     mir.Range // the call's arguments in the caller's body
+	hasArgs  bool      // args is set: a call terminator of the body
 }
 
 // bodyOf is id's lowered body, nil when it has none (bodiless, poisoned or
@@ -84,7 +86,7 @@ func (qx *queryIndex) callsOf(id types.ItemID) []callSite {
 						out = append(out, s)
 					}
 				}
-				out = append(out, callSite{callee: t.Callee.Fn.Item, at: at, line: line})
+				out = append(out, callSite{callee: t.Callee.Fn.Item, at: at, line: line, args: t.Args, hasArgs: true})
 			case mir.CallInterface:
 				if qx.ifaceNamed(t.Callee.SelfType) {
 					// Items or ItemsMut on the self of a Slice[T] namespace
@@ -472,59 +474,98 @@ func (qx *queryIndex) allocs(e qEntry) []string {
 	return out
 }
 
-// stack is `stack F`: a recursion reachable from F (no static bound), an
-// indirect call (no static bound either), or the deepest chain of direct
-// calls. Frame sizes exist only after code generation, so the bound is
-// stated in calls, not bytes.
+// stack is `stack F`: a recursion reachable from F that no depth parameter
+// bounds (no static bound), an indirect call (no static bound either), or
+// the deepest chain of direct calls, each recursion a depth parameter
+// bounds (query_depth.go) counted at its bound. Frame sizes exist only
+// after code generation, so the bound is stated in calls, not bytes.
 func (qx *queryIndex) stack(e qEntry) []string {
 	if !qx.isFunc(e) {
 		return []string{e.name + " is not a function"}
 	}
 	r, _ := qx.walk(e.id, nil)
-	if cyc := qx.cycle(e.id); cyc != "" {
+	comps, comp := qx.sccs(r.order)
+	bounds := map[int]*recBound{}
+	for i, c := range comps {
+		if qx.recursive(c) {
+			if b := qx.depthBound(c); b != nil {
+				bounds[i] = b
+			}
+		}
+	}
+	inBound := func(from, to types.ItemID) bool {
+		return comp[from] == comp[to] && bounds[comp[from]] != nil
+	}
+	if cyc := qx.cycle(e.id, inBound); cyc != "" {
 		return []string{"no static bound: recursion " + cyc}
 	}
-	depth := map[types.ItemID]int{}
-	next := map[types.ItemID]types.ItemID{}
-	var deep func(types.ItemID) int
-	deep = func(id types.ItemID) int {
-		if d, ok := depth[id]; ok {
+	// The deepest chain over the components: a bounded recursion counts its
+	// bound, any other function one frame.
+	depth := map[int]int{}
+	next := map[int]types.ItemID{}
+	var deep func(int) int
+	deep = func(ci int) int {
+		if d, ok := depth[ci]; ok {
 			return d
 		}
-		depth[id] = 1 // no cycle (checked above), so a revisit is a finished node
 		best, via := 0, types.NoItem
-		for _, c := range qx.callsOf(id) {
-			if c.indirect {
-				continue
-			}
-			if d := deep(c.callee); d > best {
-				best, via = d, c.callee
+		for _, f := range comps[ci] {
+			for _, c := range qx.callsOf(f) {
+				if c.indirect || comp[c.callee] == ci {
+					continue
+				}
+				if d := deep(comp[c.callee]); d > best {
+					best, via = d, c.callee
+				}
 			}
 		}
-		depth[id], next[id] = best+1, via
-		return best + 1
+		self := 1
+		if b := bounds[ci]; b != nil {
+			self = b.frames
+		}
+		depth[ci], next[ci] = best+self, via
+		return best + self
 	}
-	d := deep(e.id)
+	d := deep(comp[e.id])
 	var chain []string
-	for id := e.id; id != types.NoItem && len(chain) < 8; id = next[id] {
-		chain = append(chain, qx.name(id))
+	frames := 0
+	for id := e.id; id != types.NoItem && len(chain) < 8; id = next[comp[id]] {
+		if b := bounds[comp[id]]; b != nil {
+			chain = append(chain, qx.name(id)+" (depth-bounded, "+itoaQ(b.frames)+" frames)")
+			frames += b.frames
+		} else {
+			chain = append(chain, qx.name(id))
+			frames++
+		}
 	}
-	if d > len(chain) {
+	if d > frames {
 		chain = append(chain, "...")
 	}
 	var out []string
 	if n := len(r.indirect); n > 0 {
 		out = append(out, "no static bound: "+itoaQ(n)+" indirect call(s), first "+r.indirect[0].at)
-	} else {
+	} else if len(bounds) == 0 {
 		out = append(out, "bounded: no recursion and no indirect call in the "+itoaQ(len(r.order))+" function(s) "+e.name+" reaches")
+	} else {
+		out = append(out, "bounded: no indirect call in the "+itoaQ(len(r.order))+" function(s) "+e.name+
+			" reaches, and a depth parameter bounds each of its "+itoaQ(len(bounds))+" recursion(s)")
 	}
 	out = append(out, "deepest direct chain: "+itoaQ(d)+" frame(s): "+strings.Join(chain, " -> "),
 		"frame sizes are known after code generation (mk build); the bound here is in calls")
+	// The bounded recursions last, in the order they are reached: the
+	// answer's cap may cut them, never the chain.
+	for i := len(comps) - 1; i >= 0; i-- {
+		if b := bounds[i]; b != nil {
+			out = append(out, "depth-bounded recursion "+qx.cycleNames(b.funcs)+": "+b.param+" ("+b.ty+
+				") falls around every cycle, at most "+itoaQ(b.frames)+" frame(s)")
+		}
+	}
 	return out
 }
 
-// cycle is a recursion reachable from root as "A -> B -> A", or "".
-func (qx *queryIndex) cycle(root types.ItemID) string {
+// cycle is a recursion reachable from root as "A -> B -> A", or "". It
+// leaves out the calls skip names.
+func (qx *queryIndex) cycle(root types.ItemID, skip func(from, to types.ItemID) bool) string {
 	const (
 		white = iota
 		grey
@@ -541,7 +582,7 @@ func (qx *queryIndex) cycle(root types.ItemID) string {
 		color[id] = grey
 		stack = append(stack, id)
 		for _, c := range qx.callsOf(id) {
-			if c.indirect {
+			if c.indirect || skip != nil && skip(id, c.callee) {
 				continue
 			}
 			switch color[c.callee] {

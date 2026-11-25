@@ -41,7 +41,7 @@ DivLarge(a: &Arena, q: mut []u64, r: mut []u64, x: []u64, y: []u64): OutOfMemory
         _ = ShlVU(mut v[..], y, sh)
     }
     Clear(q)
-    try DivRecStep(&s, q, mut u[..], v[..])
+    try DivRecStep(&s, q, mut u[..], v[..], DepthLimit)
     if sh == 0 {
         Copy(r, u[..n])
     } else {
@@ -52,18 +52,19 @@ DivLarge(a: &Arena, q: mut []u64, r: mut []u64, x: []u64, y: []u64): OutOfMemory
 // DivRecStep divides u by v in place: the quotient is added into q, whose
 // words at the quotient's positions are zero on entry, and the remainder
 // replaces u. v is normalized (its top bit set) and u < v * 2^(64 (q.Len()));
-// its scratch is allocated in s.
-DivRecStep(s: &Arena, q: mut []u64, u: mut []u64, v: []u64): OutOfMemory!void {
+// its scratch is allocated in s. At depth 0 it divides by DivLeaf.
+DivRecStep(s: &Arena, q: mut []u64, u: mut []u64, v: []u64, depth: u8): OutOfMemory!void {
     ul := Norm(u[..]).Len()
     n := v.Len()
     if ul < n || (ul == n && CmpVV(u[..ul], v) < 0) {
         return
     }
-    if n < DivRecWords {
+    if n < DivRecWords || depth == 0 {
         try DivLeaf(s, q, mut u[..ul], v)
         return
     }
     m := ul - n
+    d := depth - 1
     b := n / 2
     sh := b - 1
     var j := m
@@ -72,14 +73,14 @@ DivRecStep(s: &Arena, q: mut []u64, u: mut []u64, v: []u64): OutOfMemory!void {
         // words of u and of v, then the correction by v's low sh words.
         uu := mut u[j - b..ul]
         qhat := try s.Slice[u64](b + 3)
-        try DivRecStep(s, mut qhat[..], mut uu[sh..b + n], v[sh..])
+        try DivRecStep(s, mut qhat[..], mut uu[sh..b + n], v[sh..], d)
         try DivFix(s, mut qhat[..], mut uu[..], v, sh)
         _ = AddTo(mut q[j - b..], Norm(qhat[..]))
         j -= b
     }
     // The last block, below 2^(64 b) times v.
     qhat := try s.Slice[u64](j + 3)
-    try DivRecStep(s, mut qhat[..], mut u[sh..ul], v[sh..])
+    try DivRecStep(s, mut qhat[..], mut u[sh..ul], v[sh..], d)
     try DivFix(s, mut qhat[..], mut u[..ul], v, sh)
     _ = AddTo(mut q[..], Norm(qhat[..]))
 }

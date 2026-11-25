@@ -2,6 +2,16 @@
 
 Every user-visible change to Mk, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). What a 0.x release may change, at each stability level, is in [stability](doc/std/README.md#9-stability).
 
+## Unreleased
+
+### Tools
+
+- `mk query stack` bounds a recursion whose depth parameter (a `u8` or `u16` parameter that every call inside the recursion passes on unchanged or less a positive constant, lowered around every cycle) bounds it, counting it as at most (max + 1) frames per function, and lists it as `depth-bounded recursion`; any other recursion still answers `no static bound` ([tools](doc/tools.md#52-depth-bounded-recursion)).
+
+### Standard library
+
+- `std.big`'s recursions (Karatsuba and Toom-3 products and squares and their scratch sizing, recursive division, `Text`, `Parse` and `Sqrt`) take a `u8` depth, and the operand swaps of addition and of unbalanced products no longer call themselves, so `mk query stack` gives every `std.big` operation a static bound.
+
 ## 0.6.0 (2026-11-24)
 
 ### Language

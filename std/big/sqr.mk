@@ -94,30 +94,32 @@ SqrBasic(z: mut []u64, x: []u64) {
     }
 }
 
-// SqrScratch is the scratch SqrEq needs for an n-word operand. It is at
-// most EqScratch(n) for every n, by induction on n: each threshold here is
-// at least its product's (KaratsubaWords, ToomWords), Karatsuba's square
-// has the product's layout, and Toom-3's square needs 9p words beside its
-// recursion where the product needs 12p. So a square never needs more than
-// the product of two n-word operands.
-SqrScratch(n: int): int {
-    if n < KaraSqrWords {
+// SqrScratch is the scratch SqrEq needs for an n-word operand at depth. It
+// is at most EqScratch(n, depth) for every n and depth, by induction on n:
+// each threshold here is at least its product's (KaratsubaWords,
+// ToomWords), both recursions lower the depth once per level, Karatsuba's
+// square has the product's layout, and Toom-3's square needs 9p words
+// beside its recursion where the product needs 12p. So a square never
+// needs more than the product of two n-word operands.
+SqrScratch(n: int, depth: u8): int {
+    if n < KaraSqrWords || depth == 0 {
         return 0
     }
+    d := depth - 1
     if n < ToomSqrWords {
         m := (n + 1) / 2
-        inner := 4 * m + SqrScratch(m)
+        inner := 4 * m + SqrScratch(m, d)
         return if inner > 6 * m + 1 { inner } else { 6 * m + 1 }
     }
     k := (n + 2) / 3
     r := n - 2 * k
     p := k + 1
-    var inner := SqrScratch(p)
-    sk := SqrScratch(k)
+    var inner := SqrScratch(p, d)
+    sk := SqrScratch(k, d)
     if sk > inner {
         inner = sk
     }
-    sr := SqrScratch(r)
+    sr := SqrScratch(r, d)
     if sr > inner {
         inner = sr
     }
@@ -126,13 +128,14 @@ SqrScratch(n: int): int {
 }
 
 // SqrEq sets z = x * x for x of n words and z.Len() = 2n, with t,
-// SqrScratch(n) words, as scratch.
-SqrEq(z: mut []u64, x: []u64, t: mut []u64) {
+// SqrScratch(n, depth) words, as scratch; at depth 0, the schoolbook
+// square.
+SqrEq(z: mut []u64, x: []u64, t: mut []u64, depth: u8) {
     n := x.Len()
-    if n >= ToomSqrWords {
-        Toom3Sqr(z, x, t)
-    } else if n >= KaraSqrWords {
-        KaraSqr(z, x, t)
+    if n >= ToomSqrWords && depth > 0 {
+        Toom3Sqr(z, x, t, depth - 1)
+    } else if n >= KaraSqrWords && depth > 0 {
+        KaraSqr(z, x, t, depth - 1)
     } else if n >= SqrBasicWords {
         SqrBasic(z, x)
     } else {
@@ -141,16 +144,17 @@ SqrEq(z: mut []u64, x: []u64, t: mut []u64) {
 }
 
 // KaraSqr sets z = x * x for x of n words and z.Len() = 2n, with t,
-// SqrScratch(n) words, as scratch: z0 = x0^2, z2 = x1^2 and z1 = z0 + z2 -
-// (x0 - x1)^2, the last square never negative.
-KaraSqr(z: mut []u64, x: []u64, t: mut []u64) {
+// SqrScratch(n, depth + 1) words, as scratch: z0 = x0^2, z2 = x1^2 and z1 =
+// z0 + z2 - (x0 - x1)^2, the last square never negative, each square
+// SqrEq's at depth.
+KaraSqr(z: mut []u64, x: []u64, t: mut []u64, depth: u8) {
     n := x.Len()
     m := (n + 1) / 2
     h := n - m
-    SqrEq(mut z[..2 * m], x[..m], mut t[..])
-    SqrEq(mut z[2 * m..], x[m..], mut t[..])
+    SqrEq(mut z[..2 * m], x[..m], mut t[..], depth)
+    SqrEq(mut z[2 * m..], x[m..], mut t[..], depth)
     _ = AbsDiff(mut t[..m], x[..m], x[m..])
-    KaraSqrMiddle(t, m)
+    KaraSqrMiddle(t, m, depth)
     (left: lo, right: hi) := t.SplitAt(4 * m)
     w := mut hi[..2 * m + 1]
     w[2 * m] = AddPad(mut w[..2 * m], z[..2 * m], z[2 * m..2 * m + 2 * h])
@@ -158,18 +162,19 @@ KaraSqr(z: mut []u64, x: []u64, t: mut []u64) {
     _ = AddTo(mut z[m..], Norm(w[..]))
 }
 
-// KaraSqrMiddle sets t[2m..4m] = t[..m]^2, with t[4m..] as scratch.
-KaraSqrMiddle(t: mut []u64, m: int) {
+// KaraSqrMiddle sets t[2m..4m] = t[..m]^2, with t[4m..] as scratch, by
+// SqrEq at depth.
+KaraSqrMiddle(t: mut []u64, m: int, depth: u8) {
     (left: d, right: rest) := t.SplitAt(2 * m)
     (left: p, right: more) := rest.SplitAt(2 * m)
-    SqrEq(p, d[..m], more)
+    SqrEq(p, d[..m], more, depth)
 }
 
 // Toom3Sqr sets z = x * x for x of n >= ToomSqrWords words and z.Len() =
-// 2n, with t, SqrScratch(n) words, as scratch: Toom3's evaluation and
-// interpolation (toom.mk), with the five products squares, so every value
-// at a point is non-negative.
-Toom3Sqr(z: mut []u64, x: []u64, t: mut []u64) {
+// 2n, with t, SqrScratch(n, depth + 1) words, as scratch: Toom3's
+// evaluation and interpolation (toom.mk), with the five products squares,
+// SqrEq's at depth, so every value at a point is non-negative.
+Toom3Sqr(z: mut []u64, x: []u64, t: mut []u64, depth: u8) {
     n := x.Len()
     k := (n + 2) / 3
     p := k + 1
@@ -181,10 +186,10 @@ Toom3Sqr(z: mut []u64, x: []u64, t: mut []u64) {
     (left: b, right: t5) := t4.SplitAt(l)
     (left: c, right: rest) := t5.SplitAt(l)
     _ = ToomEval(mut e1[..], mut em1[..], mut em2[..], x[..k], x[k..2 * k], x[2 * k..])
-    SqrEq(mut a[..], e1[..], mut rest[..])
-    SqrEq(mut b[..], em1[..], mut rest[..])
-    SqrEq(mut c[..], em2[..], mut rest[..])
-    SqrEq(mut z[..2 * k], x[..k], mut rest[..])
-    SqrEq(mut z[4 * k..], x[2 * k..], mut rest[..])
+    SqrEq(mut a[..], e1[..], mut rest[..], depth)
+    SqrEq(mut b[..], em1[..], mut rest[..], depth)
+    SqrEq(mut c[..], em2[..], mut rest[..], depth)
+    SqrEq(mut z[..2 * k], x[..k], mut rest[..], depth)
+    SqrEq(mut z[4 * k..], x[2 * k..], mut rest[..], depth)
     ToomInterp(z, mut a[..], mut b[..], mut c[..], k)
 }
