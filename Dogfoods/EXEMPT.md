@@ -99,6 +99,12 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 - `enum Direction {` (both): no dogfood calls it. Covered instead: std/text/tests_bidi.mk.
 - `struct Run {` (both): no dogfood calls it. Covered instead: std/text/tests_bidi.mk's Levels.Line blocks.
 
+## std.hash
+
+- `Sip13State.New(key: HashKey): Sip13State` (both): no dogfood calls it. Covered instead: std/std-defects_sip13state_test.go, which reads Sum after every piece against hash.Sip13 and the Go model.
+- `Sip13State.Bytes(mut self, data: []u8)` (both): no dogfood calls it. Covered instead: std/std-defects_sip13state_test.go's split cases.
+- `Sip13State.Sum(self): u64` (both): no dogfood calls it. Covered instead: std/std-defects_sip13state_test.go's split cases and Rust's DefaultHasher vectors.
+
 ## std.http
 
 - `error ProxyRefused(code: int)` (both): no dogfood calls it. Covered instead: std/http/tests_proxy.mk's CONNECT blocks.

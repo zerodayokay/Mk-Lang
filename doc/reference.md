@@ -11177,7 +11177,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.simd` | `Vec Mask Lane CpuFeatures Choice Cpu Lanes Lookup16 Dispatch IndexByte IndexAny Count Equal Compare ValidUtf8 ValidWtf8 IsAscii Utf16Len Utf16LenBytes LastIndexByte Dot Sum` |
 | `std.free` | `PanicInfo`, `Heap`, on the freestanding target only |
 | `std.libc` | No Mk names: C-callable functions that a package's C sources link against, written in Mk and exported with `export extern`: the memory and string functions, `malloc`, `calloc`, `realloc` and `free` over the `Heap`, and what sqlite needs as `SQLITE_OS_OTHER`; on `x86_64-windows` also `__C_specific_handler`, the language handler a C source's `__try`, `__except` and `__finally` need, forwarded to ntdll's |
-| `std.hash` | `Xx Xx64 Crc32 Sip13 Sha256 Sha512 Blake3 Crc32State Xx64State Sha256State Sha512State Blake3State Sha1 Sha1State Sha384 Sha384State` |
+| `std.hash` | `Xx Xx64 Crc32 Sip13 Sha256 Sha512 Blake3 Crc32State Xx64State Sip13State Sha256State Sha512State Blake3State Sha1 Sha1State Sha384 Sha384State` |
 | `std.json` | `Parse Value Member Json Codec Error` |
 | `std.http` | `Serve Fetch ReadRequest Dispatch Request Response Reply Header Route Error Client ClientRequest ClientLimits DefaultClientLimits Exchange ServeWith ServeOn ServeChan ServerOptions DefaultServerOptions Link Taken` |
 | `std.regex` | `Compile Regex Match Matcher Error` |
@@ -12453,6 +12453,9 @@ Crc32State.Sum(self): u32
 Xx64State.New(seed: u64): Xx64State
 Xx64State.Bytes(mut self, data: []u8)
 Xx64State.Sum(self): u64
+Sip13State.New(key: HashKey): Sip13State
+Sip13State.Bytes(mut self, data: []u8)
+Sip13State.Sum(self): u64
 Sha256State.New(): Sha256State
 Sha256State.Bytes(mut self, data: []u8)
 Sha256State.Sum(self): [32]u8

@@ -4,6 +4,9 @@
 package lsp
 
 var surfaceDocs2 = map[string]surfaceDoc{
+	"Zone.FromTzif":                     {Module: "std.time", Lines: []string{"Zone.FromTzif(a: &Arena, name: str, data: []u8): time.Error|OutOfMemory!Zone from a"}},
+	"Zone.Load":                         {Module: "std.time", Lines: []string{"Zone.Load(a: &Arena, io: Io, name: str, embedded: ?Database): time.Error|OutOfMemory!Zone from a"}},
+	"Zone.Local":                        {Module: "std.time", Lines: []string{"Zone.Local(a: &Arena, io: Io): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Utc":                          {Module: "std.time", Lines: []string{"Zone.Utc(): Zone"}},
 	"ZstdDecoder.Cause":                 {Module: "std.compress", Lines: []string{"ZstdDecoder.Cause(&self): ?compress.Error"}},
 	"ZstdDecoder.New":                   {Module: "std.compress", Lines: []string{"ZstdDecoder.New(a: &Arena, window_limit: int): ZstdDecoder"}},
@@ -388,6 +391,9 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"hash.Sha512State.New":              {Module: "std.hash", Lines: []string{"Sha512State.New(): Sha512State"}},
 	"hash.Sha512State.Sum":              {Module: "std.hash", Lines: []string{"Sha512State.Sum(self): [64]u8"}},
 	"hash.Sip13":                        {Module: "std.hash", Lines: []string{"hash.Sip13(data: []u8, key: HashKey): u64"}},
+	"hash.Sip13State.Bytes":             {Module: "std.hash", Lines: []string{"Sip13State.Bytes(mut self, data: []u8)"}},
+	"hash.Sip13State.New":               {Module: "std.hash", Lines: []string{"Sip13State.New(key: HashKey): Sip13State"}},
+	"hash.Sip13State.Sum":               {Module: "std.hash", Lines: []string{"Sip13State.Sum(self): u64"}},
 	"hash.Xx":                           {Module: "std.hash", Lines: []string{"hash.Xx(data: []u8): u64"}},
 	"hash.Xx64":                         {Module: "std.hash", Lines: []string{"hash.Xx64(data: []u8, seed: u64): u64"}},
 	"hash.Xx64State.Bytes":              {Module: "std.hash", Lines: []string{"Xx64State.Bytes(mut self, data: []u8)"}},
@@ -898,11 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"sqlite.Db.Prepare":                 {Module: "std.db.sqlite", Lines: []string{"Db.Prepare(&self, a: &Arena, io: Io, sql: str): sqlite.Error!Stmt from self, a"}},
 	"sqlite.Error":                      {Module: "std.db.sqlite", Lines: []string{"type Error = Sqlite | Busy | Misuse | OutOfMemory | Canceled"}},
 	"sqlite.Misuse":                     {Module: "std.db.sqlite", Lines: []string{"error Misuse"}},
-	"sqlite.Open":                       {Module: "std.db.sqlite", Lines: []string{"sqlite.Open(a: &Arena, io: Io, path: str): sqlite.Error!Db"}},
-	"sqlite.Sqlite":                     {Module: "std.db.sqlite", Lines: []string{"error Sqlite(code: i32)"}},
-	"sqlite.Stmt.BindInt":               {Module: "std.db.sqlite", Lines: []string{"Stmt.BindInt(mut self, i: int, v: i64): sqlite.Error!void"}},
-	"sqlite.Stmt.BindText":              {Module: "std.db.sqlite", Lines: []string{"Stmt.BindText(mut self, i: int, s: str): sqlite.Error!void"}},
-	"sqlite.Stmt.Close":                 {Module: "std.db.sqlite", Lines: []string{"Stmt.Close(self)"}},
-	"sqlite.Stmt.Int":                   {Module: "std.db.sqlite", Lines: []string{"Stmt.Int(&self, col: int): i64"}},
-	"sqlite.Stmt.Reset":                 {Module: "std.db.sqlite", Lines: []string{"Stmt.Reset(mut self)"}},
 }

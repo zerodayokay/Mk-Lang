@@ -19,6 +19,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 - `List[T].Resize(n, x)` makes a list's length `n`, keeping the first `n` elements and appending copies of a plain `x` (`E0701` for any other `T`), growing at most once. A body generic in a plain `T` can fill a list with one value through it; there a loop of `Push(x)` is `E0604`, since the second `Push` stores `x` through the copies already in the list.
 - `simd.Utf16LenBytes(b: []u8): int`, `simd.Utf16Len` for bytes: the UTF-16 length of UTF-8 or WTF-8 held as `[]u8`, such as a lone surrogate's three bytes, which `str.From` refuses. It shares `Utf16Len`'s vector kernels, and `Utf16Len` is now `Utf16LenBytes` over the string's bytes.
 - `simd.Utf16Len` and `Utf16LenBytes` give the same count on every CPU for any bytes, not only UTF-8 and WTF-8: their scalar form (below 16 bytes and on `x86_64-freestanding`) now counts as the vector forms do, one unit per byte that is not a continuation byte and one more per byte from `0xF0` on.
+- `hash.Sip13State` is SipHash-1-3 over input that arrives in pieces: `Sip13State.New(key)`, then `Bytes(data)` any number of times, then `Sum()`. Any split gives `hash.Sip13` of the concatenation. Like `Xx64State` and the SHA and BLAKE3 states it is not zero-valid, so `Arena.Slice[hash.Sip13State]` is E0701.
 
 ### Loan checker
 
