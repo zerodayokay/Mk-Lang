@@ -58,7 +58,7 @@ If error sets were inferred from bodies, as in Zig, or open, as Go's `error` is,
 
 ### Why can't errors carry references?
 
-Error payloads are plain data. An error then allocates nothing, holds no loans, and can always travel up the stack past the data it describes. It carries an offset or a line number, not the text.
+Error payloads are plain data. An error then allocates nothing, holds no loans, and can always travel up the stack past the data it describes. It carries an offset or a line number, not the text it was reading. The one exception is a `str` that lives as long as the program, such as a literal or a `const`: it borrows from no frame, so an error that holds it still travels anywhere, and a message such as `Unsupported(feature: "generators")` needs no table of codes. The loan checker accepts only such strings there (E0605).
 
 ### Why does a panic end the process?
 

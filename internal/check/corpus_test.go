@@ -50,6 +50,7 @@ var corpusExcepted = map[string]string{
 	"examples.md: become raw.Compare(a, b, n) // <- E0314": "std.raw's Compare, the intrinsic become refuses (E0314), is not in this harness's prelude (mk corpus passes it; TestLangE0314's intrinsic case)",
 	"codes/E0313_packed.mk":                                "rule 4 asks the driver's ABI classifier (Config.ParamClass), which this harness has not; mk corpus and TestBecome_PackedArgumentPerTarget judge it",
 	"codes/E1101_vm.mk":                                    "the unsafe doors are std.vm's, std.runtime's and std.mem's exports, which this harness's prelude does not load; mk corpus judges it",
+	"codes/E0303_float_conversion.mk":                      "`f32(K)` of a named float const is judged by K's value, which needs the evaluator; this harness has none",
 	"codes/E1101_fault_filter.mk":                          "the unsafe doors are std.vm's, std.runtime's and std.mem's exports, which this harness's prelude does not load; mk corpus judges it",
 	"codes/E1101_foreign_io.mk":                            "the unsafe doors are std.vm's, std.runtime's and std.mem's exports, which this harness's prelude does not load; mk corpus judges it",
 	"codes/E1101_mem_custom.mk":                            "the unsafe doors are std.vm's, std.runtime's and std.mem's exports, which this harness's prelude does not load; mk corpus judges it",

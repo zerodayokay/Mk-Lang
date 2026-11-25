@@ -3,10 +3,15 @@
 //
 // What: held and behind (H and B), setHeld and the holders indexes, kill
 // and purge, statement, asm, valueH, operand and the operand table, e0409,
-// lenRead, rvalueFV and rvalueOne (the rvalue table), and slice.
+// lenRead, rvalueFV and rvalueOne (the rvalue table), slice, and
+// staticPayload and errorStr (E0605 for an error's str payload).
 //
 // How: each statement reads its operands (checking init and conflicts),
 // computes the set its rvalue holds, and writes it to the destination.
+// An error is no carrier, so no loan it could hold is tracked after it is
+// built: the str its payload may hold is judged static where it is stored
+// (the error's aggregate, an assignment to the field), the field takes no
+// `mut` borrow, and so a read of the field holds no loan.
 // setHeld is the one primitive that writes a held set and keeps the
 // body-wide holders index a superset, so a kill or purge subtracts from
 // exactly the roots that may hold the loan.
@@ -452,10 +457,11 @@ func (c *checker) asm(st *state, ctx *stmtCtx, a *mir.Asm) {
 }
 
 // valueH is the set a read of place p yields: H(root) with no deref,
-// else tag(B(H(root)), p); empty for a non-carrier type.
+// else tag(B(H(root)), p); empty for a non-carrier type and for an error's
+// str, which is static wherever it is read (errorStr).
 func (c *checker) valueH(st *state, p pathID) setID {
 	pi := c.paths.get(p)
-	if !c.w.carrier(pi.typ()) {
+	if !c.w.carrier(pi.typ()) || c.errorStr(pi) {
 		return emptySet
 	}
 	if s, _, ok := c.splitRead(st, p); ok {
@@ -854,6 +860,9 @@ func (c *checker) rvalueFV(st *state, ctx *stmtCtx, s *mir.Statement) (setID, fv
 		for i, o := range ops {
 			sets[i], fvs[i] = c.operandFV(st, ctx, o)
 			out = c.sets.unite(out, sets[i])
+			if rv.Agg == mir.AggError && c.body.OperandType(o) == types.Str {
+				c.staticPayload(ctx, sets[i])
+			}
 		}
 		dt := c.body.PlaceType(s.Place)
 		if !c.w.carrier(dt) {
@@ -874,6 +883,9 @@ func (c *checker) rvalueOne(st *state, ctx *stmtCtx, s *mir.Statement) setID {
 	case mir.RvRef:
 		c.collapseFor(st, rv.Place, rv.Borrow == mir.Exclusive)
 		p := c.paths.ofPlace(c.body, c.tab, rv.Place)
+		if rv.Borrow == mir.Exclusive && c.report && c.errorStr(c.paths.get(p)) {
+			c.errAt(diag.E0605, ctx.span, "an error's str payload takes no `mut` borrow: a store through it could hold a loan that is not static")
+		}
 		return c.borrow(st, ctx, s, p, rv.Borrow == mir.Exclusive)
 	case mir.RvSlice:
 		c.collapseFor(st, rv.Place, rv.Borrow == mir.Exclusive)
@@ -960,4 +972,33 @@ func (c *checker) slice(st *state, ctx *stmtCtx, s *mir.Statement) setID {
 		return c.borrow(st, ctx, s, dp, rv.Borrow == mir.Exclusive)
 	}
 	return c.borrow(st, ctx, s, p, rv.Borrow == mir.Exclusive)
+}
+
+// staticPayload is E0605 for each loan of S that is not static, S being a
+// str stored into an error's payload: an error never borrows from the
+// function that failed, so it travels up the stack and across tasks freely.
+func (c *checker) staticPayload(ctx *stmtCtx, S setID) {
+	if !c.report {
+		return
+	}
+	for _, l := range c.sets.get(S) {
+		if !c.loans[l].static {
+			c.errAt(diag.E0605, ctx.span, "an error payload may hold only static loans").
+				Fact("loan", c.loanFact(loanID(l)))
+		}
+	}
+}
+
+// errorStr reports whether path pi is a str field of an error's payload,
+// the one payload field that may hold a loan, and only a static one.
+func (c *checker) errorStr(pi *pathInfo) bool {
+	n := len(pi.steps)
+	if n == 0 || pi.steps[n-1].kind != stField || pi.types[n-1] != types.Str {
+		return false
+	}
+	base := pi.rootType
+	if n > 1 {
+		base = pi.types[n-2]
+	}
+	return c.tab.Kind(base) == types.KErrorSet
 }

@@ -1,7 +1,8 @@
 // Why: declarations and signatures are where most type errors of a program
 // surface first, and their read sets drive incremental rebuilds.
 // What: tests of type expressions, structs, enums, aliases, signatures,
-// Main, E0412, E0410, E0303 and declaration read sets.
+// Main, E0412, E0410, E0303, E0408 for error payloads and declaration
+// read sets.
 // How: builds modules from source through syntax and resolve and compares
 // the diagnostics, layouts and read sets.
 
@@ -758,4 +759,31 @@ impl[T] Slice[T] for Span[T] {
 }
 `)
 	})
+}
+
+// TestE0408_ErrorPayload: an error payload is plain data, or a str field
+// (the loan checker keeps it static); any other reference is E0408.
+func TestE0408_ErrorPayload(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"plain fields", "error E(at: int, ok: bool, ratio: f32)\n", ""},
+		{"str field", "error E(at: int, msg: str)\n", ""},
+		{"str alias field", "type Text = str\n\nerror E(msg: Text)\n", ""},
+		{"slice", "error E(key: []u8)\n", "E0408@1:14"},
+		{"ref", "error E(at: &int)\n", "E0408@1:13"},
+		{"optional str", "error E(msg: ?str)\n", "E0408@1:14"},
+		{"array of str", "error E(msgs: [2]str)\n", "E0408@1:15"},
+		{"struct holding str", "struct Pos {\n\tname: str\n}\n\nerror E(at: Pos)\n", "E0408@5:13"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := newWorld(t, true)
+			checkCodes(t, w, "m", opt{}, tc.want, tc.src)
+		})
+	}
 }
