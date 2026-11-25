@@ -58,15 +58,15 @@ func FuzzDirName(test string) string {
 	return string(b)
 }
 
-// benchCall finds a call of testing.Bench in a test block's text: how mk
-// bench tells a benchmark from another test without running it. The module
-// must be imported under its own name.
-var benchCall = regexp.MustCompile(`\btesting\.Bench\s*\(`)
+// benchCall finds a call of testing.Bench or testing.BenchSys in a test
+// block's text: how mk bench tells a benchmark from another test without
+// running it. The module must be imported under its own name.
+var benchCall = regexp.MustCompile(`\btesting\.Bench(Sys)?\s*\(`)
 
 // selectTest reports whether opt selects test tc: under --fuzz the test of
 // exactly that name, under mk bench the tests whose block calls
-// testing.Bench, and in both and plain runs only those whose name contains
-// opt.Run.
+// testing.Bench or testing.BenchSys, and in both and plain runs only those
+// whose name contains opt.Run.
 func (s *Session) selectTest(tc testCase, opt TestOptions) bool {
 	if !strings.Contains(tc.name, opt.Run) {
 		return false
