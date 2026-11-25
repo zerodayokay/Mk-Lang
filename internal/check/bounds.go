@@ -5,7 +5,7 @@
 // What: satisfies (Plain, Send, Share, Fields[B], interfaces, the computed
 // Lane and Integer), ImplOf and ImplArgs (impl lookup), boundFailure
 // (E0701), constPlain and globalShare, sliceImplicit (the implicit bounds of
-// `Slice[T]` functions and HeapList.Extend) and shapeReads.
+// `Slice[T]` functions, HeapList.Extend and List.Resize) and shapeReads.
 //
 // How: ImplOf searches only the two modules coherence allows (the
 // interface's and the type constructor's, plus std for a builtin
@@ -545,11 +545,11 @@ func (c *Checker) byValueChildren(t types.TypeID) []types.TypeID {
 // `T: Plain`. The library's published signatures cannot carry them, so
 // check adds the bound to the function's body (where `s[i].Eq(x)` then
 // type-checks) and checks it at every call (E0701). std.core's
-// `HeapList[T].Extend` copies its slice's elements and needs `T: Plain` the
-// same way; its calls are judged by implicitBounds (zerovalid.go), since
-// they do not come through a Slice.
+// `HeapList[T].Extend` and `List[T].Resize` copy elements and need
+// `T: Plain` the same way; their calls are judged by implicitBounds
+// (zerovalid.go), since they do not come through a Slice.
 func (c *Checker) sliceImplicit(it *types.Item) (types.Bound, bool) {
-	if c.heapListExtend(it) {
+	if c.listCopies(it) {
 		return types.Bound{Kind: types.BoundPlain}, true
 	}
 	if c.known.Slice == types.NoItem || it.Owner != c.known.Slice || it.Kind != types.KindFunc {
@@ -567,15 +567,24 @@ func (c *Checker) sliceImplicit(it *types.Item) (types.Bound, bool) {
 	return types.Bound{}, false
 }
 
-// heapListExtend reports whether it is std.core's `HeapList[T].Extend`,
-// which KnownItems does not name: matched by module, owner and
-// name, as freebound.go's release rows are.
-func (c *Checker) heapListExtend(it *types.Item) bool {
-	if it.Kind != types.KindFunc || it.Owner == types.NoItem || c.cfg.Interner.Str(it.Name) != "Extend" {
+// listCopies reports whether it is std.core's `HeapList[T].Extend` or
+// `List[T].Resize`, which copy elements and which KnownItems does not name:
+// matched by module, owner and name, as freebound.go's release rows are.
+func (c *Checker) listCopies(it *types.Item) bool {
+	if it.Kind != types.KindFunc || it.Owner == types.NoItem {
+		return false
+	}
+	var owner string
+	switch c.cfg.Interner.Str(it.Name) {
+	case "Extend":
+		owner = "HeapList"
+	case "Resize":
+		owner = "List"
+	default:
 		return false
 	}
 	o := c.cfg.Items.Get(it.Owner)
-	if o == nil || c.cfg.Interner.Str(o.Name) != "HeapList" {
+	if o == nil || c.cfg.Interner.Str(o.Name) != owner {
 		return false
 	}
 	mod := c.cfg.Items.Module(o.Module)

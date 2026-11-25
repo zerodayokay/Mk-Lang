@@ -1,8 +1,8 @@
 // Why: most growable arrays live and die with an arena; such a list needs no
 // free and no allocator check, only fast appends.
 //
-// What: List[T] with New, Push, Pop, Len, Clear, Truncate, Insert, Remove and
-// Done, plus its Slice and Format impls.
+// What: List[T] with New, Push, Pop, Len, Clear, Truncate, Resize, Insert,
+// Remove and Done, plus its Slice and Format impls.
 //
 // How: growth is max(4, 2·cap, needed). When the buffer is the arena's last
 // block it grows in place; otherwise a new buffer is taken and the old one is
@@ -96,6 +96,29 @@ export List[T].Truncate(mut self, n: int) {
         raw.Fail(8, "List.Truncate would drop a linear value")
     }
     self.n = n
+}
+
+/// Makes the length n: keeps the first n elements and appends copies of x
+/// up to n, growing at most once. The elements are copies, so T must be
+/// plain: a call with any other T is E0701. The call stores x once, so a
+/// generic caller can fill a list with one value; a second Push of the same
+/// value would store it through the copies already in the list (E0604).
+/// Panics (code 2) when n < 0. OutOfMemory when the buffer cannot grow, and
+/// then the list is unchanged. O(n - Len()) when it grows, else O(1); growth
+/// allocates from the arena.
+export List[T].Resize(mut self, n: int, x: T into self): OutOfMemory!void {
+    if n < 0 {
+        raw.Fail(2, "List.Resize: negative length")
+    }
+    if n > self.n {
+        if n > self.cap {
+            try self.Grow(n)
+        }
+        for i in self.n..n {
+            SlotWrite(self.ptr, i, x) // i < n <= cap: an empty slot
+        }
+    }
+    self.n = n // T is plain: dropping the tail drops nothing
 }
 
 /// Inserts x before element i (i == Len() appends). Panics (code 2) unless
