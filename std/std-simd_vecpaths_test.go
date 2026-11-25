@@ -215,10 +215,11 @@ func std10SimdWant(b []byte) string {
 
 // TestStd_SimdMatchesGo: through the public entry points, so the cpu
 // dispatch this machine takes (avx2 from 64 bytes, avx512bw from 256 when
-// Cpu() reports them) is what runs: simd.IsAscii, Utf16Len, Utf16LenBytes (on
-// every input, WTF-8 or not), LastIndexByte and ValidWtf8 against Go models, dev and release, and text.ToUtf16 (whose sizing
-// pass is simd.Utf16Len) against unicode/utf16. The bit-for-bit comparison of
-// each vector width with its scalar form is std/simd/tests_scan.mk's, run by
+// Cpu() reports them) is what runs: simd.IsAscii, Utf16Len, Utf16LenBytes
+// (on every input, WTF-8 or not), LastIndexByte and ValidWtf8 against Go
+// models, dev and release, and text.ToUtf16 (whose sizing pass is
+// simd.Utf16Len) against unicode/utf16. The bit-for-bit comparison of each
+// vector width with its scalar form is std/simd/tests_scan.mk's, run by
 // TestStd_SimdTestBlocks.
 //
 // Inputs: every length 0 to 300 of random bytes, of ASCII with one high byte,

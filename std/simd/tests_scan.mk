@@ -1,7 +1,8 @@
 // Why: each vector form of scan.mk must give exactly its scalar form's result.
 // What: tests at 16, 32 and 64 lanes against the scalar forms, on random and
 // adversarial bytes, every length 0 to 300 at every offset 0 to 63, and
-// 2,000 random lengths up to 5,000.
+// 2,000 random lengths up to 5,000; and Utf16LenBytes, through its
+// dispatch too, against known counts of WTF-8 pieces and of junk.
 // How: the wide forms are called directly (the baseline build legalizes the
 // wide vectors, so they run on any machine). Helper names start with Ts,
 // because every file of std/simd is one module.
@@ -300,8 +301,8 @@ test "string kernels: Utf16LenBytes counts WTF-8: a lone surrogate, a pair's fou
     for n in [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 600] {
         for pi in 0..5 {
             p := pieces[pi][0..piece_lens[pi]]
-            // The piece at the start, across the last vector's edge, and
-            // at the very end, where the tail window ends.
+            // The piece at the start, in the middle, one byte before the
+            // end, and at the very end, where the tail window ends.
             for at in [0, n / 2, n - p.Len() - 1, n - p.Len()] {
                 for k in 0..p.Len() {
                     buf[at + k] = p[k]
@@ -321,8 +322,22 @@ test "string kernels: Utf16LenBytes counts WTF-8: a lone surrogate, a pair's fou
         Assert(Utf16LenBytes(pieces[pi][0..piece_lens[pi]]) == piece_units[pi])
     }
     Assert(Utf16LenBytes(buf[0..0]) == 0)
-    // On bytes that are not WTF-8 the count is still the same on every
-    // path: a stray continuation byte counts nothing, a lone lead one.
-    junk: [5]u8 = [0x80, 0xBF, 0xF8, 0xC0, 0xFF]
-    Assert(Utf16LenBytes(junk[..]) == 5 && Utf16LenScalar(junk[..]) == 5)
+    // Bytes that are not WTF-8 count the same on every path: a
+    // continuation byte nothing, another byte below 0xF0 one, and a byte
+    // from 0xF0 on two.
+    junk: [6]u8 = [0x80, 0xBF, 0xF8, 0xC0, 0xFF, 0xF0]
+    junk_units: [6]int = [0, 0, 2, 1, 2, 2]
+    Assert(Utf16LenBytes(junk[..]) == 7 && Utf16LenScalar(junk[..]) == 7)
+    // Junk repeated through each width's vectors, steps and tail window,
+    // and past both dispatch bounds.
+    for n in [16, 17, 63, 64, 65, 255, 256, 257, 600] {
+        var want := 0
+        for k in 0..n {
+            buf[k] = junk[k % 6]
+            want += junk_units[k % 6]
+        }
+        s := buf[0..n]
+        Assert(Utf16LenBytes(s) == want && Utf16LenScalar(s) == want && Utf16LenN[16](s) == want &&
+            Utf16LenN[32](s) == want && Utf16LenN[64](s) == want)
+    }
 }

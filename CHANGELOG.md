@@ -4,12 +4,9 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
-### Added
+### Standard library
 
 - `simd.Utf16LenBytes(b: []u8): int`, `simd.Utf16Len` for bytes: the UTF-16 length of UTF-8 or WTF-8 held as `[]u8`, such as a lone surrogate's three bytes, which `str.From` refuses. It shares `Utf16Len`'s vector kernels, and `Utf16Len` is now `Utf16LenBytes` over the string's bytes.
-
-### Changed
-
 - `simd.Utf16Len` and `Utf16LenBytes` give the same count on every CPU for any bytes, not only UTF-8 and WTF-8: their scalar form (below 16 bytes and on `x86_64-freestanding`) now counts as the vector forms do, one unit per byte that is not a continuation byte and one more per byte from `0xF0` on.
 
 ## 0.6.0 (2026-11-24)
