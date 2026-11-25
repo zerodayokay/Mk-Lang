@@ -445,6 +445,7 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"List.Pop":                   {Module: "", Lines: []string{"List[T].Pop(mut self): ?T"}},
 	"List.Push":                  {Module: "", Lines: []string{"List[T].Push(mut self, x: T into self): OutOfMemory!void"}, Notes: []string{"| `List[T].Push(mut self, x: T into self): OutOfMemory!void` | A method."}},
 	"List.Remove":                {Module: "", Lines: []string{"List[T].Remove(mut self, i: int): T"}},
+	"List.Resize":                {Module: "", Lines: []string{"List[T].Resize(mut self, n: int, x: T into self): OutOfMemory!void"}},
 	"List.Truncate":              {Module: "", Lines: []string{"List[T].Truncate(mut self, n: int)"}},
 	"ListenOptions":              {Module: "std.net", Lines: []string{"struct ListenOptions"}},
 	"Listener.Accept":            {Module: "std.net", Lines: []string{"Listener.Accept(&self, io: Io): net.Error!Stream"}},
@@ -903,5 +904,4 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Zone.FromTzif":              {Module: "std.time", Lines: []string{"Zone.FromTzif(a: &Arena, name: str, data: []u8): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Load":                  {Module: "std.time", Lines: []string{"Zone.Load(a: &Arena, io: Io, name: str, embedded: ?Database): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Local":                 {Module: "std.time", Lines: []string{"Zone.Local(a: &Arena, io: Io): time.Error|OutOfMemory!Zone from a"}},
-	"Zone.Utc":                   {Module: "std.time", Lines: []string{"Zone.Utc(): Zone"}},
 }

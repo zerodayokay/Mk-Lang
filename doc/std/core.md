@@ -2795,8 +2795,9 @@ body generic in T can fill a list with one value; there a second Push of
 the same value is E0604, since it would store it through the copies
 already in the list.
 Panics (code 2) when n < 0. OutOfMemory when the buffer cannot grow, and
-then the list is unchanged. O(n - Len()) when it grows, else O(1); growth
-allocates from the arena.
+then the list is unchanged. O(n - Len()) for n above Len(), else O(1),
+plus a copy of Len() elements when the buffer grows; growth allocates
+from the arena.
 
 ### `List.Truncate`
 

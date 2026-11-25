@@ -40,7 +40,8 @@ func TestHeapListExtendPlain(t *testing.T) {
 
 // TestListResizePlain: std.core's `List[T].Resize` writes copies of x, so its
 // body sees an implicit `T: Plain` (a call that needs it, here `Copy`, checks
-// clean) and every call whose element is not plain is E0701.
+// clean) and every call whose element is not plain is E0701 at the method
+// name, by a value or in the namespace form.
 func TestListResizePlain(t *testing.T) {
 	core := fakePrelude() + "export struct List[T] {\n\tn: int\n}\n" +
 		"Copy[U: Plain](x: U) {\n}\n" +
@@ -49,6 +50,7 @@ func TestListResizePlain(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"plain", "F(l: mut List[int]) {\n\tl.Resize(3, 7)\n}\n", ""},
 		{"not plain", "F(l: mut List[Box[int]], x: Box[int]) {\n\tl.Resize(3, x)\n}\n", "E0701@2:4"},
+		{"not plain, namespace form", "F(l: mut List[Box[int]], x: Box[int]) {\n\tList[Box[int]].Resize(l, 3, x)\n}\n", "E0701@2:17"},
 		{"generic caller, unbounded", "F[T](l: mut List[T], x: T) {\n\tl.Resize(3, x)\n}\n", "E0701@2:4"},
 		{"generic caller, plain", "F[T: Plain](l: mut List[T], x: T) {\n\tl.Resize(3, x)\n\tl.Resize(4, x)\n}\n", ""},
 		{"another method has no bound", "F(l: mut List[Box[int]], x: Box[int]) {\n\tl.Other(x)\n}\n", ""},

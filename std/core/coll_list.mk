@@ -105,8 +105,9 @@ export List[T].Truncate(mut self, n: int) {
 /// the same value is E0604, since it would store it through the copies
 /// already in the list.
 /// Panics (code 2) when n < 0. OutOfMemory when the buffer cannot grow, and
-/// then the list is unchanged. O(n - Len()) when it grows, else O(1); growth
-/// allocates from the arena.
+/// then the list is unchanged. O(n - Len()) for n above Len(), else O(1),
+/// plus a copy of Len() elements when the buffer grows; growth allocates
+/// from the arena.
 export List[T].Resize(mut self, n: int, x: T into self): OutOfMemory!void {
     if n < 0 {
         raw.Fail(2, "List.Resize: negative length")
