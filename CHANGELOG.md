@@ -2,6 +2,12 @@
 
 Every user-visible change to Mk, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). What a 0.x release may change, at each stability level, is in [stability](doc/std/README.md#9-stability).
 
+## Unreleased
+
+### Tools
+
+- `mk query sig --member <name> [--json]` lists every function and method of a workspace member's modules with its signature and contracts, never capped, including impl methods and the functions `gen` lines write ([section 5.2 of the tools guide](doc/tools.md#52-member-wide-signatures)). `sig Name` is unchanged.
+
 ## 0.6.0 (2026-11-24)
 
 ### Language
