@@ -580,7 +580,8 @@ The `--json` document, version 1, is one object and a newline (shown wrapped, wi
 ```text
 {"version":1,"query":"sig","member":"eng","complete":true,"missing":[],
  "functions":[{"name":"Collect","module":"src","file":"src/heap.mk","line":11,"col":8,
-               "sig":"export Collect(h: mut Heap)","contracts":[],"exported":true,
+               "sig":"export Collect(h: mut Heap)","resolved":"export Collect(h: mut Heap)",
+               "contracts":[],"exported":true,
                "impl":"","generated":false,"gen":""}, ...]}
 ```
 
@@ -591,7 +592,8 @@ The `--json` document, version 1, is one object and a newline (shown wrapped, wi
   - `name` is the name `sig` takes: `Collect`, or `Heap.Grow` for a method. An impl method, which `sig` does not answer, is named after its type too, `Square.Area`, also for an impl for a generic type (`Box.Area` for `impl[T] Shape for Box[T]`), and `impl` names its interface, `Shape`; `impl` is `""` for any other function.
   - `module` is the module path.
   - `file`, `line` and `col` locate the function's name, as diagnostics print it. A generated function's `file` is its module's gen view, `src/gen/<target>/gen.mk`, which a query does not write.
-  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart.
+  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart. An alias is spelled as the declaration writes it, by its name and arguments: `Load(i: u64): Value` for `type Value = u64`, also under `&`, `mut`, `[]`, `?`, an array, `E!T` and a generic type's arguments.
+  - `resolved` is `sig` with every alias spelled as its type, `Load(i: u64): u64`, and equals `sig` when the signature names no alias.
   - `exported` is true for an exported function. An impl method is never `exported`: its type and its interface decide who can call it.
   - `generated` is true for a function a `gen` line wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
 

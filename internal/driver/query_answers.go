@@ -82,9 +82,28 @@ func (qx *queryIndex) genericsString(gs []types.GenericParam, all []types.Generi
 }
 
 // sigLine spells a signature as the reference writes one: prefix, own
-// generics, parameters with into, result, then the flow clauses.
+// generics, parameters with into, result, then the flow clauses. A type is
+// spelled as the declaration writes it where it names an alias
+// (Signature.Spelled), and by TypeString elsewhere.
 func (qx *queryIndex) sigLine(display string, s *types.Signature) string {
+	return qx.sigText(display, s, false)
+}
+
+// sigResolved is sigLine with every alias spelled as its type: what
+// apidiff compares, so that a change of an alias's target shows in each
+// signature naming it, and sig --member's resolved field.
+func (qx *queryIndex) sigResolved(display string, s *types.Signature) string {
+	return qx.sigText(display, s, true)
+}
+
+func (qx *queryIndex) sigText(display string, s *types.Signature, resolved bool) string {
 	tab := qx.w.tab
+	spell := func(i int, t types.TypeID) string {
+		if !resolved && i < len(s.Spelled) && s.Spelled[i] != "" {
+			return s.Spelled[i]
+		}
+		return tab.TypeString(t, s.Generics)
+	}
 	var b strings.Builder
 	if s.Exported {
 		b.WriteString("export ")
@@ -109,7 +128,7 @@ func (qx *queryIndex) sigLine(display string, s *types.Signature) string {
 			if p.Var {
 				b.WriteString("var ")
 			}
-			b.WriteString(qx.str(p.Name) + ": " + tab.TypeString(p.Type, s.Generics))
+			b.WriteString(qx.str(p.Name) + ": " + spell(i, p.Type))
 		}
 		if p.Into != types.NoParam {
 			b.WriteString(" into " + qx.paramName(s, p.Into))
@@ -120,7 +139,7 @@ func (qx *queryIndex) sigLine(display string, s *types.Signature) string {
 	}
 	b.WriteByte(')')
 	if r := tab.ReturnType(s.Result, s.Errors); r != types.Void {
-		b.WriteString(": " + tab.TypeString(r, s.Generics))
+		b.WriteString(": " + spell(len(s.Params), r))
 	}
 	if f := qx.flowClauses(s); f != "" {
 		b.WriteString(" " + f)

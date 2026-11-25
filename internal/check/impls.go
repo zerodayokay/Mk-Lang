@@ -381,6 +381,7 @@ func (m *Module) expectedSig(d *types.ImplDecl, idecl *types.InterfaceDecl, im *
 		}
 		s.Generics[i] = g
 	}
+	s.Spelled = nil // the interface's spelling, not of the substituted types
 	s.Params = append([]types.Param(nil), im.Params...)
 	for i := range s.Params {
 		s.Params[i].Type = c.subst(s.Params[i].Type, args, d.For)

@@ -55,8 +55,11 @@ type SigEntry struct {
 	File string `json:"file"`
 	Line int    `json:"line"`
 	Col  int    `json:"col"`
-	// Sig is the signature as `mk query sig Name` spells its first line.
-	Sig string `json:"sig"`
+	// Sig is the signature as `mk query sig Name` spells its first line:
+	// an alias as the declaration writes it. Resolved spells every alias
+	// as its type; it equals Sig when the signature names no alias.
+	Sig      string `json:"sig"`
+	Resolved string `json:"resolved"`
 	// Contracts are the requires and ensures clauses, one per entry.
 	Contracts []string `json:"contracts"`
 	Exported  bool     `json:"exported"`
@@ -140,7 +143,7 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 				l.Missing = append(l.Missing, name)
 				continue
 			}
-			e := SigEntry{Name: name, Module: m.path, Sig: qx.sigLine(name, sig), Contracts: []string{},
+			e := SigEntry{Name: name, Module: m.path, Sig: qx.sigLine(name, sig), Resolved: qx.sigResolved(name, sig), Contracts: []string{},
 				Exported: it.Exported, Impl: impl}
 			e.File, e.Line, e.Col = qx.spanAt(it.Span)
 			for _, c := range sig.Contracts {
