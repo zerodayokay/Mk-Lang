@@ -1,5 +1,5 @@
 // verdict: reject E0505
-// note: csr-sh1's class one level down: u's Cell sits in a field (w) beside the loaned place u.x, and Put stores a shallow &i32 of u.x into t. The walk of a stored value's own loans trusts no type: from S it reaches t, then u through t's loan (R5: a loan of u.x overlaps u), and u holds W, which holds a Cell inline, so it takes n's loan: E0505 when n dies. A walk that takes the store cut of R11 at t, or skips t's shallow loan, checks this clean
+// note: csr-sh1's class one level down: u's Cell sits in a field (w) beside the loaned place u.x, and Put stores a shallow &i32 of u.x into t. The walk of a stored value's own loans does not trust a holder's type: from S it reaches t, then u through t's loan (R5: a loan of u.x overlaps u), and u holds W, which holds a Cell inline, so it takes n's loan: E0505 when n dies. A walk that takes the store cut of R11 at t, or skips t's shallow loan, checks this clean
 struct W {
     c: Cell[?&i32]
 }

@@ -12,9 +12,9 @@
 // Chan, Arena or view restores it. A local, temporary or argument slot whose
 // type can write no loan below its own bytes (storesBelow) receives the store
 // but passes it on through none of the loans it holds, except in the
-// self-reach and spawn walks (csrConst), which trust no type. An allocator reached
-// on a later hop is itself the root a store writes, since its contents have
-// no node of their own. A store into a frame root, a parameter's node or a
+// self-reach and spawn walks (csrConst), which do not trust a holder's type.
+// An allocator reached on a later hop is itself the root a store writes,
+// since its contents have no node of their own. A store into a frame root, a parameter's node or a
 // global is judged against the body's signature (E0604, E0605).
 
 package borrow
@@ -45,9 +45,9 @@ type hop struct {
 // keeps writing possible, a shared step ends it, a step into a Cell, Mutex,
 // Chan, Arena or view restores it; the walk does not pass an allocator, nor
 // a local, temporary or argument slot whose type can write no loan below its
-// own bytes (storesBelow), outside csrConst. An allocator reached on a later hop is itself a
-// root the store writes: its contents (a Cell put in it, a List's storage)
-// have no node of their own, so a loan stored into them is stored into the
+// own bytes (storesBelow), outside csrConst. An allocator reached on a later
+// hop is itself a root the store writes: its contents (a Cell put in it, a
+// List's storage) have no node of their own, so a loan stored into them is stored into the
 // allocator; the call rule stores into it without the loans it holds by
 // being itself (allocSelf). The exception is an allocator reached out of an
 // allocator through a loan the holder has by provenance (a sub-arena's
@@ -236,7 +236,8 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 			// place the store can land (storebelow.go). The self-reach
 			// walk and spawnStores' (csrConst) do not cut here, as they
 			// read no shallow mark (shallowHop): they defend against a
-			// callee that writes past its signature, so they trust no type.
+			// callee that writes past its signature, so they do not trust
+			// a holder's type.
 			continue
 		}
 		for _, m := range c.sets.get(c.held(st, t)) {

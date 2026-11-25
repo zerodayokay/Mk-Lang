@@ -1254,7 +1254,7 @@ Shelf.PutShared(&self, x: &i32 into self) {
 - `x: S into x` declares such a store when `x` is stored nowhere else.
 - A parameter takes one `into`. Beside `x into h`, nothing can declare a store of `x` into `x`, so no body may store `x` into `h` and then write through it.
 - This binds `unsafe` and `extern` bodies too (R19).
-- That walk trusts no type: it follows every loan its roots hold, shallow ones too, and passes a store on through any local whatever its type, so it still rejects the caller of an `unsafe` or `extern` body that writes past its signature. A `List[u64]` passed with `*h into h` in one view beside another borrowed piece makes its arena take that piece's loan.
+- That walk does not trust a holder's type: it follows every loan its roots hold, shallow ones too, and passes a store on through a local whatever its type, so it still rejects the caller of an `unsafe` or `extern` body that writes past its signature. A view that holds an arena's `List[u64]` beside another borrowed piece, passed with `*h into h`, makes the arena take that piece's loan.
 
 **Inside one parameter.** A store from one part of a parameter into a deeper part says so too: `*self into self`. A store into the first level needs no clause, because that level already holds everything below it. That is why a callee may move loans between the fields of a `mut` argument with no clause, and why a split local passed whole as `mut` is whole after the call (R7).
 
@@ -1291,7 +1291,7 @@ CopyAll(a: &Arena, xs: &List[str]): OutOfMemory!List[str] from a, xs *xs into a 
 
 The rules for allocators (`Arena`, `Alloc`, `Heap`):
 
-- An allocator the argument holds, directly or on a later step, receives the store. A later step passes through a value only when its type can write a loan below itself (above), so a `List[u64]` leads no store to its arena. The walk does not go on past an allocator, except into what was stored in its memory.
+- An allocator the argument holds, directly or on a later step, receives the store. A later step passes through a value only when its type can write a loan below itself (above), so a `List[u64]` leads no store to its arena, except in the walk of a stored value's own loans. The walk does not go on past an allocator, except into what was stored in its memory.
 - An allocator reached through the loan another allocator holds by its making (a sub-arena's parent, an arena's heap) is skipped, since nothing in the first one lives in it.
 - A store into an allocator drops the loans it holds by being itself, such as a loan of the arena stored into its own memory. So does a store into the memory of an arena that a parameter `a: &Arena` refers to, so `a` need not be declared `into a`. With `a` a reference to an allocator, `*a into a` stores the handle's loans, which the allocator holds by its making, into the allocator itself: they are dropped too, so its heap or parent stays skipped.
 - The allocators a parameter reaches are tracked apart from what a `mut` reference or a view beside them reaches, never merged with it.
