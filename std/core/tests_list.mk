@@ -694,3 +694,73 @@ test "List.Truncate keeps the first n, n at or past Len is a no-op, and the list
 
 // The panics (a negative n, a linear element dropped) are whole programs in
 // std/std-exitpanics_test.go, since a panic fails a block here.
+
+// List.Extend appends a slice as a Push per element would, growing at most
+// once per call: an empty xs changes nothing, a buffer that is the arena's
+// last block grows in place, and one with a block after it moves to a new
+// buffer with every element.
+test "List.Extend of an empty slice, in place, into a new buffer, and equal to a Push per element" (sys: &System) {
+    var ar := try Arena.New(sys.heap)
+    defer ar.Free()
+    var xs: [300]u64 = [0; 300]
+    for i in 0..300 {
+        xs[i] = Trunc[u64](i) * 0x9E37_79B9 + 2
+    }
+    var l := List[u64].New(&ar)
+    try l.Extend(xs[0..0])
+    Assert(l.Len() == 0)
+    try l.Push(1)
+    p := raw.Of(&l.Items()[0])
+    try l.Extend(xs[0..10])
+    Assert(l.Len() == 11 && raw.Same(raw.Of(&l.Items()[0]), p)) // grown in place
+    try l.Extend(xs[0..0])
+    Assert(l.Len() == 11)
+    _ = try ar.Put(Trunc[u64](7)) // a block after the buffer
+    try l.Extend(xs[10..300])
+    Assert(l.Len() == 301 && !raw.Same(raw.Of(&l.Items()[0]), p)) // a new buffer
+    var m := List[u64].New(&ar)
+    try m.Push(1)
+    for x in xs {
+        try m.Push(x)
+    }
+    Assert(m.Len() == l.Len())
+    for i in 0..l.Len() {
+        Assert(l[i] == m[i])
+    }
+    var b := List[u8].New(&ar)
+    try b.Extend("Hel".AsBytes())
+    try b.Push(0x6C)
+    try b.Extend("o, world".AsBytes())
+    Assert((str.From(b.Items()) else { "" }) == "Hello, world")
+    var s := List[TlExtendPair].New(&ar)
+    ps: [3]TlExtendPair = [TlExtendPair(k: "a", v: 1), TlExtendPair(k: "bc", v: 2), TlExtendPair(k: "", v: 65535)]
+    try s.Extend(ps[..])
+    try s.Extend(ps[1..3])
+    Assert(s.Len() == 5 && s[0].k == "a" && s[3].k == "bc" && s[4].v == 65535)
+}
+
+// The arena's heap allows one allocation, its first chunk; an Extend past
+// that chunk needs another, which the budget refuses: OutOfMemory, and the
+// buffer, the length and every element are as they were.
+test "List.Extend out of memory leaves the list unchanged" (sys: &System) {
+    var bud := TtBudget(left: 1, inner: raw.Of(sys.heap.Alloc()))
+    var hp := TtBudgetHeap(raw.OfMut(mut bud))
+    var ar := try Arena.New(&hp)
+    defer ar.Free()
+    var l := List[u64].New(&ar)
+    var xs: [1000]u64 = [0; 1000]
+    for i in 0..1000 {
+        xs[i] = Trunc[u64](i) + 5
+    }
+    try l.Extend(xs[0..3])
+    p := raw.Of(&l.Items()[0])
+    var failed := false
+    l.Extend(xs[..]) else {
+        failed = true
+    }
+    Assert(failed)
+    Assert(l.Len() == 3 && raw.Same(raw.Of(&l.Items()[0]), p))
+    for i in 0..3 {
+        Assert(l[i] == xs[i])
+    }
+}

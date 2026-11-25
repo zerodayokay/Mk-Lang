@@ -11399,6 +11399,7 @@ List[T].Len(&self): int
 List[T].Clear(mut self)
 List[T].Truncate(mut self, n: int)
 List[T].Resize(mut self, n: int, x: T into self): OutOfMemory!void
+List[T].Extend(mut self, xs: []T): OutOfMemory!void *xs into self
 List[T].Insert(mut self, i: int, x: T into self): OutOfMemory!void
 List[T].Remove(mut self, i: int): T
 List[T].Done(self): mut []T

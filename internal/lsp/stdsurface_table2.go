@@ -4,6 +4,7 @@
 package lsp
 
 var surfaceDocs2 = map[string]surfaceDoc{
+	"Zone.Fixed":                        {Module: "std.time", Lines: []string{"Zone.Fixed(offset_seconds: i32): Zone"}},
 	"Zone.FromTzif":                     {Module: "std.time", Lines: []string{"Zone.FromTzif(a: &Arena, name: str, data: []u8): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Load":                         {Module: "std.time", Lines: []string{"Zone.Load(a: &Arena, io: Io, name: str, embedded: ?Database): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Local":                        {Module: "std.time", Lines: []string{"Zone.Local(a: &Arena, io: Io): time.Error|OutOfMemory!Zone from a"}},
@@ -903,5 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"sqlite.Db.Exec":                    {Module: "std.db.sqlite", Lines: []string{"Db.Exec(&self, io: Io, sql: str): sqlite.Error!void"}},
 	"sqlite.Db.Prepare":                 {Module: "std.db.sqlite", Lines: []string{"Db.Prepare(&self, a: &Arena, io: Io, sql: str): sqlite.Error!Stmt from self, a"}},
 	"sqlite.Error":                      {Module: "std.db.sqlite", Lines: []string{"type Error = Sqlite | Busy | Misuse | OutOfMemory | Canceled"}},
-	"sqlite.Misuse":                     {Module: "std.db.sqlite", Lines: []string{"error Misuse"}},
 }
