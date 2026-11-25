@@ -162,10 +162,9 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 			l.Functions = append(l.Functions, e)
 		}
 	}
-	// Entries are not localized (localizeText) as sig Name's answer is: a
+	// Entries hold no dependency's module path to localize (modPath): a
 	// sig spells types by their names alone and a contract as its source
-	// writes it, so neither holds a dependency's canonical id, and a rewrite
-	// would only rename a parameter spelled as one.
+	// writes it.
 	slices.SortFunc(l.Functions, func(a, b SigEntry) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Col, b.Col),
 			cmp.Compare(a.Name, b.Name))

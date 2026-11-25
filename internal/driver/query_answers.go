@@ -209,7 +209,7 @@ func (qx *queryIndex) sig(e qEntry) []string {
 		}
 		out = append(out, "    "+w+c.Text)
 	}
-	out = append(out, "module "+e.mod+classSuffix(e.mod))
+	out = append(out, "module "+qx.modPath(e.mod)+classSuffix(e.mod))
 	return append(out, qx.doc(it)...)
 }
 
@@ -259,9 +259,9 @@ func (qx *queryIndex) declHead(e qEntry, withOpen bool) string {
 		head = "export " + head
 	}
 	if c, _ := moduleClass(e.mod); c != ClassStable {
-		return head + "  (module " + e.mod + ", " + c + ")"
+		return head + "  (module " + qx.modPath(e.mod) + ", " + c + ")"
 	}
-	return head + "  (module " + e.mod + ")"
+	return head + "  (module " + qx.modPath(e.mod) + ")"
 }
 
 // doc is the item's /// lines from its source, all of them: the answer's
@@ -439,12 +439,13 @@ func (qx *queryIndex) importLine(e qEntry) []string {
 	if e.module != nil && e.module.binRoot && !e.std && e.mod == "main" {
 		return []string{e.name + " is in the root module: no import inside the package"}
 	}
-	out := []string{"import " + e.mod, "spelled " + lastSeg(e.mod) + "." + e.name}
+	mod := qx.modPath(e.mod)
+	out := []string{"import " + mod, "spelled " + lastSeg(mod) + "." + e.name}
 	switch c, why := moduleClass(e.mod); c {
 	case ClassExperimental:
-		out = append(out, e.mod+" is Experimental: it may change or be withdrawn in any minor release; "+why)
+		out = append(out, mod+" is Experimental: it may change or be withdrawn in any minor release; "+why)
 	case ClassProvisional:
-		out = append(out, e.mod+" is Provisional: it may change in a minor release, each change with a decision line")
+		out = append(out, mod+" is Provisional: it may change in a minor release, each change with a decision line")
 	}
 	return out
 }
@@ -632,7 +633,7 @@ func (qx *queryIndex) errors(e qEntry) []string {
 			continue
 		}
 		it := qx.w.items.Get(m.Item)
-		l := qx.str(it.Name) + "  " + qx.w.items.Module(it.Module).Path
+		l := qx.str(it.Name) + "  " + qx.modPath(qx.w.items.Module(it.Module).Path)
 		if d, ok := it.Decl.(*types.ErrorDecl); ok && len(d.Fields) > 0 {
 			var fs []string
 			for _, f := range d.Fields {
@@ -681,7 +682,7 @@ func (qx *queryIndex) providedFormatSig(subject string) ([]string, bool) {
 		}
 		for _, m := range im.Methods {
 			if s := qx.funcSig(m); s != nil && qx.str(qx.w.items.Get(m).Name) == name {
-				return []string{qx.sigLine(name, s), "impl Format for " + e.name + " (provided by the compiler)", "module " + e.mod}, true
+				return []string{qx.sigLine(name, s), "impl Format for " + e.name + " (provided by the compiler)", "module " + qx.modPath(e.mod)}, true
 			}
 		}
 	}
