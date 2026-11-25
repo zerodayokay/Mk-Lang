@@ -229,9 +229,9 @@ ArenaFreeEntry(ctx: *u8, p: *u8, size: int, align: int) {
 // loads, and no list is walked. The block starts room bytes in, 16 or its
 // alignment, and the chunk's size is room + size. An ordinary newest chunk
 // is the first, the current one or one of its own (a chunk of the next
-// size is current when made, and only Reset unlinks the current), and a
-// block from its record to its end is alone in it; the first and the
-// current are never returned. An aligned one must carry OwnBit: a former
+// size stops being current only when a newer one is linked above it, and
+// the current one is never unlinked), and a block from its record to its
+// end is alone in it; the first and the current are never returned. An aligned one must carry OwnBit: a former
 // current aligned chunk has an own chunk's shift from AlignedBase up, and a
 // block at its alignment can reach its end over smaller-aligned blocks.
 FreeOwnChunk(h: *ArenaHdr, p: *u8, size: int, align: int) {
