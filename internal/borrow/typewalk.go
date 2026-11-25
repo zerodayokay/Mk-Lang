@@ -48,6 +48,8 @@ type walker struct {
 	refs       map[types.TypeID]*refInfo
 	splitMerge map[types.TypeID][][]bool
 	readDecl   map[types.ItemID]bool
+	// below holds storesBelow's answers (storebelow.go).
+	below map[types.TypeID]bool
 }
 
 type memoBit uint8
@@ -89,6 +91,7 @@ func newWalker(env *Env, reads *types.ReadSet) *walker {
 		refs:         make(map[types.TypeID]*refInfo),
 		splitMerge:   make(map[types.TypeID][][]bool),
 		readDecl:     make(map[types.ItemID]bool),
+		below:        make(map[types.TypeID]bool),
 	}
 	if env.Types != nil {
 		w.items = env.Types.Items()

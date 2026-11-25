@@ -2,7 +2,7 @@
 // polymorphically recursive types, yet never on a merely wide or deep type.
 // What: tests of recur, the bound of those walks.
 // How: builds wide, deeply nested and recursive generic structs and checks
-// storesFirst and walkExtra.
+// storesFirst, walkExtra and storesBelow.
 
 package borrow
 
@@ -16,11 +16,11 @@ import (
 // TestWalksBoundGrowthNotWidth: a wide type (65 fields ?&B[[i]u8], each
 // a different instance of B) and a nest that shrinks as the walk goes into its
 // argument (B[B[...66 deep...[i64]]]) give main's answers, false, in
-// storesFirst and walkExtra, where a bound on the instances met in a walk made
-// them true (E0602 on valid code). A polymorphically recursive G[T] { v: T,
-// next: ?&G[?T] } ends: walkExtra with the answer an ANY step gives, true, and
-// storesFirst with its closure's, false, since nothing any instance holds
-// takes a store (closure_test.go).
+// storesFirst, walkExtra and storesBelow, where a bound on the instances met
+// in a walk made them true (E0602 on valid code). A polymorphically recursive
+// G[T] { v: T, next: ?&G[?T] } ends: walkExtra and storesBelow with the
+// answer an ANY step gives, true, and storesFirst with its closure's, false,
+// since nothing any instance holds takes a store (closure_test.go).
 func TestWalksBoundGrowthNotWidth(t *testing.T) {
 	k := newKit(t)
 	k.structItem(k.main, "B", 1, false, false, field("p", k.tab.Ref(k.tab.Param(0))))
@@ -56,9 +56,13 @@ func TestWalksBoundGrowthNotWidth(t *testing.T) {
 		if w.walkExtra(c.t) {
 			t.Errorf("walkExtra(%s) = true, want false (no exclusive reference or writable referent in it)", c.name)
 		}
+		if w.storesBelow(c.t) {
+			t.Errorf("storesBelow(%s) = true, want false (no reference in it leads to a carrier slot)", c.name)
+		}
 	}
-	if w.storesFirst(gInt) || !w.walkExtra(gInt) {
-		t.Errorf("G[int]: storesFirst %v, walkExtra %v; want false and true at the bound", w.storesFirst(gInt), w.walkExtra(gInt))
+	if w.storesFirst(gInt) || !w.walkExtra(gInt) || !w.storesBelow(gInt) {
+		t.Errorf("G[int]: storesFirst %v, walkExtra %v, storesBelow %v; want false, true and true at the bound",
+			w.storesFirst(gInt), w.walkExtra(gInt), w.storesBelow(gInt))
 	}
 }
 

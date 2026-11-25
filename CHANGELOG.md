@@ -18,6 +18,10 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 - `std.big`'s recursions (Karatsuba and Toom-3 products and squares and their scratch sizing, recursive division, `Text`, `Parse` and `Sqrt`) take a `u8` depth, and the operand swaps of addition and of unbalanced products no longer call themselves, so `mk query stack` gives every `std.big` operation a static bound.
 - `List[T].Resize(n, x)` makes a list's length `n`, keeping the first `n` elements and appending copies of a plain `x` (`E0701` for any other `T`), growing at most once. A body generic in a plain `T` can fill a list with one value through it; there a loop of `Push(x)` is `E0604`, since the second `Push` stores `x` through the copies already in the list.
 
+### Loan checker
+
+- A store through a local or temporary goes on through the loans it holds only when its type can write a loan below its own bytes (R11). A view built over one field of a `mut` parameter, whose field leads to memory with no carrier, no longer makes `*self into self` store the parameter's own loan into the parameter (a false `E0604` whose suggested clause then locked every caller), and a `List` of non-carriers no longer passes a store on to its arena (a false `E0503`/`E0504` at the arena owner's teardown).
+
 ## 0.6.0 (2026-11-24)
 
 ### Language
