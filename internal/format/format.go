@@ -758,6 +758,12 @@ func space(prev, cur *item) bool {
 		return true
 	case c == ast.TokRBrace:
 		return p != ast.TokLBrace
+	case p == ast.TokRBrace && (c == ast.TokLBracket || c == ast.TokLParen):
+		// A suffix of an if, match or fn literal used as an operand,
+		// `match k { .. }[1]`, `if c { F } else { G }(x)`: on its line a }
+		// is followed by [ or ( nowhere else (one statement and one arm
+		// per line), so it is tight, as after any operand.
+		return false
 	case p == ast.TokLBrace || p == ast.TokRBrace:
 		return true
 	case prev.tight || cur.tight:

@@ -456,6 +456,16 @@ func TestConstructOperandSpaced(t *testing.T) {
 	}
 }
 
+// TestConstructSuffixTight: an index, a slice or a call after the closing
+// brace of an if or match used as an operand is a suffix, written tight as
+// after any other operand; it was written `} [1]` and `} (3, 4)`.
+func TestConstructSuffixTight(t *testing.T) {
+	wantFixed(t, "F(c: bool, k: int, xs: [2]int): int {\n    a := if c { xs } else { xs }[0]\n    b := match k {\n        1 { xs }\n        _ { xs }\n    }[1]\n    g := if c { G } else { H }(a, b)\n    return g + match k {\n        1 { G }\n        _ { H }\n    }(a, b) + if c { &xs } else { &xs }[0..1].Len()\n}\n")
+	if got := mustFormat(t, "F(k: int, xs: [2]int): int {\n    return match k {\n        1 { xs }\n        _ { xs }\n    } [1]\n}\n"); got != "F(k: int, xs: [2]int): int {\n    return match k {\n        1 { xs }\n        _ { xs }\n    }[1]\n}\n" {
+		t.Errorf("got:\n%s", got)
+	}
+}
+
 // TestContinuedIfCondition: a body after a continued condition whose
 // last line closes a bracket is indented from the statement, not from the
 // continuation (std/task/sched.mk's Linger).
