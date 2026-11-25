@@ -5,7 +5,8 @@
 // What: satisfies (Plain, Send, Share, Fields[B], interfaces, the computed
 // Lane and Integer), ImplOf and ImplArgs (impl lookup), boundFailure
 // (E0701), constPlain and globalShare, sliceImplicit (the implicit bounds of
-// `Slice[T]` functions, HeapList.Extend and List.Resize) and shapeReads.
+// `Slice[T]` functions, HeapList.Extend, List.Extend and List.Resize) and
+// shapeReads.
 //
 // How: ImplOf searches only the two modules coherence allows (the
 // interface's and the type constructor's, plus std for a builtin
@@ -545,8 +546,8 @@ func (c *Checker) byValueChildren(t types.TypeID) []types.TypeID {
 // `T: Plain`. The library's published signatures cannot carry them, so
 // check adds the bound to the function's body (where `s[i].Eq(x)` then
 // type-checks) and checks it at every call (E0701). std.core's
-// `HeapList[T].Extend` and `List[T].Resize` copy elements and need
-// `T: Plain` the same way; their calls are judged by implicitBounds
+// `HeapList[T].Extend`, `List[T].Extend` and `List[T].Resize` copy elements
+// and need `T: Plain` the same way; their calls are judged by implicitBounds
 // (zerovalid.go), since they do not come through a Slice.
 func (c *Checker) sliceImplicit(it *types.Item) (types.Bound, bool) {
 	if c.listCopies(it) {
@@ -567,24 +568,29 @@ func (c *Checker) sliceImplicit(it *types.Item) (types.Bound, bool) {
 	return types.Bound{}, false
 }
 
-// listCopies reports whether it is std.core's `HeapList[T].Extend` or
-// `List[T].Resize`, which copy elements and which KnownItems does not name:
-// matched by module, owner and name, as freebound.go's release rows are.
+// listCopies reports whether it is std.core's `HeapList[T].Extend`,
+// `List[T].Extend` or `List[T].Resize`, which copy elements and which
+// KnownItems does not name: matched by module, owner and name, as
+// freebound.go's release rows are.
 func (c *Checker) listCopies(it *types.Item) bool {
 	if it.Kind != types.KindFunc || it.Owner == types.NoItem {
 		return false
 	}
-	var owner string
-	switch c.cfg.Interner.Str(it.Name) {
-	case "Extend":
-		owner = "HeapList"
-	case "Resize":
-		owner = "List"
-	default:
+	name := c.cfg.Interner.Str(it.Name)
+	if name != "Extend" && name != "Resize" {
 		return false
 	}
 	o := c.cfg.Items.Get(it.Owner)
-	if o == nil || c.cfg.Interner.Str(o.Name) != owner {
+	if o == nil {
+		return false
+	}
+	switch c.cfg.Interner.Str(o.Name) {
+	case "List":
+	case "HeapList":
+		if name != "Extend" {
+			return false
+		}
+	default:
 		return false
 	}
 	mod := c.cfg.Items.Module(o.Module)

@@ -4,6 +4,8 @@
 package lsp
 
 var surfaceDocs3 = map[string]surfaceDoc{
+	"sqlite.Db.Prepare":          {Module: "std.db.sqlite", Lines: []string{"Db.Prepare(&self, a: &Arena, io: Io, sql: str): sqlite.Error!Stmt from self, a"}},
+	"sqlite.Error":               {Module: "std.db.sqlite", Lines: []string{"type Error = Sqlite | Busy | Misuse | OutOfMemory | Canceled"}},
 	"sqlite.Misuse":              {Module: "std.db.sqlite", Lines: []string{"error Misuse"}},
 	"sqlite.Open":                {Module: "std.db.sqlite", Lines: []string{"sqlite.Open(a: &Arena, io: Io, path: str): sqlite.Error!Db"}},
 	"sqlite.Sqlite":              {Module: "std.db.sqlite", Lines: []string{"error Sqlite(code: i32)"}},
