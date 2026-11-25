@@ -12,12 +12,13 @@
 // a shared reference to memory that takes loan stores through `&`, a type
 // parameter, Self, fn or interface value, an allocator held by value, a `mut
 // view` or a loan-interior-writable type, a view type argument that holds
-// loans, and a raw pointer each answer yes. A raw pointer is opaque to the
-// walk, so only two are exempt: a view's own pointer to one of its type
-// parameters, whose storage the type argument stands for (R18), and, behind
-// a shared step, a read-only view's own pointers (R19 makes a view that
-// writes loans through `&self` a `mut view`) and the context of an Alloc or
-// Heap, which takes no store through `&`. Behind a shared step only memory
+// loans, and a raw pointer, even behind a reference to a type that holds no
+// loan (rawBehind), each answer yes. A raw pointer is opaque to the walk, so
+// only two are exempt: a view's own pointer to one of its type parameters,
+// whose storage the type argument stands for (R18), and, behind a shared
+// step, a read-only view's own pointers (R19 makes a view that writes loans
+// through `&self` a `mut view`) and the context of an Alloc or Heap, which
+// takes no store through a reference. Behind a shared step only memory
 // that takes loan stores through `&`, raw pointers and opaque types answer
 // yes, as in the writable walk. The walk keeps a seen set per query, stops
 // at recur's bound on a polymorphically recursive type with the answer an
@@ -84,12 +85,15 @@ func (w *walker) belowWalk(t types.TypeID, shared bool, seen map[belowKey]bool, 
 	case types.KStr:
 		return false
 	case types.KMut, types.KMutSlice:
-		if shared {
-			return w.carrier(ty.Elem) && w.belowWalk(ty.Elem, true, seen, r)
+		if !w.carrier(ty.Elem) {
+			return w.rawBehind(ty.Elem)
 		}
-		return w.carrier(ty.Elem)
+		return !shared || w.belowWalk(ty.Elem, true, seen, r)
 	case types.KRef, types.KSlice:
-		return w.carrier(ty.Elem) && (w.writableByType(ty.Elem) || w.belowWalk(ty.Elem, true, seen, r))
+		if !w.carrier(ty.Elem) {
+			return w.rawBehind(ty.Elem)
+		}
+		return w.writableByType(ty.Elem) || w.belowWalk(ty.Elem, true, seen, r)
 	case types.KNamed:
 		if w.isInterfaceType(t) {
 			return true
@@ -122,6 +126,14 @@ func (w *walker) belowWalk(t types.TypeID, shared bool, seen map[belowKey]bool, 
 		}
 	}
 	return false
+}
+
+// rawBehind reports whether a referent that is no carrier still answers yes:
+// it holds no loan, but a raw pointer in its bytes (holdsRaw) reaches what
+// the walk cannot see. An allocator's context pointer does not count (an
+// Alloc or Heap takes no store through a reference).
+func (w *walker) rawBehind(t types.TypeID) bool {
+	return !w.factsOf(t).Allocator && w.holdsRaw(t, map[types.TypeID]bool{})
 }
 
 // viewBelow is the part of a read-only or plain view that its fields do not

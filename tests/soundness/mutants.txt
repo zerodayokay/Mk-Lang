@@ -408,7 +408,7 @@ file internal/borrow/store.go
 anchor \t\tif ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
 replace \t\tif ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType {
 note the provenance cut taken for every frame root, whatever its type can write below itself: a holder that can store through what it borrows (a field holding a reference, a Cell behind a shared reference, a List of references, a generic field, a raw pointer) passes no store on, so each witness is accepted and leaves a reference to a dead local in the caller's memory; expected VDeadScope
-witness SB-provenance-writer-reject.mk SB-cell-holder-reject.mk SB-list-carrier-reject.mk SB-generic-holder-reject.mk SB-view-raw-reject SB-raw-holder-reject SB-raw-shared-reject
+witness SB-provenance-writer-reject.mk SB-cell-holder-reject.mk SB-list-carrier-reject.mk SB-generic-holder-reject.mk SB-view-raw-reject SB-raw-holder-reject SB-raw-shared-reject SB-raw-behind-reject
 end
 
 mutant M-SB-raw
@@ -429,6 +429,16 @@ anchor p.Kind == types.KRawPtr && w.tab.Kind(p.Elem) != types.KParam {
 replace p.Kind == types.KRawPtr && !w.paramFrom(p.Elem, 0) {
 note a view's raw pointer trusted as typed whenever its pointee mentions a type parameter: V[u64] over `*Node[T]`, whose Node holds a `&Cell[?&i32]` beside T, passes no store on, so the witness is accepted and the cell keeps a reference to a dead local; expected VDeadScope
 witness SB-view-raw-reject
+end
+
+mutant M-SB-rawbehind
+rule R11
+class R
+file internal/borrow/storebelow.go
+anchor \treturn !w.factsOf(t).Allocator && w.holdsRaw(t, map[types.TypeID]bool{})
+replace \treturn false
+note a referent that holds no loan taken to reach nothing, even when it holds a raw pointer: a holder of `&Bare` whose code stores through Bare's pointer into memory it borrows by another field passes no store on, so the witness is accepted and the cell keeps a reference to a dead local; expected VDeadScope
+witness SB-raw-behind-reject
 end
 
 mutant M-C3-self
