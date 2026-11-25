@@ -249,7 +249,10 @@ func (u *unit) constPat(p ast.Pattern, it *types.Item, t types.TypeID) {
 	}
 	a, ok := u.m.constValueArg(u.x, it, p.Span())
 	if !ok || a.Kind != types.CAValue {
-		return // reported by the const's own check or evaluation
+		// Reported by the const's own check or evaluation; lower's
+		// E0000 at a value-less pattern is judged at this read.
+		u.b.poisonRead(it.ID, p.Span())
+		return
 	}
 	u.b.setConst(p.ID(), a.Value)
 }
