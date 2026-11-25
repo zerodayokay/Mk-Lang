@@ -130,6 +130,9 @@ export Main(sys: &System): WriteError!void {
     scope s := sys.io.Scope() {
         s.go Parts(mode)
     }
+    if mode != 0 {
+        return
+    }
     var g: [4]u64 = [0; 4]
     var n: u64 = 0
     unsafe "the counters are this process's" {

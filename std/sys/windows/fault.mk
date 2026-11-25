@@ -290,7 +290,9 @@ Words(p: *u8): (code: u32, pc: uint, sp: uint, addr: uint) {
 // system stack (the in-extern test, ExternTop) first gets a true StackLimit
 // (CoverStackLimit), for the walk and for the C code's own handlers. A
 // fault whose pc is in a std.vm code region goes to the filters, and one
-// none resumes is reported as kind 4. It runs on the faulting
+// none resumes is reported as kind 4. Any other access or illegal
+// instruction it passes on goes to the filters first when it is on a stack
+// Mk runs on (MkStack), whatever its pc (MKH-493). It runs on the faulting
 // stack: for an overflow, inside the guarantee (a task's 16 KiB; a
 // carrier's 32 KiB).
 MkVectoredHandler(p: *u8): i32 {

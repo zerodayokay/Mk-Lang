@@ -100,7 +100,7 @@ Which faults reach the filters depends on the target:
 
 | Target | Faults the filters see |
 |---|---|
-| Windows | A stack overflow (in a library, one in its own code or on a stack Mk made); an access or illegal-instruction fault in Mk code; any fault whose `pc` is in a code region. Never a fault that C code handles itself (`__try`). |
+| Windows | A stack overflow (in a library, one in its own code or on a stack Mk made); an access or illegal-instruction fault in Mk code; any fault whose `pc` is in a code region; any other access or illegal-instruction fault on a task's or a carrier's stack (in a program with no task, every one), whatever its `pc`, C code's or a system DLL's. The filters see it before the C code's own `__try`, and one they all pass goes on to that handler or the system, as without filters. |
 | Linux, macOS | A `SIGSEGV`, `SIGBUS` or `SIGILL` that Mk owns: its `pc` in the executable's image, on the main thread or a thread std started, or on a task's or a carrier's stack; any fault in a code region. A fault in C code outside the image on a foreign thread, and a signal another process or thread sends, get the signal's default action, raised again at once. |
 
 - `FaultKind.Stack` is an access to a guard page the runtime knows, a task's or a carrier's, and is reported as a stack overflow wherever its `pc` is.
@@ -405,15 +405,17 @@ take a lock, allocate or suspend. A fault inside a filter ends the
 process with `panic: fault in a fault filter`, status 101.
 
 Which faults reach the filters differs by target. On Windows: a stack
-overflow, an access or illegal-instruction fault in Mk code, and any
-fault whose pc is in a std.vm code region; never a fault that C code
-handles itself (`__try`). On Linux: a SIGSEGV, SIGBUS or SIGILL that Mk
-owns, which is one whose pc is in the executable's image, whose thread
-is the main thread or one std started, or whose stack is a task's or a
-carrier's; and any fault whose pc is in a std.vm code region. So on
-Linux a fault in a shared library's C code called on an Mk thread
-reaches the filters and Mk's report, where Windows routes only a fault
-whose pc is in the image.
+overflow, an access or illegal-instruction fault in Mk code, any fault
+whose pc is in a std.vm code region, and any other access or
+illegal-instruction fault whose stack is a task's or a carrier's (in a
+program with no task, every one), whatever its pc: C code's, a system
+DLL's. The filters see such a fault before the C code's own handler
+(`__try`), and one they all pass goes on to it, or to the system, as
+it would without filters; it is never Mk's report. On Linux: a
+SIGSEGV, SIGBUS or SIGILL that Mk owns, which is one whose pc is in
+the executable's image, whose thread is the main thread or one std
+started, or whose stack is a task's or a carrier's; and any fault whose
+pc is in a std.vm code region. One every filter passes is Mk's report.
 
 macOS routes as Linux does.
 

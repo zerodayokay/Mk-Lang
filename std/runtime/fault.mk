@@ -154,15 +154,17 @@ FWord(p: *u64): &raw.Atomic[u64] {
 /// process with `panic: fault in a fault filter`, status 101.
 ///
 /// Which faults reach the filters differs by target. On Windows: a stack
-/// overflow, an access or illegal-instruction fault in Mk code, and any
-/// fault whose pc is in a std.vm code region; never a fault that C code
-/// handles itself (`__try`). On Linux: a SIGSEGV, SIGBUS or SIGILL that Mk
-/// owns, which is one whose pc is in the executable's image, whose thread
-/// is the main thread or one std started, or whose stack is a task's or a
-/// carrier's; and any fault whose pc is in a std.vm code region. So on
-/// Linux a fault in a shared library's C code called on an Mk thread
-/// reaches the filters and Mk's report, where Windows routes only a fault
-/// whose pc is in the image.
+/// overflow, an access or illegal-instruction fault in Mk code, any fault
+/// whose pc is in a std.vm code region, and any other access or
+/// illegal-instruction fault whose stack is a task's or a carrier's (in a
+/// program with no task, every one), whatever its pc: C code's, a system
+/// DLL's. The filters see such a fault before the C code's own handler
+/// (`__try`), and one they all pass goes on to it, or to the system, as
+/// it would without filters; it is never Mk's report. On Linux: a
+/// SIGSEGV, SIGBUS or SIGILL that Mk owns, which is one whose pc is in
+/// the executable's image, whose thread is the main thread or one std
+/// started, or whose stack is a task's or a carrier's; and any fault whose
+/// pc is in a std.vm code region. One every filter passes is Mk's report.
 ///
 /// macOS routes as Linux does.
 ///
