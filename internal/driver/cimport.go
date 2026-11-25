@@ -2,7 +2,8 @@
 // assembly sources (c_sources, asm_sources); the driver must turn those
 // into Mk modules and link objects as a cached native step.
 //
-// What: validateC (the manifest's C fields), cImports and cImportsOf (the
+// What: validateC (the manifest's C fields), cIncludeDirs (the -I
+// directories of a package's C), cImports and cImportsOf (the
 // translated imports of one package), prune, translateC and vendoredViews,
 // the C object builds (cObjects, cObjectsOf, asmSourcesFor) with their
 // cache keys (cobjObjKey, cobjCandidate, saveCobjCandidate), and
@@ -13,6 +14,9 @@
 // readable binding is written to gen/<target>/c/<name>.mk, and the shim,
 // the C sources and the assembly sources become objects of the link. A C
 // object's key covers the content hash of every header its -MD file lists.
+// The translation, the shim and the C sources search the same -I
+// directories: the package root, then every C import's include_dirs (the
+// package's C imports are one translation unit, so they share one path).
 
 package driver
 
@@ -23,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -37,7 +42,9 @@ import (
 )
 
 // validateC checks the manifest's C fields: a CImport's name is one
-// import path segment, unique, with at least one header; a C source is a
+// import path segment, unique, with at least one header, and each of its
+// include_dirs a directory inside the package other than its root, written
+// relative with / separators; a C source is a
 // package file ending in .c, an assembly source one ending in .s or .S
 // whose target is "" or a target mk knows.
 func validateC(m *Manifest, t *srcTree) []*diag.Diagnostic {
@@ -69,6 +76,20 @@ func validateC(m *Manifest, t *srcTree) []*diag.Diagnostic {
 				fail(ci.Field+".defines["+strconv.Itoa(i)+"]", "define %q is not NAME or NAME=VALUE", d)
 			}
 		}
+		for i, d := range ci.IncludeDirs {
+			f := ci.Field + ".include_dirs[" + strconv.Itoa(i) + "]"
+			c := path.Clean(d)
+			switch {
+			case d == "" || strings.ContainsAny(d, "\\:\n") || path.IsAbs(d):
+				fail(f, "include directory %q is not a relative directory with / separators", d)
+			case c == "..", strings.HasPrefix(c, "../"):
+				fail(f, "include directory %q is not a directory inside the package", d)
+			case c == ".":
+				fail(f, "include directory %q is the package root, which is always searched first", d)
+			case t.osRoot != "" && !t.isDir(c):
+				fail(f, "include directory %s does not exist (as spelled)", d)
+			}
+		}
 	}
 	for _, cs := range m.CSources {
 		if !strings.HasSuffix(cs.Path, ".c") {
@@ -88,6 +109,23 @@ func validateC(m *Manifest, t *srcTree) []*diag.Diagnostic {
 			// though no hosted build takes it.
 			if _, _, ok := TargetNamed(as.Target); !ok && as.Target != types.X86_64Freestanding.Name {
 				fail(as.Field+".target", "assembly source %s: unknown target %q", as.Path, as.Target)
+			}
+		}
+	}
+	return out
+}
+
+// cIncludeDirs are the -I directories of man's C, absolute: the package
+// root osRoot, then each C import's include_dirs in order, each once.
+func cIncludeDirs(man *Manifest, osRoot string) []string {
+	out := []string{osRoot}
+	seen := map[string]bool{}
+	for _, c := range man.CImports {
+		for _, d := range c.IncludeDirs {
+			d = path.Clean(d)
+			if !seen[d] {
+				seen[d] = true
+				out = append(out, filepath.Join(osRoot, filepath.FromSlash(d)))
 			}
 		}
 	}
@@ -354,7 +392,7 @@ func (s *Session) translateC(imports []cimport.Import, man *Manifest, osRoot, ta
 		return nil, "", []*diag.Diagnostic{toolErr(err, "clang did not report its resource directory")}
 	}
 	req := cimport.Request{Target: target, Triple: cimport.ParseTriple(target), Imports: imports,
-		Include: []string{osRoot}, Sysroot: sysrootFor(target, os.Getenv)}
+		Include: cIncludeDirs(man, osRoot), Sysroot: sysrootFor(target, os.Getenv)}
 	ci.sysdir = req.Sysroot
 	st := w.openStore(s.cacheDir())
 	// The build ID is in the key: the mapping is code inside the mk binary.
@@ -584,6 +622,7 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 		}
 		libcDir = d
 	}
+	include := cIncludeDirs(ci.man, ci.root)
 	dh := cimport.NewDepHasher(st)
 	defer dh.Save()
 	var objs []string
@@ -595,7 +634,7 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 			system = append([]string{libcDir}, ci.sysdir...)
 		}
 		cj := toolchain.CJob{Triple: triple, Input: j.in, Output: out, Opt: opt, ResourceDir: rd,
-			Include: []string{ci.root}, System: system, Sysroot: sysroot, Flags: j.flags, Hosted: j.shim}
+			Include: include, System: system, Sysroot: sysroot, Flags: j.flags, Hosted: j.shim}
 		if !j.asm {
 			// The bin's target flags come before the manifest's own (cTargetFlags).
 			cj.Flags = append(append([]string{}, cflags...), j.flags...)

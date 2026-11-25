@@ -8,6 +8,8 @@
 //   - mem.OffsetOf[T](field): the field's offset in T's layout; a field T
 //     lacks panics, so a compile-time evaluation reports E0901.
 //   - mem.Prefetch and atomic.Pause: nothing (hints).
+//   - mem.Zeroed[T](): the destination's bytes cleared (check has refused
+//     a T that is not zero-valid).
 //   - raw.AtomicCopy: raw.Move (whole elements, overlap as memmove).
 //   - raw.AtomicFill: x written n times.
 //   - runtime.Cycles: refused (extern), a fact of the run, never of a
@@ -78,6 +80,18 @@ func init() {
 		for i := uint64(0); i < n; i++ {
 			m.writeOp(f, m.argOp(f, t, 1), loc{a: ptrAlloc(d), off: ptrOff(d) + uint32(i*ti.size), tag: dt, ti: ti})
 		}
+	}
+	intrinsics["std.mem.Zeroed"] = func(m *Machine, f *frame, t *mir.Terminator, _ types.FnRef) {
+		d := m.dest(f, t)
+		n := d.ti.size
+		m.charge(c(n))
+		if n == 0 {
+			return
+		}
+		if m.tg != nil {
+			m.tacc(d.a, d.off, n, d.tag, accWrite)
+		}
+		m.mem.access(d.a, d.off, n, true).fill(d.off, uint32(n), 0)
 	}
 	intrinsics["std.mem.OffsetOf"] = func(m *Machine, f *frame, t *mir.Terminator, fn types.FnRef) {
 		ti := m.targ(f, fn, 0)

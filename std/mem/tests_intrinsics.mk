@@ -1,6 +1,6 @@
 // Why: intrinsics are lowered by codegen and run by the evaluator; both
 // paths must agree.
-// What: tests of std.mem's OffsetOf and Prefetch (intrinsics.mk), std.raw's
+// What: tests of std.mem's OffsetOf, Prefetch and Zeroed (intrinsics.mk), std.raw's
 // AtomicCopy, AtomicFill, FnFromAddr and Select, and std.atomic's Pause.
 // std.runtime's Cycles is tested in std/runtime/tests_cycles.mk, since
 // std.mem builds on freestanding and std.runtime does not.
@@ -152,4 +152,81 @@ test "Select picks a or b, at run time and at compile time" {
     r := raw.Select(false, SelRec(a: 1, b: 2, c: 3), SelRec(a: 4, b: 5, c: 6))
     Assert(r.a == 4 && r.b == 5 && r.c == 6)
     Assert(Selects() == SelectsAt)
+}
+
+struct ZeroInner {
+    a: i32
+    b: f64
+}
+
+// ZeroRec has more fields than a caller would name by hand, of each
+// zero-valid kind: integers of every width, floats, bool, char, raw
+// pointers, an optional fn, arrays and a nested struct.
+struct ZeroRec {
+    f01: i8
+    f02: i16
+    f03: i32
+    f04: i64
+    f05: u8
+    f06: u16
+    f07: u32
+    f08: u64
+    f09: int
+    f10: uint
+    f11: f32
+    f12: f64
+    f13: bool
+    f14: char
+    f15: *u8
+    f16: *ZeroInner
+    f17: ?fn(i32): i32
+    f18: [5]u16
+    f19: ZeroInner
+    f20: [2]ZeroInner
+}
+
+// IsZero reports whether every field of r is its zero.
+IsZero(r: &ZeroRec): bool {
+    ok := r.f01 == 0 && r.f02 == 0 && r.f03 == 0 && r.f04 == 0 && r.f05 == 0 && r.f06 == 0 && r.f07 == 0 && r.f08 == 0
+    ok2 := r.f09 == 0 && r.f10 == 0 && r.f11 == 0.0 && r.f12 == 0.0 && !r.f13 && r.f14 == '\0'
+    ok3 := raw.IsNull(r.f15) && raw.IsNull(r.f16) && r.f17.IsNone() && r.f19.a == 0 && r.f19.b == 0.0
+    var ok4 := true
+    for i in 0..5 {
+        ok4 = ok4 && r.f18[i] == 0
+    }
+    for i in 0..2 {
+        ok4 = ok4 && r.f20[i].a == 0 && r.f20[i].b == 0.0
+    }
+    return ok && ok2 && ok3 && ok4
+}
+
+Twice(x: i32): i32 {
+    return x * 2
+}
+
+// Dirty is a ZeroRec with no field zero.
+Dirty(p: *u8): ZeroRec {
+    inner := ZeroInner(a: 3, b: 1.5)
+    return ZeroRec(f01: -1, f02: -2, f03: -3, f04: -4, f05: 5, f06: 6, f07: 7, f08: 8, f09: 9, f10: 10, f11: 1.25, f12: 2.5,
+        f13: true, f14: 'z', f15: p, f16: raw.Null[ZeroInner](), f17: some(Twice), f18: [1, 2, 3, 4, 5], f19: inner, f20: [inner, inner])
+}
+
+ZeroedIsZero(): bool {
+    r := Zeroed[ZeroRec]()
+    return IsZero(&r)
+}
+
+const ZeroedAt: bool = ZeroedIsZero()
+
+test "Zeroed is a record of zero bytes, natively and in the evaluator" {
+    Assert(ZeroedAt)
+    b: u8 = 1
+    var r := Dirty(raw.Of(&b))
+    Assert(!IsZero(&r))
+    r = Zeroed[ZeroRec]()
+    Assert(IsZero(&r))
+    xs := Zeroed[[3]ZeroInner]()
+    Assert(xs[2].a == 0 && xs[2].b == 0.0)
+    Assert(Zeroed[u64]() == 0 && Zeroed[?u32]().IsNone())
+    _ = Zeroed[void]()
 }

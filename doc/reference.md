@@ -1941,7 +1941,7 @@ The iterators `Split`, `Lines`, `Words`, `Scalars`, `MapIter`, `TextMapIter`, `C
 
 ### Zero-valid types
 
-A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, so it needs one.
+A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, and [`mem.Zeroed[T]()`](std/mem.md#layout) returns one zeroed value, so both need one.
 
 A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, or an `E!T` whose `T` is zero-valid. A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not.
 
@@ -1950,6 +1950,40 @@ A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, 
 Names(a: &Arena): OutOfMemory!int {
     xs := try a.Slice[str](4) // <- E0701
     return xs.Len()
+}
+```
+
+`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is its result, so it is not an error union either: `mem.Zeroed[E!T]()` is E0701, and `mem.Zeroed[T]()` makes the value. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
+
+```mk
+// verdict: ok
+import std.mem
+
+struct Stats {
+    count: int
+    total: f64
+    last: ?u32
+    buckets: [8]u32
+}
+
+export Main(sys: &System): WriteError!void {
+    var s := mem.Zeroed[Stats]()
+    s.count += 1
+    try sys.Print("{c} {b}\n", (c: s.count, b: s.buckets[7]))
+}
+```
+
+```mk
+// verdict: reject E0701
+import std.mem
+
+struct Named {
+    id: int
+    name: str
+}
+
+Blank(): Named {
+    return mem.Zeroed[Named]() // <- E0701
 }
 ```
 
@@ -2031,7 +2065,7 @@ export Main(sys: &System): WriteError!void {
 | E0507 | mut-through-shared | Writing an element through a `[]T` ([slices](#slices-t-and-mut-t)) |
 | E0508 | mut-of-immutable | `mut x` of a local that is not `var` ([references](#references-t-and-mut-t)) |
 | E0608 | flow-mismatch | A function given as a `fn` type whose clauses do not cover the function's ([function types](#function-types)) |
-| E0701 | bound-unmet | A unique or linear type where `Plain` is needed; `Arena.Slice` of a type that is not zero-valid |
+| E0701 | bound-unmet | A unique or linear type where `Plain` is needed; `Arena.Slice` or `mem.Zeroed` of a type that is not zero-valid, or `mem.Zeroed` of an error union |
 | E0704 | impl-conflict | A method through an alias of another module's type ([aliases](#type-aliases)) |
 | E0705 | not-const | An array length that is not a compile-time constant ([arrays](#arrays-nt)) |
 | E0706 | requires-failed | An enum, or a struct with no `Format`, in a format string ([enums](#enum-types)) |
@@ -9883,9 +9917,11 @@ How C declarations appear in Mk:
 | A function-pointer field | `?fn(...)`. Reading it needs `unsafe` (E1101): calling it runs C code |
 
 - Types and constants become PascalCase, and fields snake_case. Functions keep their C names. Each declaration's C form is in a comment above it.
+- A struct is made by naming every field, or zeroed whole as C's `= {0}` does with [`mem.Zeroed`](#zero-valid-types): `mem.Zeroed[geom.GeomPoint]()`. A C struct's fields (integers, floats, raw pointers, `?fn`, arrays, nested structs, a union's bytes, bitfield units) are all zero-valid, so it needs no `unsafe`.
 - `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
 - `headers` are paths from the package root. `defines` are macros the headers are read with, `NAME` or `NAME=value`.
-- All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them.
+- `include_dirs` are directories of the package searched for headers after the package root, for a library whose headers include each other by a name under their own include directory: `pkg.CImport(name: "z", headers: ["third_party/z/include/z.h"], defines: [], macros: [], vendor: false, include_dirs: ["third_party/z/include"])`, where `z.h` has `#include "zconf.h"`. Each is a relative path with `/` separators inside the package, other than the root itself (E0202 otherwise). The field may be left out.
+- All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them. So their `include_dirs` form one search path, in the order the imports list them, and the shim and the package's C sources are compiled with the same path.
 - `mk check` runs Clang to translate the C imports, with a minimal environment. It compiles no C source.
 - The bindings are made per target. `mk check --all-targets` translates them for both `x86_64-windows` and `x86_64-linux` and reports an item the package uses whose API differs (E0213). A constant's value is not part of the API. It needs each target's system headers, from `MK_SYSROOT_<target>`, or `vendor: true` to read the committed `gen/<target>/c/` files instead. Without either, it is E0213, `reason: no-sysroot`.
 
@@ -9900,8 +9936,8 @@ The manifest builds C and assembly files with the package:
 | `links` | `pkg.Link(...)` | A library ([below](#linking-libraries)) |
 
 - C sources link against `std.libc`, the C library written in Mk, and the bin's links. They get no other C runtime. Without a sysroot, only `std.libc`'s functions are declared in the headers they see: a call to anything else fails to compile, or to link, with E0001. [std.libc](std/libc.md) lists the functions, the include path and the system-libc mode of Linux.
-- A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works.
-- A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root instead.
+- A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works, and then the C imports' `include_dirs`.
+- A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root, or list their directory in a C import's `include_dirs`, instead.
 
 ### Linking libraries
 
@@ -11360,7 +11396,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.sync` | `RwLock ReadGuard Select Selectable Shared Semaphore Notify Barrier Once` |
 | `std.atomic` | `AtomicInt AtomicBool Atomic Spin SpinGuard Order Relaxed Acquire Release AcqRel SeqCst Fence Unordered Pause` |
 | `std.mmio` | `Load Store Fence Reg`, every call inside an unsafe block |
-| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch` |
+| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch Zeroed` |
 | `std.coll` | `Deque HeapDeque PriorityQueue BTree HeapBTree BTreeIter Bitset` |
 | `std.text` | `Graphemes Clusters Normalize Form FoldCase Width ToUtf16 FromUtf16 WordBounds SentenceBounds Bounds ParagraphBounds BidiLevels Levels Run Direction Mirror LineBreaks Breaks Capped Sink CategoryOf Category ScriptOf Script ScriptExtensions Has Property UnicodeVersion` |
 | `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ExactDigits Digits DigitMode` |
@@ -12486,6 +12522,7 @@ struct PanicInfo {
 type AllocTable = core.AllocTable
 mem.OffsetOf[T](field: str): int
 mem.Prefetch[T](p: &T, write: bool)
+mem.Zeroed[T](): T
 Fixed.New(buf: mut []u8): Fixed
 Fixed.Alloc(&self): &Alloc from self
 Fixed.Reset(mut self) ends self

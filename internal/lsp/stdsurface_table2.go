@@ -645,6 +645,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"mem.Pool.Sweep":                    {Module: "std.mem", Lines: []string{"Pool[T].Sweep(mut self, const keep: fn(Handle, &T): bool): int"}},
 	"mem.PoolIter.Next":                 {Module: "std.mem", Lines: []string{"PoolIter[T].Next(mut self): ?(handle: Handle, value: &T) from self.pool"}},
 	"mem.Prefetch":                      {Module: "std.mem", Lines: []string{"mem.Prefetch[T](p: &T, write: bool)"}},
+	"mem.Zeroed":                        {Module: "std.mem", Lines: []string{"mem.Zeroed[T](): T"}},
 	"mmio.Fence":                        {Module: "std.mmio", Lines: []string{"mmio.Fence()"}},
 	"mmio.Load":                         {Module: "std.mmio", Lines: []string{"mmio.Load[T: Plain](p: *T): T"}},
 	"mmio.Reg.New":                      {Module: "std.mmio", Lines: []string{"Reg[T].New(addr: uint): Reg[T]"}},
@@ -903,5 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"sqlite.Db.Exec":                    {Module: "std.db.sqlite", Lines: []string{"Db.Exec(&self, io: Io, sql: str): sqlite.Error!void"}},
 	"sqlite.Db.Prepare":                 {Module: "std.db.sqlite", Lines: []string{"Db.Prepare(&self, a: &Arena, io: Io, sql: str): sqlite.Error!Stmt from self, a"}},
 	"sqlite.Error":                      {Module: "std.db.sqlite", Lines: []string{"type Error = Sqlite | Busy | Misuse | OutOfMemory | Canceled"}},
-	"sqlite.Misuse":                     {Module: "std.db.sqlite", Lines: []string{"error Misuse"}},
 }
