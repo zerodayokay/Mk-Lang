@@ -1,5 +1,5 @@
 // verdict: reject E0303
-// note: f32(x) passes a float literal or named const whose value is exactly an f32, and no other
+// note: f32(x) passes a float literal or named const whose value is exactly an f32, and no other; a float const to an integer is never T(x)
 const Half: f64 = 0.5
 const Tenth: f64 = 0.1
 const Big = 1e300
@@ -18,4 +18,8 @@ RoundsConst(): f32 {
 
 Overflows(): f32 {
     return f32(Big) // <- E0303
+}
+
+ToInt(): u8 {
+    return u8(Half) // <- E0303
 }
