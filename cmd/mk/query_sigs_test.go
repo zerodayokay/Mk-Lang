@@ -165,20 +165,25 @@ func TestMemberSignatures(t *testing.T) {
 			}
 		}
 	}
-	// The other items, each with its head and doc as `sig Name` answers.
+	// The other items, each with its head and doc as `sig Name` answers,
+	// and a type a gen line wrote marked with it.
 	var items []string
 	for _, e := range l.Items {
 		var doc []string
 		for _, d := range e["doc"].([]any) {
 			doc = append(doc, d.(string))
 		}
-		items = append(items, strings.Join([]string{e["kind"].(string), e["subject"].(string), e["sig"].(string), strings.Join(doc, "; ")}, "|"))
+		g := ""
+		if e["generated"] == true {
+			g = e["gen"].(string)
+		}
+		items = append(items, strings.Join([]string{e["kind"].(string), e["subject"].(string), e["sig"].(string), strings.Join(doc, "; "), g}, "|"))
 	}
 	wantItems := []string{ // the gen view, src/gen/..., sorts first
-		"struct|ShapeDyn|mut view struct ShapeDyn  (module src)|",
-		"struct|Heap|export struct Heap  (module src)|/// A heap.",
-		"interface|Shape|interface Shape  (module src)|",
-		"struct|Square|struct Square  (module src)|",
+		"struct|ShapeDyn|mut view struct ShapeDyn  (module src)||src/heap.mk:39:1",
+		"struct|Heap|export struct Heap  (module src)|/// A heap.|",
+		"interface|Shape|interface Shape  (module src)||",
+		"struct|Square|struct Square  (module src)||",
 	}
 	if !slices.Equal(items, wantItems) {
 		t.Errorf("items:\n%s\nwant:\n%s", strings.Join(items, "\n"), strings.Join(wantItems, "\n"))
@@ -224,6 +229,9 @@ func TestMemberSignatures(t *testing.T) {
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	if st != 0 || lines[0] != "member eng: 10 function(s)" ||
 		!slices.Contains(lines, "4 other item(s)") || !slices.Contains(lines, "export struct Heap  (module src)  src/heap.mk:5:15") ||
+		!slices.ContainsFunc(lines, func(l string) bool {
+			return strings.HasPrefix(l, "mut view struct ShapeDyn  (module src)  src/gen/"+sigsTarget+"/gen.mk:") && strings.HasSuffix(l, " (gen src/heap.mk:39:1)")
+		}) ||
 		!slices.Contains(lines, "export Collect(h: mut Heap)  src/heap.mk:11:8") ||
 		!slices.Contains(lines, "    requires h.n >= 0") ||
 		!slices.ContainsFunc(lines, func(l string) bool {

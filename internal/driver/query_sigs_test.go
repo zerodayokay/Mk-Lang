@@ -160,7 +160,10 @@ gen dyn.Of(Shape)
 // its module line, its doc lines and its cut, item by item, over every item
 // kind, a generic owner's method, generated functions, an extern and
 // spellings that another module's item takes; only an impl method (an
-// error's built-in Format among them) has no subject.
+// error's built-in Format among them) has no subject. An impl method has
+// its own doc lines and the built-in Format none, though it is located at
+// its error's name; an entry is generated exactly when it is in the gen
+// view, a type too.
 func TestSignaturesAnswerAsSig(t *testing.T) {
 	t.Parallel()
 	dir := writeTree(t, sigsEverySource)
@@ -179,6 +182,7 @@ func TestSignaturesAnswerAsSig(t *testing.T) {
 	}
 	kinds := map[string]bool{}
 	subjects := map[string]string{}
+	implDocs := map[string][]string{}
 	cut, headCut := false, false
 	for i, e := range append(slices.Clone(l.Functions), l.Items...) {
 		if want := i >= len(l.Functions); want != (e.Kind != "func") {
@@ -188,10 +192,14 @@ func TestSignaturesAnswerAsSig(t *testing.T) {
 		if e.Doc == nil || e.Contracts == nil {
 			t.Errorf("%s: doc %v contracts %v, not []", e.Name, e.Doc, e.Contracts)
 		}
+		if gv := strings.HasPrefix(e.File, "src/gen/"); e.Generated != gv || e.Generated != (e.Gen != "") {
+			t.Errorf("%s (%s %s): generated %v gen %q", e.Name, e.Kind, e.File, e.Generated, e.Gen)
+		}
 		if e.Subject == "" {
 			if e.Impl == "" {
 				t.Errorf("%s (module %s): no subject", e.Name, e.Module)
 			}
+			implDocs[e.Module+" "+e.Name] = e.Doc
 			continue
 		}
 		subjects[e.Module+" "+e.Name] = e.Subject
@@ -228,6 +236,14 @@ func TestSignaturesAnswerAsSig(t *testing.T) {
 	}
 	if !headCut {
 		t.Error("no entry's head is cut: Guarded's contracts are meant to pass the cap")
+	}
+	for k, want := range map[string][]string{"src Point.Area": {"/// Area of a point."}, "src Oops.Format": {}} {
+		if got, ok := implDocs[k]; !ok || !slices.Equal(got, want) {
+			t.Errorf("%s: doc %q (listed %v), want %q", k, got, ok, want)
+		}
+	}
+	if !slices.ContainsFunc(l.Items, func(e SigEntry) bool { return e.Name == "ShapeDyn" && e.Generated }) {
+		t.Error("no generated item: gen dyn.Of(Shape) writes the struct ShapeDyn")
 	}
 	for k, want := range map[string]string{"src.more Point": "Point", "src Point": "src.Point", "src.more Thing": "Thing",
 		"src Thing": "src.Thing", "src.more Solo": "Solo", "src.x.more Solo": "src.x.more.Solo", "src Box.Get": "Box.Get"} {

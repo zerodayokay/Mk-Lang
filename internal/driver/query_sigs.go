@@ -71,8 +71,8 @@ type SigEntry struct {
 	Exported  bool     `json:"exported"`
 	// Impl is the interface an impl method implements, "" otherwise.
 	Impl string `json:"impl"`
-	// Generated is true for a function a gen line wrote; Gen is that
-	// line, file:line:col, "" otherwise.
+	// Generated is true for a function or item a gen line wrote; Gen is
+	// that line, file:line:col, "" otherwise.
 	Generated bool   `json:"generated"`
 	Gen       string `json:"gen"`
 	// Kind is the item's kind as find names it: func, struct, enum, error,
@@ -84,7 +84,8 @@ type SigEntry struct {
 	// spelling of which an earlier item takes.
 	Subject string `json:"subject"`
 	// Doc is the item's /// lines that `sig Subject`'s answer holds, after
-	// its cap; Truncated is that answer's count of lines the cap cut.
+	// its cap; Truncated is that answer's count of lines the cap cut. An
+	// error's built-in Format has none.
 	Doc       []string `json:"doc"`
 	Truncated int      `json:"truncated"`
 }
@@ -102,16 +103,19 @@ func (l *SigList) JSON() []byte {
 // its position; then the other items' heads, after a header of their own.
 func (l *SigList) Text() string {
 	var b strings.Builder
-	b.WriteString("member " + l.Member + ": " + itoaQ(len(l.Functions)) + " function(s)\n")
-	if !l.Complete {
-		b.WriteString("incomplete: no signature for " + strings.Join(l.Missing, ", ") + "\n")
-	}
-	for _, e := range l.Functions {
+	line := func(e SigEntry) {
 		b.WriteString(e.Sig + "  " + e.File + ":" + itoaQ(e.Line) + ":" + itoaQ(e.Col))
 		if e.Generated {
 			b.WriteString(" (gen " + e.Gen + ")")
 		}
 		b.WriteString("\n")
+	}
+	b.WriteString("member " + l.Member + ": " + itoaQ(len(l.Functions)) + " function(s)\n")
+	if !l.Complete {
+		b.WriteString("incomplete: no signature for " + strings.Join(l.Missing, ", ") + "\n")
+	}
+	for _, e := range l.Functions {
+		line(e)
 		for _, c := range e.Contracts {
 			b.WriteString("    " + c + "\n")
 		}
@@ -119,7 +123,7 @@ func (l *SigList) Text() string {
 	if len(l.Items) > 0 {
 		b.WriteString(itoaQ(len(l.Items)) + " other item(s)\n")
 		for _, e := range l.Items {
-			b.WriteString(e.Sig + "  " + e.File + ":" + itoaQ(e.Line) + ":" + itoaQ(e.Col) + "\n")
+			line(e)
 		}
 	}
 	return b.String()
@@ -179,15 +183,23 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 		}
 		return ""
 	}
-	// answer fills e's sig, doc and truncated from sig's lines, cut as
-	// answerQuery cuts them.
-	answer := func(e *SigEntry, q qEntry, it *types.Item) {
+	// answer fills e's sig, doc and truncated from sig's lines, its head
+	// then doc, cut as answerQuery cuts them.
+	answer := func(e *SigEntry, q qEntry, doc []string) {
 		head := qx.sigHead(q)
 		var a QueryAnswer
-		a.capLines(append(slices.Clip(head), qx.doc(it)...))
+		a.capLines(append(slices.Clip(head), doc...))
 		e.Sig, e.Doc, e.Truncated = head[0], []string{}, a.Truncated
 		if len(a.Answer) > len(head) {
 			e.Doc = a.Answer[len(head):]
+		}
+	}
+	// genMark fills e's generated and gen from o, the gen line that wrote
+	// it, when there is one.
+	genMark := func(e *SigEntry, o *types.GenOrigin) {
+		if o != nil {
+			f, ln, col := qx.spanAt(o.Gen)
+			e.Generated, e.Gen = true, f+":"+itoaQ(ln)+":"+itoaQ(col)
 		}
 	}
 	for _, m := range mods {
@@ -206,7 +218,8 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 				e := SigEntry{Name: name, Module: m.path, Contracts: []string{}, Exported: it.Exported,
 					Kind: it.Kind.String(), Subject: subject(id, name, m.path)}
 				e.File, e.Line, e.Col = qx.spanAt(it.Span)
-				answer(&e, qEntry{id: id, name: name, mod: m.path, module: m}, it)
+				answer(&e, qEntry{id: id, name: name, mod: m.path, module: m}, qx.doc(it))
+				genMark(&e, it.Origin)
 				l.Items = append(l.Items, e)
 				continue
 			case types.KindFunc:
@@ -228,10 +241,13 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 			}
 			e := SigEntry{Name: name, Module: m.path, Contracts: []string{}, Exported: it.Exported, Impl: impl,
 				Kind: it.Kind.String()}
+			doc := qx.doc(it)
 			if impl == "" {
 				e.Subject = subject(id, name, m.path)
+			} else if im, ok := qx.w.items.Get(it.Owner).Decl.(*types.ImplDecl); ok && qx.providedFormatOf(im) != types.NoItem {
+				doc = nil // it is located at the error's name: those lines are the error's
 			}
-			answer(&e, qEntry{id: id, name: name, mod: m.path, module: m}, it)
+			answer(&e, qEntry{id: id, name: name, mod: m.path, module: m}, doc)
 			e.File, e.Line, e.Col = qx.spanAt(it.Span)
 			for _, c := range sig.Contracts {
 				w := "requires "
@@ -245,17 +261,15 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 			if o == nil && impl != "" {
 				o = qx.w.items.Get(it.Owner).Origin
 			}
-			if o != nil {
-				f, ln, col := qx.spanAt(o.Gen)
-				e.Generated, e.Gen = true, f+":"+itoaQ(ln)+":"+itoaQ(col)
-			}
+			genMark(&e, o)
 			l.Functions = append(l.Functions, e)
 		}
 	}
 	// Entries are not localized (localizeText) as sig Name's answer is: a
-	// sig spells types by their names alone and a contract as its source
-	// writes it, so neither holds a dependency's canonical id, and a rewrite
-	// would only rename a parameter spelled as one.
+	// sig or head spells types by their names alone, and a contract and a
+	// doc line are as their source writes them, so a rewrite would only
+	// rename a word spelled as a dependency's canonical id, a parameter's
+	// name among them.
 	order := func(a, b SigEntry) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Col, b.Col),
 			cmp.Compare(a.Name, b.Name))

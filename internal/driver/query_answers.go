@@ -674,14 +674,9 @@ func (qx *queryIndex) providedFormatSig(subject string) ([]string, bool) {
 	if !ok || qx.w.items.Get(e.id).Kind != types.KindError {
 		return nil, false
 	}
-	tab := qx.w.tab
 	for i := 1; i < qx.w.items.NumItems(); i++ {
 		im, ok := qx.w.items.Get(types.ItemID(i)).Decl.(*types.ImplDecl)
-		if !ok || im.For == types.NoType || im.Bound.Item == types.NoItem {
-			continue
-		}
-		ty := tab.Get(im.For)
-		if ty.Kind != types.KErrorSet || singleError(tab, ty.Errors) != e.id || qx.w.items.Get(im.Bound.Item).Key != types.ItemKey("std.core", "Format") {
+		if !ok || qx.providedFormatOf(im) != e.id {
 			continue
 		}
 		for _, m := range im.Methods {
@@ -691,6 +686,24 @@ func (qx *queryIndex) providedFormatSig(subject string) ([]string, bool) {
 		}
 	}
 	return nil, false
+}
+
+// providedFormatOf is the error whose built-in Format impl im is: an impl of
+// std.core.Format for an error's set of one, which only the compiler
+// declares (a written one is E0704). NoItem for any other impl.
+func (qx *queryIndex) providedFormatOf(im *types.ImplDecl) types.ItemID {
+	if im.For == types.NoType || im.Bound.Item == types.NoItem {
+		return types.NoItem
+	}
+	ty := qx.w.tab.Get(im.For)
+	if ty.Kind != types.KErrorSet {
+		return types.NoItem
+	}
+	e := singleError(qx.w.tab, ty.Errors)
+	if e == types.NoItem || qx.w.items.Get(im.Bound.Item).Key != types.ItemKey("std.core", "Format") {
+		return types.NoItem
+	}
+	return e
 }
 
 // primMembers are the methods of a primitive type (str, i64, f64), which is
