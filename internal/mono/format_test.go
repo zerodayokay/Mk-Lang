@@ -253,7 +253,7 @@ Main(): int {
 `)
 	_, ds := Collect(sw, sw.limitRoots(), Options{Known: k, Validate: true})
 	// In source order: Collect's order is the instances', which follows
-	// their names' hashes (iface's domains, FormatVersion 2).
+	// their names' hashes (iface's domains, which FormatVersion names).
 	sort.SliceStable(ds, func(i, j int) bool { return ds[i].At.Start < ds[j].At.Start })
 	var got []string
 	for _, d := range ds {

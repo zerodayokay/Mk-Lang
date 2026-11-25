@@ -152,7 +152,7 @@ func (s *Session) Query(q string, args []string) (*QueryAnswer, Result, error) {
 		return nil, res, nil
 	}
 	qx := newQueryIndexOf(s, true)
-	return s.localizeAnswer(answerQuery(qx, q, args, !checkedToTypes(res))), res, nil
+	return answerQuery(qx, q, args, !checkedToTypes(res)), res, nil
 }
 
 // ParseFailed reports whether the check stopped at a parse error, where
@@ -178,6 +178,61 @@ type queryIndex struct {
 	w       *world
 	entries []qEntry                    // in module, then key order
 	calls   map[types.ItemID][]callSite // callsOf's memo (query_body.go)
+	// local maps a dependency's canonical id to the root's local name for
+	// it, for modPath; nil without dependency items.
+	local map[string]string
+}
+
+// modPath spells module path p as the root imports it: a dependency's
+// canonical id, the path's first segment, becomes the root's local name.
+// Only a module path is rewritten, never text the source holds (a
+// signature, a contract, a doc comment), whose words are local already.
+func (qx *queryIndex) modPath(p string) string {
+	first, rest, ok := strings.Cut(p, ".")
+	name := qx.local[first]
+	switch {
+	case name == "":
+		return p
+	case !ok:
+		return name
+	}
+	return name + "." + rest
+}
+
+// keyText is an item key spelled with modPath. A key starts with its
+// module's path, which is a dependency's canonical id alone for the module
+// at its package root, and every other dotted run in it starts with a
+// module path too (an impl's interface and type:
+// `u.src#impl(u.src.Shape for u.src.Box):Area`). A member's or an impl
+// method's name is a run without a dot, and a test's quoted name is the
+// source's text, so both stay as they are.
+func (qx *queryIndex) keyText(k types.Key) string {
+	s := k.String()
+	if len(qx.local) == 0 {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == '"' {
+			b.WriteString(s[i:])
+			break
+		}
+		j := i
+		for j < len(s) && (identByte(s[j]) || s[j] == '.') {
+			j++
+		}
+		switch run := s[i:j]; {
+		case j == i:
+			b.WriteByte(s[i])
+			j++
+		case i == 0 || strings.Contains(run, "."):
+			b.WriteString(qx.modPath(run))
+		default:
+			b.WriteString(run)
+		}
+		i = j
+	}
+	return b.String()
 }
 
 func newQueryIndex(s *Session) *queryIndex { return newQueryIndexOf(s, false) }
@@ -229,8 +284,11 @@ func newQueryIndexOf(s *Session, deps bool) *queryIndex {
 		for _, m := range s.pkgB.mods {
 			add(m, false, false)
 		}
-		// A dependency's exported items; an answer names them
-		// by the root's local name (localizeAnswer).
+		// A dependency's exported items; an answer names their modules
+		// by the root's local name (modPath).
+		if deps && len(s.depRoot) > 0 {
+			qx.local = s.displayNames(nil)
+		}
 		direct := map[string]bool{} // the cids the root names
 		for _, p := range s.depRoot {
 			direct[p.cid+"."] = true
@@ -533,7 +591,7 @@ func (qx *queryIndex) find(word string) []string {
 	for _, e := range qx.entries {
 		last := strings.ToLower(lastSeg(e.name))
 		it := qx.w.items.Get(e.id)
-		line := e.name + "  " + it.Kind.String() + "  " + e.mod
+		line := e.name + "  " + it.Kind.String() + "  " + qx.modPath(e.mod)
 		if seen[line] {
 			continue
 		}

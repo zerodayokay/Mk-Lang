@@ -26,38 +26,38 @@ import (
 )
 
 // FormatVersion is written into every store-form header; every domain string
-// ends in "v2" for it (DomPGO, DomData and DomDataFail, which mirror other
+// ends in "v3" for it (DomPGO, DomData and DomDataFail, which mirror other
 // packages' domains, excepted). A change to any encoding bumps it (and the
 // build ID changes anyway, because the encoder is in the binary).
-const FormatVersion = 2
+const FormatVersion = 3
 
 // Domains, frozen per FormatVersion.
 const (
-	DomType     = "mk.ty.v2"
-	DomErrSet   = "mk.errset.v2"
-	DomConst    = "mk.const.v2"
-	DomFn       = "mk.fn.v2"
-	DomArgs     = "mk.args.v2"
-	DomSig      = "mk.sig.v2"
-	DomDecl     = "mk.decl.v2"
-	DomFields   = "mk.fields.v2"
-	DomShape    = "mk.shape.v2"
-	DomLayout   = "mk.layout.v2"
-	DomBody     = "mk.body.v2"
-	DomInstance = "mk.instance.v2"
-	DomInstName = "mk.instname.v2"
+	DomType     = "mk.ty.v3"
+	DomErrSet   = "mk.errset.v3"
+	DomConst    = "mk.const.v3"
+	DomFn       = "mk.fn.v3"
+	DomArgs     = "mk.args.v3"
+	DomSig      = "mk.sig.v3"
+	DomDecl     = "mk.decl.v3"
+	DomFields   = "mk.fields.v3"
+	DomShape    = "mk.shape.v3"
+	DomLayout   = "mk.layout.v3"
+	DomBody     = "mk.body.v3"
+	DomInstance = "mk.instance.v3"
+	DomInstName = "mk.instname.v3"
 	// DomInstNameCPU is InstanceNameCPU's domain for a non-empty feature
 	// set; an empty set is InstanceName itself.
-	DomInstNameCPU = "mk.instname.cpu.v2"
-	DomAPI         = "mk.api.v2"
-	DomShapes      = "mk.shapes.v2"
-	DomImpl        = "mk.impl.v2"
-	DomNames       = "mk.names.v2"
-	DomTokens      = "mk.tokens.v2"
-	DomImports     = "mk.imports.v2"
-	DomKey         = "mk.cachekey.v2" // every cache key, with the entry family as first write
-	DomBuild       = "mk.build.v2"
-	DomTarget      = "mk.target.v2" // ReadTarget values
+	DomInstNameCPU = "mk.instname.cpu.v3"
+	DomAPI         = "mk.api.v3"
+	DomShapes      = "mk.shapes.v3"
+	DomImpl        = "mk.impl.v3"
+	DomNames       = "mk.names.v3"
+	DomTokens      = "mk.tokens.v3"
+	DomImports     = "mk.imports.v3"
+	DomKey         = "mk.cachekey.v3" // every cache key, with the entry family as first write
+	DomBuild       = "mk.build.v3"
+	DomTarget      = "mk.target.v3" // ReadTarget values
 	// DomPGO is pgo.HashDomain, the domain of a profile's hash in a pack
 	// key; registered here so no iface domain reuses it. pgo declares its
 	// own copy (iface is not among its imports); driver's

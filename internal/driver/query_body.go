@@ -170,7 +170,8 @@ func (qx *queryIndex) itemsCallOf(fn types.ItemID, recv types.TypeID) (callSite,
 }
 
 // name is an item's display name for an answer: a literal is named by its
-// owner, a test by its key.
+// owner, a test and an impl method by its key, with the root's local names
+// (keyText).
 func (qx *queryIndex) name(id types.ItemID) string {
 	it := qx.w.items.Get(id)
 	if it.Kind == types.KindLiteral && it.Owner != types.NoItem {
@@ -179,7 +180,7 @@ func (qx *queryIndex) name(id types.ItemID) string {
 	if n := qx.displayName(it); n != "" && it.Kind != types.KindTest {
 		return n
 	}
-	return it.Key.String()
+	return qx.keyText(it.Key)
 }
 
 // pkgBodies are the package's items that can have a body, in module then
