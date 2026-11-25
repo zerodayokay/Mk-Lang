@@ -656,11 +656,11 @@ export Arena.New(h: &Heap): OutOfMemory!Arena {
 /// source once warm; a request too large for p's chunks takes a chunk of
 /// its own from the source and gives it back. p keeps a frame's bytes until
 /// its Reset or Free when p started a new chunk while the frame lived, or
-/// when the frame ends while a later block of p lives: a value p gave
-/// while the frame lived, or a newer frame's chunk. So a call that takes
-/// from p while its frame lives keeps 4 KiB or more of p on every call, and
-/// frames nested deeper than one chunk of p holds keep one more chunk on
-/// every round: Sub suits those.
+/// when the frame ends while a later block of p in the same chunk lives: a
+/// value p gave there while the frame lived, or a newer frame's chunk. So a
+/// call that takes a small value from p while its frame lives keeps 4 KiB
+/// or more of p on every call, and frames nested deeper than one chunk of
+/// p holds keep one more chunk on every round: Sub suits those.
 export Arena.NewIn(a: &Alloc): OutOfMemory!Arena from a {
     return try NewArena(a, false)
 }

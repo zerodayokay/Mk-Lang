@@ -1435,10 +1435,12 @@ TaFzForget(a: Arena) {
     }
 }
 
-// A level: two frames f and g on under (the root or a frame), operations
-// on the root, under, f and g in any order, deeper levels on f or g, and
-// the two frames freed in either order. Every header is checked after
-// each step; after a failed check nothing more runs and nothing is freed.
+// A level: two frames f and g on under (the root or a frame), and h, a
+// Sub of f (an arena on under's Alloc() too, which borrows f); operations
+// on the root, under, f, g and h in any order, a Reset of g, deeper levels
+// on f or g, and the three freed in one of three orders (h before f). Every
+// header is checked after each step; after a failed check nothing more
+// runs and nothing is freed.
 TaFzLevel(sp: *TaFzState, root: &Arena, under: &Arena, uid: int, level: int, steps: int) {
     var f := Arena.NewIn(under.Alloc()) else {
         TaFzBad(sp, 40)
@@ -1449,20 +1451,32 @@ TaFzLevel(sp: *TaFzState, root: &Arena, under: &Arena, uid: int, level: int, ste
         f.Free()
         return
     }
+    var h := f.Sub() else {
+        TaFzBad(sp, 42)
+        g.Free()
+        f.Free()
+        return
+    }
     fid := TaFzNewId(sp)
     gid := TaFzNewId(sp)
+    hid := TaFzNewId(sp)
     var step := 0
     for step < steps && TaFzOk(sp) {
         step += 1
         w := TaFzRand(sp, 100)
-        if w < 15 {
+        if w < 13 {
             TaFzOp(sp, root, 0, true)
-        } else if w < 35 {
+        } else if w < 30 {
             TaFzOp(sp, under, uid, uid == 0)
-        } else if w < 60 {
+        } else if w < 50 {
             TaFzOp(sp, &f, fid, false)
-        } else if w < 85 {
+        } else if w < 70 {
             TaFzOp(sp, &g, gid, false)
+        } else if w < 82 {
+            TaFzOp(sp, &h, hid, false)
+        } else if w < 85 {
+            TaFzDrop(sp, gid)
+            g.Reset()
         } else if w < 93 {
             if level < 3 {
                 if TaFzRand(sp, 2) == 0 {
@@ -1478,13 +1492,29 @@ TaFzLevel(sp: *TaFzState, root: &Arena, under: &Arena, uid: int, level: int, ste
         TaFzHdr(sp, under, uid == 0)
         TaFzHdr(sp, &f, false)
         TaFzHdr(sp, &g, false)
+        TaFzHdr(sp, &h, false)
     }
     if !TaFzOk(sp) {
+        TaFzForget(h)
         TaFzForget(f)
         TaFzForget(g)
         return
     }
-    if TaFzRand(sp, 2) == 0 {
+    k := TaFzRand(sp, 3)
+    if k == 0 {
+        TaFzDrop(sp, hid)
+        h.Free()
+        TaFzAll(sp, root)
+        TaFzDrop(sp, fid)
+        f.Free()
+        TaFzAll(sp, root)
+        TaFzHdr(sp, &g, false)
+        TaFzDrop(sp, gid)
+        g.Free()
+    } else if k == 1 {
+        TaFzDrop(sp, hid)
+        h.Free()
+        TaFzAll(sp, root)
         TaFzDrop(sp, gid)
         g.Free()
         TaFzAll(sp, root)
@@ -1492,12 +1522,15 @@ TaFzLevel(sp: *TaFzState, root: &Arena, under: &Arena, uid: int, level: int, ste
         TaFzDrop(sp, fid)
         f.Free()
     } else {
-        TaFzDrop(sp, fid)
-        f.Free()
-        TaFzAll(sp, root)
-        TaFzHdr(sp, &g, false)
         TaFzDrop(sp, gid)
         g.Free()
+        TaFzAll(sp, root)
+        TaFzHdr(sp, &h, false)
+        TaFzDrop(sp, hid)
+        h.Free()
+        TaFzAll(sp, root)
+        TaFzDrop(sp, fid)
+        f.Free()
     }
     TaFzAll(sp, root)
     TaFzHdr(sp, under, uid == 0)
@@ -1567,13 +1600,15 @@ TaFzRun(sys: &System, seed: u64, line: bool, rounds: int, steps: int, stats: mut
     return 0
 }
 
-// Seeds 1000 and 650358 (k 0 and 82) find R1 (mem_arena.mk at 24aa785e).
-// Across the 96 seeds, frees through an Alloc() return ordinary and aligned
-// chunks to the source, so the path under test runs.
+// 192 seeds, alternating a line root and a NewIn one. Seeds 539492,
+// 777062, 840414, 1204688 and 1283878 (k 68, 98, 106, 152 and 162) find R1
+// (mem_arena.mk at 24aa785e). Frees through an Alloc() return over 100
+// ordinary and over 100 aligned chunks to the source across the seeds, so
+// the path under test runs.
 test "fuzz: frames and Alloc() frees on an arena keep every live block" (sys: &System) {
     var fails := 0
     var stats: [4]int = [0; 4]
-    for k in 0..96 {
+    for k in 0..192 {
         seed := Trunc[u64](1000 + k * 7919)
         code := TaFzRun(sys, seed, k % 2 == 0, 6, 60, mut stats)
         if code != 0 {
