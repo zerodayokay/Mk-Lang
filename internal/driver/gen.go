@@ -93,6 +93,9 @@ func (b *build) stage4(m *modNode, rm *resolve.Module) {
 		if lr.Poisoned {
 			m.evalPoison.Store(true)
 			if i < len(lines) {
+				if len(m.genPoison) == 0 {
+					m.genRoot, m.genRootIn = b.poisonRoot(m, &lines[i])
+				}
 				m.genPoison = append(m.genPoison, lines[i].Span)
 			}
 		}
@@ -158,10 +161,13 @@ func (m *modNode) genWrap(ds []*diag.Diagnostic) []*diag.Diagnostic {
 // empty. The line is m's, or dep's for a member miss `dep.X`
 // (resolve.MissedIn). A line that failed with its own error makes the E0201
 // its consequence, so the report holds that error whatever its phase
-// (diag.Order); a line of m whose run ended in poison is only cited, since
-// its cause (a type the generator read and the stage-4 view could not see)
-// may have no diagnostic of its own. A label, type parameter or parameter
-// is local to its function, so no gen line declares one.
+// (diag.Order). A line whose run ended in poison because a module it
+// depends on failed to check makes the E0201 a consequence of that
+// module's first error (genRoot, which stageDiags reports); with no such
+// module (a type of m the stage-4 view could not see, which may have no
+// diagnostic of its own) a line of m is only cited. A label, type
+// parameter or parameter is local to its function, so no gen line declares
+// one.
 func (m *modNode) noteGen(d *diag.Diagnostic) {
 	if d.Code != diag.E0201 {
 		return
@@ -181,7 +187,7 @@ func (m *modNode) noteGen(d *diag.Diagnostic) {
 				break
 			}
 		}
-		if owner == nil || owner.genFail == nil {
+		if owner == nil || (owner.genFail == nil && owner.genRoot == nil) {
 			return
 		}
 	}
@@ -189,9 +195,78 @@ func (m *modNode) noteGen(d *diag.Diagnostic) {
 	case owner.genFail != nil:
 		d.ConsequenceOf(owner.genFail.Code, owner.genFail.At)
 		d.Loc("gen_line", owner.genFailAt).Text("gen", "a gen line of "+at+" failed and emitted nothing: the name may be one it would have declared")
+	case owner.genRoot != nil:
+		d.ConsequenceOf(owner.genRoot.Code, owner.genRoot.At)
+		d.Loc("gen_line", owner.genPoison[0]).Text("gen", "a gen line of "+at+" emitted nothing: `"+owner.genRootIn+"`, which it depends on, failed to check")
 	case len(owner.genPoison) > 0:
 		d.Loc("gen_line", owner.genPoison[0]).Text("gen", "a gen line of this module emitted nothing: it read a type that failed to check, or one it cannot see before checking")
 	}
+}
+
+// poisonRoot finds why a poisoned line emitted nothing: the first module,
+// in a walk from the modules the line reads (the generator's, the fuel
+// const's, each argument's; m itself, not yet checked, is not walked)
+// through their imports in path order, that has a diagnostic of its own,
+// and its first. Such a module is done failed, or clean with a body stage 7
+// rejected, and every body a run enters there or in a module importing it
+// is poison. The walk runs only for a poisoned line, after every module it
+// reaches is done. nil when no module has one: the line read a type of its
+// own module it cannot see before checking.
+func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
+	w, s := b.w, b.w.sem5
+	seen := map[*modNode]bool{m: true}
+	var walk func(x *modNode) (*diag.Diagnostic, string)
+	walk = func(x *modNode) (*diag.Diagnostic, string) {
+		if x == nil || seen[x] {
+			return nil, ""
+		}
+		seen[x] = true
+		for _, ds := range [][]*diag.Diagnostic{x.diags, x.cdiags, x.fdiags} {
+			if len(ds) > 0 {
+				// As checkDiags reports it, so the cause resolves.
+				if x.gen != nil {
+					return gen.Wrap(ds[0], x.gen.out), x.path
+				}
+				return ds[0], x.path
+			}
+		}
+		for _, d := range x.deps {
+			if r, p := walk(d); r != nil {
+				return r, p
+			}
+		}
+		return nil, ""
+	}
+	from := func(id types.ItemID) (*diag.Diagnostic, string) {
+		if id == types.NoItem {
+			return nil, ""
+		}
+		return walk(s.module(w.items.Get(id).Module))
+	}
+	if r, p := from(l.Generator); r != nil {
+		return r, p
+	}
+	if r, p := from(l.FuelItem); r != nil {
+		return r, p
+	}
+	for _, a := range l.Args {
+		id := a.Item
+		if a.Kind == gen.ArgType {
+			id = types.NoItem
+			for t := a.Type; t != types.NoType; {
+				tt := w.tab.Get(t)
+				if tt.Kind == types.KNamed {
+					id = tt.Item
+					break
+				}
+				t = tt.Elem
+			}
+		}
+		if r, p := from(id); r != nil {
+			return r, p
+		}
+	}
+	return nil, ""
 }
 
 // genLine translates one of resolve's gen lines (first pass, gen/ empty).

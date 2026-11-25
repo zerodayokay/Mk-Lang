@@ -366,11 +366,18 @@ func (b *build) resolveModule(m *modNode) {
 	m.failed = len(m.diags) > 0
 }
 
-// stageDiags collects every module's stage 3 diagnostics in slot order.
+// stageDiags collects every module's stage 3 diagnostics in slot order, and
+// the error a poisoned gen line follows from (genRoot), of a later phase and
+// another module: the E0201s it causes stop the build before checkDiags, and
+// the report keeps it as their cause (diag.Order drops it otherwise, and a
+// copy checkDiags also reports).
 func (b *build) stageDiags() []*diag.Diagnostic {
 	var out []*diag.Diagnostic
 	for _, m := range b.mods {
 		out = append(out, m.diags...)
+		if m.genRoot != nil {
+			out = append(out, m.genRoot)
+		}
 	}
 	return out
 }

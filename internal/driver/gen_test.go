@@ -2,8 +2,8 @@
 // check, be visible to importers and keep gen's diagnostics.
 // What: TestGenExportUsedByImporter, TestGenDeriveEqChecks,
 // TestE0704_GeneratedImplAtGenLine, TestGenCodes (E0903, E0905, E0906),
-// TestGenFailRootOfUnknownNames, TestGenDeriveEqGolden, TestGenBoolArgument
-// and TestGenFlowDiagWrapped.
+// TestGenFailRootOfUnknownNames, TestGenPoisonRootOfUnknownNames,
+// TestGenDeriveEqGolden, TestGenBoolArgument and TestGenFlowDiagWrapped.
 // How: checks small packages with the real std generators and compares
 // diagnostics, and derive.Eq's output with internal/gen's golden.
 
@@ -170,6 +170,101 @@ func TestGenFailRootOfUnknownNames(t *testing.T) {
 					(cites && diag.Location(cold.Sources, gl.At) != "out/out.mk:3:1") {
 					t.Errorf("%v: root %d, gen_line %v; want root %d, and gen_line out/out.mk:3:1 on a linked E0201\n%s",
 						e.Diag.Code, e.Root, cites, root, cold.Report.Text(cold.Sources))
+				}
+			}
+			if warm := frontCheck(t, cfg); string(jsonOf(t, warm)) != string(jsonOf(t, cold)) {
+				t.Errorf("warm --json %s, cold %s", jsonOf(t, warm), jsonOf(t, cold))
+			}
+		})
+	}
+}
+
+// TestGenPoisonRootOfUnknownNames: a gen line emits nothing because a
+// module it depends on failed to check: the generator's own module, a module
+// the generator imports, a module whose function the generator calls, the
+// module of a type argument or of the fuel const, or a borrow error (stage
+// 7) in the generator's module. That module's first error, of a later
+// phase, is reported with the E0201s on the names the output would have
+// declared (in the module, or an importer's `out.Made`), as their root, and
+// each E0201 cites the gen line and names the module. A second error of the
+// module waits for the first to be fixed; a poisoned line with no failed
+// module keeps the old note with no root. With the module cache on, the
+// warm report equals the cold one.
+func TestGenPoisonRootOfUnknownNames(t *testing.T) {
+	const emit = "    made := g.Ident(\"Made\")\n    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n"
+	const use = "export UseMade(): int {\n    return Made + 1\n}\n"
+	// reflect reads its argument's method results: a run that meets one
+	// that failed to check, or one the stage-4 view cannot translate,
+	// ends in poison.
+	const reflect = "export Make(g: mut Gen, t: Type) {\n    for m in t.Methods() {\n        _ = m.Result()\n    }\n"
+	const flow = "export Twice() {\n    var n := 1\n    a := mut n\n    b := mut n\n    *a += 1\n    *b += 1\n}\n"
+	for _, c := range []struct {
+		name  string
+		files map[string]string
+		want  []string
+		root  string // the E0201's root, "" for none
+		in    string // the failed module the note names
+	}{
+		{"own module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n    unused := 1\n" + emit},
+			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "gn/gn.mk:2:5", "gn"},
+		{"generator's import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.One()\n" + emit,
+			"a/a.mk": "import std.math\n\nexport One(): int {\n    return 1\n}\n"},
+			[]string{"a/a.mk:1:1:E0208", "out/use.mk:2:12:E0201"}, "a/a.mk:1:1", "a"},
+		{"type argument's module", map[string]string{"gn/gn.mk": reflect + emit,
+			"a/a.mk":     "export interface Marker {\n    Get(&self): [1 + true]u8\n}\n",
+			"out/out.mk": "import a\nimport gn\n\ngen gn.Make(a.Marker)\n"},
+			[]string{"a/a.mk:2:22:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:2:22", "a"},
+		{"fuel const's module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n" + emit,
+			"a/a.mk":     "export const F: u64 = 1 + true\n",
+			"out/out.mk": "import a\nimport gn\n\ngen gn.Make() fuel a.F\n"},
+			[]string{"a/a.mk:1:27:E0301", "out/use.mk:2:12:E0201"}, "a/a.mk:1:27", "a"},
+		{"type error in a table read", map[string]string{"gn/gn.mk": "import tbl\n\nexport Make(g: mut Gen) {\n" +
+			"    made := g.Ident(\"Made\")\n    g.Emit(quote {\n        export const $made: int = $(tbl.RowOf(1))\n    })\n}\n",
+			"tbl/tbl.mk": "Mark(r: int): int {\n    return r\n}\n\nexport RowOf(k: int): int {\n    return Mark(true) + k\n}\n"},
+			[]string{"out/use.mk:2:12:E0201", "tbl/tbl.mk:6:17:E0301"}, "tbl/tbl.mk:6:17", "tbl"},
+		{"importer", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n    unused := 1\n" + emit,
+			"use/use.mk": "import out\n\nexport UseMade(): int {\n    return out.Made + 1\n}\n"},
+			[]string{"gn/gn.mk:2:5:E0208", "use/use.mk:4:16:E0201"}, "gn/gn.mk:2:5", "gn"},
+		{"two errors", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n    unused := 1\n    unused2 := 2\n" + emit},
+			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "gn/gn.mk:2:5", "gn"},
+		{"flow error", map[string]string{"gn/gn.mk": flow + "\nexport Make(g: mut Gen) {\n    Twice()\n" + emit},
+			[]string{"gn/gn.mk:4:5:E0501", "out/use.mk:2:12:E0201"}, "gn/gn.mk:4:5", "gn"},
+		{"own type", map[string]string{"gn/gn.mk": reflect + emit,
+			"out/out.mk": "import gn\n\ninterface Local {\n    Get(&self): [2 * 2]u8\n}\n\ngen gn.Make(Local)\n"},
+			[]string{"out/use.mk:2:12:E0201"}, "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			files := map[string]string{"pkg.mk": libManifest(), "out/out.mk": "import gn\n\ngen gn.Make()\n", "out/use.mk": use}
+			for p, text := range c.files {
+				files[p] = text
+			}
+			if _, ok := c.files["use/use.mk"]; ok {
+				delete(files, "out/use.mk")
+			}
+			cfg := Config{Root: writeTree(t, files), CacheDir: t.TempDir()}
+			cold := frontCheck(t, cfg)
+			expectLines(t, cold, c.want...)
+			for i, e := range cold.Report.Diags {
+				d := e.Diag
+				if at := diag.Location(cold.Sources, d.At); d.Code != diag.E0201 || !strings.HasSuffix(strings.Split(at, ":")[0], "use.mk") {
+					continue
+				}
+				g, _ := d.FactValue("gen")
+				gl, cites := d.FactValue("gen_line")
+				if !cites || !strings.HasPrefix(diag.Location(cold.Sources, gl.At), "out/out.mk:") {
+					t.Errorf("E0201 cites a gen line: %v, want out/out.mk's", cites)
+				}
+				if c.root == "" {
+					if e.Root != i+1 || d.Cause != nil || !strings.Contains(g.Str, "cannot see before checking") {
+						t.Errorf("E0201 root %d, cause %v, gen note %q; want its own root and the old note\n%s",
+							e.Root, d.Cause, g.Str, cold.Report.Text(cold.Sources))
+					}
+					continue
+				}
+				r := cold.Report.Diags[e.Root-1].Diag
+				if got := diag.Location(cold.Sources, r.At); got != c.root || !strings.Contains(g.Str, "`"+c.in+"`") {
+					t.Errorf("E0201's root at %s, gen note %q; want root %s naming `%s`\n%s", got, g.Str, c.root, c.in,
+						cold.Report.Text(cold.Sources))
 				}
 			}
 			if warm := frontCheck(t, cfg); string(jsonOf(t, warm)) != string(jsonOf(t, cold)) {
