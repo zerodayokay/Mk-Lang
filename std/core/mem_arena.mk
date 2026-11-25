@@ -537,7 +537,7 @@ Log2(n: int): int {
     return raw.Ctz64(Trunc[u64](n))
 }
 
-// SizeMask keeps a chunk size's bytes, without its shift and CurBit.
+// SizeMask keeps a chunk size's bytes, without its shift, OwnBit and CurBit.
 SizeMask(): int {
     return (1 << ShiftAt) - 1
 }
@@ -656,9 +656,11 @@ export Arena.New(h: &Heap): OutOfMemory!Arena {
 /// source once warm; a request too large for p's chunks takes a chunk of
 /// its own from the source and gives it back. p keeps a frame's bytes until
 /// its Reset or Free when p started a new chunk while the frame lived, or
-/// when the frame ends before a newer one, so frames nested deeper than
-/// one chunk of p holds keep one more chunk on every round: Sub suits that
-/// depth.
+/// when the frame ends while a later block of p lives: a value p gave
+/// while the frame lived, or a newer frame's chunk. So a call that takes
+/// from p while its frame lives keeps 4 KiB or more of p on every call, and
+/// frames nested deeper than one chunk of p holds keep one more chunk on
+/// every round: Sub suits those.
 export Arena.NewIn(a: &Alloc): OutOfMemory!Arena from a {
     return try NewArena(a, false)
 }
