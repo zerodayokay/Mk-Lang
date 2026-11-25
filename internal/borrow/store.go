@@ -228,11 +228,14 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 				}
 			}
 		}
-		if ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
+		if !c.csrConst && ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
 			// Nothing a value of t's type can write below its own bytes
 			// holds a loan, so a store through it goes no further than t:
 			// what t holds by provenance (a reborrow's path, R12) is no
-			// place the store can land (storebelow.go).
+			// place the store can land (storebelow.go). The self-reach
+			// walk and spawnStores' (csrConst) do not cut here, as they
+			// read no shallow mark (shallowHop): they defend against a
+			// callee that writes past its signature, so they trust no type.
 			continue
 		}
 		for _, m := range c.sets.get(c.held(st, t)) {
