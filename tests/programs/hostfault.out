@@ -1,0 +1,5 @@
+IsBadReadPtr: kernelbase's own __except answered 1
+RtlMoveMemory in C's __try: the C __except ran (1)
+a C read in its own __try: the C __except ran (1)
+RtlMoveMemory from a guard page: the filter resumed the copy, which copied 7
+the filter saw 4 faults

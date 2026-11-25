@@ -1,0 +1,11 @@
+# hostfault in a program with no task, on the main thread's own stack (MKH-493): a filter resumes
+# ntdll's copy from a guard page, a passed fault reaches kernelbase's own __except, and a filter
+# that guards the first page ends the process with 71. Windows only.
+# hostfaultmain/app/main.mk says what each part does.
+case ok
+target x86_64-windows
+stdout hostfaultmain.out
+case claimed
+target x86_64-windows
+args claimed
+exit 71

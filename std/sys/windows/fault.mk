@@ -30,11 +30,17 @@ struct FaultState {
     // its address, then its row count, 0 until it is given.
     rows: raw.Atomic[u64]
     nrows: raw.Atomic[u64]
+    // own holds the bytes of the fn(uint): bool FaultOwnerHook installed
+    // (whether a stack pointer is on a task slot or a carrier's system
+    // stack); own_set is 1 once it is written.
+    own: raw.Atomic[u64]
+    own_set: raw.Atomic[u32]
 }
 
 var Faults: FaultState = FaultState(hook: raw.Atomic[u64].New(0), set: raw.Atomic[u32].New(0),
     image_lo: raw.Atomic[u64].New(0), image_hi: raw.Atomic[u64].New(0), in_extern: raw.Atomic[u64].New(0),
-    extern_set: raw.Atomic[u32].New(0), rows: raw.Atomic[u64].New(0), nrows: raw.Atomic[u64].New(0))
+    extern_set: raw.Atomic[u32].New(0), rows: raw.Atomic[u64].New(0), nrows: raw.Atomic[u64].New(0),
+    own: raw.Atomic[u64].New(0), own_set: raw.Atomic[u32].New(0))
 
 const ExceptionStackOverflow: u32 = 0xC000_00FD
 const ExceptionAccessViolation: u32 = 0xC000_0005
@@ -345,6 +351,15 @@ MkVectoredHandler(p: *u8): i32 {
                 Report(FaultInfo(kind: kind, addr: addr, pc: at, sp: sp))
             }
         }
+        // A fault Mk does not report (C code outside the image, or with
+        // a handler of its own) still goes to the filters first when it is
+        // on a stack Mk runs on (MkStack), whatever its pc, so a filter
+        // sees a host function's fault at an address it guards; one no
+        // filter resumes goes on to the frame handlers exactly as before,
+        // the C code's own __except included.
+        if MkStack(sp, top) && Filter(p, kind, addr, pc) {
+            return ExceptionContinueExecution
+        }
     }
     return ContinueSearch
 }
@@ -495,10 +510,41 @@ export FatalWrite(data: []u8) {
     _ = WriteSync(h, data, -1)
 }
 
-/// FaultOwnerHook is Linux's ownership hook (std/sys/linux/fault.mk); here
-/// the vectored handler's frame walk decides (FaultOwner), so it does
-/// nothing. O(1); allocates nothing.
+/// FaultOwnerHook installs f, which answers whether a stack pointer lies on
+/// a stack Mk runs on (a task slot, a carrier's system stack): std.task's,
+/// at start, before FaultHook. The vectored handler's frame walk decides
+/// which faults are Mk's to report (FaultOwner); f decides which of the
+/// others still go to runtime.AddFaultFilter's filters first (MkStack).
+/// O(1); allocates nothing.
 export FaultOwnerHook(f: fn(uint): bool) {
+    unsafe "the hook word is an atomic's memory" {
+        raw.Write(raw.PtrCast[raw.Atomic[u64], fn(uint): bool](raw.Of(&Faults.own)), f)
+    }
+    // Edge: the Store publishes the hook's bytes, written above, to
+    // MkStack's Load.
+    Faults.own_set.Store(1)
+}
+
+// MkStack is whether a fault whose stack pointer is sp happened on a stack
+// Mk runs on: a carrier's system stack while a task runs a user extern on
+// it (top, ExternTop's answer, not 0), or a task slot or a recorded
+// carrier system stack (FaultOwnerHook's answer). With no hook (before
+// it, and in a program with no task, which installs none and runs only on
+// its main thread) every fault is taken as on one, as Linux takes every
+// fault as Mk's then (FaultOwned). It runs in the handler: loads and the
+// hook's compares, no lock, no allocation.
+MkStack(sp: uint, top: uint): bool {
+    if top != 0 {
+        return true
+    }
+    // Edge: FaultOwnerHook's Store of 1, after the hook's bytes.
+    if Faults.own_set.Load() != 1 {
+        return true
+    }
+    unsafe "the hook word holds the fn FaultOwnerHook wrote before its set word" {
+        f := raw.Read(raw.PtrCast[raw.Atomic[u64], fn(uint): bool](raw.Of(&Faults.own)))
+        return f(sp)
+    }
 }
 
 /// FaultOwned is Linux's ownership test; here every fault the vectored
