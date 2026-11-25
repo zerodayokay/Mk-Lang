@@ -640,10 +640,15 @@ export Arena.New(h: &Heap): OutOfMemory!Arena {
 ///
 /// Arena.NewIn(p.Alloc()) is a frame of the arena p: scratch memory for
 /// one call, freed before p's later allocations. Its chunks are blocks of
-/// p, and Free gives them back newest first, so p is back where it was and
-/// nested frames make no heap call once warm. p keeps a frame's bytes until
+/// p, at least FirstChunk (4 KiB) each, and Free gives them back newest
+/// first, so p is back where it was. Nested frames whose chunks fit in p's
+/// current chunk (p's chunks grow to 1 MiB) take nothing more from p's
+/// source once warm; a request too large for p's chunks takes a chunk of
+/// its own from the source and gives it back. p keeps a frame's bytes until
 /// its Reset or Free when p started a new chunk while the frame lived, or
-/// when the frame ends before a newer one.
+/// when the frame ends before a newer one, so frames nested deeper than
+/// one chunk of p holds keep one more chunk on every round: Sub suits that
+/// depth.
 export Arena.NewIn(a: &Alloc): OutOfMemory!Arena from a {
     return try NewArena(a, false)
 }
@@ -784,7 +789,8 @@ export Arena.Fmt[A: Fields[Format] + Plain](&self, const f: str, args: A): OutOf
 /// OutOfMemory when the source refuses the first chunk. O(1): one
 /// allocation from the source, the first chunk. Scratch for each of many
 /// calls is cheaper as a frame, Arena.NewIn(self.Alloc()), whose chunks
-/// come from self.
+/// come from self, while the frames live at once fit in one chunk of self
+/// (see NewIn).
 export Arena.Sub(&self): OutOfMemory!Arena {
     unsafe "hdr is this arena's live header, and its source outlives the result: the result holds self's loan, and self holds the source's" {
         return try NewArena(&*(*self.hdr).src, IsLine(self.hdr))

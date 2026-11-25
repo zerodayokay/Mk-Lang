@@ -74,7 +74,7 @@ An `Arena` hands out memory that is freed all at once. It is a linear bump alloc
 
 - `SliceAligned`'s `align` is a power of two from 1 to 65,536, else it panics (code 8). A slice made at compile time becomes static data aligned to `T`'s alignment only, so there an `align` over `T`'s is E0901. A static table that must be aligned has an `align(n)` element type, `n` up to 65,536, which static data keeps on every profile.
 - `Reset` keeps the first chunk, the current one and the current aligned one, and the next chunk size stays as it was. So a loop that resets its arena each turn settles. It takes nothing more from the heap when each request is at most 512 KiB and one turn fits in the current chunk (up to 1 MiB). Otherwise chunks go and come every turn.
-- A frame, `Arena.NewIn(a.Alloc())`, rewinds `a` when it ends: its chunks are blocks of `a`, freed newest first, and `a.Alloc()` gives back the last block it bumped and a chunk of its own while it is `a`'s newest. Frames nest as calls do, with no heap call once they are warm, and each holds a loan on `a`, so `a` is not reset or freed while one lives. A frame is not given back when `a` moved to a new chunk under it, or when it ends before a newer frame: those bytes stay in `a` until its `Reset` or `Free`.
+- A frame, `Arena.NewIn(a.Alloc())`, rewinds `a` when it ends: its chunks are blocks of `a`, freed newest first, and `a.Alloc()` gives back the last block it bumped and a chunk of its own while it is `a`'s newest. Frames nest as calls do, and each holds a loan on `a`, so `a` is not reset or freed while one lives. Once warm they take nothing more from the heap while the frames live at once fit in `a`'s current chunk (each takes at least 4 KiB of it, and `a`'s chunks grow to 1 MiB); a request too large for `a`'s chunks takes a chunk of its own from the heap and gives it back. A frame is not given back when `a` moved to a new chunk under it, or when it ends before a newer frame: those bytes stay in `a` until its `Reset` or `Free`. So frames nested deeper than one chunk of `a` holds, about 250 of them, keep one more chunk of `a` on every round; there a `Sub` per call, which takes its first chunk from the heap, stays bounded.
 
 ### The heap and Alloc
 
@@ -1433,10 +1433,15 @@ part of the Fixed used until Fixed.Reset.
 
 Arena.NewIn(p.Alloc()) is a frame of the arena p: scratch memory for
 one call, freed before p's later allocations. Its chunks are blocks of
-p, and Free gives them back newest first, so p is back where it was and
-nested frames make no heap call once warm. p keeps a frame's bytes until
+p, at least FirstChunk (4 KiB) each, and Free gives them back newest
+first, so p is back where it was. Nested frames whose chunks fit in p's
+current chunk (p's chunks grow to 1 MiB) take nothing more from p's
+source once warm; a request too large for p's chunks takes a chunk of
+its own from the source and gives it back. p keeps a frame's bytes until
 its Reset or Free when p started a new chunk while the frame lived, or
-when the frame ends before a newer one.
+when the frame ends before a newer one, so frames nested deeper than
+one chunk of p holds keep one more chunk on every round: Sub suits that
+depth.
 
 ### `Arena.Put`
 
@@ -1523,7 +1528,8 @@ does. Use it for scratch memory that is freed before the parent's.
 OutOfMemory when the source refuses the first chunk. O(1): one
 allocation from the source, the first chunk. Scratch for each of many
 calls is cheaper as a frame, Arena.NewIn(self.Alloc()), whose chunks
-come from self.
+come from self, while the frames live at once fit in one chunk of self
+(see NewIn).
 
 ### `Block`
 
