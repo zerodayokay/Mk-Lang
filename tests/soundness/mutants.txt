@@ -401,6 +401,16 @@ note the allocator store rule's later-hop store cut: an allocator reached on a l
 witness D612-d462-a1.mk D612-d462-a2.mk D612-d462-d1.mk D612-d462-d10.mk D612-d462-d11.mk D612-d462-d12.mk D612-d462-d2b.mk D612-d462-d3.mk D612-d462-d4.mk D612-d462-d5.mk D612-d462-d6.mk D612-d462-d7.mk D612-d462-d8.mk D612-d462-m3.mk FH-d462-r1c.mk FH-d462-r1d.mk FH-d462-r1e.mk
 end
 
+mutant M-SB-below
+rule R11
+class R
+file internal/borrow/store.go
+anchor 		if ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
+replace 		if ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType {
+note the provenance cut taken for every frame root, whatever its type can write below itself: a holder that can store through what it borrows (a field holding a reference, a Cell behind a shared reference, a List of references, a generic field) passes no store on, so each witness is accepted and leaves a reference to a dead local in the caller's memory; expected VDeadScope
+witness SB-provenance-writer-reject.mk SB-cell-holder-reject.mk SB-list-carrier-reject.mk SB-generic-holder-reject.mk
+end
+
 mutant M-C3-self
 rule R11
 class R

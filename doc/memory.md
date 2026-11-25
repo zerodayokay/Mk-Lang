@@ -1171,6 +1171,38 @@ Fix: copy the word into memory that outlives `index` and add the copy: `try inde
 - An exclusive step keeps writing possible, and a shared step ends it.
 - A step through a `Cell`, `Mutex` or `Chan` of a carrier, or through a `mut view`, restores it, because those write loans past a shared reference. So `Mutex[mut &i32]` stays writable through its guard. The restoring step may come after shared ones: `c: &Ctx`, whose field `h: &Hub` holds a `Chan[&i32]`, takes `*c into c`, since the channel writes loans past both references.
 - A root that cannot be written cannot receive a store, so one `into` does not affect unrelated roots. The test is about what can be written, not about type names: a store that changes type, such as `&p.x` from `p: &Point`, is still caught.
+- A local or temporary passes a store on through what it holds only when its type can write a loan below its own bytes: an exclusive reference to a carrier, a shared reference to memory that takes loan stores through `&` (a `Cell`, `Mutex` or `Chan` of a carrier, a `mut view`, an `Arena`), a type parameter, `Self`, `fn` or interface value, an allocator, a view type argument that holds loans, or a view's raw pointer to anything but its type arguments. A value of any other type receives the store itself and nothing it borrows does, even what it holds only by the path it was borrowed through (R12). So a view over one field of a `mut` parameter, whose field leads to memory with no carrier, takes `*self into self` without making the parameter take its own loan, and a `List[u64]` passes nothing on to its arena: its storage holds `u64`s, and its `&Alloc` is a shared step to memory that takes no store.
+
+```mk
+// verdict: ok
+struct Count {
+    n: int
+}
+
+view struct Counters {
+    a: mut Count
+}
+
+view struct OneCounter {
+    a: mut Count
+}
+
+OneCounter.Bump(mut self) *self into self {
+    self.a.n = self.a.n + 1
+}
+
+BumpFirst(c: mut Counters) {
+    var one := OneCounter(a: mut *c.a)
+    one.Bump()
+}
+
+TwoBumps() {
+    var n := Count(n: 0)
+    var c := Counters(a: mut n)
+    BumpFirst(mut c)
+    BumpFirst(mut c)
+}
+```
 
 A store through a `mut` field of a local wrapper reaches what the field points at:
 

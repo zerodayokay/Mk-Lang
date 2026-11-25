@@ -225,6 +225,13 @@ func (c *checker) writableSkip(st *state, l0, skip setID, arg rootID) (out []roo
 				}
 			}
 		}
+		if ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
+			// Nothing a value of t's type can write below its own bytes
+			// holds a loan, so a store through it goes no further than t:
+			// what t holds by provenance (a reborrow's path, R12) is no
+			// place the store can land (storebelow.go).
+			continue
+		}
 		for _, m := range c.sets.get(c.held(st, t)) {
 			if c.skipHop(skip, t, m) || c.shallowHop(st, t, m) {
 				continue // no hop through a shallow loan (marks.go)

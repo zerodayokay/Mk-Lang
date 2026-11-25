@@ -2,6 +2,12 @@
 
 Every user-visible change to Mk, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). What a 0.x release may change, at each stability level, is in [stability](doc/std/README.md#9-stability).
 
+## Unreleased
+
+### Loan checker
+
+- A store through a local or temporary goes on through the loans it holds only when its type can write a loan below its own bytes (R11). A view built over one field of a `mut` parameter, whose field leads to memory with no carrier, no longer makes `*self into self` store the parameter's own loan into the parameter (a false `E0604` whose suggested clause then locked every caller), and a `List` of non-carriers no longer passes a store on to its arena (a false `E0503`/`E0504` at the arena owner's teardown).
+
 ## 0.6.0 (2026-11-24)
 
 ### Language
