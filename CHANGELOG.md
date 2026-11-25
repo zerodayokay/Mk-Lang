@@ -11,7 +11,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 ### Runtime
 
 - On Windows, a C call from a task runs under the system stack's real `StackLimit`. `mk_call_system` installed the limit read when the carrier's thread started, so after one call had grown the system stack, the next call on that carrier ran below the limit the thread claimed. A stack probe trusts every page below `StackLimit` to be unused, and MSVC's `__chkstk`, which every system DLL uses, stores a zero in each: the second deep call wrote over its own live frames and crashed (two `D3DCompile` calls from one task, on any carrier). The limit a call leaves is now kept for the scheduler and for the carrier's next call.
-- The reference says how to call an assembly stub that uses no stack without the switch to the system stack that every direct `extern` call makes: through a `fn` value, named inside `unsafe`, which is an ordinary call on the task's stack and in `--release` a direct `call` of the stub ([stubs that use no stack](doc/reference.md#c-sources-and-assembly-files)). A codegen test now holds both routes to that. There is no stack-free form of `extern`.
+- The reference says how to call an assembly stub that uses no stack without the switch to the system stack that every direct `extern` call makes: through a `fn` value, named inside `unsafe`, which is an ordinary call on the task's stack and, when the value is named in the calling function, a direct `call` of the stub in `--release` ([stubs that use no stack](doc/reference.md#c-sources-and-assembly-files)). A codegen test now holds both routes to that. There is no stack-free form of `extern`.
 
 ### Checker
 
