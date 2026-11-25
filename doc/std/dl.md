@@ -51,7 +51,7 @@ A `Library` is linear: end it with `Close`, or with `Detach` to keep the library
 - `Close` releases the library; the OS unloads it, running its detach code, when that was its last reference. Opening a library twice gives two references. `Close` only releases, so it never fails.
 - `Open` and `Close` run the library's initializers or finalizers on the calling carrier and block it until they return. They cannot be cancelled.
 
-To call a function, turn its address into a `fn` value of the right C signature with `raw.FnFromAddr` inside `unsafe`. The signature is yours to get right: nothing checks it.
+To call a function, turn its address into a `fn` value of the right C signature with `raw.FnFromAddr` inside `unsafe`. The signature is yours to get right: nothing checks it. The call runs on the calling task's stack, not on the system stack that a call of an `extern` gets ([the C stack](../reference.md#functions-c-can-call-export-extern)), so call a library that uses much stack from a task spawned with `StackSize.Large`.
 
 ## Errors
 

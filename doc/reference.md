@@ -9635,7 +9635,7 @@ export Main(sys: &System): WriteError!void {
 
 **Unwinding.** Nothing in Mk unwinds, so nothing unwinds across C. A panic in a function C called aborts the process.
 
-**The C stack.** A C call runs on the operating system thread's own stack, not the task's. While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks.
+**The C stack.** A call of a bodiless `extern` function runs on the operating system thread's own stack, 8 MiB, not the task's. A call through a `fn` value does not: a C function's address and a Mk function's look the same there, so C code reached that way (a symbol from [`std.dl`](std/dl.md), a function pointer in a C import's struct, a COM method) runs on the calling task's stack. Give that task the stack the C code needs, `StackSize.Large` through `io.ScopeWith` for a library such as Direct3D ([limits and stacks](#limits-and-stacks)), or reach the C function through an `extern`. While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks.
 
 ### C imports
 
