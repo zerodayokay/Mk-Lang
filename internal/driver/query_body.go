@@ -475,15 +475,20 @@ func (qx *queryIndex) allocs(e qEntry) []string {
 }
 
 // stack is `stack F`: a recursion reachable from F that no depth parameter
-// bounds (no static bound), an indirect call (no static bound either), or
-// the deepest chain of direct calls, each recursion a depth parameter
-// bounds (query_depth.go) counted at its bound. Frame sizes exist only
-// after code generation, so the bound is stated in calls, not bytes.
+// bounds (no static bound), an indirect call or a walk cut at maxReach (no
+// static bound either), or the deepest chain of direct calls, each
+// recursion a depth parameter bounds (query_depth.go) counted at its
+// bound. Frame sizes exist only after code generation, so the bound is
+// stated in calls, not bytes.
 func (qx *queryIndex) stack(e qEntry) []string {
 	if !qx.isFunc(e) {
 		return []string{e.name + " is not a function"}
 	}
 	r, _ := qx.walk(e.id, nil)
+	if r.cut {
+		// The functions past the cut may recurse or go deeper.
+		return []string{"no static bound: the walk stopped at " + itoaQ(maxReach) + " functions"}
+	}
 	comps, comp := qx.sccs(r.order)
 	bounds := map[int]*recBound{}
 	for i, c := range comps {
@@ -513,7 +518,7 @@ func (qx *queryIndex) stack(e qEntry) []string {
 		best, via := 0, types.NoItem
 		for _, f := range comps[ci] {
 			for _, c := range qx.callsOf(f) {
-				cc, ok := comp[c.callee] // not held when maxReach cut the walk
+				cc, ok := comp[c.callee] // an indirect call's NoItem is no node
 				if c.indirect || !ok || cc == ci {
 					continue
 				}

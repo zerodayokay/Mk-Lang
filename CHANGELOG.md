@@ -7,6 +7,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 ### Tools
 
 - `mk query stack` bounds a recursion whose depth parameter (a `u8` or `u16` parameter that every call inside the recursion passes on unchanged or less a positive constant, lowered around every cycle) bounds it, counting it as at most (max + 1) frames per function, and lists it as `depth-bounded recursion`; any other recursion still answers `no static bound` ([tools](doc/tools.md#52-depth-bounded-recursion)).
+- `mk query stack` answers `no static bound` when its walk stops at 20,000 functions; it answered `bounded` without seeing the functions past the stop, so a recursion there went unreported.
 
 ### Standard library
 

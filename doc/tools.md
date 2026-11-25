@@ -562,11 +562,11 @@ export Total(xs: []i64): i64 {
 
 `mk query stack Total` answers `bounded` with a deepest chain of 257 frames: `Total`, then `Sum` at most 256 deep. The rule, for each recursion (a set of functions that call each other directly):
 
-- Each function in it has a parameter of type `u8` or `u16`, its depth, the same type in all of them, that the body never assigns.
+- Each function in it has a parameter of type `u8` or `u16`, its depth, the same type in all of them, that the body never assigns or lends as `mut`. Its position and name may differ from function to function.
 - Every call inside the recursion passes the caller's depth, either as it is or less a positive constant: `depth`, `depth - 1`, or a local bound once to one of these. `-` traps below zero, so the depth never wraps; `-%` does not count.
 - The calls that pass the depth unchanged form no cycle, so every cycle lowers it.
 
-Such a recursion of n functions counts as at most (max + 1) n frames, max being 255 for `u8` and 65,535 for `u16`, whatever depth its callers pass, and `stack` lists each one as `depth-bounded recursion`. A recursion that breaks the rule is reported as before, with the cycle that prevents a bound. Frames are counted, not bytes: a frame's size is known only after code generation.
+Such a recursion of n functions counts as at most (max + 1) n frames, max being 255 for `u8` and 65,535 for `u16`, whatever depth its callers pass, and `stack` lists each one as `depth-bounded recursion`. A recursion that breaks the rule is reported as before, with the cycle that prevents a bound. A walk that stops at 20,000 functions gives no bound either. Frames are counted, not bytes: a frame's size is known only after code generation.
 
 ## 6. API diff
 

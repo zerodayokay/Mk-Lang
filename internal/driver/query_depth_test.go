@@ -2,10 +2,12 @@
 // around each of its cycles; a wrong rule either rejects std.big's
 // divide and conquer or bounds a recursion that has no bound.
 //
-// What: TestQuery_StackDepthBounded over small recursions, and
-// TestQuery_StackStdBig over every std.big operation.
+// What: TestQuery_StackDepthBounded over small recursions,
+// TestQuery_StackStdBig over every std.big operation, and
+// TestQuery_StackWalkCut over a walk that stops at maxReach.
 //
-// How: each runs `stack` in process (queryOne) and reads the answer's lines.
+// How: each runs `stack` in process (queryOne) and reads the answer's lines;
+// the cut's package is generated, a fan of maxReach leaves.
 
 package driver
 
@@ -140,12 +142,39 @@ Loop(n: int, depth: u8): int {
     become Loop(n - 1, depth - 1)
 }
 
+Pass(kind: u8, depth: u8): int {
+    if depth == 0 {
+        return 0
+    }
+    return Pass(kind, depth - 1)
+}
+
+Noop() {
+}
+
+Hook(const f: fn(), depth: u8, n: int): int {
+    f()
+    if depth == 0 {
+        return n
+    }
+    return Hook(f, depth - 1, n)
+}
+
+Decoy(const f: fn(), depth: u8, x: u8): int {
+    f()
+    return Decoy(f, depth, depth - 1)
+}
+
+export K(): int {
+    return Pass(1, 4) + Hook(Noop, 4, 0)
+}
+
 export A(): int {
     return Fib(10, 40)
 }
 
 export I(): int {
-    return LocalBumped(3, 4) + ParamBumped(3, 4) + Mixed(3, 4) + Fresh(3, 4)
+    return LocalBumped(3, 4) + ParamBumped(3, 4) + Mixed(3, 4) + Fresh(3, 4) + Decoy(Noop, 4, 4)
 }
 
 export J(): int {
@@ -184,10 +213,11 @@ export H(): int {
 
 // TestQuery_StackDepthBounded: a recursion whose u8 or u16 depth falls
 // around every cycle (through a local, across two functions) is bounded at
-// (max+1) frames per function, through a receiver and a become as well; a
-// depth kept, wrapped, raised, reassigned, changed through a mut borrow,
-// replaced by a constant, of a wide type, or kept around some cycle of the
-// recursion is not.
+// (max+1) frames per function, through a receiver, a become, a const fn
+// parameter and a u8 parameter before the depth as well; a depth kept,
+// wrapped, raised, reassigned, changed through a mut borrow, replaced by a
+// constant or by another parameter, of a wide type, or kept around some
+// cycle of the recursion is not.
 func TestQuery_StackDepthBounded(t *testing.T) {
 	dir := testPkg(t, map[string]string{"q.mk": depthSource})
 	answerHas(t, queryOne(t, dir, "stack", "A"), "bounded: no indirect call in the 2 function(s) A reaches",
@@ -195,12 +225,15 @@ func TestQuery_StackDepthBounded(t *testing.T) {
 		"depth-bounded recursion Fib -> Fib: depth (u8) falls around every cycle, at most 256 frame(s)")
 	answerHas(t, queryOne(t, dir, "stack", "J"), "bounded: no indirect call in the 3 function(s) J reaches",
 		"deepest direct chain: 257 frame(s)", "depth-bounded recursion Walker.Walk -> Walker.Walk", "depth-bounded recursion Loop -> Loop")
+	// Hook's f() is a call through its const parameter, not followed.
+	answerHas(t, queryOne(t, dir, "stack", "K"), "deepest direct chain: 257 frame(s)",
+		"depth-bounded recursion Pass -> Pass: depth (u8)", "depth-bounded recursion Hook -> Hook: depth (u8)")
 	answerHas(t, queryOne(t, dir, "stack", "B"), "deepest direct chain: 131073 frame(s)", "(u16) falls around every cycle, at most 131072 frame(s)")
 	for _, f := range []struct{ fn, rec string }{
 		{"C", "Same -> Same, reached by C -> Same"}, {"D", "Wide -> Wide"}, {"E", "Wraps -> Wraps"},
 		{"F", "Grows -> Grows"}, {"G", "Reset -> Reset"}, {"H", "Ping -> Pong -> Ping"},
 		{"LocalBumped", "LocalBumped -> LocalBumped"}, {"ParamBumped", "ParamBumped -> ParamBumped"},
-		{"Mixed", "Mixed -> Mixed"}, {"Fresh", "Fresh -> Fresh"},
+		{"Mixed", "Mixed -> Mixed"}, {"Fresh", "Fresh -> Fresh"}, {"Decoy", "Decoy -> Decoy"},
 	} {
 		answerHas(t, queryOne(t, dir, "stack", f.fn), "no static bound: recursion "+f.rec)
 	}
@@ -269,7 +302,37 @@ func TestQuery_StackStdBig(t *testing.T) {
 			t.Errorf("stack %s has no static bound:\n%s", op, text)
 		}
 	}
-	answerHas(t, queryOne(t, dir, "stack", "OpMul"), "depth-bounded recursion Karatsuba",
-		"depth-bounded recursion Toom3 -> MulEq -> Toom3")
+	// Pinned on the chain line, which the answer's cap never cuts.
+	answerHas(t, queryOne(t, dir, "stack", "OpMul"), "MulMag -> SqrEq (depth-bounded, 1024 frames)")
 	answerHas(t, queryOne(t, dir, "stack", "OpDivMod"), "DivRecStep (depth-bounded, 256 frames)")
+}
+
+// TestQuery_StackWalkCut: a walk that stops at maxReach functions gives no
+// static bound, even when every function it saw is bounded: the recursion
+// here is in the last leaf, past the cut.
+func TestQuery_StackWalkCut(t *testing.T) {
+	const fan = 100
+	leaves := maxReach/fan + 1
+	var b strings.Builder
+	b.WriteString("export Root(): int {\n    var s := 0\n")
+	for i := range fan {
+		b.WriteString("    s += A" + itoaQ(i) + "()\n")
+	}
+	b.WriteString("    return s\n}\n")
+	for i := range fan {
+		b.WriteString("\nA" + itoaQ(i) + "(): int {\n    var s := 0\n")
+		for j := range leaves {
+			b.WriteString("    s += L" + itoaQ(i) + "X" + itoaQ(j) + "()\n")
+		}
+		b.WriteString("    return s\n}\n")
+		for j := range leaves {
+			body := "1"
+			if i == fan-1 && j == leaves-1 {
+				body = "L" + itoaQ(i) + "X" + itoaQ(j) + "()"
+			}
+			b.WriteString("\nL" + itoaQ(i) + "X" + itoaQ(j) + "(): int {\n    return " + body + "\n}\n")
+		}
+	}
+	dir := testPkg(t, map[string]string{"q.mk": b.String()})
+	answerHas(t, queryOne(t, dir, "stack", "Root"), "no static bound: the walk stopped at "+itoaQ(maxReach)+" functions")
 }
