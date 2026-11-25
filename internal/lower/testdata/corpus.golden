@@ -11653,6 +11653,76 @@ body m.UseMut generics=1 params=1 {
     return normal
 }
 == memory.md, ok block 20
+body m.BumpFirst generics=0 params=1 {
+  let _0: void // return
+  let _1: mut Counters // param 1 c
+  let _2: mut Count // temp
+  let _3: OneCounter // var one
+  let _4: mut OneCounter // temp
+  let _5: void // temp
+  bb0:
+    _2 = mut (*(*_1).0)
+    _3 = m.OneCounter(move _2)
+    scope_end _2
+    _4 = mut _3
+    _5 = call m.OneCounter:Bump(move _4) -> bb1
+  bb1:
+    scope_end _5
+    scope_end _4
+    scope_end _3
+    return normal
+}
+body m.OneCounter:Bump generics=0 params=1 {
+  let _0: void // return
+  let _1: mut OneCounter // param 1 self
+  let _2: int // temp
+  bb0:
+    _2 = Add(copy (*(*_1).0).0, int 1)
+    (*(*_1).0).0 = copy _2
+    scope_end _2
+    return normal
+}
+body m.TwoBumps generics=0 params=0 {
+  let _0: void // return
+  let _1: Count // var n
+  let _2: mut Count // temp
+  let _3: Counters // var c
+  let _4: mut Counters // temp
+  let _5: void // temp
+  let _6: mut Counters // temp
+  let _7: void // temp
+  bb0:
+    _1 = m.Count(int 0)
+    _2 = mut _1
+    _3 = m.Counters(move _2)
+    scope_end _2
+    _4 = mut _3
+    _5 = call m.BumpFirst(move _4) -> bb1
+  bb1:
+    scope_end _5
+    scope_end _4
+    _6 = mut _3
+    _7 = call m.BumpFirst(move _6) -> bb2
+  bb2:
+    scope_end _7
+    scope_end _6
+    scope_end _3
+    scope_end _1
+    return normal
+}
+body m.Use generics=1 params=1 {
+  let _0: void // return
+  let _1: &$0 // param 1 x
+  bb0:
+    return normal
+}
+body m.UseMut generics=1 params=1 {
+  let _0: void // return
+  let _1: mut $0 // param 1 x
+  bb0:
+    return normal
+}
+== memory.md, ok block 21
 body m.Shelf:Put generics=0 params=2 {
   let _0: void // return
   let _1: mut Shelf // param 1 self
@@ -11693,7 +11763,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 21
+== memory.md, ok block 22
 body m.CopyAll generics=0 params=2 {
   let _0: OutOfMemory!List[str] // return
   let _1: &Arena // param 1 a
@@ -11793,7 +11863,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 22
+== memory.md, ok block 23
 body m.B1 generics=0 params=1 {
   let _0: void // return
   let _1: &Arena // param 1 a
@@ -11875,7 +11945,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 23
+== memory.md, ok block 24
 body m.Load generics=0 params=1 {
   let _0: OutOfMemory!str // return
   let _1: &Arena // param 1 a
@@ -11954,7 +12024,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 24
+== memory.md, ok block 25
 body m.Twice generics=0 params=1 {
   let _0: void // return
   let _1: mut i32 // param 1 r
@@ -11981,7 +12051,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 25
+== memory.md, ok block 26
 body m.Grow generics=0 params=1 {
   let _0: OutOfMemory!void // return
   let _1: mut List[int] // param 1 list
@@ -12021,7 +12091,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 26
+== memory.md, ok block 27
 body m.CountSorted generics=0 params=1 {
   let _0: int // return
   let _1: mut []i32 // param 1 xs
@@ -12070,7 +12140,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 27
+== memory.md, ok block 28
 body m.Passes generics=0 params=0 {
   let _0: void // return
   let _1: Point // temp
@@ -12099,7 +12169,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 28
+== memory.md, ok block 29
 body m.Last generics=0 params=1 {
   let _0: mut Node // return
   let _1: mut Node // param 1 head
@@ -12184,7 +12254,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 29
+== memory.md, ok block 30
 body m.Limit generics=0 params=0 {
   let _0: i32 // return
   bb0:
@@ -12212,7 +12282,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 30
+== memory.md, ok block 31
 body m.Parallel generics=0 params=3 {
   let _0: i64 // return
   let _1: Io // param 1 io
@@ -12296,7 +12366,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 31
+== memory.md, ok block 32
 body m.Late generics=0 params=4 {
   let _0: OutOfMemory!void // return
   let _1: Io // param 1 io
@@ -12399,7 +12469,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 32
+== memory.md, ok block 33
 body m.Reuse generics=0 params=1 {
   let _0: OutOfMemory!int // return
   let _1: &Heap // param 1 h
@@ -12513,7 +12583,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 33
+== memory.md, ok block 34
 body m.Peek generics=0 params=1 {
   let _0: i32 // return
   let _1: *i32 // param 1 p
@@ -12533,7 +12603,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 34
+== memory.md, ok block 35
 body m.All generics=0 params=2 {
   let _0: void // return
   let _1: Io // param 1 io
@@ -12592,7 +12662,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 35
+== memory.md, ok block 36
 body m.Build generics=0 params=1 {
   let _0: OutOfMemory!Arena // return
   let _1: &Heap // param 1 h
@@ -12650,7 +12720,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 36
+== memory.md, ok block 37
 body m.Get generics=0 params=1 {
   let _0: mut ?&i32 // return
   let _1: mut S // param 1 s
@@ -40699,6 +40769,156 @@ body m.First generics=0 params=1 {
     scope_end _4
     scope_end _3
     goto bb3
+}
+body m.Use generics=1 params=1 {
+  let _0: void // return
+  let _1: &$0 // param 1 x
+  bb0:
+    return normal
+}
+body m.UseMut generics=1 params=1 {
+  let _0: void // return
+  let _1: mut $0 // param 1 x
+  bb0:
+    return normal
+}
+== tools.md, ok block 2
+body m.Sum generics=0 params=2 {
+  let _0: i64 // return
+  let _1: []i64 // param 1 xs
+  let _2: u8 // param 2 depth
+  let _3: bool // temp
+  let _4: int // temp
+  let _5: bool // temp
+  let _6: bool // temp
+  let _7: i64 // var s
+  let _8: []i64 // temp
+  let _9: int // temp
+  let _10: int // temp
+  let _11: bool // temp
+  let _12: i64 // x
+  let _13: int // temp
+  let _14: int // h
+  let _15: int // temp
+  let _16: uint // temp
+  let _17: uint // temp
+  let _18: bool // temp
+  let _19: []i64 // temp
+  let _20: u8 // temp
+  let _21: i64 // temp
+  let _22: uint // temp
+  let _23: int // temp
+  let _24: uint // temp
+  let _25: bool // temp
+  let _26: []i64 // temp
+  let _27: u8 // temp
+  let _28: i64 // temp
+  let _29: i64 // temp
+  bb0:
+    _4 = Len(_1)
+    _5 = Le(copy _4, int 8)
+    switch copy _5 [0: bb1, _: bb2]
+  bb1:
+    _6 = Eq(copy _2, u8 0)
+    _3 = copy _6
+    goto bb3
+  bb2:
+    _3 = bool 1
+    goto bb3
+  bb3:
+    switch copy _3 [0: bb5, _: bb4]
+  bb4:
+    _7 = i64 0
+    _8 = copy _1
+    _9 = Len(_8)
+    _10 = int 0
+    goto bb7
+  bb5:
+    goto bb6
+  bb6:
+    scope_end _6
+    scope_end _5
+    scope_end _4
+    scope_end _3
+    _13 = Len(_1)
+    _14 = Div(copy _13, int 2)
+    scope_end _13
+    _15 = Len(_1)
+    _16 = Trunc[uint](copy _15)
+    _17 = Trunc[uint](copy _14)
+    _18 = Le(copy _17, copy _16)
+    switch copy _18 [0: bb11, _: bb12]
+  bb7:
+    _11 = Lt(copy _10, copy _9)
+    switch copy _11 [0: bb10, _: bb8]
+  bb8:
+    _12 = copy _8[_10]
+    _7 = Add(copy _7, copy _12)
+    scope_end _12
+    goto bb9
+  bb9:
+    _10 = AddNoWrap(copy _10, int 1)
+    goto bb7
+  bb10:
+    scope_end _10
+    scope_end _9
+    scope_end _8
+    _0 = copy _7
+    scope_end _7
+    scope_end _6
+    scope_end _5
+    scope_end _4
+    scope_end _3
+    return normal
+  bb11:
+    panic bounds
+  bb12:
+    _19 = &_1[..copy _14]
+    _20 = SubNoWrap(copy _2, u8 1)
+    _21 = call m.Sum(copy _19, copy _20) -> bb13
+  bb13:
+    _22 = Trunc[uint](copy _14)
+    _23 = Len(_1)
+    _24 = Trunc[uint](copy _23)
+    _25 = Le(copy _22, copy _24)
+    switch copy _25 [0: bb14, _: bb15]
+  bb14:
+    panic bounds
+  bb15:
+    _26 = &_1[copy _14..]
+    _27 = SubNoWrap(copy _2, u8 1)
+    _28 = call m.Sum(copy _26, copy _27) -> bb16
+  bb16:
+    _29 = Add(copy _21, copy _28)
+    _0 = copy _29
+    scope_end _29
+    scope_end _28
+    scope_end _27
+    scope_end _26
+    scope_end _25
+    scope_end _24
+    scope_end _23
+    scope_end _22
+    scope_end _21
+    scope_end _20
+    scope_end _19
+    scope_end _18
+    scope_end _17
+    scope_end _16
+    scope_end _15
+    scope_end _14
+    return normal
+}
+body m.Total generics=0 params=1 {
+  let _0: i64 // return
+  let _1: []i64 // param 1 xs
+  let _2: i64 // temp
+  bb0:
+    _2 = call m.Sum(copy _1, u8 64) -> bb1
+  bb1:
+    _0 = copy _2
+    scope_end _2
+    return normal
 }
 body m.Use generics=1 params=1 {
   let _0: void // return
