@@ -8,6 +8,7 @@
 package resolve
 
 import (
+	"strings"
 	"testing"
 
 	"mk/internal/ast"
@@ -317,15 +318,22 @@ func TestBareOkIsE0101(t *testing.T) {
 
 // A pattern binding that is not snake_case is E0207, at the top of an arm
 // or in a payload, used or not, with no proven recase: the arm it stands in
-// matches every value. A const or a snake_case binding stays as it was.
+// matches every value. A const is a value test and a snake_case name a
+// binding, neither of them a diagnostic. A recase that is not declarable
+// (`None` to `none`) is not offered.
 func TestPascalBindingIsE0207(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, false)
-	b := w.add("main", opt{}, "enum Color { Red\n Green }\nconst Limit = 3\nF(c: Color, x: int, y: ?int): int {\n    match c {\n        Red { }\n        other { _ = other }\n    }\n    match y {\n        some(Lmit) { return Lmit }\n        none { }\n    }\n    return match x {\n        Limit { 1 }\n        Color { Color }\n    }\n}\n")
-	b.want(t, "E0207@6:9", "E0207@10:14", "E0207@15:9")
+	b := w.add("main", opt{}, "enum Color { Red\n Green }\nconst Limit = 3\nF(c: Color, x: int, y: ?int): int {\n    match c {\n        Red { }\n        other { _ = other }\n    }\n    match y {\n        some(Lmit) { return Lmit }\n        none { }\n    }\n    return match x {\n        Limit { 1 }\n        Color { Color }\n    }\n}\nG(y: ?int): int {\n    return match y {\n        some(v) { v }\n        None { 0 }\n    }\n}\n")
+	b.want(t, "E0207@6:9", "E0207@10:14", "E0207@15:9", "E0207@21:9")
 	for _, d := range b.info.Diags {
 		if len(d.Fixes) != 0 && d.Fixes[0].Class == diag.Proven {
 			t.Errorf("%s: a proven fix %+v", d.Message, d.Fixes[0])
+		}
+		for _, a := range d.Alternatives {
+			if strings.Contains(a, "`none`") {
+				t.Errorf("%s: offers an undeclarable name: %s", d.Message, a)
+			}
 		}
 	}
 }
@@ -364,6 +372,9 @@ func TestBindingShadowsLocal(t *testing.T) {
 	w := newWorld(t, false)
 	b := w.add("main", opt{}, "F(x: ?int) {\n    v := 1\n    match x {\n        some(v) { _ = v }\n        none { }\n    }\n    _ = v\n}\n")
 	b.want(t, "E0206@4:14")
+	if d := b.info.Diags[0]; len(d.Fixes) == 0 || d.Fixes[0].Class != diag.Proven {
+		t.Errorf("a snake_case binding over a local lost its proven rename: %+v", d)
+	}
 }
 
 func TestAltNameMustResolve(t *testing.T) {

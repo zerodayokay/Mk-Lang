@@ -193,8 +193,9 @@ func (w *walker) declare(id *ast.Ident, kind LocalKind, isVar bool, stmt ast.Stm
 }
 
 // declareLocal is declare; pattern marks a binding of a refutable pattern,
-// whose case namePattern judges (patternCase) and whose E0206 offers no
-// rename: renaming it would keep an arm that matches every value.
+// whose case namePattern judges (patternCase). Its E0206 over a const
+// generic, or under a name that is not snake_case, offers no rename:
+// renaming it would keep an arm that matches every value.
 func (w *walker) declareLocal(id *ast.Ident, kind LocalKind, isVar bool, stmt ast.Stmt, pattern bool) LocalID {
 	if id == nil || !declarable(id.Name) || len(w.bodies) == 0 {
 		// No body frame: a binding written where no body is, such as an
@@ -216,8 +217,10 @@ func (w *walker) declareLocal(id *ast.Ident, kind LocalKind, isVar bool, stmt as
 			break
 		}
 	}
+	constParam := false
 	if shadow == nil {
 		shadow = w.shadowsConstParam(id, name)
+		constParam = shadow != nil
 	}
 	f := w.bodies[len(w.bodies)-1]
 	lid := LocalID(len(f.body.Locals))
@@ -227,7 +230,7 @@ func (w *walker) declareLocal(id *ast.Ident, kind LocalKind, isVar bool, stmt as
 	w.locals = append(w.locals, scoped{sym: id.Name, fold: fold, local: lid, body: len(w.bodies) - 1, at: id.Span()})
 	w.fs.setRef(id.ID(), w.localRef(lid))
 	if shadow != nil {
-		if pattern {
+		if pattern && (constParam || !IsSnake(name)) {
 			shadow.Alt("compare with the value in an `if`, or rename the binding")
 		} else {
 			w.renameFix(shadow, id, name, lid)

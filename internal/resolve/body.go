@@ -388,8 +388,9 @@ func (w *walker) namePattern(p *ast.NamePattern, inAlt bool) {
 }
 
 // patternCase is the E0207 of a refutable pattern's binding that is not
-// snake_case: a name in a const's place that names no const in scope (a
-// misspelled one, another module's written bare, a variant without its dot)
+// snake_case: a name in a const's place that names no const or error in
+// scope (a misspelled one, another module's written bare, a variant without
+// its dot)
 // would bind and match every value. No recase is proven, since a recased
 // binding still matches everything. In a module whose gen lines are still
 // unsettled, a name found nowhere may yet be generated: Settle reports it
@@ -403,10 +404,12 @@ func (w *walker) patternCase(id *ast.Ident, found bool) {
 	w.markUsed(w.fs.fi.Refs[id.ID()])
 	want := ToSnake(name)
 	d := naming(id.Span(), name, want, "snake_case")
-	d.Message = "`" + name + "` names no const in scope, so it binds and matches every value: a binding should be snake_case: `" + want + "`"
+	d.Message = "`" + name + "` names no const or error in scope, so it binds and matches every value: a binding should be snake_case: `" + want + "`"
 	d.Alt("write `." + name + "` for a variant")
-	d.Alt("name a const in scope, or qualify another module's as `m." + name + "`")
-	d.Alt("rename the binding `" + want + "`")
+	d.Alt("name a const or error in scope, or qualify another module's as `m." + name + "`")
+	if w.free(want) {
+		d.Alt("rename the binding `" + want + "`")
+	}
 	if !found && w.m.missesPend() {
 		w.t.casePend = append(w.t.casePend, casePend{sym: id.Name, d: d})
 		return
