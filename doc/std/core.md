@@ -1274,7 +1274,7 @@ $ mk run frames.mk
 23
 ```
 
-- Every call's frame is freed before its caller's, so the shared arena is back where it was after each `Sum`, and the loop settles with no heap call.
+- Every call's frame is freed before its caller's. Once the shared arena's chunks hold the deepest call's frames, after the first turn here, each `Sum` leaves it where it found it, and the loop makes no heap call.
 - A frame is an `Arena`: a function that takes `&Arena` takes `&frame`.
 
 ## API

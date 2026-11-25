@@ -112,14 +112,16 @@ const LargeSlice = 4096
 // A larger one is a failed allocation.
 const MaxAlign = 65536
 
-// An aligned chunk keeps its heap alignment's log2 in bits 56 to 61 of its
+// An aligned chunk keeps its heap alignment's log2 in bits 56 to 60 of its
 // size (ChunkShift), so Reset and Free return it with the alignment it was
 // allocated with (the AllocTable contract) and Chunk keeps its 16 bytes; bit
+// 61 (OwnBit) marks an aligned chunk of its own, one request's alone; bit
 // 62 (CurBit) marks the current aligned chunk, whose record is an
 // AlignedChunk. An ordinary chunk's top byte is 0: no heap serves 2^56
 // bytes, and BumpAligned refuses a request past AlignedMax.
 const ShiftAt = 56
 const AlignedMax = 281474976710656
+const OwnBit = 2305843009213693952
 const CurBit = 4611686018427387904
 
 // AlignedBase is the least alignment of a current aligned chunk: one chunk
@@ -225,9 +227,13 @@ ArenaFreeEntry(ctx: *u8, p: *u8, size: int, align: int) {
 // of the arena under it, freed first. The newest chunk is the head, or
 // right below the current aligned chunk (LinkChunk); finding it is two
 // loads, and no list is walked. The block starts room bytes in, 16 or its
-// alignment, and the chunk's size is room + size, so a block that shares
-// its chunk never matches. The first chunk (prev null), the current chunk
-// and the current aligned chunk are never returned.
+// alignment, and the chunk's size is room + size. An ordinary newest chunk
+// is the first, the current one or one of its own (a chunk of the next
+// size is current when made, and only Reset unlinks the current), and a
+// block from its record to its end is alone in it; the first and the
+// current are never returned. An aligned one must carry OwnBit: a former
+// current aligned chunk has an own chunk's shift from AlignedBase up, and a
+// block at its alignment can reach its end over smaller-aligned blocks.
 FreeOwnChunk(h: *ArenaHdr, p: *u8, size: int, align: int) {
     var room := SizeOf[Chunk]()
     var shift := 0
@@ -252,13 +258,17 @@ FreeOwnChunk(h: *ArenaHdr, p: *u8, size: int, align: int) {
             above = head
             c = (*head).prev
         }
-        if raw.IsNull(c) || raw.IsNull((*c).prev) || ((*c).size & CurBit) != 0 || ChunkShift(c) != shift {
+        if raw.IsNull(c) || ChunkShift(c) != shift {
             return
         }
         if ((*c).size & SizeMask()) != room + size || !raw.Same(p, raw.Offset(raw.PtrCast[Chunk, u8](c), room)) {
             return
         }
-        if shift == 0 && IsCurrent(h, c) {
+        if shift != 0 {
+            if ((*c).size & OwnBit) == 0 {
+                return
+            }
+        } else if raw.IsNull((*c).prev) || IsCurrent(h, c) {
             return
         }
         if raw.IsNull(above) {
@@ -469,7 +479,7 @@ BumpAligned(h: *ArenaHdr, size: int, align: int): *u8 {
 // rounds (tests_arena.mk's "aligned requests bump in a chunk that Reset
 // keeps"). A new current chunk is aligned to
 // max(align, AlignedBase); the old current loses its CurBit and goes back
-// to the heap at Reset or Free, with every own chunk.
+// to the heap at Reset or Free, with every own chunk (OwnBit marks one).
 BumpAlignedSlow(h: *ArenaHdr, size: int, align: int): *u8 {
     unsafe "h is a live arena header" {
         // An aligned chunk hangs below the first chunk, so Reset and Free
@@ -500,7 +510,7 @@ BumpAlignedSlow(h: *ArenaHdr, size: int, align: int): *u8 {
                 return raw.Null[u8]()
             }
             c := raw.PtrCast[u8, Chunk](p)
-            raw.Write(c, Chunk(prev: raw.Null[Chunk](), size: total | (Log2(align) << ShiftAt)))
+            raw.Write(c, Chunk(prev: raw.Null[Chunk](), size: total | (Log2(align) << ShiftAt) | OwnBit))
             LinkChunk(h, c)
             return raw.Offset(p, align)
         }
@@ -535,7 +545,7 @@ SizeMask(): int {
 // ChunkShift is an aligned chunk's alignment log2, 0 for an ordinary chunk.
 ChunkShift(c: *Chunk): int {
     unsafe "c is a chunk of a live arena" {
-        return ((*c).size >> ShiftAt) & 63
+        return ((*c).size >> ShiftAt) & 31
     }
 }
 

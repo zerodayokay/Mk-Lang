@@ -856,3 +856,39 @@ test "a frame freed before a newer one leaves the newer one's bytes alone" (sys:
     newer.Free()
     Assert(TaAllocs(cp) == live - 2)
 }
+
+// A frame's aligned chunk is a 4096-aligned block of the current aligned
+// chunk under it. Here that block fills the root's 8 KiB aligned chunk to
+// its end, above a slice of the root's at 32, and the root starts a new
+// aligned chunk while the frame lives: the old one is right below the
+// current aligned chunk, with an own chunk's shift, size and offset for
+// the frame's block. Freeing the frame gives back its block only; the
+// chunk stays with the slice in it.
+test "a frame's aligned block that fills an aligned chunk under it leaves that chunk" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    first := try root.Put(TaLine(a: 1))
+    s := try root.SliceAligned[u8](4050, 16)
+    for i in 0..s.Len() {
+        s[i] = 0x5a
+    }
+    var f := try Arena.NewIn(root.Alloc())
+    inner := f.Put(TaLine(a: 2)) else {
+        raw.Fail(8, "out of memory")
+    }
+    next := root.Put(TaLine(a: 3)) else {
+        raw.Fail(8, "out of memory")
+    }
+    Assert(inner.a == 2)
+    live := TaAllocs(cp)
+    f.Free()
+    Assert(TaAllocs(cp) == live)
+    var ok := true
+    for x in s {
+        ok = ok && x == 0x5a
+    }
+    Assert(ok && first.a == 1 && next.a == 3)
+}
