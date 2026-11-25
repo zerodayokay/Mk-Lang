@@ -32,7 +32,7 @@ notes/
 
 Each module exports one `Error`: a union of its own errors and the sets of the modules it passes errors on from, as `http.Error` holds `net.Error`. A function names the smallest set it can fail with, often one or two members. `try` checks that set against the caller's (E0801).
 
-Error payloads are plain data with no references ([errors](reference.md#9-errors)). So an error carries a line number or an offset, never the text itself.
+Error payloads are plain data with no references but static strings ([errors](reference.md#declaring-errors)). So an error carries a line number or an offset, or a fixed message such as a literal, never text that borrows from the input.
 
 ```mk
 // verdict: ok

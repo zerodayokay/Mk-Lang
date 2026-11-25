@@ -446,6 +446,26 @@ func TestValueArmLayout(t *testing.T) {
 	}
 }
 
+// TestConstructOperandSpaced: an operator after the closing brace of an if
+// or match used as an operand is binary, spaced on both sides; it was read
+// as a prefix and written `} +1`.
+func TestConstructOperandSpaced(t *testing.T) {
+	wantFixed(t, "F(c: bool, n: int): int {\n    a := if c { 1 } else { 2 } - 1\n    b := match n {\n        0 { 1 }\n        _ { 2 }\n    } + 1\n    return a * b + if c { 3 } else { 4 } * 2\n}\n")
+	if got := mustFormat(t, "F(c: bool): int {\n    return if c { 1 } else { 2 } -1\n}\n"); got != "F(c: bool): int {\n    return if c { 1 } else { 2 } - 1\n}\n" {
+		t.Errorf("got:\n%s", got)
+	}
+}
+
+// TestConstructSuffixTight: an index, a slice or a call after the closing
+// brace of an if or match used as an operand is a suffix, written tight as
+// after any other operand; it was written `} [1]` and `} (3, 4)`.
+func TestConstructSuffixTight(t *testing.T) {
+	wantFixed(t, "F(c: bool, k: int, xs: [2]int): int {\n    a := if c { xs } else { xs }[0]\n    b := match k {\n        1 { xs }\n        _ { xs }\n    }[1]\n    g := if c { G } else { H }(a, b)\n    return g + match k {\n        1 { G }\n        _ { H }\n    }(a, b) + if c { &xs } else { &xs }[0..1].Len()\n}\n")
+	if got := mustFormat(t, "F(k: int, xs: [2]int): int {\n    return match k {\n        1 { xs }\n        _ { xs }\n    } [1]\n}\n"); got != "F(k: int, xs: [2]int): int {\n    return match k {\n        1 { xs }\n        _ { xs }\n    }[1]\n}\n" {
+		t.Errorf("got:\n%s", got)
+	}
+}
+
 // TestContinuedIfCondition: a body after a continued condition whose
 // last line closes a bracket is indented from the statement, not from the
 // continuation (std/task/sched.mk's Linger).

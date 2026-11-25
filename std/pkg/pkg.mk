@@ -73,14 +73,17 @@ export struct CSource {
 
 /// A C header import, `import c.<name>`: its headers, the
 /// defines they are read with, the prototypes of the function-like macros
-/// to bind ("int MAX(int a, int b)"), and whether the per-target bindings
-/// under gen/<target>/c/ are read when a target's headers are absent.
+/// to bind ("int MAX(int a, int b)"), whether the per-target bindings
+/// under gen/<target>/c/ are read when a target's headers are absent, and
+/// the package-relative directories searched for headers after the package
+/// root (by the translation, the shim and the package's C sources alike).
 export struct CImport {
     export name: str
     export headers: []str
     export defines: []str
     export macros: []str
     export vendor: bool
+    export include_dirs: []str
 }
 
 /// An assembly source file (.s, or .S through the preprocessor), assembled

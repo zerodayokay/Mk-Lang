@@ -317,6 +317,9 @@ export Library.Detach(self)
 		"export Null[T](): *T\nexport Offset[T](p: *T, n: int): *T\nexport Data[T](s: []T): *T\n" +
 		"export DataMut[T](s: mut []T): *T\nexport StrData(s: str): *u8\nexport FnFromAddr[F](addr: uint): F\n" +
 		"export IsNull[T](p: *T): bool\nexport Write[T](p: *T, x: T)\n"
+	// std.mem's Zeroed intrinsic, as far as the reference's zero-filled
+	// record block uses it; check's zero-valid bound finds it by module path.
+	stdStubs["std.mem"] = "export Zeroed[T](): T\n"
 }
 
 // The std of several cookbook recipes, as the tree declares it, as far as

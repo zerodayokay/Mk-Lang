@@ -1,2 +1,2 @@
-{"phase":"names","diagnostics":[{"code":"E0101","name":"syntax","phase":"names","root":1,"at":{"file":"main/00.mk","line":4,"col":9,"end_line":4,"end_col":12},"message":"constants are not patterns; compare with `if`","facts":{"expected":"pattern"},"fixes":[],"alternatives":[],"explain":"mk explain E0101"}],"omitted":0}
+{"phase":"names","diagnostics":[{"code":"E0101","name":"syntax","phase":"names","root":1,"at":{"file":"main/00.mk","line":4,"col":9,"end_line":4,"end_col":11},"message":"write `ok(_)`","facts":{"expected":"pattern"},"fixes":[],"alternatives":[],"explain":"mk explain E0101"}],"omitted":0}
 

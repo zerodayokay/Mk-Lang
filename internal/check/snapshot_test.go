@@ -43,7 +43,7 @@ var snaps = []snap{
 		w.add("lib", opt{}, "export struct P {\n\tsecret: int\n}\n")
 		return checkAll(t, w, "import lib\n\nF(p: lib.P): int {\n\treturn p.secret\n}\n")
 	}},
-	{code: diag.E0206, src: "struct C {\n\tn: int\n}\n\ninterface I {\n\tN(&self): int\n}\n\nimpl I for C {\n\tN(&self): int {\n\t\treturn 1\n\t}\n}\n"},
+	{code: diag.E0206, src: "enum C {\n\tN\n}\n\ninterface I {\n\tN(&self): int\n}\n\nimpl I for C {\n\tN(&self): int {\n\t\treturn 1\n\t}\n}\n"},
 	{code: diag.E0207, src: "struct P {\n\tx: int\n}\n\nF(p: P): int {\n\treturn p.X\n}\n"},
 	{code: diag.E0209, src: "F(x: int) {\n\tx + 1\n}\n"},
 	{code: diag.E0301, src: "F(): int {\n\treturn \"s\"\n}\n"},

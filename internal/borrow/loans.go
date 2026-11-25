@@ -187,10 +187,14 @@ func (c *checker) destination(st *state, ctx *stmtCtx, dst mir.Place, S setID) {
 
 // destinationFV is destination with the value's per-field sets fv (0 when
 // whole): a whole assignment to a root that keeps field sets takes them
-// (fields.go); any other destination reads S alone.
+// (fields.go); any other destination reads S alone. A str field of an
+// error's payload takes static loans only (staticPayload).
 func (c *checker) destinationFV(st *state, ctx *stmtCtx, dst mir.Place, S setID, fv fvID) {
 	p := c.paths.ofPlace(c.body, c.tab, dst)
 	pi := c.paths.get(p)
+	if c.report && c.errorStr(pi) {
+		c.staticPayload(ctx, S)
+	}
 	root := pi.root
 	ri := &c.roots[root]
 	if len(pi.steps) == 0 {

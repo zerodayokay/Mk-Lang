@@ -44,7 +44,7 @@ So a signature shows whether a function can allocate. A function can allocate on
 
 ### Why no null, and no zero values?
 
-A reference is never null. A value that may be absent is `?T`, and the compiler makes you handle `none`. A local must be assigned before it is read, so there is no zero value to forget about. Uninitialized memory exists only in `unsafe` code.
+A reference is never null. A value that may be absent is `?T`, and the compiler makes you handle `none`. A local must be assigned before it is read, so there is no zero value to forget about. Uninitialized memory exists only in `unsafe` code. Zeroing is a call you write, `mem.Zeroed[T]()`, and only for a type whose all-zero bytes are a value: a C struct of many fields, never a reference or a `str`.
 
 ## Errors
 
@@ -58,7 +58,7 @@ If error sets were inferred from bodies, as in Zig, or open, as Go's `error` is,
 
 ### Why can't errors carry references?
 
-Error payloads are plain data. An error then allocates nothing, holds no loans, and can always travel up the stack past the data it describes. It carries an offset or a line number, not the text.
+Error payloads are plain data. An error then allocates nothing, holds no loans, and can always travel up the stack past the data it describes. It carries an offset or a line number, not the text it was reading. The one exception is a `str` that lives as long as the program, such as a literal or a `const`: it borrows from no frame, so an error that holds it still travels anywhere, and a message such as `Unsupported(feature: "generators")` needs no table of codes. The loan checker accepts only such strings there (E0605).
 
 ### Why does a panic end the process?
 
@@ -119,7 +119,7 @@ An interface takes type parameters instead of associated types. One `impl` per t
 
 ### Why no tuples?
 
-Mk has named records: `(quot: i64, rem: i64)`. Destructuring matches by name, so swapping two fields is a compile error rather than a silent bug. The same form carries `Print`'s arguments.
+Mk has named records: `(quot: i64, rem: i64)`. Destructuring matches by name, so swapping two fields is a compile error rather than a silent bug. The same form carries `Print`'s arguments. Only an array, whose elements are all of one type and have no names, is taken apart by position, with its own brackets: `[a, b] := xs`.
 
 ### Why no shadowing?
 

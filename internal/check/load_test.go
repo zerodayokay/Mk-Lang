@@ -20,9 +20,10 @@ import (
 )
 
 // loadLib exercises every part of the index Load rebuilds: fields (one
-// private), variants, an error, interfaces, an impl whose method collides
-// with a field (shadowed), an impl for an enum, a Type.Name method,
-// a generic struct, a compile-time requires, an assertion and a Slice impl.
+// private, folding like a Type.Name method), variants, an error,
+// interfaces, an impl whose method collides with a Type.Name method
+// (shadowed), an impl for an enum, Type.Name methods, a generic struct, a
+// compile-time requires, an assertion and a Slice impl.
 const loadLib = `export struct Point {
 	export x: int
 	export y: int
@@ -60,6 +61,10 @@ export Point.Sum(&self): int {
 	return self.x + self.y
 }
 
+Point.Name(&self): int {
+	return self.name
+}
+
 export struct Box[T] {
 	export v: T
 }
@@ -88,7 +93,7 @@ impl Slice[int] for Bag {
 // fields and a Type.Name method, an impl method through lookup, a member
 // miss that an imported interface declares (E0702), a variant pattern, a
 // generic construction, an interface bound met by an imported impl, a
-// shadowed method (recased to the private field), Send through an
+// shadowed method (the private Type.Name method, E0204), Send through an
 // assertion, indexing through a Slice impl, and a restated clause.
 const loadApp = `import lib
 

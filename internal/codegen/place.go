@@ -52,6 +52,14 @@ func (fg *fnGen) placeAddr(p mir.Place) (addr, types.TypeID) {
 			if st.FieldLoop {
 				source.ICEf(fg.spanOf(fg.span), "codegen: fields-loop projection in an instance body")
 			}
+			if variant == nil && g.tt.Kind(curT) == types.KArray {
+				// A constant element step: element A sits at A times the
+				// element's size (its stride, as in indexAddr).
+				es, _ := g.sizeAlign(st.Type)
+				off := uint64(st.A) * es
+				cur = addr{v: fg.gep(cur.v, off), align: alignAt(cur.align, off), scope: cur.scope}
+				break
+			}
 			fields := variant
 			if fields == nil {
 				fields = g.fieldsOf(curT)

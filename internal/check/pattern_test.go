@@ -1,7 +1,8 @@
 // Why: pattern typing and exhaustiveness decide whether a match is
 // accepted, and the search must stay bounded.
 // What: TestE0306_* (non-exhaustive, past the cap, wildcards, or-pattern
-// expansion), TestBindingModes, TestE0408_PatternLeftovers, TestPatternTyping.
+// expansion), TestBindingModes, TestE0408_PatternLeftovers, TestPatternTyping,
+// TestConstPatterns.
 // How: checks matches and compares codes and missing-case witnesses.
 
 package check
@@ -245,4 +246,24 @@ func TestE0306_AltExpansionCap(t *testing.T) {
 	if _, ok := ds[0].FactValue("missing"); ok {
 		t.Errorf("a capped search has no witness: %s", dump(w4, ds))
 	}
+}
+
+// TestConstPatterns: a named const is a pattern matched by its value, as a
+// literal of that value: it covers that value for exhaustiveness, takes
+// only the types a literal takes, and must have the scrutinee's type.
+func TestConstPatterns(t *testing.T) {
+	const consts = "const Limit = 8\nconst Low: u8 = 0\nconst High: u8 = 1\nconst On = true\nconst Hi = \"hi\"\nconst Half = 0.5\n\n"
+	runBodyCases(t, []bodyCase{
+		{"int", consts + "F(n: int): int {\n\tmatch n {\n\t\tLimit {\n\t\t\treturn 1\n\t\t}\n\t\t_ {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", ""},
+		{"int without _", consts + "F(n: int): int {\n\tmatch n {\n\t\tLimit {\n\t\t\treturn 1\n\t\t}\n\t}\n\treturn 0\n}\n", "E0306@9:2"},
+		{"u8 covered by consts and a range", consts + "F(n: u8): int {\n\tmatch n {\n\t\tLow | High {\n\t\t\treturn 1\n\t\t}\n\t\t2.. {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", ""},
+		{"u8 gap", consts + "F(n: u8): int {\n\tmatch n {\n\t\tLow {\n\t\t\treturn 1\n\t\t}\n\t\t2.. {\n\t\t\treturn 0\n\t\t}\n\t}\n\treturn 2\n}\n", "E0306@9:2"},
+		{"bool covered", consts + "F(b: bool): int {\n\tmatch b {\n\t\tOn {\n\t\t\treturn 1\n\t\t}\n\t\tfalse {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", ""},
+		{"str", consts + "F(s: str): int {\n\tmatch s {\n\t\tHi {\n\t\t\treturn 1\n\t\t}\n\t\t_ {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", ""},
+		{"inside some", consts + "F(x: ?u8): int {\n\tmatch x {\n\t\tsome(Low) {\n\t\t\treturn 1\n\t\t}\n\t\t_ {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", ""},
+		{"type mismatch", consts + "F(n: u8): int {\n\tmatch n {\n\t\tLimit {\n\t\t\treturn 1\n\t\t}\n\t\t_ {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", "E0301@10:3"},
+		{"float const", consts + "F(x: f64): int {\n\tmatch x {\n\t\tHalf {\n\t\t\treturn 1\n\t\t}\n\t\t_ {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", "E0308@10:3"},
+		{"enum const", "enum C {\n\tRed\n\tGreen\n}\n\nconst Def = C.Red\n\nF(c: C): int {\n\tmatch c {\n\t\tDef {\n\t\t\treturn 1\n\t\t}\n\t\t_ {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", "E0301@10:3"},
+		{"with fields", consts + "F(n: int): int {\n\tmatch n {\n\t\tLimit(x) {\n\t\t\treturn x\n\t\t}\n\t\t_ {\n\t\t\treturn 0\n\t\t}\n\t}\n}\n", "E0301@10:3"},
+	})
 }

@@ -52,6 +52,8 @@ type Member struct {
 // and Type.Name functions (impl methods are found through the impl tables,
 // since an impl may live in the interface's module). list is sorted by name
 // bytes; exact and folded are lookups only, never iterated into output.
+// folded is keyed by resolve.MemberKey, so a field and a method whose names
+// fold alike are two entries.
 type memberSet struct {
 	list   []Member
 	spans  []source.Span // parallel to list
@@ -63,11 +65,14 @@ func newMemberSet() *memberSet {
 	return &memberSet{exact: map[source.Symbol]int32{}, folded: map[string]int32{}}
 }
 
-// add appends a member unless its folded name is taken: that collision was
-// resolve's E0206 and the later entry is absent.
+// add appends a member unless its key or its exact name is taken: that
+// collision was resolve's E0206 and the later entry is absent.
 func (s *memberSet) add(in *source.Interner, mb Member, at source.Span) {
-	f := resolve.Fold(in.Str(mb.Name))
+	f := resolve.MemberKey(in.Str(mb.Name), mb.Kind == MemberField)
 	if _, dup := s.folded[f]; dup {
+		return
+	}
+	if _, dup := s.exact[mb.Name]; dup {
 		return
 	}
 	s.list = append(s.list, mb)
@@ -87,7 +92,7 @@ func (s *memberSet) sortList(in *source.Interner) {
 	for i, j := range idx {
 		list[i], spans[i] = s.list[j], s.spans[j]
 		s.exact[list[i].Name] = int32(i)
-		s.folded[resolve.Fold(in.Str(list[i].Name))] = int32(i)
+		s.folded[resolve.MemberKey(in.Str(list[i].Name), list[i].Kind == MemberField)] = int32(i)
 	}
 	s.list, s.spans = list, spans
 }
@@ -209,8 +214,8 @@ func (c *Checker) ctorSet(k ctorKey) *memberSet {
 }
 
 // ownMemberSpan finds a declared member (field, variant, Type.Name) of ck by
-// folded name: for a named constructor in its module's set, for a builtin
-// in the std sets this module sees.
+// resolve.MemberKey: for a named constructor in its module's set, for a
+// builtin in the std sets this module sees.
 func (m *Module) ownMemberSpan(ck ctorKey, folded string) (source.Span, bool) {
 	if s := m.c.ctorSet(ck); s != nil {
 		if i, ok := s.folded[folded]; ok {

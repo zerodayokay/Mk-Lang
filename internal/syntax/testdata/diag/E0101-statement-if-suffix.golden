@@ -1,0 +1,2 @@
+{"phase":"parse","diagnostics":[{"code":"E0101","name":"syntax","phase":"parse","root":1,"at":{"file":"t.mk","line":2,"col":26,"end_line":2,"end_col":27},"message":"one statement per line","facts":{},"fixes":[],"alternatives":[],"explain":"mk explain E0101"}],"omitted":0}
+

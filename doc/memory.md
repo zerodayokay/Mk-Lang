@@ -121,7 +121,7 @@ Fix it in one of four ways:
 | E0601, E0602, E0607, E0608 | A result's sources: missing, wrong, or not allowed | R9, R10 |
 | E0603 | A result that borrows a local | R9 |
 | E0604 | A store into a parameter with no `into` clause | R11 |
-| E0605 | A short-lived loan stored in a global | R16 |
+| E0605 | A short-lived loan stored in a global or in an error's payload | R16 |
 | E0609 | A `fn` literal that captures more than it may | R13 |
 | E1001 to E1003 | A value that may not cross into a task, or a misused `Scope` | R17 |
 
@@ -383,6 +383,24 @@ Leak(p: Both): Res {
 
 Fix: destructure the whole value, as `Release` does. A type with private fields can be destructured only in the module that declares it.
 
+An array of linear values is taken apart whole in the same way, by position: an array pattern names every element, so each is moved into its own binding exactly once ([destructuring](reference.md#destructuring)).
+
+```mk
+// verdict: ok
+ReleaseAll(rs: [2]Res) {
+    [a, b] := rs // take the whole array apart
+    a.Close()
+    b.Close()
+}
+```
+
+```mk
+// verdict: reject E0409
+First(rs: [2]Res): Res {
+    return rs[0] // <- E0409
+}
+```
+
 ### R5. The conflict table
 
 An access to a place conflicts with a live loan when the two places overlap and the table below says so. Two places overlap when one is a prefix of the other: `p` and `p.x` overlap, `p.x` and `p.y` do not. Why: this is the rule that makes data races and use-after-free impossible in safe code; a shared loan allows readers only, an exclusive loan allows no one else.
@@ -524,7 +542,7 @@ Split() {
 }
 ```
 
-This applies to a local, a by-value parameter or a temporary whose type is a struct or record, also under `?T` and `E!T`. It keeps one set per loan-holding field (R9), one level deep: a nested struct counts as one field. While it does, the value is **split**. When it holds one set for all its fields, it is **whole**. A value behind a reference is always whole. A by-value parameter starts split, every field holding the parameter's own loan.
+This applies to a local, a by-value parameter or a temporary whose type is a struct or record, also under `?T` and `E!T`. It keeps one set per loan-holding field (R9), one level deep: a nested struct counts as one field. While it does, the value is **split**. When it holds one set for all its fields, it is **whole**. A value behind a reference is always whole, and so is an array: each binding of an array pattern holds the loans of every element, so after `[p, q] := [&x, &y]`, `x` stays borrowed while `q` lives. A by-value parameter starts split, every field holding the parameter's own loan.
 
 These uses keep `p` split, because each touches only the field it names:
 
@@ -1624,6 +1642,7 @@ Fix: store a value, not a reference to a local: `Mutex[?i32]` and `g.Store(some(
 | `const` | A compile-time value. Its type must be plain. `&Limit` is valid |
 | `var` | One instance. Its type must be `Share` (E1002). It is never assigned, moved or borrowed `mut`. It is reached only through `&` |
 | Static pseudo-loan | A reference to a global holds it. It never conflicts. Storing a value into anything reachable from it needs the value to hold no loan but the static one (E0605) |
+| Error payload | An error travels up the stack and across tasks, so a `str` in its payload is held to the same rule: the value given when the error is built or assigned to the field holds no loan but the static one, and a `mut` borrow of the field is E0605. A literal, a `const` and a result that comes from no parameter hold none, and so a read of the field holds none, even through a reference |
 
 ```mk
 // verdict: reject E1002
@@ -1631,6 +1650,19 @@ var Counter: Cell[i32] = Cell.New(0) // <- E1002
 ```
 
 Fix: a `Cell` is not `Share`; use an `atomic.Atomic[i32]` from `std.atomic`, or a `Mutex[i32]`.
+
+**Error payloads.** A `str` in an error's payload follows the static rule:
+
+```mk
+// verdict: reject E0605
+error NoSuchKey(key: str)
+
+Find(key: str): NoSuchKey!int {
+    fail NoSuchKey(key: key) // <- E0605
+}
+```
+
+Fix: carry what the caller cannot recompute, such as an index, and let the caller format the key it passed in; a literal such as `NoSuchKey(key: "config")` is accepted.
 
 **Global memory reached through a call.** A function may return a reference to global memory that takes stores, such as a global `Mutex`. Its caller must not store a loan on a local through it, so the result holds the static pseudo-loan:
 

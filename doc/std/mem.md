@@ -11,7 +11,7 @@
 - `Null` refuses everything.
 - `Custom` is an allocator over your own functions.
 - `Pool` stores values under generational handles.
-- `OffsetOf` and `Prefetch` help with layout.
+- `OffsetOf`, `Prefetch` and `Zeroed` help with layout.
 
 Reach for it to put a hard budget on memory, to keep small containers off the heap, or to check in a test that code frees what it allocates, allocates nothing, or survives an allocation that fails. Its pool lets values name each other without references.
 
@@ -48,6 +48,7 @@ import std.mem
 | Store values under handles, reuse freed slots | `Pool[T]`: `Add`, `Get`, `GetMut`, `GetPair`, `Free`, `Iter`, `Sweep` |
 | A field's byte offset | `OffsetOf[T]("field")` |
 | A prefetch hint | `Prefetch(p, write)` |
+| A value of zero bytes, such as a C struct of many fields | `Zeroed[T]()` |
 
 Each allocator gives an `&Alloc` (`Custom` an `Alloc`, which you pass as `&`), which a heap container (`HeapList`, `HeapMap`, `Box`, `coll.HeapDeque`, ...) or `Arena.NewIn` takes. `Counting`, `Limit`, `Failing` and `Fallback` take an `&Alloc` themselves, so they stack in any order.
 
@@ -150,6 +151,35 @@ export Main(sys: &System): WriteError!void {
 ```text
 $ mk run layout.mk
 size at 4, next at 8, 16 bytes
+```
+
+`Zeroed[T]()` is a `T` whose bytes are all zero: every integer and float 0, every `bool` false, every raw pointer null, every optional `none`. It fills a record of many fields without naming each one, as C's `= {0}` does, and is the way to start a C import's struct ([C imports](../reference.md#c-imports)). `T` must be [zero-valid](../reference.md#zero-valid-types), or the call is E0701, so it is safe: a `str`, slice, reference, `fn` value or struct with an `invariant` cannot be zero. `T` is the result, so it is not an error union (E0701): zero the value type instead. O(size of `T`); allocates nothing; also at compile time.
+
+```mk
+// verdict: ok
+import std.mem
+
+struct Window {
+    x: i32
+    y: i32
+    width: i32
+    height: i32
+    title: [64]u8
+    parent: ?u32
+    scale: f32
+    visible: bool
+}
+
+export Main(sys: &System): WriteError!void {
+    var w := mem.Zeroed[Window]()
+    w.width = 640
+    try sys.Print("{w} {h} {v}\n", (w: w.width, h: w.height, v: w.visible))
+}
+```
+
+```text
+$ mk run zeroed.mk
+640 0 false
 ```
 
 ## Examples
@@ -1045,6 +1075,18 @@ export Prefetch[T](p: &T, write: bool)
 
 A hint that p's memory will soon be read, or written when write is
 true; it changes nothing a program can observe. O(1); allocates
+nothing.
+
+### `Zeroed`
+
+```
+export Zeroed[T](): T
+```
+
+A T whose bytes are all zero: every integer and float 0, every bool
+false, every raw pointer null, every optional none. T must be zero-valid
+and not an error union (E0701 otherwise): a C import's struct of any
+size, or an array or struct of such parts. O(size of T); allocates
 nothing.
 
 <!-- api:end -->

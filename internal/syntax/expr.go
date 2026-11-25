@@ -283,7 +283,7 @@ func (p *parser) parseOperand(cover bool) ast.Expr {
 	case k == ast.TokPipe || k == ast.TokPipePipe:
 		return p.closureHabit()
 	case k == ast.TokIf || k == ast.TokMatch:
-		return p.operandIf()
+		return p.operandConstruct()
 	case k == ast.TokDot && p.peekKind(1) == ast.TokLBrace:
 		return p.anonLitHabit()
 	case k == ast.TokDot:

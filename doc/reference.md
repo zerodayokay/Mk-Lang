@@ -424,7 +424,7 @@ export Main(sys: &System): WriteError!void {
 - A name in the wrong case is E0207. The message gives the right spelling: `` `do_thing` should be PascalCase: `DoThing` ``.
 - A name cannot start with `_`: `_x` is E0207. `_` alone is the blank, as in `_ = F()`.
 - Lookup is exact. When nothing matches, the compiler ignores case and underscores to find what you meant: `.len()` and `userCount` are E0207, and the message names `Len` and `user_count`. `mk fix` applies the correction.
-- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A local cannot shadow another local or a parameter ([bindings](#bindings)).
+- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A type's fields are one scope and its variants and methods another, so a field `cpu` and a method `Cpu` may stand side by side ([structs](#structs)). A local cannot shadow another local or a parameter ([bindings](#bindings)).
 - An `extern` function's or var's name is its C symbol. It is used as written and is outside the case rule: `extern strlen(s: *u8): uint`.
 
 A local spelled differently from its declaration:
@@ -1091,6 +1091,7 @@ backtrace:
 
 - `int` and `uint` count as 64 bits, so `int(x)` takes an `i64` or a `u32`, and `int(u)` of a `uint` is E0303.
 - A constant whose value fits passes `T(x)`: `u8(200)`, `i32(Max)` for a `const Max: int = 100`.
+- A float literal or named float constant whose value is exactly an `f32` passes `f32(x)`: `f32(0.5)`, `f32(-1.5e3)`, `f32(Half)` for a `const Half: f64 = 0.5`. `f32(0.1)` and `f32(1e39)` would round or overflow, so they are E0303, and so is an operator over float literals or constants, `f32(0.25 + 0.25)` or `f32(Half + Half)`, which is not judged by its value: write `x: f32 = 0.1`, where the literal takes `f32` and is rounded once, or `Cast[f32](0.1)`.
 - `Cast` to an integer truncates a float toward zero, and panics on NaN, an infinity or a value out of range.
 - `Cast` from an integer to a float rounds to the nearest value, ties to even, and never panics: `Cast[f64](n)`.
 - `Cast` from `f64` to `f32` rounds to nearest-even. It panics only when a finite value rounds to an infinity; NaN and the infinities pass through.
@@ -1263,6 +1264,7 @@ backtrace:
 - Array literals, `[e; N]` and indexing: see [array literals](#array-record-and-struct-literals) and [indexing](#indexing-and-slices).
 - An array is not a slice. Pass `a[..]` where a `[]T` is expected, and `mut a[..]` where a `mut []T` is.
 - An array has the kind of its element, and its size is `N` times the element's.
+- `[a, b] := xs` takes an array apart, each element into its own binding; it is how an array of linear values is consumed ([destructuring](#destructuring)).
 - In a `const` initializer an array literal may also be a `[]T` over static data ([section 11](#compile-time-arenas-and-static-slices)).
 
 ```mk
@@ -1531,7 +1533,7 @@ Pair(): (a: int, b: int) {
 An error set `A | B` is the one union type that you write with `|`: a value of it is one of the errors listed. `E!T` is either an error from the set `E` or a value `T`. Both are described in [section 9](#9-errors).
 
 - Their rules are in [error sets](#error-sets) and [results](#results-et).
-- `E!T` has the kind of `T`. An error payload holds plain data and no references: a `str`, slice or `&T` field is E0408.
+- `E!T` has the kind of `T`. An error payload holds plain data and static strings: a `str` field holds only a string that lives as long as the program (E0605), and a slice, `&T`, or any other type holding a reference is E0408 ([declaring errors](#declaring-errors)).
 
 ### Optionals: `?T`
 
@@ -1939,7 +1941,7 @@ The iterators `Split`, `Lines`, `Words`, `Scalars`, `MapIter`, `TextMapIter`, `C
 
 ### Zero-valid types
 
-A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, so it needs one.
+A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, and [`mem.Zeroed[T]()`](std/mem.md#layout) returns one zeroed value, so both need one.
 
 A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, or an `E!T` whose `T` is zero-valid. A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not.
 
@@ -1948,6 +1950,40 @@ A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, 
 Names(a: &Arena): OutOfMemory!int {
     xs := try a.Slice[str](4) // <- E0701
     return xs.Len()
+}
+```
+
+`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is its result, so it is not an error union either: `mem.Zeroed[E!T]()` is E0701, and `mem.Zeroed[T]()` makes the value. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
+
+```mk
+// verdict: ok
+import std.mem
+
+struct Stats {
+    count: int
+    total: f64
+    last: ?u32
+    buckets: [8]u32
+}
+
+export Main(sys: &System): WriteError!void {
+    var s := mem.Zeroed[Stats]()
+    s.count += 1
+    try sys.Print("{c} {b}\n", (c: s.count, b: s.buckets[7]))
+}
+```
+
+```mk
+// verdict: reject E0701
+import std.mem
+
+struct Named {
+    id: int
+    name: str
+}
+
+Blank(): Named {
+    return mem.Zeroed[Named]() // <- E0701
 }
 ```
 
@@ -2024,12 +2060,12 @@ export Main(sys: &System): WriteError!void {
 | E0308 | no-operator | `==` on a type without it; arithmetic on `char`; indexing a `str` |
 | E0401 | use-after-move | A unique or linear value used after it moved ([kinds](#kinds)) |
 | E0402 | not-consumed | A linear value not consumed on some path ([linear values](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)) |
-| E0408 | not-plain | An error payload with a reference ([error sets and results](#error-sets-and-results)) |
+| E0408 | not-plain | An error payload with a reference other than a `str` ([error sets and results](#error-sets-and-results)) |
 | E0410 | must-declare-kind | An exported struct whose private fields make it `view`, `mut view` or `linear`, without the keywords ([exported kinds](#exported-kinds)) |
 | E0507 | mut-through-shared | Writing an element through a `[]T` ([slices](#slices-t-and-mut-t)) |
 | E0508 | mut-of-immutable | `mut x` of a local that is not `var` ([references](#references-t-and-mut-t)) |
 | E0608 | flow-mismatch | A function given as a `fn` type whose clauses do not cover the function's ([function types](#function-types)) |
-| E0701 | bound-unmet | A unique or linear type where `Plain` is needed; `Arena.Slice` of a type that is not zero-valid |
+| E0701 | bound-unmet | A unique or linear type where `Plain` is needed; `Arena.Slice` or `mem.Zeroed` of a type that is not zero-valid, or `mem.Zeroed` of an error union |
 | E0704 | impl-conflict | A method through an alias of another module's type ([aliases](#type-aliases)) |
 | E0705 | not-const | An array length that is not a compile-time constant ([arrays](#arrays-nt)) |
 | E0706 | requires-failed | An enum, or a struct with no `Format`, in a format string ([enums](#enum-types)) |
@@ -2140,7 +2176,22 @@ export Main(sys: &System): WriteError!void {
 - `s.f` reads a field. You change a field through a `var` binding or a `mut` reference ([section 5](#5-statements)).
 - A struct has no `==` and no `Format` of its own (E0308, E0706). After `import std.derive`, `gen derive.Eq(Vec2)` and `gen derive.Format(Vec2)` write both for you ([section 11](#11-compile-time)): then `a.Eq(&b)` compares two values and `{a}` prints `Vec2(x: 1, y: 2)`.
 - A struct cannot hold itself by value, directly or through other structs (E0907). Hold it through a reference, `next: ?&Chain`, or a `Box`.
-- Field names are `snake_case` (E0207). A field and a method of one type cannot have names that differ only in case and underscores (E0206), so a field `name` and a method `Name` conflict.
+- Field names are `snake_case` (E0207). A field and a method of one type may have names that differ only in case and underscores: a field `cpu` and a method `Cpu` are two members, and `m.cpu` reads one while `m.Cpu()` calls the other. Two fields, or two methods, or a method and a variant, that differ only in case and underscores are E0206, as is a field spelled exactly as a method.
+
+```mk
+// verdict: ok
+struct Machine {
+    cpu: int
+}
+
+Machine.Cpu(&self): int { // a method beside the field `cpu`
+    return self.cpu * 2
+}
+
+Load(m: &Machine): int {
+    return m.cpu + m.Cpu()
+}
+```
 - `invariant c` among the fields states a condition every value must meet ([section 15](#15-contracts-and-tests)).
 
 A struct may take type parameters. Construction infers them from the fields, or you write them:
@@ -2429,7 +2480,7 @@ export Main(sys: &System): WriteError!void {
 - The type must be plain (E0408). `&Limit` is a valid reference that lives as long as the program ([globals](memory.md#r16-globals)).
 - A constant cannot be assigned (E0301).
 - A literal that does not fit the type is E0303. An evaluation that panics, and constants in a cycle, are compile errors ([evaluating constants](#evaluating-constants), [the stage rule](#the-stage-rule)).
-- A constant is not a pattern: compare with `if` ([literal patterns](#literal-patterns)).
+- A constant of an integer, `bool`, `char` or `str` type is a pattern, matched by its value ([literal patterns](#literal-patterns)).
 
 ### Global variables
 
@@ -2736,7 +2787,7 @@ packed align(8) struct Both { // <- E0706
 |---|---|---|
 | E0101 | syntax | `.Quit` as an expression; a tag type on an enum with fields; two variants on one line; `packed(n)` with another `n` |
 | E0203 | unknown-member | A variant's field read with a dot ([enums](#enums)) |
-| E0206 | duplicate-name | Two items, two variants' tags, or a field and a method whose names differ only in case ([functions](#functions-and-methods), [tags](#enum-tags)) |
+| E0206 | duplicate-name | Two items, two variants' tags, two fields or two methods whose names differ only in case, or a field spelled exactly as a method ([functions](#functions-and-methods), [structs](#structs), [tags](#enum-tags)) |
 | E0207 | naming | A field not in `snake_case`, a function not in `PascalCase` |
 | E0301 | type-mismatch | A tag type that is not an integer; an assignment to a constant |
 | E0302 | no-conversion | A number from an enum without a tag type ([tags](#enum-tags)) |
@@ -2808,7 +2859,7 @@ Sum(m: &Map[str, int]): int {
 | Statement | Meaning |
 |---|---|
 | `x := e`, `var x := e`, `x: T = e`, `x: T` | Bind a local ([bindings](#bindings)) |
-| `(a, b) := r`, `Point(x, y) := p` | Take a record or struct apart ([destructuring](#destructuring)) |
+| `(a, b) := r`, `Point(x, y) := p`, `[a, b] := xs` | Take a record, struct or array apart ([destructuring](#destructuring)) |
 | `p = e`, `p += e` | Assign ([assignment](#assignment)) |
 | `F(x)`, `_ = e` | Call for the effect, or drop a value ([expression statements](#expression-statements)) |
 | `if c { } else { }`, `if x := e { }` | Choose ([`if`](#if)) |
@@ -2896,7 +2947,7 @@ Twice(n: int): int {
 }
 ```
 
-**Destructuring.** A binding can take a record or a struct apart: `(lo, hi) := r`, `Point(x, y) := p`, `var Point(x, y) := p`. The pattern names every field or ends with `..`. Taking a struct apart consumes it. See [destructuring](#destructuring) in section 6 for the rules.
+**Destructuring.** A binding can take a record, a struct or a fixed array apart: `(lo, hi) := r`, `Point(x, y) := p`, `var Point(x, y) := p`, `[a, b] := xs`. A record or struct pattern names every field or ends with `..`; an array pattern names every element. Taking a struct or array apart consumes it. See [destructuring](#destructuring) in section 6 for the rules.
 
 See also: [kinds](#kinds) for what a binding copies or moves, [the memory model](memory.md#r3-assignment-before-use) for assignment before use.
 
@@ -3039,7 +3090,7 @@ export Main(sys: &System): WriteError!void {
 - `if x := &e` binds a `&T` to the payload, and `if x := mut e` a `mut T` through which you change it.
 - `e` must be an optional (E0307). For an `E!T`, use [`else`](#else) or [`match`](#match-on-a-result).
 - `if T is u8 { }` tests a type parameter at compile time. See [specialization](#specialization-if-t-is).
-- In value position, an `if` with an `else` gives a value. See [below](#if-match-and-else-as-values).
+- Used as an expression, an `if` with an `else` gives a value, as an operand too. See [below](#if-match-and-else-as-values).
 
 ```mk
 // verdict: reject E0307
@@ -3540,7 +3591,7 @@ When a rule fails, `return f(a)` is the same call without the frame reuse.
 
 ### `if`, `match` and `else` as values
 
-In value position, an `if` with an `else` and a `match` give a value: the last line of the arm that runs. An `e else { }` block gives one too ([section 9](#else)), and in parentheses it can also be an operand: `1 + (F() else { 0 })`.
+Used as an expression, an `if` with an `else` and a `match` give a value: the last line of the arm that runs. They stand wherever an expression does, as an operand too: `1 + if c { 2 } else { 3 }`. An `e else { }` block gives one too ([section 9](#else)), and in parentheses it can also be an operand: `1 + (F() else { 0 })`.
 
 ```mk
 // verdict: ok
@@ -3574,12 +3625,30 @@ twenty
 5 20 yes 1
 ```
 
-Value position is:
+An `if` or `match` is a value anywhere an expression stands: the right side of a binding or an assignment, the operand of `return`, an argument, a field or element of a literal, an operand of an operator, an index, a condition, and the last line of an arm that is itself a value. Suffixes and operators may follow its closing brace, and bind to the whole construct: `if c { 1 } else { 2 } * 3` multiplies the chosen value.
 
-- the right side of a binding or an assignment;
-- the operand of `return`;
-- an argument, or a field or element of a literal;
-- the last line of an arm that is itself in value position.
+```mk
+// verdict: ok
+export Main(sys: &System): WriteError!void {
+    c := sys.args.Len() > 0
+    xs := [10, 20, 30]
+    a := 1 + if c { 2 } else { 3 } // an operand
+    b := xs[if c { 0 } else { 2 }] // an index
+    n := match b {
+        10 { "ten" }
+        _ { "other" }
+    }.Len() // a suffix on the whole match
+    var k := 0
+    if a == if c { 3 } else { 4 } { // a condition's operand
+        k = 1
+    }
+    try sys.Print("{a} {b} {n} {k}\n", (a, b, n, k))
+}
+```
+
+```text
+3 10 3 1
+```
 
 The rules:
 
@@ -3587,7 +3656,8 @@ The rules:
 - An arm that does not fall through, because it returns, breaks, continues or fails, needs no value.
 - An arm whose last line is not a value is E0310. An `if` without an `else` is E0311. If an arm cannot end in a value, use the statement form and assign a local in each arm.
 - Under `_ =`, an `else` block may fall through without a value; the error is ignored.
-- Anywhere else, `if` and `match` are statements. As an operand, even in parentheses as in `1 + (if c { 2 } else { 3 })`, they are E0101: bind the value to a local first.
+- Operands are evaluated left to right: in `x + if c { .. } else { .. }` whose arm assigns `x`, the left `x` is read before the arm runs, as it is before a call that changes `x`.
+- At the start of a statement, `if` and `match` are statements, so nothing may follow the closing brace on that line (E0101). Wrap one in parentheses to use its value there: `(if c { a } else { b }).Close()`.
 
 ```mk
 // verdict: reject E0311 E0310
@@ -3635,7 +3705,7 @@ Pick(c: bool, n: i32): i32 {
 
 ## 6. Patterns
 
-A pattern describes the shape of a value and names its parts. Patterns appear in three places: the arms of a `match`, a destructuring binding `p := e`, and, with a record pattern, the head of a `for` loop.
+A pattern describes the shape of a value and names its parts. Patterns appear in three places: the arms of a `match`, a destructuring binding `p := e`, and, with a record pattern, the head of a `for` loop. An array pattern `[a, b]` appears only in a destructuring binding.
 
 ```mk
 // verdict: ok
@@ -3665,6 +3735,7 @@ Class(c: char): int {
 | `NotFound(id)`, `NotFound` | An error, in a `match` on an error set |
 | `some(x)`, `none`, `ok(v)`, `err(e)` | An optional or a result |
 | `1`, `-1`, `true`, `"text"`, `'a'` | A literal |
+| `Limit`, `codes.OpAdd` | A named const, by its value ([literals](#literal-patterns)) |
 | `0..10`, `'a'..'{'`, `200..`, `..0` | A half-open range of integers or characters |
 | `A \| B` | Either pattern |
 | `_` | Anything, binding nothing |
@@ -3825,7 +3896,7 @@ elsewhere
 
 ### Literal patterns
 
-An integer, `bool`, `char` or `str` literal matches a value equal to it.
+An integer, `bool`, `char` or `str` literal, or a named const of one of those types, matches a value equal to it.
 
 ```mk
 // verdict: ok
@@ -3869,7 +3940,39 @@ export Main(sys: &System): WriteError!void {
 - A negative integer is written with its `-`: `-1`.
 - A float is not a pattern (E0308). Compare floats with `if`.
 - A literal of a type other than the value's is E0301.
-- A constant is not a pattern (E0101). `match n { Limit { } }` is rejected rather than read as a binding. Compare with `if n == Limit`.
+- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does. Its value is needed before the module's own functions are ready, so a const that calls one of them is E0908 there ([the stage rule](#the-stage-rule)). Outside an alternative, a name that is no const in scope is a [binding](#bindings-and-wildcards): a misspelled const, or another module's const written without its module, matches every value, and is E0208 when its arm does not use it. In an alternative, where a name never binds, an unknown one is E0201.
+
+```mk
+// verdict: ok
+const OpAdd: u8 = 1
+const OpSub: u8 = 2
+const Yes = true
+
+Op(code: u8): str {
+    return match code {
+        OpAdd { "add" } // the value 1
+        OpSub | 3 { "sub" } // a const among literals
+        _ { "?" }
+    }
+}
+
+Halts(b: bool): bool {
+    return match b { // Yes and false cover bool
+        Yes { true }
+        false { false }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    a := Op(2)
+    h := Halts(true)
+    try sys.Print("{a} {h}\n", (a, h))
+}
+```
+
+```text
+sub true
+```
 
 ```mk
 // verdict: reject E0308
@@ -4205,7 +4308,7 @@ The error names the gap, `200..`.
 
 ### Destructuring
 
-A binding `p := e` takes a record or a struct apart. Its pattern must match every value of the type: it cannot fail.
+A binding `p := e` takes a record, a struct or a fixed array apart. Its pattern must match every value of the type: it cannot fail.
 
 ```mk
 // verdict: ok
@@ -4247,9 +4350,62 @@ export Main(sys: &System): WriteError!void {
 - Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct.
 - `var` before the pattern makes every binding `var`.
 - A pattern that can fail, such as a literal, is E0306. Use `match`.
-- Only a record or a struct pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
+- Only a record, a struct or an array pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
 - Outside the struct's module, a struct with private fields cannot be destructured (E0204).
 - A `for` loop may destructure each element with a record pattern: `for (key, value) in m.Iter()`. A struct pattern there is E0101. See [`for`](#for-loops).
+
+An array pattern `[a, b] := xs` takes a fixed array `[N]T` apart by position: the i-th name binds element i. It is how a function consumes an array of [linear](#linear-and-view-structs) values, whose elements cannot be moved out one at a time (`xs[0]` is E0409, see [R4](memory.md#r4-places-and-moves-out-of-them)).
+
+```mk
+// verdict: ok
+linear struct Conn {
+    id: int
+}
+
+Conn.Close(self): int {
+    Conn(id) := self
+    return id
+}
+
+Ends(): [2]Conn {
+    return [Conn(id: 1), Conn(id: 2)]
+}
+
+export Main(sys: &System): WriteError!void {
+    ends := Ends()
+    [near, far] := ends // moves ends; each element into its own binding
+    n := far.Close() * 10 + near.Close()
+    [x, y, z] := [4, 5, 6] // plain elements are copied
+    try sys.Print("{n} {x} {y} {z}\n", (n, x, y, z))
+}
+```
+
+```text
+21 4 5 6
+```
+
+- An array pattern names every element, one plain name each, so every element is bound exactly once: fewer or more names than `N` is E0305. It takes no `..`, `_` or nested pattern (E0101); to keep only some elements of a plain array, index it.
+- `N` must be known where the destructure is checked: an array whose length is a const generic of the function, `[N]T`, is E0301. Its element type may be generic, as in `Split[T](xs: [2]T)`.
+- Destructuring moves the whole array, or copies it if its elements are plain. `var [a, b] := xs` makes both bindings `var`.
+- `(a, b) := xs` on an array is E0301: a record pattern names fields, and an array has none.
+
+An array pattern that leaves out an element:
+
+```mk
+// verdict: reject E0305
+linear struct Conn {
+    id: int
+}
+
+Conn.Close(self) {
+    Conn(id: _) := self
+}
+
+First(ends: [2]Conn) {
+    [near] := ends // <- E0305
+    near.Close()
+}
+```
 
 A destructure that can fail:
 
@@ -4300,14 +4456,14 @@ Name(b: Bag): str {
 
 | Code | Name | Reported for |
 |---|---|---|
-| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a constant or a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head |
+| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
 | E0206 | duplicate-name | A binding that shadows a local ([bindings](#bindings-and-wildcards)) |
 | E0208 | unused | A binding that is never used, often a variant written without its dot ([variants](#variant-patterns)) |
-| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")` ([literals](#literal-patterns)) |
-| E0305 | field-names | A destructure that neither names every field nor ends with `..` ([destructuring](#destructuring)) |
+| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")`; a const of a type a literal cannot have ([literals](#literal-patterns)); an array pattern on a value that is not an array of known length, or a record pattern on an array ([destructuring](#destructuring)) |
+| E0305 | field-names | A destructure that neither names every field nor ends with `..`; an array pattern that does not name every element ([destructuring](#destructuring)) |
 | E0306 | non-exhaustive | A `match` that misses values; a destructure that can fail ([exhaustiveness](#exhaustiveness)) |
-| E0308 | no-operator | A float literal as a pattern ([literals](#literal-patterns)) |
+| E0308 | no-operator | A float literal or a float const as a pattern ([literals](#literal-patterns)) |
 | E0309 | record-names | A field name the type does not have ([variants](#variant-patterns)) |
 | E0315 | empty-range | A range whose low end is not below its high end ([ranges](#range-patterns)) |
 | E0408 | not-plain | A field skipped by `..` that is not plain ([destructuring](#destructuring)) |
@@ -4920,7 +5076,7 @@ These forms are expressions too, each with its own section:
 |---|---|
 | `T(x)`, `Cast[T](x)`, `Trunc[T](x)` | Conversions ([conversions](#conversions)) |
 | `try e`, `e else { }`, `e.Must()` | Handle a failure ([section 9](#9-errors)) |
-| `if c { a } else { b }`, `match e { }` | A value in value position ([values](#if-match-and-else-as-values)) |
+| `if c { a } else { b }`, `match e { }` | A value wherever an expression stands, an operand too ([values](#if-match-and-else-as-values)) |
 | `SizeOf[T]()`, `AlignOf[T]()` | Layout facts at compile time ([section 11](#11-compile-time)) |
 | `quote { ... }` | Code as data, in a generator ([generators](#generators)) |
 
@@ -5203,15 +5359,52 @@ BadByte(offset: 2, value: 200) at offset 2
 line 4
 ```
 
-- A payload is plain data: integers, floats, `bool`, `char`, and arrays, records, structs and enums of plain data.
-- A payload holds no references, so no `str`, slice or `&T` (E0408). An error never borrows from the function that failed, so it can always travel up the stack. To carry a short name, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`. Usually a position or an id is better: the caller formats the message.
+- A payload is plain data: integers, floats, `bool`, `char`, and arrays, records, structs and enums of plain data. A field may also be a `str`.
+- A payload holds no other reference, so no slice, `&T`, `?str`, `[N]str` or struct holding a `str` (E0408).
+- A `str` field holds only a static string: a literal, a `const`, a global, or a `str` a function returns that comes from none of its parameters. Building the error with any other `str`, such as a parameter or a view of a local buffer, is E0605, and so are assigning such a `str` to the field and a `mut` borrow of the field. An error never borrows from the function that failed, so it can always travel up the stack and into another task. To carry text made at run time, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`, or a position or an id from which the caller formats the message.
+- Since an error's `str` is static, reading it gives a `str` that borrows nothing, even through a reference: for `e: &Bad`, `e.msg` outlives `e`. A `match` on a `mut` of the error would bind the field as a `mut str`, which is E0605: bind the error, as `err(e)`, and read `e.msg`.
 - Construction names every field, `BadByte(offset: 3, value: 200)`, as for a struct (E0305).
 - An error has no type parameters.
 
 ```mk
 // verdict: reject E0408
-error NoSuchKey(key: str) // <- E0408
+error NoSuchKey(key: []u8) // <- E0408
 ```
+
+A `str` field holds text that lives as long as the program:
+
+```mk
+// verdict: ok
+error Unsupported(feature: str, line: int)
+
+const Generators: str = "generators"
+
+Feature(code: u8): str {
+    return match code {
+        1 { "classes" }
+        _ { "modules" }
+    }
+}
+
+Compile(code: u8, line: int): Unsupported!void {
+    if code == 0 {
+        fail Unsupported(feature: Generators, line: line)
+    }
+    fail Unsupported(feature: Feature(code), line: line) // Feature's result borrows nothing
+}
+
+export Main(sys: &System): WriteError!void {
+    Compile(1, 7) else e {
+        try sys.Print("{e}\n", (e))
+    }
+}
+```
+
+```text
+Unsupported(feature: classes, line: 7)
+```
+
+A `str` that borrows from the failing function, or from its caller, could outlive its bytes, so `fail NoSuchKey(key: key)` with a parameter `key` is E0605 ([the memory model](memory.md#r16-globals) has the example). Carry what the caller cannot recompute, such as an index, and let the caller format the key it passed in.
 
 A payload is built by naming its fields:
 
@@ -6144,9 +6337,10 @@ See also: [`mk query panics`](tools.md#51-member-wide-panic-sites), which lists 
 | E0306 | non-exhaustive | A `match` that misses an error, or lacks `_` on an open set ([sets](#error-sets)) |
 | E0307 | not-optional | `else x` on a `?T`, which has no error to bind ([`else`](#else)) |
 | E0402 | not-consumed | A linear temporary still live when `try` or `else` leaves the statement (example in [the memory model](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)) |
-| E0408 | not-plain | A payload field that holds a reference or a `str` ([declaring](#declaring-errors)) |
+| E0408 | not-plain | A payload field that holds a reference other than a `str` ([declaring](#declaring-errors)) |
 | E0411 | moved-before-failure | A by-value argument changed before a later failure (example in [section 8](#fallible-calls-consume-only-on-success)) |
 | E0412 | private-in-signature | A private error in an exported signature ([modules](#errors-across-modules)) |
+| E0605 | loan-into-global | A payload `str` that is not static, stored when the error is built or assigned, or a `mut` borrow of such a field ([declaring](#declaring-errors), example in [the memory model](memory.md#r16-globals)) |
 | E0704 | impl-conflict | `impl Format` for an error ([printing](#how-errors-print)) |
 | E0706 | requires-failed | An error with no `Format` in a format string ([printing](#how-errors-print)) |
 | E0801 | error-not-in-set | A `fail` or `try` whose error is not in the function's set ([`fail`](#fail), [`try`](#try)) |
@@ -7373,7 +7567,7 @@ main.mk:10:7: E0902 fuel-exhausted: compile-time evaluation ran out of fuel afte
 
 ### The stage rule
 
-Some evaluations run before the module's own functions and types are ready: the length in an array type, a const argument, a compile-time `requires`, and a `gen` argument. Such an evaluation may not call a function of the same module, or need the layout of a type of the same module (E0908). The report names the consts and functions the evaluation entered, with the trace.
+Some evaluations run before the module's own functions and types are ready: the length in an array type, a const argument, a compile-time `requires`, a `gen` argument, and a const named in a match pattern. Such an evaluation may not call a function of the same module, or need the layout of a type of the same module (E0908). The report names the consts and functions the evaluation entered, with the trace.
 
 ```mk
 // verdict: reject E0908
@@ -7870,7 +8064,7 @@ See also: [`std.derive`](std/derive.md), [`std.build`](std/build.md) for embedde
 | E0905 | generated-invalid | Generated code that does not compile ([errors in generated code](#errors-in-generated-code)) |
 | E0906 | forbidden-input | A generator that reads the structure of a generated type ([what a generator sees](#what-a-generator-sees)) |
 | E0907 | layout-cycle | A type that contains itself ([the stage rule](#the-stage-rule)) |
-| E0908 | stage-violation | A type, const argument, `requires` or `gen` argument that needs its own module's functions or layouts ([the stage rule](#the-stage-rule)) |
+| E0908 | stage-violation | A type, const argument, `requires`, `gen` argument or const pattern that needs its own module's functions or layouts ([the stage rule](#the-stage-rule)) |
 | E0909 | const-cycle | A const that reads itself ([the stage rule](#the-stage-rule)) |
 | E0910 | file-input | A bad path for `build.File` or `g.Input` ([data files](std/build.md#data-files)) |
 | E1002 | not-share | A const that holds a `Cell` or a raw pointer, such as a `List` ([evaluating constants](#evaluating-constants)) |
@@ -9723,9 +9917,11 @@ How C declarations appear in Mk:
 | A function-pointer field | `?fn(...)`. Reading it needs `unsafe` (E1101): calling it runs C code |
 
 - Types and constants become PascalCase, and fields snake_case. Functions keep their C names. Each declaration's C form is in a comment above it.
+- A struct is made by naming every field, or zeroed whole as C's `= {0}` does with [`mem.Zeroed`](#zero-valid-types): `mem.Zeroed[geom.GeomPoint]()`. A C struct's fields (integers, floats, raw pointers, `?fn`, arrays, nested structs, a union's bytes, bitfield units) are all zero-valid, so it needs no `unsafe`.
 - `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
 - `headers` are paths from the package root. `defines` are macros the headers are read with, `NAME` or `NAME=value`.
-- All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them.
+- `include_dirs` are directories of the package searched for headers after the package root, for a library whose headers include each other by a name under their own include directory: `pkg.CImport(name: "z", headers: ["third_party/z/include/z.h"], defines: [], macros: [], vendor: false, include_dirs: ["third_party/z/include"])`, where `z.h` has `#include "zconf.h"`. Each is a relative path with `/` separators inside the package, other than the root itself (E0202 otherwise). The field may be left out.
+- All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them. So their `include_dirs` form one search path, in the order the imports list them, and the shim and the package's C sources are compiled with the same path.
 - `mk check` runs Clang to translate the C imports, with a minimal environment. It compiles no C source.
 - The bindings are made per target. `mk check --all-targets` translates them for both `x86_64-windows` and `x86_64-linux` and reports an item the package uses whose API differs (E0213). A constant's value is not part of the API. It needs each target's system headers, from `MK_SYSROOT_<target>`, or `vendor: true` to read the committed `gen/<target>/c/` files instead. Without either, it is E0213, `reason: no-sysroot`.
 
@@ -9740,8 +9936,8 @@ The manifest builds C and assembly files with the package:
 | `links` | `pkg.Link(...)` | A library ([below](#linking-libraries)) |
 
 - C sources link against `std.libc`, the C library written in Mk, and the bin's links. They get no other C runtime. Without a sysroot, only `std.libc`'s functions are declared in the headers they see: a call to anything else fails to compile, or to link, with E0001. [std.libc](std/libc.md) lists the functions, the include path and the system-libc mode of Linux.
-- A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works.
-- A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root instead.
+- A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works, and then the C imports' `include_dirs`.
+- A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root, or list their directory in a C import's `include_dirs`, instead.
 
 ### Linking libraries
 
@@ -11200,7 +11396,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.sync` | `RwLock ReadGuard Select Selectable Shared Semaphore Notify Barrier Once` |
 | `std.atomic` | `AtomicInt AtomicBool Atomic Spin SpinGuard Order Relaxed Acquire Release AcqRel SeqCst Fence Unordered Pause` |
 | `std.mmio` | `Load Store Fence Reg`, every call inside an unsafe block |
-| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch` |
+| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch Zeroed` |
 | `std.coll` | `Deque HeapDeque PriorityQueue BTree HeapBTree BTreeIter Bitset` |
 | `std.text` | `Graphemes Clusters Normalize Form FoldCase Width ToUtf16 FromUtf16 WordBounds SentenceBounds Bounds ParagraphBounds BidiLevels Levels Run Direction Mirror LineBreaks Breaks Capped Sink CategoryOf Category ScriptOf Script ScriptExtensions Has Property UnicodeVersion` |
 | `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ExactDigits Digits DigitMode` |
@@ -12326,6 +12522,7 @@ struct PanicInfo {
 type AllocTable = core.AllocTable
 mem.OffsetOf[T](field: str): int
 mem.Prefetch[T](p: &T, write: bool)
+mem.Zeroed[T](): T
 Fixed.New(buf: mut []u8): Fixed
 Fixed.Alloc(&self): &Alloc from self
 Fixed.Reset(mut self) ends self

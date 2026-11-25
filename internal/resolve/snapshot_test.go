@@ -31,7 +31,7 @@ var snapshots = []struct {
 	{name: "e0208", src: "F() {\n    x := 1\n}\n"},
 	{name: "e1209", src: "F(): ?int { return null }\n"},
 	{name: "e1221", prelude: true, src: "F(v: Vec[int]) { }\n"},
-	{name: "e0101", src: "const Max = 3\nF(x: int) {\n    match x {\n        Max { }\n        _ { }\n    }\n}\n"},
+	{name: "e0101", src: "error E\nF(x: E!int) {\n    match x {\n        ok { }\n        _ { }\n    }\n}\n"},
 }
 
 func TestSnapshots(t *testing.T) {
