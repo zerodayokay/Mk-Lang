@@ -544,11 +544,18 @@ func (m *amModel) resize(b amBlock, old, new int) bool {
 }
 
 func (m *amModel) free(b amBlock, size int, null bool) {
-	if size <= 0 || size > m.used || null {
+	if size <= 0 || null {
 		return
 	}
-	if m.last(b, size) {
+	if size <= m.used && m.last(b, size) {
 		m.used -= size
+		return
+	}
+	// FreeOwnChunk: the newest chunk goes back when the block has it to
+	// itself (never the first or the current chunk).
+	if c := m.chunks[0]; !c.first && c.id != m.cur && c.id == b.chunk && b.off == 0 && c.size == amRoom+size {
+		m.chunks = m.chunks[1:]
+		m.heapFree(c.size)
 	}
 }
 

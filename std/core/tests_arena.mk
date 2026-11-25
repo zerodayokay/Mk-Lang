@@ -754,3 +754,105 @@ test "the block after a large Slice does not overlap it, on every line path" (sy
     big := try plain.Slice[u8](16384)
     Assert(TaOff(raw.Data(big[..]), 64) == 16)
 }
+
+// A frame: an arena on another arena's Alloc(), taken and freed per call,
+// nested as calls nest. Its chunks come from the arena under it and go back
+// last-in first-out, so a call gives back what it took and nothing else.
+// TaFrame takes a frame, fills small, large and align(4096) slices, nests
+// depth more frames, and checks its own bytes after the inner ones are gone.
+// Its aligned slice is two pages, or big's bytes when big is over half of
+// MaxChunk: four frames' aligned chunks then fit in one current aligned
+// chunk of the arena under them, or take chunks of their own there.
+TaFrame(under: &Arena, depth: int, big: int): OutOfMemory!void {
+    var f := try Arena.NewIn(under.Alloc())
+    defer f.Free()
+    small := try f.Slice[u8](100)
+    large := try f.Slice[u8](big)
+    var np := 2
+    if big > MaxChunk / 2 {
+        np = big / 4096 + 1
+    }
+    pages := try f.Slice[TaPage](np)
+    for i in 0..small.Len() {
+        small[i] = 0x11
+    }
+    for i in 0..large.Len() {
+        large[i] = 0x22
+    }
+    pages[pages.Len() - 1].a = 0x33
+    Assert(TaOff(raw.Of(&pages[0]), 4096) == 0)
+    if depth > 0 {
+        try TaFrame(under, depth - 1, big)
+    }
+    _ = try f.Dup("after the inner frames")
+    Assert(TaFillCheck(small[..], 0x11, large, 0x22) && pages[pages.Len() - 1].a == 0x33)
+}
+
+// Frames whose large requests take chunks of their own in the arena under
+// them (600,000 bytes, over half of MaxChunk, and as many align(4096)
+// bytes), nested three deep: once warm, the heap blocks live and the
+// arena under the frames stay the same from round to round (a request that
+// size takes its chunk from the heap and returns it on every round).
+test "frames on an arena's Alloc give their chunks back, large ones included" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    keep := try root.Put(TaPair(a: 1, b: 2))
+    for big in [3_000, 100_000, 600_000] {
+        var live := 0
+        var held := 0
+        for round in 0..12 {
+            try TaFrame(&root, 3, big)
+            if round == 3 {
+                live = TaAllocs(cp)
+                held = ArenaHeld(&root)
+            }
+        }
+        Assert(TaAllocs(cp) == live && ArenaHeld(&root) == held)
+    }
+    Assert(keep.a == 1 && keep.b == 2)
+}
+
+// Frames freed out of order, each with a request over MaxChunk, which takes
+// a chunk of its own in the arena under them: the older one's is not the newest,
+// so it stays in the arena under them, and the newer frame's bytes are
+// untouched; freeing the newer one then returns its two large chunks (one
+// ordinary, one align(4096)), the newest. Free of the root returns the
+// rest (the counting heap's leak check).
+test "a frame freed before a newer one leaves the newer one's bytes alone" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    var older := try Arena.NewIn(root.Alloc())
+    a := older.Slice[u8](1_100_000) else {
+        raw.Fail(8, "out of memory")
+    }
+    var newer := Arena.NewIn(root.Alloc()) else {
+        raw.Fail(8, "out of memory")
+    }
+    b := newer.Slice[u8](1_100_000) else {
+        raw.Fail(8, "out of memory")
+    }
+    p := newer.Slice[TaPage](150) else {
+        raw.Fail(8, "out of memory")
+    }
+    for i in 0..b.Len() {
+        b[i] = 0x44
+    }
+    p[149].a = 7
+    a[0] = 1
+    live := TaAllocs(cp)
+    older.Free()
+    Assert(TaAllocs(cp) == live)
+    var ok := true
+    for i in 0..b.Len() {
+        ok = ok && b[i] == 0x44
+    }
+    Assert(ok && p[149].a == 7)
+    newer.Free()
+    Assert(TaAllocs(cp) == live - 2)
+}

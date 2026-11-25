@@ -16,7 +16,10 @@
 // reaches a steady state with no heap traffic when each request is at most
 // MaxChunk/2 bytes and one turn's requests fit in the current chunk.
 // Requests aligned beyond ChunkAlign bump in an aligned chunk of their own,
-// kept at the head of the list (BumpAligned).
+// kept at the head of the list (BumpAligned). Alloc()'s free gives back the
+// last block bumped, and a chunk of its own while it is the newest
+// (FreeOwnChunk), so an arena on another's Alloc() (a frame) rewinds it
+// last in first out.
 
 import std.raw
 
@@ -143,7 +146,8 @@ struct AlignedChunk {
 const MaxBytes = 9223372036854775807
 
 // The table behind Arena.Alloc(): alloc bumps, resize grows or shrinks the
-// last block in place only, free gives back only the last block.
+// last block in place only, free gives back the last block, or the newest
+// chunk when the block has it to itself (FreeOwnChunk).
 const ArenaTable = AllocTable(alloc: ArenaAllocEntry, resize: ArenaResizeEntry, free: ArenaFreeEntry)
 
 // A request through Alloc() comes from any std container: a negative size,
@@ -190,9 +194,11 @@ ArenaResizeEntry(ctx: *u8, p: *u8, old: int, new: int, align: int): bool {
 }
 
 // Freeing the last block bumped gives its bytes back (bumpalo's dealloc of
-// the last allocation): a LIFO temporary costs nothing. Any other block, or
-// a size that does not match, stays until Reset or Free. The alignment
-// padding before the block is not reclaimed.
+// the last allocation): a LIFO temporary costs nothing. A block with a
+// chunk of its own goes back to the source with its chunk while that chunk
+// is the newest (FreeOwnChunk). Any other block, or a size that does not
+// match, stays until Reset or Free. The alignment padding before the block
+// is not reclaimed.
 ArenaFreeEntry(ctx: *u8, p: *u8, size: int, align: int) {
     unsafe "ctx is the address of a live arena header; p a block of it" {
         h := raw.PtrCast[u8, ArenaHdr](ctx)
@@ -206,6 +212,65 @@ ArenaFreeEntry(ctx: *u8, p: *u8, size: int, align: int) {
         ac := AlignedLast(h, p, size)
         if !raw.IsNull(ac) {
             (*ac).used = (*ac).used - size
+            return
+        }
+        FreeOwnChunk(h, p, size, align)
+    }
+}
+
+// FreeOwnChunk returns the newest chunk to the source when p's size bytes
+// have it to themselves: a chunk of its own (BumpSlow, BumpAlignedSlow)
+// freed before a later chunk was linked. That is how an arena on another
+// arena's Alloc() gives a large request back: its chunk is the newest chunk
+// of the arena under it, freed first. The newest chunk is the head, or
+// right below the current aligned chunk (LinkChunk); finding it is two
+// loads, and no list is walked. The block starts room bytes in, 16 or its
+// alignment, and the chunk's size is room + size, so a block that shares
+// its chunk never matches. The first chunk (prev null), the current chunk
+// and the current aligned chunk are never returned.
+FreeOwnChunk(h: *ArenaHdr, p: *u8, size: int, align: int) {
+    var room := SizeOf[Chunk]()
+    var shift := 0
+    if align > ChunkAlign {
+        if align > MaxAlign || (align & (align - 1)) != 0 {
+            return
+        }
+        room = align
+        shift = Log2(align)
+    }
+    if size > MaxBytes - room {
+        return
+    }
+    unsafe "h is a live arena header; p a block of it" {
+        head := (*h).chunks
+        if raw.IsNull(head) {
+            return
+        }
+        var above := raw.Null[Chunk]()
+        var c := head
+        if IsAlignedCur(head) {
+            above = head
+            c = (*head).prev
+        }
+        if raw.IsNull(c) || raw.IsNull((*c).prev) || ((*c).size & CurBit) != 0 || ChunkShift(c) != shift {
+            return
+        }
+        if ((*c).size & SizeMask()) != room + size || !raw.Same(p, raw.Offset(raw.PtrCast[Chunk, u8](c), room)) {
+            return
+        }
+        if shift == 0 && IsCurrent(h, c) {
+            return
+        }
+        if raw.IsNull(above) {
+            (*h).chunks = (*c).prev
+        } else {
+            (*above).prev = (*c).prev
+        }
+        a := &*(*h).src
+        if shift != 0 {
+            FreeAligned(a, c)
+        } else {
+            FreeBytes(a, raw.PtrCast[Chunk, u8](c), (*c).size, ChunkSrc(h))
         }
     }
 }
@@ -572,6 +637,13 @@ export Arena.New(h: &Heap): OutOfMemory!Arena {
 /// chunks freed in last-in first-out order: an arena that served a value
 /// aligned over 8, or a Sub freed before its parent's later chunks, leaves
 /// part of the Fixed used until Fixed.Reset.
+///
+/// Arena.NewIn(p.Alloc()) is a frame of the arena p: scratch memory for
+/// one call, freed before p's later allocations. Its chunks are blocks of
+/// p, and Free gives them back newest first, so p is back where it was and
+/// nested frames make no heap call once warm. p keeps a frame's bytes until
+/// its Reset or Free when p started a new chunk while the frame lived, or
+/// when the frame ends before a newer one.
 export Arena.NewIn(a: &Alloc): OutOfMemory!Arena from a {
     return try NewArena(a, false)
 }
@@ -710,7 +782,9 @@ export Arena.Fmt[A: Fields[Format] + Plain](&self, const f: str, args: A): OutOf
 /// Arena.NewIn would make; it holds a loan on self, so it ends before self
 /// does. Use it for scratch memory that is freed before the parent's.
 /// OutOfMemory when the source refuses the first chunk. O(1): one
-/// allocation from the source, the first chunk.
+/// allocation from the source, the first chunk. Scratch for each of many
+/// calls is cheaper as a frame, Arena.NewIn(self.Alloc()), whose chunks
+/// come from self.
 export Arena.Sub(&self): OutOfMemory!Arena {
     unsafe "hdr is this arena's live header, and its source outlives the result: the result holds self's loan, and self holds the source's" {
         return try NewArena(&*(*self.hdr).src, IsLine(self.hdr))
@@ -718,7 +792,10 @@ export Arena.Sub(&self): OutOfMemory!Arena {
 }
 
 /// The arena as an Alloc, the same one on every call, for containers that
-/// take a &Alloc and should live in the arena. O(1).
+/// take a &Alloc and should live in the arena. O(1). Its free gives back
+/// the last block bumped, or a block that has a chunk of its own while
+/// that chunk is the arena's newest; any other block stays until Reset or
+/// Free.
 export Arena.Alloc(&self): &Alloc {
     unsafe "hdr is this arena's live header, alive while self is" {
         return &(*self.hdr).own
