@@ -9760,7 +9760,8 @@ How C declarations appear in Mk:
 - A struct is made by naming every field, or zeroed whole as C's `= {0}` does with [`mem.Zeroed`](#zero-valid-types): `mem.Zeroed[geom.GeomPoint]()`. A C struct's fields (integers, floats, raw pointers, `?fn`, arrays, nested structs, a union's bytes, bitfield units) are all zero-valid, so it needs no `unsafe`.
 - `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
 - `headers` are paths from the package root. `defines` are macros the headers are read with, `NAME` or `NAME=value`.
-- All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them.
+- `include_dirs` are directories of the package searched for headers after the package root, for a library whose headers include each other by a name under their own include directory: `pkg.CImport(name: "z", headers: ["vendor/z/include/z.h"], defines: [], macros: [], vendor: false, include_dirs: ["vendor/z/include"])`, where `z.h` has `#include "zconf.h"`. Each is a relative path with `/` separators inside the package, other than the root itself (E0202 otherwise). The field may be left out.
+- All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them. So their `include_dirs` form one search path, in the order the imports list them, and the shim and the package's C sources are compiled with the same path.
 - `mk check` runs Clang to translate the C imports, with a minimal environment. It compiles no C source.
 - The bindings are made per target. `mk check --all-targets` translates them for both `x86_64-windows` and `x86_64-linux` and reports an item the package uses whose API differs (E0213). A constant's value is not part of the API. It needs each target's system headers, from `MK_SYSROOT_<target>`, or `vendor: true` to read the committed `gen/<target>/c/` files instead. Without either, it is E0213, `reason: no-sysroot`.
 
@@ -9775,8 +9776,8 @@ The manifest builds C and assembly files with the package:
 | `links` | `pkg.Link(...)` | A library ([below](#linking-libraries)) |
 
 - C sources link against `std.libc`, the C library written in Mk, and the bin's links. They get no other C runtime. Without a sysroot, only `std.libc`'s functions are declared in the headers they see: a call to anything else fails to compile, or to link, with E0001. [std.libc](std/libc.md) lists the functions, the include path and the system-libc mode of Linux.
-- A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works.
-- A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root instead.
+- A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works, and then the C imports' `include_dirs`.
+- A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root, or list their directory in a C import's `include_dirs`, instead.
 
 ### Linking libraries
 
