@@ -8,7 +8,10 @@
 //
 // How: the scheduler is suspended inside Switch while its task runs, so the
 // area below its saved frame is free; SystemStack hands out a pointer 256
-// bytes below it and sets the task's in_c flag, which InExtern reads.
+// bytes below it and sets the task's in_c flag, which InExtern reads. On
+// Windows the call also runs under the system stack's NT_TIB words, and the
+// scheduler's saved context is their one record: SystemStack copies them
+// from it, and SystemStackDone stores back the StackLimit the call left.
 
 import std.raw
 import std.rt
@@ -27,6 +30,14 @@ export SystemStack(): *SysStack {
         c := (*t).carrier
         sp := (Trunc[uint]((*c).sys_ctx[0]) - 256) & ~Trunc[uint](15)
         (*c).sys_stack.sp = raw.FromAddr[u8](sp)
+        if Target.os == Os.Windows {
+            // The words Switch saved when the scheduler left its stack, with
+            // the StackLimit of any call since (SystemStackDone). The words
+            // read when the carrier started are stale once the stack has
+            // grown: a StackLimit above the stack's real one makes a probe
+            // that stores, as MSVC's __chkstk does, write over live frames.
+            (*c).sys_stack.tib = [(*c).sys_ctx[1], (*c).sys_ctx[2], (*c).sys_ctx[3]]
+        }
         h := HeaderOf(t)
         (*h).in_c = 1
         // A plain add on the carrier's own record (the task runs on c's
@@ -36,13 +47,20 @@ export SystemStack(): *SysStack {
     }
 }
 
-/// SystemStackDone clears in_c after the call.
+/// SystemStackDone clears in_c after the call. On Windows it also records
+/// the StackLimit the call left in the scheduler's saved context, so the
+/// scheduler and the carrier's next call run under the system stack's real
+/// limit when the call committed more of it.
 /// O(1); allocates nothing.
 export SystemStackDone() {
     h := rt.CurrentSlot()
     if !raw.IsNull(h) {
-        unsafe "the running task's header" {
+        unsafe "the running task's header, and its carrier's record, which only this thread writes" {
             (*h).in_c = 0
+            if Target.os == Os.Windows {
+                c := (*TaskOf(h)).carrier
+                (*c).sys_ctx[2] = (*c).sys_stack.tib[1]
+            }
         }
     }
 }

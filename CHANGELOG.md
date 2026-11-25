@@ -8,6 +8,10 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 - `void` may be written as a type argument of a generic call wherever inference may choose it: `raw.Null[void]()`, `raw.FromAddr[void](a)` and `raw.PtrCast[T, void](p)` build a `*void`, C's `void *`, and `raw.PtrCast[void, T](p)` gives the typed pointer back. The written argument was E0301 (`void` is only a result type), while `raw.Addr(p)` of a `*void` inferred the same argument, so a `void *` parameter of a C function could be passed only what C had returned. `void` as the argument of a generic type (`Box[void]`), in `SizeOf[void]()` and as a local's type is E0301 as before.
 
+### Runtime
+
+- On Windows, a C call from a task runs under the system stack's real `StackLimit`. `mk_call_system` installed the limit read when the carrier's thread started, so after one call had grown the system stack, the next call on that carrier ran below the limit the thread claimed. A stack probe trusts every page below `StackLimit` to be unused, and MSVC's `__chkstk`, which every system DLL uses, stores a zero in each: the second deep call wrote over its own live frames and crashed (two `D3DCompile` calls from one task, on any carrier). The limit a call leaves is now kept for the scheduler and for the carrier's next call.
+
 ### Checker
 
 - A call infers a function's const generic from an array argument's length: `Total[const N: int](xs: &[N]int)` called as `Total(&xs)`, alone or beside a type parameter (`First[T, const N: int](xs: [N]T)`). Every such call was an internal compiler error in check (`types.Table.Intern(array): ... length kind 0`), so the length had to be written in brackets. Arguments that disagree on the length are E0301, and a const generic no argument names is still E0711.

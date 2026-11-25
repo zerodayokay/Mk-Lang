@@ -203,6 +203,10 @@ ud2
 // StackBase, StackLimit and DeallocationStack set to ss.tib[0..2] for the
 // call and restored after, so the kernel grows the system stack through its
 // guard page and exception dispatch sees a stack inside the recorded one.
+// The StackLimit the call leaves is stored back in ss.tib[1]: the kernel
+// lowers it as the call commits pages, and the next call must start from
+// that limit, since a probe trusts every page below it to be unused (MSVC's
+// __chkstk stores a zero in each).
 const win64CallSystem = `
 pushq %rbx
 .seh_pushreg %rbx
@@ -212,9 +216,12 @@ pushq %rdi
 .seh_pushreg %rdi
 pushq %r12
 .seh_pushreg %r12
+pushq %r13
+.seh_pushreg %r13
 movq %rsp, %rbx
 .seh_setframe %rbx, 0
 .seh_endprologue
+movq %r8, %r13
 movq %gs:0x08, %rsi
 movq %gs:0x10, %rdi
 movq %gs:0x1478, %r12
@@ -229,10 +236,13 @@ subq $32, %rsp
 movq %rcx, %rax
 movq %rdx, %rcx
 callq *%rax
+movq %gs:0x10, %rax
+movq %rax, 16(%r13)
 movq %rbx, %rsp
 movq %rsi, %gs:0x08
 movq %rdi, %gs:0x10
 movq %r12, %gs:0x1478
+popq %r13
 popq %r12
 popq %rdi
 popq %rsi
