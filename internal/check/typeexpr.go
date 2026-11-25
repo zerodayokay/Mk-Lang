@@ -79,6 +79,7 @@ const (
 	posResult      // a function or fn type result: void and never
 	posOk          // the T of E!T: void
 	posPtr         // the pointee of *T: void
+	posArg         // a type argument written at a generic call: void, as inference may choose it
 )
 
 func (x *tctx) tab() *types.Table { return x.m.c.cfg.Types }

@@ -635,7 +635,10 @@ func (u *unit) explicitTypes(in *infer, idx *ast.IndexExpr, ps []types.GenericPa
 		if ps[i].Const {
 			continue
 		}
-		if t := u.x.typeOf(a, posPlain); t != types.Poison {
+		// posArg: a written argument may be void wherever an inferred one may,
+		// so `raw.Null[void]()` and `raw.PtrCast[T, void](p)` build the *void
+		// that `raw.Addr(p)` already takes by inference.
+		if t := u.x.typeOf(a, posArg); t != types.Poison {
 			in.set(from+i, types.TypeArg(t))
 		} else {
 			if ax, ok := a.(ast.Expr); ok && ax != nil && !typeShaped(a) && u.x.reading(a) != resolve.ReadType {

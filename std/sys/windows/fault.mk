@@ -452,13 +452,12 @@ FaultOwner(p: *u8, top: uint): uint {
 
 // CoverStackLimit lowers the thread's NT_TIB StackLimit (gs:0x10) to the
 // page this handler runs on, when it is above it. During a user extern the
-// words are the system stack's as std.task recorded them, and the stack may
-// since have been committed deeper without a guard-page fault to update
-// them, so frames of the extern can lie below StackLimit. Exception
-// dispatch and RtlUnwindEx refuse such frames (STATUS_BAD_STACK), so the C
+// words are the system stack's as std.task installed them (SystemStack),
+// which follow the stack as it grows; this guards a StackLimit that was
+// left above the extern's frames all the same. Exception dispatch and
+// RtlUnwindEx refuse frames below StackLimit (STATUS_BAD_STACK), so the C
 // code's own __except would never run. Every page from here up is
-// committed, since this frame is on it, so the lower limit is true, and a
-// limit above the real one only makes a probe touch committed pages.
+// committed, since this frame is on it, so the lower limit is true.
 // mk_call_system restores the task's words after the call.
 CoverStackLimit() {
     var mark: u64 = 0

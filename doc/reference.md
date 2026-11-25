@@ -1165,7 +1165,7 @@ backtrace:
   Main (main.mk)
 ```
 
-- `void` appears only as a result type, as the `T` of `E!void`, and as the pointee of `*void`. A local or field of type `void` is E0301.
+- `void` appears only as a result type, as the `T` of `E!void`, as the pointee of `*void`, and as a type argument of a generic call, written or inferred (`raw.Null[void]()` is a null `*void`). A local or field of type `void` is E0301, and so is `void` as the argument of a generic type, `Box[void]`.
 - A `never` function must not return. `return` in one is E0301; every path ends in a call of another `never` function, such as `Panic`, or loops forever. A body that can reach its end is E0805 ([functions](#functions-and-methods)).
 - A call of a `never` function ends its path, so it may close an `else` block or a `match` arm where a value is expected.
 
@@ -1674,7 +1674,7 @@ Push(a: &Arena, head: ?&Node into a, v: int): OutOfMemory!&Node from a, head {
 
 ### Raw pointer types: `*T`
 
-`*T` is an address with no checks: it may be null, dangle or alias. You need one only to talk to C, to hardware, or to build a container the borrow rules cannot express. A raw pointer is plain and 8 bytes; `*void` is an untyped address.
+`*T` is an address with no checks: it may be null, dangle or alias. You need one only to talk to C, to hardware, or to build a container the borrow rules cannot express. A raw pointer is plain and 8 bytes; `*void` is an untyped address, C's `void *`, made from a typed pointer with `raw.PtrCast[T, void](p)`.
 
 ```mk
 // verdict: ok
@@ -6936,6 +6936,36 @@ Run(var k: int): int {
 - A `const` parameter of any type other than `fn`, such as `const f: F` with `F` a type parameter, is an ordinary value in the body. Its argument cannot be a literal that captures (E0609), and a `const` `fn` parameter cannot be passed on to it (E0705).
 - Inside a `fn` literal, a captured `const` parameter is an ordinary value, not a const argument (E0705).
 - A `const f: str` passed on as the format of `Print` or `Arena.Fmt` is checked at each call against that call's text ([formatting](std/core.md#formatting-and-printing)).
+
+**Inferring a const generic.** A call may leave out a function's const generic when an argument's type names it, as it may leave out a type parameter: the length of an array argument gives the `N` of a `[N]T` parameter. A const generic that no argument's type names is written in brackets (E0711 otherwise), and two arguments that give different values are E0301.
+
+```mk
+// verdict: ok
+Total[const N: int](xs: &[N]int): int {
+    var sum := 0
+    for i in 0..N {
+        sum += xs[i]
+    }
+    return sum
+}
+
+First[T: Plain, const N: int](xs: [N]T): T {
+    return xs[0]
+}
+
+export Main(sys: &System): WriteError!void {
+    xs := [1, 2, 3]
+    ys: [2]u8 = [9, 8]
+    a := Total(&xs)    // N is 3, from the argument's type
+    b := First(ys)     // T is u8 and N is 2
+    c := Total[3](&xs) // or written
+    try sys.Print("{a} {b} {c}\n", (a, b, c))
+}
+```
+
+```text
+6 9 6
+```
 
 ### Const arguments in a generic
 

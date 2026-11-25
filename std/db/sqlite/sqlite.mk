@@ -111,9 +111,9 @@ unsafe impl Send for Db {}
 unsafe impl Share for Db {}
 
 // sqlite3_bind_text with the destructor as a plain pointer (*u8, which
-// passes as C's pointer; *void cannot be built from an address), so it can be
-// SQLITE_TRANSIENT (-1), which the binding's fn-typed parameter cannot
-// hold; an extern may name a C function the binding also declares.
+// passes as C's pointer), so it can be SQLITE_TRANSIENT (-1), which the
+// binding's fn-typed parameter cannot hold; an extern may name a C function
+// the binding also declares.
 extern sqlite3_bind_text(p0: *sqlite3.Sqlite3Stmt, p1: i32, p2: *u8, p3: i32, p4: *u8): i32
 
 // Hold takes Big for a method that has no Io, through io without
