@@ -2444,7 +2444,7 @@ export Main(sys: &System): WriteError!void {
 - The type must be plain (E0408). `&Limit` is a valid reference that lives as long as the program ([globals](memory.md#r16-globals)).
 - A constant cannot be assigned (E0301).
 - A literal that does not fit the type is E0303. An evaluation that panics, and constants in a cycle, are compile errors ([evaluating constants](#evaluating-constants), [the stage rule](#the-stage-rule)).
-- A constant is not a pattern: compare with `if` ([literal patterns](#literal-patterns)).
+- A constant of an integer, `bool`, `char` or `str` type is a pattern, matched by its value ([literal patterns](#literal-patterns)).
 
 ### Global variables
 
@@ -3680,6 +3680,7 @@ Class(c: char): int {
 | `NotFound(id)`, `NotFound` | An error, in a `match` on an error set |
 | `some(x)`, `none`, `ok(v)`, `err(e)` | An optional or a result |
 | `1`, `-1`, `true`, `"text"`, `'a'` | A literal |
+| `Limit`, `codes.OpAdd` | A named const, by its value ([literals](#literal-patterns)) |
 | `0..10`, `'a'..'{'`, `200..`, `..0` | A half-open range of integers or characters |
 | `A \| B` | Either pattern |
 | `_` | Anything, binding nothing |
@@ -3840,7 +3841,7 @@ elsewhere
 
 ### Literal patterns
 
-An integer, `bool`, `char` or `str` literal matches a value equal to it.
+An integer, `bool`, `char` or `str` literal, or a named const of one of those types, matches a value equal to it.
 
 ```mk
 // verdict: ok
@@ -3884,7 +3885,39 @@ export Main(sys: &System): WriteError!void {
 - A negative integer is written with its `-`: `-1`.
 - A float is not a pattern (E0308). Compare floats with `if`.
 - A literal of a type other than the value's is E0301.
-- A constant is not a pattern (E0101). `match n { Limit { } }` is rejected rather than read as a binding. Compare with `if n == Limit`.
+- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does.
+
+```mk
+// verdict: ok
+const OpAdd: u8 = 1
+const OpSub: u8 = 2
+const Yes = true
+
+Op(code: u8): str {
+    return match code {
+        OpAdd { "add" } // the value 1
+        OpSub | 3 { "sub" } // a const among literals
+        _ { "?" }
+    }
+}
+
+Halts(b: bool): bool {
+    return match b { // Yes and false cover bool
+        Yes { true }
+        false { false }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    a := Op(2)
+    h := Halts(true)
+    try sys.Print("{a} {h}\n", (a, h))
+}
+```
+
+```text
+sub true
+```
 
 ```mk
 // verdict: reject E0308
@@ -4315,14 +4348,14 @@ Name(b: Bag): str {
 
 | Code | Name | Reported for |
 |---|---|---|
-| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a constant or a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head |
+| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
 | E0206 | duplicate-name | A binding that shadows a local ([bindings](#bindings-and-wildcards)) |
 | E0208 | unused | A binding that is never used, often a variant written without its dot ([variants](#variant-patterns)) |
-| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")` ([literals](#literal-patterns)) |
+| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")`; a const of a type a literal cannot have ([literals](#literal-patterns)) |
 | E0305 | field-names | A destructure that neither names every field nor ends with `..` ([destructuring](#destructuring)) |
 | E0306 | non-exhaustive | A `match` that misses values; a destructure that can fail ([exhaustiveness](#exhaustiveness)) |
-| E0308 | no-operator | A float literal as a pattern ([literals](#literal-patterns)) |
+| E0308 | no-operator | A float literal or a float const as a pattern ([literals](#literal-patterns)) |
 | E0309 | record-names | A field name the type does not have ([variants](#variant-patterns)) |
 | E0315 | empty-range | A range whose low end is not below its high end ([ranges](#range-patterns)) |
 | E0408 | not-plain | A field skipped by `..` that is not plain ([destructuring](#destructuring)) |

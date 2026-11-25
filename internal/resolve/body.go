@@ -2,13 +2,14 @@
 // and each needs its own scoping rule before check can type it.
 //
 // What: the walker's statement and pattern methods: block, stmt, ifStmt,
-// cond, forStmt, labelUse, recordPat, pattern, patFields, declarePattern,
-// constPattern and namePattern.
+// cond, forStmt, labelUse, recordPat, pattern, patFields, declarePattern
+// and namePattern.
 //
 // How: one switch per statement kind. A declaration resolves its initializer
 // before it declares its names, so x := x + 1 reads an outer x. A bare name
-// in a pattern is an error test, a value test, E0101 or a fresh binding,
-// decided by what it names; in an alternative it never binds.
+// in a pattern is an error test, a value test (a const, true, false), E0101
+// or a fresh binding, decided by what it names; in an alternative it never
+// binds.
 
 package resolve
 
@@ -288,11 +289,7 @@ func (w *walker) pattern(p ast.Pattern, inAlt bool) {
 	case *ast.NamePattern:
 		w.namePattern(p, inAlt)
 	case *ast.PathPattern:
-		r := w.path(p.Path, posPattern, p.ID())
-		if p.Path != nil && len(p.Path.Names) == 1 && r.Kind == RefItem &&
-			w.m.s.cfg.Items.Get(types.ItemID(r.A)).Kind == types.KindConst {
-			w.constPattern(p.Path.Names[0], p.ID())
-		}
+		w.path(p.Path, posPattern, p.ID())
 		w.patFields(p.Fields)
 	case *ast.VariantPattern:
 		w.patFields(p.Fields)
@@ -323,16 +320,8 @@ func (w *walker) patFields(fs []*ast.PatField) {
 	}
 }
 
-// constPattern reports a const used as a pattern.
-func (w *walker) constPattern(id *ast.Ident, node ast.NodeID) {
-	d := diag.New(diag.E0101, id.Span(), "constants are not patterns; compare with `if`").In(diag.PhaseNames).Text("expected", "pattern")
-	w.t.diags = append(w.t.diags, d)
-	w.fs.setRef(id.ID(), poisonRef)
-	w.fs.setRef(node, poisonRef)
-}
-
 // namePattern decides a bare name in a pattern: an error
-// type is an error test, true and false are value tests, a const or a bare
+// type is an error test, a const, true and false are value tests, a bare
 // ok or err is E0101, anything else is a fresh binding.
 func (w *walker) namePattern(p *ast.NamePattern, inAlt bool) {
 	id := p.Name
@@ -358,12 +347,9 @@ func (w *walker) namePattern(p *ast.NamePattern, inAlt bool) {
 		case RefItem:
 			it := w.m.s.cfg.Items.Get(types.ItemID(h.ref.A))
 			switch it.Kind {
-			case types.KindError:
+			case types.KindError, types.KindConst:
 				w.fs.setRef(id.ID(), h.ref)
 				w.fs.setRef(p.ID(), h.ref)
-				return
-			case types.KindConst:
-				w.constPattern(id, p.ID())
 				return
 			}
 		case RefUniverse:

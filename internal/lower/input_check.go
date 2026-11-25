@@ -582,6 +582,8 @@ func (in *checkInput) Pattern(id ast.NodeID) Pat {
 			return Pat{Kind: PVariant, Item: u.Item, Variant: u.Index}
 		case check.UseError:
 			return Pat{Kind: PErrorCase, Item: u.Item}
+		case check.UseConst:
+			return Pat{Kind: PLit} // a named const: its value, as a literal
 		}
 		if p.Name.Name == source.SymNone {
 			return Pat{Kind: PNone}
@@ -603,6 +605,8 @@ func (in *checkInput) Pattern(id ast.NodeID) Pat {
 		switch u.Kind {
 		case check.UseError:
 			return Pat{Kind: PErrorCase, Item: u.Item}
+		case check.UseConst:
+			return Pat{Kind: PLit} // a qualified const: its value, as a literal
 		case check.UseNone:
 			// A struct pattern `P(x)`: check sets no Use on it,
 			// only UseField on its fields (a fuzz crasher,

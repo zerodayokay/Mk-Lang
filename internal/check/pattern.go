@@ -2,13 +2,14 @@
 // and binding mode, and what the match must still cover.
 //
 // What: matchStmt and matchStmtV (a match as a statement or a value), pat
-// and its cases (namePat, literalPat, variantPat, pathPat, errorTest,
-// patFields), leftover (E0408) and notPattern (E0301).
+// and its cases (namePat, literalPat, constPat, variantPat, pathPat,
+// errorTest, patFields), leftover (E0408) and notPattern (E0301).
 //
 // How: each pattern is typed against the scrutinee's type: variants, error
-// tests, some/none, ok/err, literals, ranges, names and alternatives, each
-// under a binding mode (bindAs); the errors are E0203, E0207, E0301, E0303,
-// E0308, E0309 and E0408. exhaust.go then checks the arms cover every value.
+// tests, some/none, ok/err, literals, named consts, ranges, names and
+// alternatives, each under a binding mode (bindAs); the errors are E0203,
+// E0207, E0301, E0303, E0308, E0309 and E0408. exhaust.go then checks the
+// arms cover every value.
 
 package check
 
@@ -164,8 +165,11 @@ func (u *unit) namePat(p *ast.NamePattern, t types.TypeID, mode ast.RefMode) {
 	switch r.Kind {
 	case resolve.RefItem:
 		it := u.c.cfg.Items.Get(types.ItemID(r.A))
-		if it.Kind == types.KindError {
+		switch it.Kind {
+		case types.KindError:
 			u.errorTest(p, it, nil, false, t, mode)
+		case types.KindConst:
+			u.constPat(p, it, t)
 		}
 		return
 	case resolve.RefUniverse:
@@ -204,6 +208,59 @@ func (u *unit) literalPat(p *ast.LiteralPattern, t types.TypeID) {
 	if t != types.Poison && lt != types.Poison && lt != t {
 		u.patMismatch(p, "`"+u.str(lt)+"`", t)
 	}
+}
+
+// constPat is a named const, `K` or `lib.K`, as a pattern: a value test
+// against the const's value, as a literal of that value would be. Its type
+// is one a literal pattern takes (an integer, char, bool or str; a float is
+// E0308, anything else E0301) and must be the scrutinee's (E0301, as for
+// `==`). The value is check's (constValueArg: folded, else evaluated; a
+// same-module const named in a pattern is early), so lower and the
+// exhaustiveness check read it as a literal's.
+func (u *unit) constPat(p ast.Pattern, it *types.Item, t types.TypeID) {
+	d, ok := u.c.declOfItem(it).(*types.ConstDecl)
+	if !ok {
+		return
+	}
+	*u.b.use(p.ID()) = Use{Kind: UseConst, Item: it.ID}
+	u.x.rec.signature(it.Key)
+	ct := d.Type
+	if ct == types.NoType {
+		u.b.poisonRead(it.ID, p.Span()) // as an expression's read of it
+		return
+	}
+	if ct == types.Poison {
+		return
+	}
+	name := u.c.cfg.Interner.Str(it.Name)
+	switch u.tab.Kind(ct) {
+	case types.KInt, types.KIntPtr, types.KChar, types.KBool, types.KStr:
+	case types.KFloat:
+		u.err(diag.E0308, p.Span(), "`"+name+"` is a float const, not a pattern; compare with `if`").Text("operator", "pattern").Text("type", "float")
+		return
+	default:
+		u.err(diag.E0301, p.Span(), "`"+name+"` is a const of `"+u.str(ct)+"`, not a pattern; a const pattern is an integer, char, bool or str").
+			Text("expected", "pattern").Text("found", u.str(ct)).Alt("match its value's shape, such as a variant `.V`, or compare with `if`")
+		return
+	}
+	if t != types.Poison && ct != t {
+		u.patMismatch(p, "`"+u.str(ct)+"`", t)
+		return
+	}
+	a, ok := u.m.constValueArg(u.x, it, p.Span())
+	if !ok || a.Kind != types.CAValue {
+		return // reported by the const's own check or evaluation
+	}
+	u.b.setConst(p.ID(), a.Value)
+}
+
+// constPatKey is a const pattern's value as check recorded it (constPat),
+// NoConst when it has none.
+func (u *unit) constPatKey(p ast.Pattern) types.ConstID {
+	if c := u.b.Consts; c != nil {
+		return c[u.b.slot(p.ID())]
+	}
+	return types.NoConst
 }
 
 // variantPat is `.V`, `.V(f, g: p)` or `E.V(..)` against an enum:
@@ -344,6 +401,11 @@ func (u *unit) pathPat(p *ast.PathPattern, t types.TypeID, mode ast.RefMode) {
 		case types.KindError:
 			u.errorTest(p, it, p.Fields, p.HasFields, t, mode)
 			return
+		case types.KindConst:
+			if !p.HasFields && len(p.Fields) == 0 {
+				u.constPat(p, it, t)
+				return
+			}
 		case types.KindStruct:
 			ty := u.tab.Get(t)
 			d, _ := u.c.declOfItem(it).(*types.StructDecl)
