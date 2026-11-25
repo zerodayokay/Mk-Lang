@@ -25,7 +25,7 @@ var snapshotTriggers = []struct{ name, src string }{
 	{"E0101-lexical", "F() {\n    x := 0X1\n}\n"},
 	{"E0101-expected", "F() {\n    x :=\n}\n"},
 	{"E0101-foreign", "F() {\n    x++\n}\n"},
-	{"E0101-operand-if", "F() {\n    x := 1 + if c { 1 } else { 2 }\n}\n"},
+	{"E0101-statement-if-suffix", "F() {\n    if c { 1 } else { 2 }.F()\n}\n"},
 	{"E0101-loop-pattern", "F() {\n    for (a, b) in &xs {\n    }\n}\n"},
 	{"E0102", "F() {\n    type := 1\n}\n"},
 	{"E0609", "F() {\n    g := |x| x\n}\n"},

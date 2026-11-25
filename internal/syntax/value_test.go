@@ -1,7 +1,8 @@
-// Why: if and match are values in some positions and statements in others,
-// and the parser must place each one right.
-// What: tests of value positions, the destructured loop variable and the
-// assert habit with its proven fix.
+// Why: if and match are values wherever an expression stands, and
+// statements at the start of a statement; the parser must place each one
+// right.
+// What: tests of value and operand positions, the destructured loop
+// variable and the assert habit with its proven fix.
 // How: parses sources and checks which node holds each IfStmt or MatchStmt
 // (valueParents), the for-pattern heads, and the fix's reparse.
 
@@ -68,53 +69,59 @@ func TestValuePositions(t *testing.T) {
 	}
 }
 
-func TestOperandIsE0101(t *testing.T) {
-	cases := []struct{ name, body, at string }{
-		{"binary operand", "x := 1 + if c { 2 } else { 3 }", "2:14"},
-		{"suffix after value", "x := match x { .A { 1 } }.Len()", "2:30"},
-		{"operator after value", "x := if c { 1 } else { 2 } + 3", "2:32"},
-		{"call then operand", "x := F(x) + if c { 1 } else { 2 }", "2:17"},
-		{"condition", "if if c { true } else { false } {\n    }", "2:8"},
-		{"scrutinee", "match match c { .A { 1 } } {\n    }", "2:11"},
-		{"repeat value", "xs := [if c { 1 } else { 2 }; 3]", "2:33"},
-		{"repeat count", "xs := [0; if c { 1 } else { 2 }]", "2:15"},
-		{"receiver", "if c { 1 } else { 2 }.F()", ""},
+// TestOperandPositions: an if or match is a primary expression, so it may
+// stand wherever an expression does, with suffixes and operators after its
+// closing brace.
+func TestOperandPositions(t *testing.T) {
+	cases := []struct{ name, body, want string }{
+		{"binary operand", "x := 1 + if c { 2 } else { 3 }", "*ast.BinaryExpr<-*ast.IfStmt"},
+		{"operator after value", "x := if c { 1 } else { 2 } + 3", "*ast.BinaryExpr<-*ast.IfStmt"},
+		{"call then operand", "x := F(x) + if c { 1 } else { 2 }", "*ast.BinaryExpr<-*ast.IfStmt"},
+		{"suffix after value", "x := match x { .A { 1 } }.Len()", "*ast.FieldExpr<-*ast.MatchStmt"},
+		{"parenthesized", "x := (if c { 1 } else { 2 }) * 2", "*ast.ParenExpr<-*ast.IfStmt"},
+		{"unary", "x := -if c { 1 } else { 2 }", "*ast.UnaryExpr<-*ast.IfStmt"},
+		{"index", "x := xs[if c { 0 } else { 1 }]", "*ast.IndexExpr<-*ast.IfStmt"},
+		{"condition", "if if c { true } else { false } {\n    }", "*ast.IfStmt<-*ast.IfStmt"},
+		{"scrutinee", "match match c { .A { 1 } } {\n    }", "*ast.MatchStmt<-*ast.MatchStmt"},
+		{"repeat value", "xs := [if c { 1 } else { 2 }; 3]", "*ast.RepeatLit<-*ast.IfStmt"},
+		{"match arm operand", "x := match c {\n        .A { 1 + if d { 2 } else { 3 } }\n    }", "*ast.BindStmt<-*ast.MatchStmt *ast.BinaryExpr<-*ast.IfStmt"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := parse(t, "F() {\n    "+c.body+"\n}\n", Options{})
-			if len(r.diags) == 0 || r.diags[0].Code.String() != "E0101" {
-				t.Fatalf("want E0101, got:\n  %s", strings.Join(r.codes(), "\n  "))
+			if len(r.diags) != 0 {
+				t.Fatalf("diagnostics:\n  %s", strings.Join(r.codes(), "\n  "))
 			}
-			if c.at == "" {
-				return
-			}
-			lc := r.src.LineCol(r.diags[0].At.Start)
-			if got := fmt.Sprintf("%d:%d", lc.Line, lc.Col); got != c.at {
-				t.Errorf("at %s, want %s: %s", got, c.at, strings.Join(r.codes(), "; "))
+			got := strings.Join(valueParents(r.file), " ")
+			if got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})
 	}
-	// A const initializer is no value position.
-	r := parse(t, "const N = if c { 1 } else { 2 }\n", Options{})
-	if r.codeList() != "E0101" {
+	// A const initializer is an expression too.
+	r := parse(t, "const N = 1 + if c { 1 } else { 2 }\n", Options{})
+	if len(r.diags) != 0 {
 		t.Errorf("const: %v", r.codes())
 	}
 }
 
-// TestNoE1218: if and match used as values get no habit code. The value
-// form is clean; the operand form is E0101 at the keyword.
+// TestStatementIfIsNoOperand: at the start of a statement an if is the
+// statement, so nothing may follow its closing brace on the line.
+func TestStatementIfIsNoOperand(t *testing.T) {
+	for _, body := range []string{"if c { 1 } else { 2 }.F()", "match c { .A { 1 } } + 1"} {
+		r := parse(t, "F() {\n    "+body+"\n}\n", Options{})
+		if len(r.diags) == 0 || r.diags[0].Code.String() != "E0101" {
+			t.Errorf("%q: want E0101, got %v", body, r.codes())
+		}
+	}
+}
+
+// TestNoE1218: if and match used as values or operands get no habit code.
 func TestNoE1218(t *testing.T) {
-	r := parse(t, "F() {\n    x := if c { 1 } else { 2 }\n}\n", Options{})
-	if len(r.diags) != 0 {
-		t.Errorf("value form: %v", r.codes())
-	}
-	r = parse(t, "F() {\n    x := 1 + if c { 1 } else { 2 }\n}\n", Options{})
-	if len(r.diags) != 1 || r.diags[0].Code.String() != "E0101" {
-		t.Fatalf("operand form: %v", r.codes())
-	}
-	if lc := r.src.LineCol(r.diags[0].At.Start); lc.Line != 2 || lc.Col != 14 || r.diags[0].At.End-r.diags[0].At.Start != 2 {
-		t.Errorf("span %v", r.diags[0].At)
+	for _, src := range []string{"F() {\n    x := if c { 1 } else { 2 }\n}\n", "F() {\n    x := 1 + if c { 1 } else { 2 }\n}\n"} {
+		if r := parse(t, src, Options{}); len(r.diags) != 0 {
+			t.Errorf("%q: %v", src, r.codes())
+		}
 	}
 }
 

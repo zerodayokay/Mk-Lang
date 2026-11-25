@@ -4,8 +4,8 @@
 // What: the unexported marker methods of every node type, and AllNodeTypes.
 //
 // How: generated from the lists in AllNodeTypes; TestEveryNodeTypeIsListed
-// keeps the two in step. IfStmt and MatchStmt are also Exprs, standing in an
-// Expr field only in a value position.
+// keeps the two in step. IfStmt and MatchStmt are also Exprs, standing in
+// any Expr field.
 
 package ast
 

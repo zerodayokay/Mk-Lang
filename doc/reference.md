@@ -3054,7 +3054,7 @@ export Main(sys: &System): WriteError!void {
 - `if x := &e` binds a `&T` to the payload, and `if x := mut e` a `mut T` through which you change it.
 - `e` must be an optional (E0307). For an `E!T`, use [`else`](#else) or [`match`](#match-on-a-result).
 - `if T is u8 { }` tests a type parameter at compile time. See [specialization](#specialization-if-t-is).
-- In value position, an `if` with an `else` gives a value. See [below](#if-match-and-else-as-values).
+- Used as an expression, an `if` with an `else` gives a value, as an operand too. See [below](#if-match-and-else-as-values).
 
 ```mk
 // verdict: reject E0307
@@ -3555,7 +3555,7 @@ When a rule fails, `return f(a)` is the same call without the frame reuse.
 
 ### `if`, `match` and `else` as values
 
-In value position, an `if` with an `else` and a `match` give a value: the last line of the arm that runs. An `e else { }` block gives one too ([section 9](#else)), and in parentheses it can also be an operand: `1 + (F() else { 0 })`.
+Used as an expression, an `if` with an `else` and a `match` give a value: the last line of the arm that runs. They stand wherever an expression does, as an operand too: `1 + if c { 2 } else { 3 }`. An `e else { }` block gives one too ([section 9](#else)), and in parentheses it can also be an operand: `1 + (F() else { 0 })`.
 
 ```mk
 // verdict: ok
@@ -3589,12 +3589,30 @@ twenty
 5 20 yes 1
 ```
 
-Value position is:
+An `if` or `match` is a value anywhere an expression stands: the right side of a binding or an assignment, the operand of `return`, an argument, a field or element of a literal, an operand of an operator, an index, a condition, and the last line of an arm that is itself a value. Suffixes and operators may follow its closing brace, and bind to the whole construct: `if c { 1 } else { 2 } * 3` multiplies the chosen value.
 
-- the right side of a binding or an assignment;
-- the operand of `return`;
-- an argument, or a field or element of a literal;
-- the last line of an arm that is itself in value position.
+```mk
+// verdict: ok
+export Main(sys: &System): WriteError!void {
+    c := sys.args.Len() > 0
+    xs := [10, 20, 30]
+    a := 1 + if c { 2 } else { 3 } // an operand
+    b := xs[if c { 0 } else { 2 }] // an index
+    n := match b {
+        10 { "ten" }
+        _ { "other" }
+    }.Len() // a suffix on the whole match
+    var k := 0
+    if a == if c { 3 } else { 4 } { // a condition's operand
+        k = 1
+    }
+    try sys.Print("{a} {b} {n} {k}\n", (a, b, n, k))
+}
+```
+
+```text
+3 10 3 1
+```
 
 The rules:
 
@@ -3602,7 +3620,8 @@ The rules:
 - An arm that does not fall through, because it returns, breaks, continues or fails, needs no value.
 - An arm whose last line is not a value is E0310. An `if` without an `else` is E0311. If an arm cannot end in a value, use the statement form and assign a local in each arm.
 - Under `_ =`, an `else` block may fall through without a value; the error is ignored.
-- Anywhere else, `if` and `match` are statements. As an operand, even in parentheses as in `1 + (if c { 2 } else { 3 })`, they are E0101: bind the value to a local first.
+- Operands are evaluated left to right: in `x + if c { .. } else { .. }` whose arm assigns `x`, the left `x` is read before the arm runs, as it is before a call that changes `x`.
+- At the start of a statement, `if` and `match` are statements, so nothing may follow the closing brace on that line (E0101). Wrap one in parentheses to use its value there: `(if c { a } else { b }).Close()`.
 
 ```mk
 // verdict: reject E0311 E0310
@@ -4968,7 +4987,7 @@ These forms are expressions too, each with its own section:
 |---|---|
 | `T(x)`, `Cast[T](x)`, `Trunc[T](x)` | Conversions ([conversions](#conversions)) |
 | `try e`, `e else { }`, `e.Must()` | Handle a failure ([section 9](#9-errors)) |
-| `if c { a } else { b }`, `match e { }` | A value in value position ([values](#if-match-and-else-as-values)) |
+| `if c { a } else { b }`, `match e { }` | A value wherever an expression stands, an operand too ([values](#if-match-and-else-as-values)) |
 | `SizeOf[T]()`, `AlignOf[T]()` | Layout facts at compile time ([section 11](#11-compile-time)) |
 | `quote { ... }` | Code as data, in a generator ([generators](#generators)) |
 

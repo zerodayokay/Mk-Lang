@@ -1,2 +1,0 @@
-{"phase":"parse","diagnostics":[{"code":"E0101","name":"syntax","phase":"parse","root":1,"at":{"file":"t.mk","line":2,"col":14,"end_line":2,"end_col":16},"message":"`if` is a value only on the right of a binding or an assignment, after `return`, as an argument, a field or an element; bind it to a local first","facts":{},"fixes":[],"alternatives":["bind it to a local first"],"explain":"mk explain E0101"}],"omitted":0}
-

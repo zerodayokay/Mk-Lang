@@ -54,8 +54,8 @@ type AssignStmt struct {
 }
 
 // IfStmt is "if" Cond Block [ "else" ( If | Block ) ]. It is also an Expr,
-// standing in an Expr field only in a value position; check
-// decides whether a last-line IfStmt of a value arm is a value.
+// a primary that may stand in any Expr field; check decides whether a
+// last-line IfStmt of a value arm is a value.
 type IfStmt struct {
 	Base
 	// Cond is an Expr, a *BindCond or an *IsCond.
@@ -138,7 +138,7 @@ type FieldsSource struct {
 }
 
 // MatchStmt is "match" Expr "{" { Arm Term } "}". Like IfStmt, it is also
-// an Expr in a value position.
+// an Expr, in any Expr field.
 type MatchStmt struct {
 	Base
 	X    Expr

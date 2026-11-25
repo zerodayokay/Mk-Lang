@@ -98,6 +98,8 @@ func TestEvalAgrees(t *testing.T) {
 		{"statement", "Pick(n: int): int {\n\tr: int\n\tif n < 0 {\n\t\tr = -1\n\t} else if n == 0 {\n\t\tr = 0\n\t} else {\n\t\tr = n * 2\n\t}\n\treturn r\n}\nH(): int {\n\tx := Pick(-3) + Pick(0) * 10\n\ty: int\n\tmatch Pick(4) {\n\t\t8 {\n\t\t\ty = 100\n\t\t}\n\t\t_ {\n\t\t\ty = 0\n\t\t}\n\t}\n\treturn x + y\n}\n", 99},
 		{"else nested", "Get(o: ?int, c: bool): int {\n\treturn o else {\n\t\tif c { 10 } else {\n\t\t\tmatch c {\n\t\t\t\ttrue { 0 }\n\t\t\t\tfalse { 20 }\n\t\t\t}\n\t\t}\n\t}\n}\nH(): int {\n\treturn Get(none, true) + Get(none, false) + Get(some(3), true)\n}\n", 33},
 		{"else value", "Get(o: ?int): int {\n\treturn o else { 7 }\n}\nH(): int {\n\treturn Get(none) + Get(some(2))\n}\n", 9},
+		{"operands", "Pick(c: bool): int {\n\treturn 1 + if c { 10 } else { 20 } * 2\n}\nH(): int {\n\treturn Pick(true) + Pick(false) * 100 + (match Pick(true) {\n\t\t21 { 5 }\n\t\t_ { 0 }\n\t})\n}\n", 4126},
+		{"left operand read first", "H(): int {\n\tvar x := 10\n\treturn x * 100 + if x > 0 {\n\t\tx = 7\n\t\tx\n\t} else {\n\t\t0\n\t}\n}\n", 1007},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := evalH(t, c.src)
