@@ -494,7 +494,9 @@ func (qx *queryIndex) stack(e qEntry) []string {
 		}
 	}
 	inBound := func(from, to types.ItemID) bool {
-		return comp[from] == comp[to] && bounds[comp[from]] != nil
+		cf, ok1 := comp[from]
+		ct, ok2 := comp[to]
+		return ok1 && ok2 && cf == ct && bounds[cf] != nil
 	}
 	if cyc := qx.cycle(e.id, inBound); cyc != "" {
 		return []string{"no static bound: recursion " + cyc}
@@ -511,10 +513,11 @@ func (qx *queryIndex) stack(e qEntry) []string {
 		best, via := 0, types.NoItem
 		for _, f := range comps[ci] {
 			for _, c := range qx.callsOf(f) {
-				if c.indirect || comp[c.callee] == ci {
+				cc, ok := comp[c.callee] // not held when maxReach cut the walk
+				if c.indirect || !ok || cc == ci {
 					continue
 				}
-				if d := deep(comp[c.callee]); d > best {
+				if d := deep(cc); d > best {
 					best, via = d, c.callee
 				}
 			}
