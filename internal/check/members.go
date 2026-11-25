@@ -168,6 +168,14 @@ func (m *Module) placeMethod(it *types.Item) {
 			orphan(c.cfg.Interner.Str(o.Name))
 			return
 		}
+		if o.Kind == types.KindError && resolve.MemberKey(c.cfg.Interner.Str(it.Name), false) == resolve.MemberKey("Format", false) {
+			// An error's Format is the compiler's impl method, decided after
+			// implCollisions; a Type.Name Format beside it is E0206 as it is
+			// beside a written impl's, and `e.Format(w)` stays the impl's.
+			m.Diags = append(m.Diags, diag.New(diag.E0206, it.Span, "`"+c.cfg.Interner.Str(it.Name)+"` is already a member of `"+
+				c.cfg.Interner.Str(o.Name)+"`: an error's `Format` is the compiler's").In(diag.PhaseTypes).Loc("first", o.Span))
+			return
+		}
 		if s := m.members[o.ID]; s != nil {
 			s.add(c.cfg.Interner, mb, it.Span)
 		}

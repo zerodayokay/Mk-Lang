@@ -5366,7 +5366,7 @@ line 4
 - Since an error's `str` is static, reading it gives a `str` that borrows nothing, even through a reference: for `e: &Bad`, `e.msg` outlives `e`. A `match` on a `mut` of the error would bind the field as a `mut str`, which is E0605: bind the error, as `err(e)`, and read `e.msg`.
 - Construction names every field, `BadByte(offset: 3, value: 200)`, as for a struct (E0305).
 - An error has no type parameters.
-- An error takes methods and `Type.Name` functions, declared in its module as for a struct ([methods](#methods)). An error set of more than one error has none but `Format`.
+- An error takes methods and `Type.Name` functions, declared in its module as for a struct ([methods](#methods)). Its `Format` is the compiler's impl method, so a method named `Format` is E0206. An error set of more than one error has no methods but `Format`.
 
 ```mk
 // verdict: ok
@@ -5376,11 +5376,8 @@ BadByte.Line(&self, width: int): int { // a method of an error
     return self.offset / width + 1
 }
 
-Report(data: []u8): int {
-    Check(data) else e {
-        return e.Line(16)
-    }
-    return 0
+BadByte.Skip(mut self) { // changes a var error in place
+    self.offset += 1
 }
 
 Check(data: []u8): BadByte!void {
@@ -5390,6 +5387,21 @@ Check(data: []u8): BadByte!void {
         }
     }
 }
+
+export Main(sys: &System): WriteError!void {
+    var data: [20]u8 = [0; 20]
+    data[17] = 200
+    Check(data[..]) else e {
+        var at := e
+        at.Skip()
+        line := e.Line(16)
+        try sys.Print("line {line}, then {at}\n", (line, at))
+    }
+}
+```
+
+```text
+line 2, then BadByte(offset: 18, value: 200)
 ```
 
 ```mk

@@ -29765,6 +29765,13 @@ body m.BadByte:Line generics=0 params=2 {
     scope_end _3
     return normal
 }
+body m.BadByte:Skip generics=0 params=1 {
+  let _0: void // return
+  let _1: mut BadByte // param 1 self
+  bb0:
+    (*_1).0 = Add(copy (*_1).0, int 1)
+    return normal
+}
 body m.Check generics=0 params=1 {
   let _0: BadByte!void // return
   let _1: []u8 // param 1 data
@@ -29812,29 +29819,89 @@ body m.Check generics=0 params=1 {
     scope_end _6
     goto bb3
 }
-body m.Report generics=0 params=1 {
-  let _0: int // return
-  let _1: []u8 // param 1 data
-  let _2: BadByte // e
-  let _3: void // temp
-  let _4: &BadByte // temp
+body m.Main generics=0 params=1 {
+  let _0: WriteError!void // return
+  let _1: &System // param 1 sys
+  let _2: [20]u8 // var data
+  let _3: int // temp
+  let _4: uint // temp
   let _5: int // temp
+  let _6: uint // temp
+  let _7: bool // temp
+  let _8: BadByte // e
+  let _9: []u8 // temp
+  let _10: void // temp
+  let _11: BadByte // var at
+  let _12: mut BadByte // temp
+  let _13: void // temp
+  let _14: &BadByte // temp
+  let _15: int // temp
+  let _16: int // line
+  let _17: WriteError // temp
+  let _18: (at: BadByte, line: int) // temp
+  let _19: void // temp
   bb0:
-    _3 = call m.Check(copy _1) -> bb2 err else _2 -> bb1
+    _2 = [u8 0; 20]
+    _3 = int 17
+    _4 = Trunc[uint](copy _3)
+    _5 = Len(_2)
+    _6 = Trunc[uint](copy _5)
+    _7 = Lt(copy _4, copy _6)
+    switch copy _7 [0: bb1, _: bb2]
   bb1:
-    _4 = &_2
-    _5 = call m.BadByte:Line(copy _4, int 16) -> bb3
+    panic bounds
   bb2:
-    scope_end _3
-    _0 = int 0
-    return normal
-  bb3:
-    _0 = copy _5
+    _2[_3] = u8 200
+    scope_end _7
+    scope_end _6
     scope_end _5
     scope_end _4
-    scope_end _2
     scope_end _3
-    return else
+    _9 = &_2[..]
+    _10 = call m.Check(copy _9) -> bb4 err else _8 -> bb3
+  bb3:
+    _11 = copy _8
+    _12 = mut _11
+    _13 = call m.BadByte:Skip(move _12) -> bb5
+  bb4:
+    goto bb9
+  bb5:
+    scope_end _13
+    scope_end _12
+    _14 = &_8
+    _15 = call m.BadByte:Line(copy _14, int 16) -> bb6
+  bb6:
+    _16 = copy _15
+    scope_end _15
+    scope_end _14
+    _18 = (at: BadByte, line: int)(copy _11, copy _16)
+    _19 = call std.core.System:Print[(at: BadByte, line: int)](copy _1, const str "line {line}, then {at}\n", copy _18) -> bb8 err try _17 -> bb7
+  bb7:
+    _0 = err(copy _17)
+    scope_end _19
+    scope_end _18
+    scope_end _17
+    scope_end _16
+    scope_end _11
+    scope_end _8
+    scope_end _10
+    scope_end _9
+    scope_end _2
+    return try
+  bb8:
+    scope_end _19
+    scope_end _18
+    scope_end _17
+    scope_end _16
+    scope_end _11
+    scope_end _8
+    goto bb9
+  bb9:
+    scope_end _10
+    scope_end _9
+    _0 = ok()
+    scope_end _2
+    return normal
 }
 body m.Use generics=1 params=1 {
   let _0: void // return
