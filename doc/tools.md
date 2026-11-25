@@ -555,10 +555,10 @@ The `--json` document, version 1, is one object and a newline (shown wrapped, wi
 - `query` is `"sig"`, and `member` is the member's package name.
 - `complete` is false when a function has no signature, because it failed to check. `missing` names those functions.
 - `functions` are sorted by file, line, column and name. Every field of an entry is always present:
-  - `name` is the name `sig` takes: `Collect`, or `Heap.Grow` for a method. An impl method, which `sig` does not answer, is named after its type too, `Square.Area`, and `impl` names its interface, `Shape`; `impl` is `""` for any other function.
+  - `name` is the name `sig` takes: `Collect`, or `Heap.Grow` for a method. An impl method, which `sig` does not answer, is named after its type too, `Square.Area`, also for an impl for a generic type (`Box.Area` for `impl[T] Shape for Box[T]`), and `impl` names its interface, `Shape`; `impl` is `""` for any other function.
   - `module` is the module path.
   - `file`, `line` and `col` locate the function's name, as diagnostics print it. A generated function's `file` is its module's gen view, `src/gen/<target>/gen.mk`, which a query does not write.
-  - `sig` is the first line `sig Name` answers, `export` included (spelled the same way for an impl method), and `contracts` are its `requires` and `ensures` clauses.
+  - `sig` is the first line `sig Name` answers, `export` included (spelled the same way for an impl method), and `contracts` are its `requires` and `ensures` clauses. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart.
   - `exported` is true for an exported function.
   - `generated` is true for a function a `gen` line wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
 

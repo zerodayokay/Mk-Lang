@@ -156,6 +156,17 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 			l.Functions = append(l.Functions, e)
 		}
 	}
+	if len(s.depRoot) > 0 {
+		// A dependency's names as the root spells them, as sig Name's.
+		names := s.displayNames(nil)
+		for i := range l.Functions {
+			e := &l.Functions[i]
+			e.Sig = localizeText(e.Sig, names)
+			for j, c := range e.Contracts {
+				e.Contracts[j] = localizeText(c, names)
+			}
+		}
+	}
 	slices.SortFunc(l.Functions, func(a, b SigEntry) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Col, b.Col),
 			cmp.Compare(a.Name, b.Name))
@@ -170,12 +181,21 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 func (qx *queryIndex) sigName(it *types.Item) (name, impl string, ok bool) {
 	if it.Owner != types.NoItem {
 		o := qx.w.items.Get(it.Owner)
-		if im, isImpl := o.Decl.(*types.ImplDecl); isImpl {
-			if im.For == types.NoType {
-				return "", "", false
+		if o.Kind == types.KindImpl {
+			im, checked := o.Decl.(*types.ImplDecl)
+			if !checked || im.For == types.NoType {
+				return it.Key.String(), "", true // unchecked: listed as missing
 			}
-			return qx.w.tab.TypeString(im.For, im.Generics) + "." + qx.str(it.Name),
-				qx.boundString(im.Bound, im.Generics), true
+			// Named as the type's own methods are, Box.Area for an impl
+			// for Box[T]; an impl for an error is keyed by its set of one.
+			owner := qx.w.tab.TypeString(im.For, im.Generics)
+			switch ty := qx.w.tab.Get(im.For); {
+			case ty.Kind == types.KNamed:
+				owner = qx.str(qx.w.items.Get(ty.Item).Name)
+			case ty.Kind == types.KErrorSet && singleError(qx.w.tab, ty.Errors) != types.NoItem:
+				owner = qx.str(qx.w.items.Get(singleError(qx.w.tab, ty.Errors)).Name)
+			}
+			return owner + "." + qx.str(it.Name), qx.boundString(im.Bound, im.Generics), true
 		}
 	}
 	if it.Name == source.NoSymbol {

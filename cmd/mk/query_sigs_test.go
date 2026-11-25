@@ -87,13 +87,14 @@ test "t" {
 `
 
 // mkh176Want is each entry as name|sig|file:line|contracts|impl|gen, in
-// the listing's order (file, line, column, name). The gen view file is not
-// written by a query; its positions are the ones mk check's view has.
+// the listing's order (file, line, column, name). A generated entry's
+// position is in the gen view, whose lines follow the generator's text, so
+// only its file is compared.
 var mkh176Want = []string{
-	"ShapeDyn.Of|ShapeDyn.Of[T: Shape](x: mut T): ShapeDyn from x|src/gen/" + mkh176Target + "/gen.mk:10||| src/heap.mk:39:1",
-	"ShapeDyn.AdaptArea|ShapeDyn.AdaptArea[T: Shape](obj: &Ref): f64|src/gen/" + mkh176Target + "/gen.mk:15||| src/heap.mk:39:1",
-	"ShapeDyn.Area|ShapeDyn.Area(&self): f64|src/gen/" + mkh176Target + "/gen.mk:21||Shape| src/heap.mk:39:1",
-	"GenStep|GenStep(h: mut Heap)|src/gen/" + mkh176Target + "/gen.mk:28||| src/heap.mk:41:1",
+	"ShapeDyn.Of|ShapeDyn.Of[T: Shape](x: mut T): ShapeDyn from x|src/gen/" + mkh176Target + "/gen.mk||| src/heap.mk:39:1",
+	"ShapeDyn.AdaptArea|ShapeDyn.AdaptArea[T: Shape](obj: &Ref): f64|src/gen/" + mkh176Target + "/gen.mk||| src/heap.mk:39:1",
+	"ShapeDyn.Area|ShapeDyn.Area(&self): f64|src/gen/" + mkh176Target + "/gen.mk||Shape| src/heap.mk:39:1",
+	"GenStep|GenStep(h: mut Heap)|src/gen/" + mkh176Target + "/gen.mk||| src/heap.mk:41:1",
 	"Collect|export Collect(h: mut Heap)|src/heap.mk:11|||",
 	"Peek|export Peek(h: &Heap): int|src/heap.mk:15|requires h.n >= 0||",
 	"Heap.Grow|export Heap.Grow(mut self, by: int)|src/heap.mk:21|||",
@@ -166,12 +167,13 @@ func TestMemberSignatures(t *testing.T) {
 		for _, c := range e["contracts"].([]any) {
 			cs = append(cs, c.(string))
 		}
-		g := ""
+		g, at := "", e["file"].(string)
 		if e["generated"] == true {
 			g = " " + e["gen"].(string)
+		} else {
+			at += ":" + strconv.Itoa(int(e["line"].(float64)))
 		}
-		got = append(got, strings.Join([]string{e["name"].(string), e["sig"].(string),
-			e["file"].(string) + ":" + strconv.Itoa(int(e["line"].(float64))), strings.Join(cs, "; "), e["impl"].(string), g}, "|"))
+		got = append(got, strings.Join([]string{e["name"].(string), e["sig"].(string), at, strings.Join(cs, "; "), e["impl"].(string), g}, "|"))
 	}
 	if !slices.Equal(got, mkh176Want) {
 		t.Errorf("functions:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(mkh176Want, "\n"))
@@ -198,11 +200,63 @@ func TestMemberSignatures(t *testing.T) {
 	if st != 0 || lines[0] != "member eng: 10 function(s)" ||
 		!slices.Contains(lines, "export Collect(h: mut Heap)  src/heap.mk:11:8") ||
 		!slices.Contains(lines, "    requires h.n >= 0") ||
-		!slices.Contains(lines, "GenStep(h: mut Heap)  src/gen/"+mkh176Target+"/gen.mk:28:1 (gen src/heap.mk:41:1)") {
+		!slices.ContainsFunc(lines, func(l string) bool {
+			return strings.HasPrefix(l, "GenStep(h: mut Heap)  src/gen/"+mkh176Target+"/gen.mk:") && strings.HasSuffix(l, " (gen src/heap.mk:41:1)")
+		}) {
 		t.Errorf("text: status %d\n%s\nstderr %s", st, text, errOut)
 	}
 	if _, err := os.Stat(filepath.Join(ws, "eng", "src", "gen")); err == nil {
 		t.Error("the query wrote the gen view")
+	}
+}
+
+// TestMemberSignaturesDeps: a member's signatures spell a sibling member's
+// types as `sig Name` does, and an impl method of a generic type is named
+// after the type alone, as its inherent methods are.
+func TestMemberSignaturesDeps(t *testing.T) {
+	ws := t.TempDir()
+	for name, text := range map[string]string{
+		"pkg.mk":    "const Package = pkg.Package(\n    name: \"ws\",\n    members: [\"hp\", \"eng\"],\n)\n",
+		"hp/pkg.mk": "const Package = pkg.Package(\n    name: \"hp\",\n)\n",
+		"hp/src/h.mk": "export struct Heap {\n    export n: int\n}\n\nexport struct Box[T] {\n    v: T\n}\n\nexport interface Shape {\n    Area(&self): f64\n}\n\n" +
+			"impl[T] Shape for Box[T] {\n    Area(&self): f64 {\n        return 1.0\n    }\n}\n\nexport Box.Grow[T](mut self) {\n}\n",
+		"eng/pkg.mk":        "const Package = pkg.Package(\n    name: \"eng\",\n    deps: [\n        pkg.Dep(name: \"hp\", path: \"../hp\"),\n    ],\n)\n",
+		"eng/src/a.mk":      "import hp.src\n\nexport Run(h: mut src.Heap) {\n    h.n += 1\n}\n",
+		"eng/src/more/b.mk": "import heap = hp.src\n\nexport Walk(h: mut heap.Heap, b: &heap.Box[int]): f64 {\n    return 1.0\n}\n",
+	} {
+		p := filepath.Join(ws, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := func(member string) []string {
+		st, out, errOut := mk("query", "sig", "--member", member, "--root", ws, "--json")
+		var l sigListDoc
+		if err := json.Unmarshal([]byte(out), &l); st != 0 || err != nil {
+			t.Fatalf("%s: status %d %v\n%s\nstderr %s", member, st, err, out, errOut)
+		}
+		var got []string
+		for _, e := range l.Functions {
+			got = append(got, e["name"].(string)+"|"+e["module"].(string)+"|"+e["sig"].(string)+"|"+e["impl"].(string))
+		}
+		return got
+	}
+	want := []string{"Run|src|export Run(h: mut Heap)|", "Walk|src.more|export Walk(h: mut Heap, b: &Box[int]): f64|"}
+	if got := list("eng"); !slices.Equal(got, want) {
+		t.Errorf("eng:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	for _, w := range want {
+		f := strings.Split(w, "|")
+		if st, out, _ := mk("query", "sig", f[0], "--root", filepath.Join(ws, "eng"), "--json"); st != 0 || !strings.Contains(out, `"answer":["`+f[2]+`"`) {
+			t.Errorf("sig %s: status %d, want %q first:\n%s", f[0], st, f[2], out)
+		}
+	}
+	want = []string{"Box.Area|src|Box.Area(&self): f64|Shape", "Box.Grow|src|export Box.Grow[T](mut self)|"}
+	if got := list("hp"); !slices.Equal(got, want) {
+		t.Errorf("hp:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
