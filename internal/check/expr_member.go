@@ -183,7 +183,8 @@ func (u *unit) missAt(t types.TypeID, name *ast.Ident, v *valueSite) {
 
 // memberMiss is E0702 when an interface visible from this module has a
 // method of that name (the type has no impl of it), else E0203 with the
-// type's members.
+// type's members this module can use: another module's private fields and
+// Type.Name functions are left out.
 func (u *unit) memberMiss(t types.TypeID, name *ast.Ident) {
 	in := u.c.cfg.Interner
 	nm := in.Str(name.Name)
@@ -196,6 +197,9 @@ func (u *unit) memberMiss(t types.TypeID, name *ast.Ident) {
 	var names []string
 	seen := map[source.Symbol]bool{}
 	for _, mb := range u.m.visibleMembers(t) {
+		if !mb.Exported && mb.Item != types.NoItem && u.c.cfg.Items.Get(mb.Item).Module != u.m.ID {
+			continue
+		}
 		if !seen[mb.Name] {
 			seen[mb.Name] = true
 			names = append(names, in.Str(mb.Name))

@@ -125,7 +125,9 @@ func (m *Module) memberPass() {
 	}
 	for _, iid := range ids {
 		it := c.cfg.Items.Get(iid)
-		if it.Kind != types.KindFunc || (it.Owner == types.NoItem && it.OwnerPrim == types.NoType) {
+		// A struct's invariant is an unnamed function item of the struct
+		// (InvariantKey), not a member.
+		if it.Kind != types.KindFunc || (it.Owner == types.NoItem && it.OwnerPrim == types.NoType) || it.Name == source.NoSymbol {
 			continue
 		}
 		m.guard(it, func() { m.placeMethod(it) })
