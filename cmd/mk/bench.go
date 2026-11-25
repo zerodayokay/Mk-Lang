@@ -2,7 +2,8 @@
 // and a number saved from a busy machine must never pass for a real one.
 //
 // What: runBench, the `mk bench [flags] [name] [path]` command: it runs the
-// test blocks that call testing.Bench, in a release build unless --dev, and
+// test blocks that call testing.Bench or testing.BenchSys, in a release
+// build unless --dev, and
 // prints each one's median time per call, its 95% interval and the
 // repetitions, under the machine, the command and the time (driver/bench.go).
 //
@@ -30,7 +31,7 @@ import (
 )
 
 func init() {
-	register(command{"bench", "bench   [flags] [name] [path]  run the benchmarks (test blocks calling testing.Bench) and print their statistics", func(args []string, stdout, stderr io.Writer) int {
+	register(command{"bench", "bench   [flags] [name] [path]  run the benchmarks (test blocks calling testing.Bench or BenchSys) and print their statistics", func(args []string, stdout, stderr io.Writer) int {
 		return runBench(args, stdout, stderr, os.Getenv)
 	}})
 }

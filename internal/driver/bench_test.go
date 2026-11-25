@@ -78,3 +78,58 @@ func TestBenchCodeOnly(t *testing.T) {
 		t.Errorf("codeOnly after a raw string ending in a backslash = %q", got)
 	}
 }
+
+// benchSysSource is an allocating benchmark: Run builds a list in an arena
+// off sys.heap on every call, which only BenchSys's System makes possible.
+const benchSysSource = `import std.testing
+
+Sum(sys: &System, n: int): OutOfMemory!int {
+    var a := try Arena.New(sys.heap)
+    defer a.Free()
+    var xs := List[int].New(&a)
+    for i in 0..n {
+        try xs.Push(i)
+    }
+    var s := 0
+    for x in xs {
+        s += x
+    }
+    return s
+}
+
+Run(sys: &System, n: int) {
+    Assert(Sum(sys, n).Must() == n * (n - 1) / 2)
+}
+
+test "alloc" (sys: &System) {
+    testing.BenchSys(sys, Run)
+}
+
+test "plain" {
+    Assert(true)
+}
+`
+
+// TestBenchSys: a benchmark that allocates from the test block's System
+// passes under plain mk test, which calls f(sys, 1), and under mk bench,
+// which selects only it and times f(sys, n) at a calibrated n. The failure
+// it guards against: testing.Bench takes fn(n: int), so such a benchmark
+// does not compile (MKH-345), and a BenchSys call is not found by mk
+// bench's text scan, so it is never run.
+func TestBenchSys(t *testing.T) {
+	root := testPkg(t, map[string]string{"main.mk": benchSysSource})
+	rep := mkTest(t, Config{Root: root}, TestOptions{})
+	if len(rep.Tests) != 2 || rep.Tests[0].Result != "pass" || rep.Tests[1].Result != "pass" {
+		t.Fatalf("mk test: %+v", rep.Tests)
+	}
+	rep = mkTest(t, Config{Root: root}, TestOptions{Bench: true, BenchLimit: 3 * time.Second})
+	if len(rep.Tests) != 1 || rep.Tests[0].Name != "alloc" || rep.Tests[0].Result != "pass" {
+		t.Fatalf("mk bench: %+v", rep.Tests)
+	}
+	if b := rep.Tests[0].Bench; b == nil || b.N < 1 || b.N > 1<<30 || b.Reps < BenchBatch {
+		t.Errorf("statistics %+v", b)
+	}
+	if !benchCall.MatchString(codeOnly("testing.BenchSys(sys, Run)", false)) || benchCall.MatchString("testing.Benchmark(x)") {
+		t.Error("benchCall does not tell testing.BenchSys( from other names")
+	}
+}

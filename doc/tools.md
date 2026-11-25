@@ -278,7 +278,7 @@ Arena is in the prelude: no import
 
 ### `mk bench`
 
-`mk bench` runs the benchmarks: `test` blocks that call `testing.Bench` ([section 10](#10-debugging-coverage-fuzzing-and-profiling)). A name selects the benchmarks whose names contain it.
+`mk bench` runs the benchmarks: `test` blocks that call `testing.Bench` or `testing.BenchSys` ([section 10](#10-debugging-coverage-fuzzing-and-profiling)). A name selects the benchmarks whose names contain it.
 
 ```sh
 mk bench
@@ -651,7 +651,7 @@ Contracts are checked in the callee, so editing a contract does not rebuild the 
 
 **Fuzzing.** `testing.Fuzz(f)` in a `test` block registers a fuzz target. Plain `mk test` runs it over its saved inputs; `mk test --fuzz <test name> [--fuzztime d]` searches for new failing inputs.
 
-**Benchmarks.** `testing.Bench(f)` in a `test` block registers a benchmark, and `mk bench [name]` runs it. `--limit` bounds the time each benchmark takes, and `--baseline` compares with an earlier run.
+**Benchmarks.** `testing.Bench(f)` in a `test` block registers a benchmark (`testing.BenchSys(sys, f)` one that allocates), and `mk bench [name]` runs it. `--limit` bounds the time each benchmark takes, and `--baseline` compares with an earlier run.
 
 See [std.testing](std/testing.md) for fuzz targets and benchmarks.
 

@@ -10511,7 +10511,7 @@ PASS main "prop Span.Len"
 These are library features that run inside `test` blocks:
 
 - `testing.Fuzz(f)` registers a fuzz target. `mk test` runs it over saved inputs, and `mk test --fuzz name` searches for new failing ones. See [fuzz targets](std/testing.md#fuzz-targets).
-- `testing.Bench(f)` registers a benchmark that `mk bench` runs. See [benchmarks](std/testing.md#benchmarks).
+- `testing.Bench(f)` registers a benchmark that `mk bench` runs, and `testing.BenchSys(sys, f)` one that takes the test's `System`, to allocate. See [benchmarks](std/testing.md#benchmarks).
 - `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` runs every test that way. See [`std.sim`](std/sim.md).
 
 See also: [write a test and a property](cookbook.md#write-a-test-and-a-property), [tests beside code](codebase.md#6-tests-beside-code), [`mk test`](tools.md#mk-test).
@@ -11233,7 +11233,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
-| `std.testing` | `Fuzz Bench` |
+| `std.testing` | `Fuzz Bench BenchSys` |
 | `std.build` | `File Profile ProfileKind`, read at compile time only |
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
@@ -13331,6 +13331,7 @@ linux.Syscall(nr: uint, a0: uint, a1: uint, a2: uint, a3: uint, a4: uint, a5: ui
 // std.testing
 testing.Fuzz(f: fn([]u8))
 testing.Bench(f: fn(n: int))
+testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))
 
 // std.build. ProfileKind below is build.ProfileKind; build.Profile is its constant, set by the driver
 build.File(path: str): []u8
