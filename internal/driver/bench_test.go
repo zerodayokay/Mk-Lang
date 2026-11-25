@@ -114,8 +114,8 @@ test "plain" {
 // passes under plain mk test, which calls f(sys, 1), and under mk bench,
 // which selects only it and times f(sys, n) at a calibrated n. The failure
 // it guards against: testing.Bench takes fn(n: int), so such a benchmark
-// does not compile (MKH-345), and a BenchSys call is not found by mk
-// bench's text scan, so it is never run.
+// does not compile, and a BenchSys call mk bench's text scan does not
+// find is never run.
 func TestBenchSys(t *testing.T) {
 	root := testPkg(t, map[string]string{"main.mk": benchSysSource})
 	rep := mkTest(t, Config{Root: root}, TestOptions{})
