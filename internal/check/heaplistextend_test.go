@@ -39,12 +39,12 @@ func TestHeapListExtendPlain(t *testing.T) {
 }
 
 // TestListResizePlain: std.core's `List[T].Resize` writes copies of x, so its
-// body sees an implicit `T: Plain` (x is used twice, which an open T, read as
-// linear, could not be) and every call whose element is not plain is E0701.
+// body sees an implicit `T: Plain` (a call that needs it, here `Copy`, checks
+// clean) and every call whose element is not plain is E0701.
 func TestListResizePlain(t *testing.T) {
 	core := fakePrelude() + "export struct List[T] {\n\tn: int\n}\n" +
-		"Keep[T](x: T, y: T) {\n}\n" +
-		"export List[T].Resize(mut self, n: int, x: T) {\n\tKeep(x, x)\n}\n" +
+		"Copy[U: Plain](x: U) {\n}\n" +
+		"export List[T].Resize(mut self, n: int, x: T) {\n\tCopy(x)\n}\n" +
 		"export List[T].Other(mut self, x: T) {\n}\n"
 	for _, tc := range []struct{ name, src, want string }{
 		{"plain", "F(l: mut List[int]) {\n\tl.Resize(3, 7)\n}\n", ""},

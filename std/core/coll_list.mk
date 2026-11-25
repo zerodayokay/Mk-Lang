@@ -101,8 +101,9 @@ export List[T].Truncate(mut self, n: int) {
 /// Makes the length n: keeps the first n elements and appends copies of x
 /// up to n, growing at most once. The elements are copies, so T must be
 /// plain: a call with any other T is E0701. The call stores x once, so a
-/// generic caller can fill a list with one value; a second Push of the same
-/// value would store it through the copies already in the list (E0604).
+/// body generic in T can fill a list with one value; there a second Push of
+/// the same value is E0604, since it would store it through the copies
+/// already in the list.
 /// Panics (code 2) when n < 0. OutOfMemory when the buffer cannot grow, and
 /// then the list is unchanged. O(n - Len()) when it grows, else O(1); growth
 /// allocates from the arena.

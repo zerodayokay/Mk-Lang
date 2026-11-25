@@ -263,7 +263,7 @@ A `List[T]` is a growable array in an arena; `HeapList[T]` is its linear heap fo
 - `New` allocates nothing until the first `Push`. A growth takes the capacity to the largest of 4, twice the old capacity, and what is needed. In an arena it grows in place when the buffer is the arena's last block, and otherwise leaves the old buffer to the arena.
 - `Push` is amortized O(1). `Pop` is O(1). `Insert(i, x)` and `Remove(i)` are O(Len() - i) and panic (code 2) out of range; `Insert` checks before it grows.
 - `List.Truncate(n)` keeps the first `n` elements; an `n` at or above `Len()` changes nothing. It panics (code 2) for a negative `n`. `HeapList` has no `Truncate`.
-- `List.Resize(n, x)` makes the length `n`: it keeps the first `n` elements and appends copies of `x`, growing at most once. `T` must be plain (E0701 otherwise). It panics (code 2) for a negative `n`. It is how a generic body fills a list with one value: a second `Push(x)` of the same `x` would store it through the copies already in the list, which may hold a `&Cell` that `Push`'s `x into self` lets it write (E0604).
+- `List.Resize(n, x)` makes the length `n`: it keeps the first `n` elements and appends copies of `x`, growing at most once. `T` must be plain (E0701 otherwise). It panics (code 2) for a negative `n`. It is how a body generic in a plain `T` fills a list with one value: there a second `Push(x)` of the same `x` is E0604, since it would store `x` through the copies already in the list, and a plain `T` may hold a `&Cell` that `Push`'s `x into self` lets it write.
 - `Clear` empties the list and keeps its capacity.
 - `List.Done()` ends the list and returns a `mut []T` that lives as long as the arena.
 - `HeapList.Extend(a, xs)` copies a plain `T` (E0701 otherwise), grows at most once, and leaves the list unchanged on `OutOfMemory`.
@@ -433,7 +433,7 @@ So a linear value is never dropped behind your back: either the call refuses to 
 | Function | Needs |
 |---|---|
 | `Has`, `Index` | `T: Eq` |
-| `Fill`, `CopyFrom`, `HeapList.Extend` | `T: Plain` |
+| `Fill`, `CopyFrom`, `HeapList.Extend`, `List.Resize` | `T: Plain` |
 | `Arena.Slice[T]`, `Arena.SliceAligned[T]` | A zero-valid `T`: its all-zero bytes are a value of it. Both fill their elements with zeros |
 | `Free`, `Set`, `Ensure`, `Replace`, `Remove` and others | The rules above |
 
@@ -2791,8 +2791,9 @@ export List[T].Resize(mut self, n: int, x: T into self): OutOfMemory!void
 Makes the length n: keeps the first n elements and appends copies of x
 up to n, growing at most once. The elements are copies, so T must be
 plain: a call with any other T is E0701. The call stores x once, so a
-generic caller can fill a list with one value; a second Push of the same
-value would store it through the copies already in the list (E0604).
+body generic in T can fill a list with one value; there a second Push of
+the same value is E0604, since it would store it through the copies
+already in the list.
 Panics (code 2) when n < 0. OutOfMemory when the buffer cannot grow, and
 then the list is unchanged. O(n - Len()) when it grows, else O(1); growth
 allocates from the arena.

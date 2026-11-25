@@ -6,7 +6,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Standard library
 
-- `List[T].Resize(n, x)` makes a list's length `n`, keeping the first `n` elements and appending copies of a plain `x` (`E0701` for any other `T`), growing at most once. A generic `[T: Plain]` body can fill a list with one value through it, which a loop of `Push(x)` cannot do: the second `Push` stores `x` through the copies already in the list (`E0604`).
+- `List[T].Resize(n, x)` makes a list's length `n`, keeping the first `n` elements and appending copies of a plain `x` (`E0701` for any other `T`), growing at most once. A body generic in a plain `T` can fill a list with one value through it; there a loop of `Push(x)` is `E0604`, since the second `Push` stores `x` through the copies already in the list.
 
 ## 0.6.0 (2026-11-24)
 
