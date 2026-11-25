@@ -473,6 +473,7 @@ When the package checks clean, a last round drops the empty `()` argument of eac
 | `uses` | Every standard library item the package references, with its sites. Never capped |
 | `perimeter` | Per package of the build: its local names, source and version, and its unsafe code, C and assembly ([the packages guide](packages.md#11-grants-for-unsafe-code)). Never capped |
 | `panics --member name` | Every panic site of a workspace member's modules ([section 5.1](#51-member-wide-panic-sites)). Never capped |
+| `sig --member name` | Every function and method of a workspace member's modules with its signature, generated ones included ([section 5.3](#53-member-wide-signatures)). Never capped |
 
 ### 5.1 Member-wide panic sites
 
@@ -533,7 +534,7 @@ Without `--json`, the listing is a header line, then one line per site: `kind  f
 |---|---|
 | 0 | The listing was printed |
 | 1 | The member has errors, printed on stderr. The listing is still printed when the member checks as far as types |
-| 2 | An unknown member, which the message names among the members; or `--member` given with any other query |
+| 2 | An unknown member, which the message names among the members; or `--member` given with a query other than `panics` and `sig`, or with a name |
 
 ### 5.2 Depth-bounded recursion
 
@@ -567,6 +568,36 @@ export Total(xs: []i64): i64 {
 - The calls that pass the depth unchanged form no cycle, so every cycle lowers it.
 
 Such a recursion of n functions counts as at most (max + 1) n frames, max being 255 for `u8` and 65,535 for `u16`, whatever depth its callers pass, and `stack` lists each one as `depth-bounded recursion`. A recursion that breaks the rule is reported as before, with the cycle that prevents a bound. A walk that stops at 20,000 functions gives no bound either. Frames are counted, not bytes: a frame's size is known only after code generation.
+
+### 5.3 Member-wide signatures
+
+`mk query sig --member <name> [--json] [--root path]` lists every function and method of one workspace member's modules, each with its signature as `sig Name` spells it. The member is named, found and checked as for [section 5.1](#51-member-wide-panic-sites), and the exit status is the same. `sig Name` still takes one name.
+
+The listing is complete: never capped and never paged. It holds functions, methods, impl methods and `extern` functions, and the functions a `gen` line writes, which no declaration in the source shows. It also holds an error's built-in `Format` ([the reference](reference.md#how-errors-print)), located at the error's name. Contract predicates, invariants, `fn` literals and test blocks are not listed. Functions of the standard library and of dependencies are not listed.
+
+The `--json` document, version 1, is one object and a newline (shown wrapped, with one function):
+
+```text
+{"version":1,"query":"sig","member":"eng","complete":true,"missing":[],
+ "functions":[{"name":"Collect","module":"src","file":"src/heap.mk","line":11,"col":8,
+               "sig":"export Collect(h: mut Heap)","contracts":[],"exported":true,
+               "impl":"","generated":false,"gen":""}, ...]}
+```
+
+- `version` is 1. A field added keeps the version, and a field removed or changed in meaning raises it.
+- `query` is `"sig"`, and `member` is the member's package name.
+- `complete` is false when a function has no signature, because it failed to check. `missing` names those functions.
+- `functions` are sorted by file, line, column and name. Every field of an entry is always present:
+  - `name` is the name `sig` takes: `Collect`, or `Heap.Grow` for a method. An impl method, which `sig` does not answer, is named after its type too, `Square.Area`, also for an impl for a generic type (`Box.Area` for `impl[T] Shape for Box[T]`), and `impl` names its interface, `Shape`; `impl` is `""` for any other function.
+  - `module` is the module path.
+  - `file`, `line` and `col` locate the function's name, as diagnostics print it. A generated function's `file` is its module's gen view, `src/gen/<target>/gen.mk`, which a query does not write.
+  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart.
+  - `exported` is true for an exported function. An impl method is never `exported`: its type and its interface decide who can call it.
+  - `generated` is true for a function a `gen` line wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
+
+Without `--json`, the listing is a header line, then one line per function, `sig  file:line:col`, followed by `(gen file:line:col)` for a generated one, and each contract on a line of its own.
+
+The listing covers the modules of one target, the host's or `--target`'s.
 
 ## 6. API diff
 

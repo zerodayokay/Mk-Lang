@@ -12,6 +12,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 - `mk query stack` bounds a recursion whose depth parameter (a `u8` or `u16` parameter that every call inside the recursion passes on unchanged or less a positive constant, lowered around every cycle) bounds it, counting it as at most (max + 1) frames per function, and lists it as `depth-bounded recursion`; any other recursion still answers `no static bound` ([tools](doc/tools.md#52-depth-bounded-recursion)).
 - `mk query stack` answers `no static bound` when its walk stops at 20,000 functions; it answered `bounded` without seeing the functions past the stop, so a recursion there went unreported.
+- `mk query sig --member <name> [--json]` lists every function and method of a workspace member's modules with its signature and contracts, never capped, including impl methods and the functions `gen` lines write ([section 5.3 of the tools guide](doc/tools.md#53-member-wide-signatures)). `sig Name` is unchanged.
 
 ### Standard library
 
