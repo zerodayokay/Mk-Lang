@@ -1,6 +1,6 @@
 # std.testing
 
-`std.testing` turns a `test` block into a fuzz target or a benchmark. `testing.Fuzz(f)` calls `f` with inputs: saved files under plain `mk test`, mutated ones under `mk test --fuzz`. `testing.Bench(f)` lets `mk bench` time `f`. Neither needs syntax of its own: a test block calls the function, and the `mk` command decides what happens. For ordinary tests, `Assert` and the `test` block are enough; for checking a function's contract with generated arguments, use `mk test --prop` ([contracts and the property tester](../tools.md#7-contracts-and-the-property-tester)).
+`std.testing` turns a `test` block into a fuzz target, a benchmark or a test that expects a panic. `testing.Fuzz(f)` calls `f` with inputs: saved files under plain `mk test`, mutated ones under `mk test --fuzz`. `testing.Bench(f)` lets `mk bench` time `f`. `testing.ExpectPanic(want)` makes a test pass only when it panics. None needs syntax of its own: a test block calls the function, and the `mk` command decides what happens. For ordinary tests, `Assert` and the `test` block are enough; for checking a function's contract with generated arguments, use `mk test --prop` ([contracts and the property tester](../tools.md#7-contracts-and-the-property-tester)).
 
 Read the [`mk test`](../tools.md#mk-test) and [`mk bench`](../tools.md#mk-bench) commands first, and [fuzzing and benchmarks](../tools.md#10-debugging-coverage-fuzzing-and-profiling) for the flags.
 
@@ -15,8 +15,9 @@ import std.testing
 - [Fuzz targets](#fuzz-targets)
 - [The mutation loop](#the-mutation-loop)
 - [Benchmarks](#benchmarks)
+- [Expected panics](#expected-panics)
 - [Memory and cost](#memory-and-cost)
-- [Examples](#examples): [run a fuzz target over saved inputs](#run-a-fuzz-target-over-saved-inputs), [a saved input that fails](#a-saved-input-that-fails), [find a failing input](#find-a-failing-input), [a benchmark](#a-benchmark)
+- [Examples](#examples): [run a fuzz target over saved inputs](#run-a-fuzz-target-over-saved-inputs), [a saved input that fails](#a-saved-input-that-fails), [find a failing input](#find-a-failing-input), [a benchmark](#a-benchmark), [a refused input](#a-refused-input)
 - [API](#api)
 
 ## The main pieces
@@ -28,6 +29,7 @@ import std.testing
 | Search for failing inputs | `mk test --fuzz <test name> [--fuzztime d]` |
 | Declare a benchmark | `testing.Bench(f)` in a `test` block, `f: fn(n: int)` |
 | Time the benchmarks | `mk bench [name]` |
+| Expect a panic | `testing.ExpectPanic(want)` in a `test` block, before the code that panics |
 | Line coverage of the package | `mk test --cover` ([coverage](../tools.md#10-debugging-coverage-fuzzing-and-profiling)) |
 
 ## Fuzz targets
@@ -66,13 +68,26 @@ A benchmark is a function `f: fn(n: int)` that does its work `n` times. One `tes
 - Plain `mk test` calls `f(1)` once, and so does any other run. So `mk test` checks that every benchmark works.
 - `mk bench` finds benchmarks by the text `testing.Bench(` in a test block. Import `std.testing` under its own name, and call `Bench` directly in the block.
 
+## Expected panics
+
+A kept `Assert` or a contract is code too, and a test can check that it refuses a bad input. `testing.ExpectPanic(want)` in a `test` block turns the test round: it passes only when it panics after the call.
+
+- The panic's report line (`panic: assert at load.mk:4:5`) must contain `want` after its `panic: `. `want` may name the message (`"assert"`, `"contract: requires"`, `"bounds"`), the site (`"load.mk:4:"`), or both; `""` matches any panic. A `want` with a line break never matches.
+- The test fails when its body returns (`returned; testing.ExpectPanic("assert") wanted a panic`), and when the panic does not match (`panic does not contain "overflow" (testing.ExpectPanic): panic: assert at load.mk:4:5`). Its output is printed only when it fails, as for any test.
+- A panic before the call fails the test as any panic does, and so does a panic in a test that never calls it. Call it right before the code that should panic. When a test calls it more than once, the last call counts.
+- `mk test` runs each test in its own process, and a panic ends that process, so nothing after the panic runs: one test checks one refusal.
+- The call writes the line `mkexpectpanic <length of want> <want>` to standard error, from which `mk test` judges the test. Anywhere else, `mk run` included, it only writes that line.
+- A contract is not checked in a release build, so under `mk test --release` a test that expects a `contract` panic fails as returned. `Assert` is checked in every build.
+- Under `mk test --cover` a test that ends in a panic writes no counts, so the report notes that it has none, whether it passes or fails.
+- `mk test --fuzz` and `mk bench` do not read the line: there a panic is a finding.
+
 ## Memory and cost
 
-`Fuzz` reads its inputs into memory from the process heap and frees them before it returns. In plain `mk test` it costs one call of `f` per saved input. `Bench` allocates nothing itself. In any other run `Fuzz` costs one check and `Bench` one call of `f(1)`.
+`Fuzz` reads its inputs into memory from the process heap and frees them before it returns. In plain `mk test` it costs one call of `f` per saved input. `Bench` allocates nothing itself. In any other run `Fuzz` costs one check and `Bench` one call of `f(1)`. `ExpectPanic` allocates nothing and writes one line.
 
 ## Examples
 
-Each example is a package directory: the file shown (`port.mk`, `digits.mk`, `header.mk`, `sum.mk`, in order) and, for the fuzz targets, the files under `testdata/fuzz/`.
+Each example is a package directory: the file shown (`port.mk`, `digits.mk`, `header.mk`, `sum.mk`, `load.mk`, in order) and, for the fuzz targets, the files under `testdata/fuzz/`.
 
 ### Run a fuzz target over saved inputs
 
@@ -242,6 +257,42 @@ PASS main "sum_digits"
 
 `mk bench` prints the median time per call, its confidence interval and the number of repetitions. These differ on every machine, so they are not shown here.
 
+### A refused input
+
+```mk
+// verdict: ok
+import std.testing
+
+// Load reads the word at an offset, which must be a multiple of 8.
+Load(off: u64): u64 {
+    Assert(off & 7 == 0) // a misaligned offset is a bug in the caller
+    return off
+}
+
+test "an aligned offset" {
+    Assert(Load(8) == 8)
+}
+
+test "a misaligned offset is refused" {
+    testing.ExpectPanic("assert")
+    _ = Load(9)
+}
+
+test "a misaligned offset that is not refused" {
+    testing.ExpectPanic("assert")
+    _ = Load(16)
+}
+```
+
+```text
+$ mk test
+PASS main "an aligned offset"
+PASS main "a misaligned offset is refused"
+FAIL main "a misaligned offset that is not refused": returned; testing.ExpectPanic("assert") wanted a panic
+    mkexpectpanic 6 assert
+2 passed, 1 failed
+```
+
 ## API
 
 <!-- api:begin -->
@@ -264,6 +315,23 @@ the benchmark works. `mk bench` finds a benchmark by the text
 name.
 
 Bench itself allocates nothing; O(the repetitions' calls of f).
+
+### `ExpectPanic`
+
+```
+export ExpectPanic(want: str)
+```
+
+ExpectPanic makes the test block that calls it pass only if it panics
+after the call, and its panic's report line ("panic: assert at
+main.mk:4:5") contains want; an empty want matches every panic. The
+test then fails if its body returns, and a panic before the call fails
+it as any panic does. The last call wins. It writes the line
+"mkexpectpanic <length of want> <want>" to standard error, from which
+`mk test` judges the child; anywhere else, it writes only that line.
+A want with a line break never matches.
+
+Allocates nothing; O(want).
 
 ### `Fuzz`
 

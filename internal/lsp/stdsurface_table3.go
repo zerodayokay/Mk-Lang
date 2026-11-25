@@ -105,6 +105,7 @@ var surfaceDocs3 = map[string]surfaceDoc{
 	"term.Unsupported":           {Module: "std.term", Lines: []string{"error Unsupported"}},
 	"term.UseColor":              {Module: "std.term", Lines: []string{"term.UseColor(io: Io, s: Std): bool"}},
 	"testing.Bench":              {Module: "std.testing", Lines: []string{"testing.Bench(f: fn(n: int))"}},
+	"testing.ExpectPanic":        {Module: "std.testing", Lines: []string{"testing.ExpectPanic(want: str)"}},
 	"testing.Fuzz":               {Module: "std.testing", Lines: []string{"testing.Fuzz(f: fn([]u8))"}},
 	"text.BidiLevels":            {Module: "std.text", Lines: []string{"text.BidiLevels(a: &Arena, s: str, dir: Direction): OutOfMemory!Levels from a, s"}},
 	"text.Bounds.Next":           {Module: "std.text", Lines: []string{"Bounds.Next(mut self): ?int"}},

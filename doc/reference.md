@@ -10632,7 +10632,7 @@ PASS main "prints"
 ```
 
 - Each line names the module and the test. A failing test shows its output, its panic or error, and its exit status.
-- A test passes when it returns. It fails on a panic (`Assert`, a broken contract, an index out of bounds), on an error that leaves it (exit 1), on a leak, or on a timeout.
+- A test passes when it returns. It fails on a panic (`Assert`, a broken contract, an index out of bounds), on an error that leaves it (exit 1), on a leak, or on a timeout. A test that calls `testing.ExpectPanic(want)` is the other way round: it passes only when it panics after the call, with a report line that contains `want` ([expected panics](std/testing.md#expected-panics)).
 - A test may use `try`. An error that leaves the test fails it, and `mk test` prints the error with its trace ([errors in tests](#errors-in-tests-and-tasks)).
 - A test may declare one parameter of type `&System`, usually `(sys: &System)`, for memory, output, files and tasks. A parameter of another type is E0301, and a second parameter E0101.
 - In a test, the heap counts its allocations. Memory still allocated when the test ends fails it with `leak (exit 102)`.
@@ -10708,6 +10708,7 @@ These are library features that run inside `test` blocks:
 
 - `testing.Fuzz(f)` registers a fuzz target. `mk test` runs it over saved inputs, and `mk test --fuzz name` searches for new failing ones. See [fuzz targets](std/testing.md#fuzz-targets).
 - `testing.Bench(f)` registers a benchmark that `mk bench` runs. See [benchmarks](std/testing.md#benchmarks).
+- `testing.ExpectPanic(want)` makes a test pass only when it panics after the call, so a test can check that an `Assert` or a contract refuses a bad input. See [expected panics](std/testing.md#expected-panics).
 - `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` runs every test that way. See [`std.sim`](std/sim.md).
 
 See also: [write a test and a property](cookbook.md#write-a-test-and-a-property), [tests beside code](codebase.md#6-tests-beside-code), [`mk test`](tools.md#mk-test).
@@ -13528,6 +13529,7 @@ linux.Syscall(nr: uint, a0: uint, a1: uint, a2: uint, a3: uint, a4: uint, a5: ui
 // std.testing
 testing.Fuzz(f: fn([]u8))
 testing.Bench(f: fn(n: int))
+testing.ExpectPanic(want: str)
 
 // std.build. ProfileKind below is build.ProfileKind; build.Profile is its constant, set by the driver
 build.File(path: str): []u8

@@ -134,6 +134,7 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 		s.benchRun(out, argv, env, i, opt)
 		return
 	}
+	defer judgeExpectedPanic(out) // after runChild: testing.ExpectPanic's flip
 	dir := s.fuzzCorpusDir(tc, opt)
 	note := s.fuzzCorpusNote(tc, opt)
 	defer func() { out.Note = note }() // after runChild, which sets the rest
@@ -182,4 +183,66 @@ func withoutNames(env, names []string, viaRunner bool) []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+// expectPanicMark starts the line std.testing's ExpectPanic writes to
+// standard error: "mkexpectpanic <length of want> <want>".
+const expectPanicMark = "mkexpectpanic "
+
+// judgeExpectedPanic flips a plain child's result when its output holds
+// ExpectPanic's line (the last well-formed one counts): a panic whose
+// report line, after the mark, contains the wanted text passes; a panic
+// that does not match fails, and so does a body that returned (exit 0).
+// Any other status, and a child with no mark, is left as runChild set it.
+func judgeExpectedPanic(tc *TestCase) {
+	out := strings.ReplaceAll(tc.Output, "\r\n", "\n")
+	want, after, found := "", 0, false
+	for at := 0; ; {
+		i := strings.Index(out[at:], expectPanicMark)
+		if i < 0 {
+			break
+		}
+		at += i + len(expectPanicMark)
+		sp := strings.IndexByte(out[at:], ' ')
+		if sp < 0 {
+			continue
+		}
+		n, err := strconv.Atoi(out[at : at+sp])
+		if err != nil || n < 0 || n > len(out)-(at+sp+1) {
+			continue
+		}
+		want, after, found = out[at+sp+1:at+sp+1+n], at+sp+1+n, true
+		at = after
+	}
+	if !found {
+		return
+	}
+	call := "testing.ExpectPanic(" + strconv.Quote(want) + ")"
+	switch tc.Status {
+	case 0:
+		tc.Result, tc.Detail = "fail", "returned; "+call+" wanted a panic"
+		return
+	case 101:
+	default:
+		return
+	}
+	// The report is the output's end: its line, then any backtrace. A
+	// partial line of standard output may precede it on the same line.
+	rep := out[after:]
+	if b := strings.LastIndex(rep, "\nbacktrace:\n"); b >= 0 {
+		rep = rep[:b]
+	}
+	rep = strings.TrimRight(rep, "\n")
+	line := rep[strings.LastIndexByte(rep, '\n')+1:]
+	p := strings.Index(line, "panic: ")
+	if p < 0 {
+		tc.Result, tc.Detail = "fail", "no panic report after "+call
+		return
+	}
+	line = line[p:]
+	if !strings.Contains(line[len("panic: "):], want) {
+		tc.Result, tc.Detail = "fail", "panic does not contain "+strconv.Quote(want)+" (testing.ExpectPanic): "+line
+		return
+	}
+	tc.Result = "pass"
 }

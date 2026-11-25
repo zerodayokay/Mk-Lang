@@ -1,7 +1,7 @@
 // Why: fuzzing and benchmarking should need no new syntax: a test block
 // calls a function, and the driver decides what happens.
 //
-// What: Fuzz, Bench, RunSeeds, the mutation loop (Loop, Mutate, Guided)
+// What: Fuzz, Bench, ExpectPanic, RunSeeds, the mutation loop (Loop, Mutate, Guided)
 // and the small decimal helpers it reads and writes with.
 //
 // How: the driver (internal/driver/fuzz.go and bench.go) tells the test
@@ -32,6 +32,10 @@
 //   - MK_TESTING_BENCH: "<n> <reps>", a decimal n (0: grow n from 1 until
 //     one call of f takes at least 20 ms) and a decimal repetition count;
 //     each repetition writes "mkbench <n> <nanoseconds>" to standard error.
+//
+// One line goes the other way: ExpectPanic writes "mkexpectpanic <length>
+// <want>" to standard error, and the driver (testing.go's
+// judgeExpectedPanic) passes the child on a panic whose report matches.
 //
 // The loop mutates by bit flips, byte sets, inserts, deletes, splices of
 // another input and dictionary tokens, and is guided by the package's live
@@ -133,6 +137,26 @@ export Bench(f: fn(n: int)) {
         w = Put(mut line[..], w, "\n")
         rt.WriteErr(line[0..w])
     }
+}
+
+/// ExpectPanic makes the test block that calls it pass only if it panics
+/// after the call, and its panic's report line ("panic: assert at
+/// main.mk:4:5") contains want; an empty want matches every panic. The
+/// test then fails if its body returns, and a panic before the call fails
+/// it as any panic does. The last call wins. It writes the line
+/// "mkexpectpanic <length of want> <want>" to standard error, from which
+/// `mk test` judges the child; anywhere else, it writes only that line.
+/// A want with a line break never matches.
+///
+/// Allocates nothing; O(want).
+export ExpectPanic(want: str) {
+    var line: [48]u8 = [0; 48]
+    var w := Put(mut line[..], 0, "mkexpectpanic ")
+    w = PutInt(mut line[..], w, Trunc[i64](want.Len()))
+    w = Put(mut line[..], w, " ")
+    rt.WriteErr(line[0..w])
+    rt.WriteErr(want.AsBytes())
+    rt.WriteErr("\n".AsBytes())
 }
 
 // Time is the nanoseconds one call f(n) takes on the monotonic clock.
