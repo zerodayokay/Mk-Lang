@@ -63,7 +63,7 @@ The cookbook shows a whole file hashed through one fixed buffer: [Hash a file in
 
 Every function in `std.hash` is total: it cannot fail and never panics. None allocates; states live wherever you put them, usually on the stack.
 
-- Every hash is O(n) in its input. `Sum` costs one or two block compressions for the SHA states, O(1) for `Crc32State`, `Xx64State` and `Sip13State` (its four final rounds), and one compression per level of its stack for `Blake3State`.
+- Every hash is O(n) in its input. `Sum` costs one or two block compressions for the SHA states, O(1) for `Crc32State`, `Xx64State` and `Sip13State` (one round for the last word, then the three final rounds), and one compression per level of its stack for `Blake3State`.
 - `Blake3State` holds a stack of up to 54 chaining values (1,728 bytes), enough for 2^64 bytes of input. `Blake3` builds no state, so a short input does not pay for that stack.
 - `Xx` takes one of five fixed paths for inputs of up to 240 bytes and reads longer inputs in 64-byte stripes. It is small enough to inline.
 
@@ -511,8 +511,8 @@ export Sip13State.Sum(self): u64
 ```
 
 Returns SipHash-1-3 of everything absorbed under the state's key; the
-state can keep absorbing. O(1): the last word and the four final
-rounds. It allocates nothing.
+state can keep absorbing. O(1): one round for the last word, then the
+three final rounds. It allocates nothing.
 
 ### `Xx`
 

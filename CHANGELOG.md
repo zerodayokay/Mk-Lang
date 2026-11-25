@@ -6,7 +6,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Standard library
 
-- `hash.Sip13State` is SipHash-1-3 over input that arrives in pieces: `Sip13State.New(key)`, then `Bytes(data)` any number of times, then `Sum()`. Any split gives `hash.Sip13` of the concatenation. Like the other hash states it is not zero-valid, so `Arena.Slice[hash.Sip13State]` is E0701.
+- `hash.Sip13State` is SipHash-1-3 over input that arrives in pieces: `Sip13State.New(key)`, then `Bytes(data)` any number of times, then `Sum()`. Any split gives `hash.Sip13` of the concatenation. Like `Xx64State` and the SHA and BLAKE3 states it is not zero-valid, so `Arena.Slice[hash.Sip13State]` is E0701.
 
 ## 0.6.0 (2026-11-24)
 

@@ -99,8 +99,8 @@ export Sip13State.Bytes(mut self, data: []u8) {
 }
 
 /// Returns SipHash-1-3 of everything absorbed under the state's key; the
-/// state can keep absorbing. O(1): the last word and the four final
-/// rounds. It allocates nothing.
+/// state can keep absorbing. O(1): one round for the last word, then the
+/// three final rounds. It allocates nothing.
 export Sip13State.Sum(self): u64 {
     return SipFinish(self.v0, self.v1, self.v2, self.v3, ((self.total & 0xFF) << 56) | self.tail)
 }
