@@ -21,30 +21,32 @@
 const ToomWords: int = 300
 
 // MulEq sets z = x * y for x.Len() = y.Len() = n and z.Len() = 2n, with t,
-// EqScratch(n) words, as scratch: Toom-3 from ToomWords words, Karatsuba
-// (or the schoolbook product) below.
-MulEq(z: mut []u64, x: []u64, y: []u64, t: mut []u64) {
-    if x.Len() >= ToomWords {
-        Toom3(z, x, y, t)
+// EqScratch(n, depth) words, as scratch: Toom-3 from ToomWords words,
+// Karatsuba (or the schoolbook product) below; at depth 0, the schoolbook
+// product.
+MulEq(z: mut []u64, x: []u64, y: []u64, t: mut []u64, depth: u8) {
+    if x.Len() >= ToomWords && depth > 0 {
+        Toom3(z, x, y, t, depth - 1)
         return
     }
-    Karatsuba(z, x, y, t)
+    Karatsuba(z, x, y, t, depth)
 }
 
-// EqScratch is the scratch MulEq needs for two n-word operands.
-EqScratch(n: int): int {
-    if n < ToomWords {
-        return KaraScratch(n)
+// EqScratch is the scratch MulEq needs for two n-word operands at depth.
+EqScratch(n: int, depth: u8): int {
+    if n < ToomWords || depth == 0 {
+        return KaraScratch(n, depth)
     }
+    d := depth - 1
     k := (n + 2) / 3
     r := n - 2 * k
     p := k + 1
-    var inner := EqScratch(p)
-    sk := EqScratch(k)
+    var inner := EqScratch(p, d)
+    sk := EqScratch(k, d)
     if sk > inner {
         inner = sk
     }
-    sr := EqScratch(r)
+    sr := EqScratch(r, d)
     if sr > inner {
         inner = sr
     }
@@ -135,8 +137,9 @@ ToomEval(e1: mut []u64, em1: mut []u64, em2: mut []u64, x0: []u64, x1: []u64, x2
 }
 
 // Toom3 sets z = x * y for x.Len() = y.Len() = n >= ToomWords and z.Len()
-// = 2n, with t, EqScratch(n) words, as scratch.
-Toom3(z: mut []u64, x: []u64, y: []u64, t: mut []u64) {
+// = 2n, with t, EqScratch(n, depth + 1) words, as scratch; its five
+// products are MulEq's at depth.
+Toom3(z: mut []u64, x: []u64, y: []u64, t: mut []u64, depth: u8) {
     n := x.Len()
     k := (n + 2) / 3
     p := k + 1
@@ -153,17 +156,17 @@ Toom3(z: mut []u64, x: []u64, y: []u64, t: mut []u64) {
     sx := ToomEval(mut ex1[..], mut exm1[..], mut exm2[..], x[..k], x[k..2 * k], x[2 * k..])
     sy := ToomEval(mut ey1[..], mut eym1[..], mut eym2[..], y[..k], y[k..2 * k], y[2 * k..])
     // a = r(1), b = r(-1), c = r(-2); r(0) and r(inf) go straight to z.
-    MulEq(mut a[..], ex1[..], ey1[..], mut rest[..])
-    MulEq(mut b[..], exm1[..], eym1[..], mut rest[..])
+    MulEq(mut a[..], ex1[..], ey1[..], mut rest[..], depth)
+    MulEq(mut b[..], exm1[..], eym1[..], mut rest[..], depth)
     if sx.n1 != sy.n1 {
         NegTC(mut b[..])
     }
-    MulEq(mut c[..], exm2[..], eym2[..], mut rest[..])
+    MulEq(mut c[..], exm2[..], eym2[..], mut rest[..], depth)
     if sx.n2 != sy.n2 {
         NegTC(mut c[..])
     }
-    MulEq(mut z[..2 * k], x[..k], y[..k], mut rest[..])
-    MulEq(mut z[4 * k..], x[2 * k..], y[2 * k..], mut rest[..])
+    MulEq(mut z[..2 * k], x[..k], y[..k], mut rest[..], depth)
+    MulEq(mut z[4 * k..], x[2 * k..], y[2 * k..], mut rest[..], depth)
     ToomInterp(z, mut a[..], mut b[..], mut c[..], k)
 }
 

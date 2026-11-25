@@ -4,8 +4,14 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
+### Tools
+
+- `mk query stack` bounds a recursion whose depth parameter (a `u8` or `u16` parameter that every call inside the recursion passes on unchanged or less a positive constant, lowered around every cycle) bounds it, counting it as at most (max + 1) frames per function, and lists it as `depth-bounded recursion`; any other recursion still answers `no static bound` ([tools](doc/tools.md#52-depth-bounded-recursion)).
+- `mk query stack` answers `no static bound` when its walk stops at 20,000 functions; it answered `bounded` without seeing the functions past the stop, so a recursion there went unreported.
+
 ### Standard library
 
+- `std.big`'s recursions (Karatsuba and Toom-3 products and squares and their scratch sizing, recursive division, `Text`, `Parse` and `Sqrt`) take a `u8` depth, and the operand swaps of addition and of unbalanced products no longer call themselves, so `mk query stack` gives every `std.big` operation a static bound.
 - `List[T].Resize(n, x)` makes a list's length `n`, keeping the first `n` elements and appending copies of a plain `x` (`E0701` for any other `T`), growing at most once. A body generic in a plain `T` can fill a list with one value through it; there a loop of `Push(x)` is `E0604`, since the second `Push` stores `x` through the copies already in the list.
 
 ## 0.6.0 (2026-11-24)

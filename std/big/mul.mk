@@ -41,14 +41,14 @@ MulBasic(z: mut []u64, x: []u64, y: []u64) {
 }
 
 // KaraScratch is the number of scratch words Karatsuba needs for two
-// n-word operands: 4 ceil(n / 2) at this level beside the recursion's,
-// and at least 6 ceil(n / 2) + 1 for the middle sum.
-KaraScratch(n: int): int {
-    if n < KaratsubaWords {
+// n-word operands at depth: 4 ceil(n / 2) at this level beside the
+// recursion's, and at least 6 ceil(n / 2) + 1 for the middle sum.
+KaraScratch(n: int, depth: u8): int {
+    if n < KaratsubaWords || depth == 0 {
         return 0
     }
     m := (n + 1) / 2
-    inner := 4 * m + KaraScratch(m)
+    inner := 4 * m + KaraScratch(m, depth - 1)
     return if inner > 6 * m + 1 { inner } else { 6 * m + 1 }
 }
 
@@ -101,22 +101,24 @@ AddPad(z: mut []u64, x: []u64, y: []u64): u64 {
 }
 
 // Karatsuba sets z = x * y for x.Len() = y.Len() = n and z.Len() = 2n,
-// using t, KaraScratch(n) words, as scratch.
-Karatsuba(z: mut []u64, x: []u64, y: []u64, t: mut []u64) {
+// using t, KaraScratch(n, depth) words, as scratch; at depth 0 it takes the
+// schoolbook product.
+Karatsuba(z: mut []u64, x: []u64, y: []u64, t: mut []u64, depth: u8) {
     n := x.Len()
-    if n < KaratsubaWords {
+    if n < KaratsubaWords || depth == 0 {
         MulBasic(z, x, y)
         return
     }
     m := (n + 1) / 2
     h := n - m
+    d := depth - 1
     // z0 = x0 y0 in z[..2m], z2 = x1 y1 in z[2m..].
-    Karatsuba(mut z[..2 * m], x[..m], y[..m], mut t[..])
-    Karatsuba(mut z[2 * m..], x[m..], y[m..], mut t[..])
+    Karatsuba(mut z[..2 * m], x[..m], y[..m], mut t[..], d)
+    Karatsuba(mut z[2 * m..], x[m..], y[m..], mut t[..], d)
     // p = (x0 - x1)(y1 - y0), its sign the product of the two differences'.
     xneg := AbsDiff(mut t[..m], x[..m], x[m..])
     yneg := AbsDiff(mut t[m..2 * m], y[m..], y[..m])
-    KaraMiddle(t, m)
+    KaraMiddle(t, m, d)
     // w = z0 + z2 + p (p subtracted when the signs differ), then z += w B^m.
     (left: lo, right: hi) := t.SplitAt(4 * m)
     w := mut hi[..2 * m + 1]
@@ -129,64 +131,98 @@ Karatsuba(z: mut []u64, x: []u64, y: []u64, t: mut []u64) {
     _ = AddTo(mut z[m..], Norm(w[..]))
 }
 
-// KaraMiddle sets t[2m..4m] = t[..m] * t[m..2m], with t[4m..] as scratch.
-KaraMiddle(t: mut []u64, m: int) {
+// KaraMiddle sets t[2m..4m] = t[..m] * t[m..2m], with t[4m..] as scratch,
+// by Karatsuba at depth.
+KaraMiddle(t: mut []u64, m: int, depth: u8) {
     (left: dx, right: rest) := t.SplitAt(m)
     (left: dy, right: rest2) := rest.SplitAt(m)
     (left: p, right: more) := rest2.SplitAt(2 * m)
-    Karatsuba(p, dx[..], dy[..], more)
+    Karatsuba(p, dx[..], dy[..], more, depth)
 }
 
 // MulNat sets z = x * y, z.Len() = x.Len() + y.Len(), with scratch t of
 // MulScratch(x.Len(), y.Len()) words.
+//
+// Operands of unequal lengths n > k are cut into pieces of k words, each
+// multiplied by the shorter operand and added into z at its offset; the
+// last piece, shorter than k, then takes the shorter operand's role, as in
+// Euclid's algorithm on the two lengths. Each round's products sit in t
+// after the round before's, and its leftover product is added straight
+// into z at the offset where it belongs.
 MulNat(z: mut []u64, x: []u64, y: []u64, t: mut []u64) {
-    if x.Len() < y.Len() {
-        MulNat(z, y, x, t)
+    // a is the longer operand, b the shorter.
+    var a := if x.Len() < y.Len() { y } else { x }
+    var b := if x.Len() < y.Len() { x } else { y }
+    if b.Len() < KaratsubaWords {
+        MulBasic(z, a, b)
         return
     }
-    n := x.Len()
-    k := y.Len()
-    if k < KaratsubaWords {
-        MulBasic(z, x, y)
+    if a.Len() == b.Len() {
+        MulEq(z, a, b, t, DepthLimit)
         return
     }
-    if n == k {
-        MulEq(z, x, y, t)
-        return
-    }
-    // Pieces of x of k words, each times y by Karatsuba, added in at their
-    // offsets; the last piece, shorter, by MulNat with the roles swapped.
     Clear(z)
-    (left: prod, right: kt) := t.SplitAt(2 * k)
-    var i := 0
-    for i + k <= n {
-        MulEq(mut prod[..], x[i..i + k], y, mut kt[..])
-        _ = AddTo(mut z[i..], prod[..])
-        i += k
-    }
-    if i < n {
-        rest := n - i
-        Clear(mut prod[..])
-        MulNat(mut prod[..rest + k], y, x[i..], mut kt[..])
-        _ = AddTo(mut z[i..], prod[..rest + k])
+    var off := 0  // a * b is added into z at off
+    var at := 0   // this round's scratch is t[at..]
+    var last := 0 // the round before's 2k-word product is t[last..at]
+    for {
+        n := a.Len()
+        k := b.Len()
+        if k < KaratsubaWords {
+            // n + k <= 2 (the round before's k): its product's words.
+            p := mut t[last..last + n + k]
+            MulBasic(p, a, b)
+            _ = AddTo(mut z[off..], p[..])
+            return
+        }
+        (left: prod, right: kt) := (mut t[at..]).SplitAt(2 * k)
+        var i := 0
+        for i + k <= n {
+            MulEq(mut prod[..], a[i..i + k], b, mut kt[..], DepthLimit)
+            _ = AddTo(mut z[off + i..], prod[..])
+            i += k
+        }
+        if i == n {
+            return
+        }
+        // The rest a[i..], shorter than b, times b, at off + i.
+        rest := a[i..]
+        a = b
+        b = rest
+        off += i
+        last = at
+        at += 2 * k
     }
 }
 
-// MulScratch is the scratch MulNat needs for operands of n and k words.
+// MulScratch is the scratch MulNat needs for operands of n and k words:
+// over MulNat's rounds, the most that a round's 2k-word product, after the
+// rounds before's, and its products' scratch need.
 MulScratch(n: int, k: int): int {
-    small := if n < k { n } else { k }
-    if small < KaratsubaWords {
+    var a := if n < k { k } else { n }
+    var b := if n < k { n } else { k }
+    if b < KaratsubaWords {
         return 0
     }
-    if n == k {
-        return EqScratch(n)
+    if a == b {
+        return EqScratch(a, DepthLimit)
     }
-    big := if n < k { k } else { n }
-    rest := big % small
-    tail := if rest == 0 { 0 } else { MulScratch(small, rest) }
-    kara := EqScratch(small)
-    inner := if kara > tail { kara } else { tail }
-    return 2 * small + inner
+    var at := 0
+    var most := 0
+    for b >= KaratsubaWords {
+        need := at + 2 * b + EqScratch(b, DepthLimit)
+        if need > most {
+            most = need
+        }
+        rest := a % b
+        if rest == 0 {
+            break
+        }
+        at += 2 * b
+        a = b
+        b = rest
+    }
+    return most
 }
 
 // MulMag is x * y for magnitudes, in a, normalized, with its scratch in a:
@@ -195,8 +231,8 @@ MulScratch(n: int, k: int): int {
 MulMag(a: &Arena, x: []u64, y: []u64): OutOfMemory![]u64 from a {
     z := try a.Slice[u64](x.Len() + y.Len())
     if x.Len() == y.Len() && CmpVV(x, y) == 0 {
-        t := try a.Slice[u64](SqrScratch(x.Len()))
-        SqrEq(mut z[..], x, mut t[..])
+        t := try a.Slice[u64](SqrScratch(x.Len(), DepthLimit))
+        SqrEq(mut z[..], x, mut t[..], DepthLimit)
         return Norm(z[..])
     }
     t := try a.Slice[u64](MulScratch(x.Len(), y.Len()))

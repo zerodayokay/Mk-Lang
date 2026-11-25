@@ -468,7 +468,7 @@ When the package checks clean, a last round drops the empty `()` argument of eac
 | `errors F` | The error set, with reasons |
 | `callers F` | Direct callers |
 | `allocs F` | A path to an allocator, or none |
-| `stack F` | The stack bound, or the recursion that prevents one |
+| `stack F` | The stack bound in calls, or the recursion that prevents one. A recursion whose depth parameter falls around every cycle counts at its bound ([section 5.2](#52-depth-bounded-recursion)) |
 | `panics F` | Every panic site reachable from `F` through direct calls, with its code and the call path to it |
 | `uses` | Every standard library item the package references, with its sites. Never capped |
 | `perimeter` | Per package of the build: its local names, source and version, and its unsafe code, C and assembly ([the packages guide](packages.md#11-grants-for-unsafe-code)). Never capped |
@@ -534,6 +534,39 @@ Without `--json`, the listing is a header line, then one line per site: `kind  f
 | 0 | The listing was printed |
 | 1 | The member has errors, printed on stderr. The listing is still printed when the member checks as far as types |
 | 2 | An unknown member, which the message names among the members; or `--member` given with any other query |
+
+### 5.2 Depth-bounded recursion
+
+`stack F` gives a bound in calls: the deepest chain of direct calls from `F`. A recursion has no such bound by itself, so `stack` names it and stops, unless a depth parameter bounds it. Divide and conquer (a Karatsuba product, a recursive division, a parser's nesting) then states its bound like this:
+
+```mk
+// verdict: ok
+// Sum adds xs by halves. depth falls by one per level, and at 0 the loop
+// finishes, so the recursion is never deeper than depth.
+Sum(xs: []i64, depth: u8): i64 {
+    if xs.Len() <= 8 || depth == 0 {
+        var s: i64 = 0
+        for x in xs {
+            s += x
+        }
+        return s
+    }
+    h := xs.Len() / 2
+    return Sum(xs[..h], depth - 1) + Sum(xs[h..], depth - 1)
+}
+
+export Total(xs: []i64): i64 {
+    return Sum(xs, 64)
+}
+```
+
+`mk query stack Total` answers `bounded` with a deepest chain of 257 frames: `Total`, then `Sum` at most 256 deep. The rule, for each recursion (a set of functions that call each other directly):
+
+- Each function in it has a parameter of type `u8` or `u16`, its depth, the same type in all of them, that the body never assigns or lends as `mut`. Its position and name may differ from function to function.
+- Every call inside the recursion passes the caller's depth, either as it is or less a positive constant: `depth`, `depth - 1`, or a local bound once to one of these. `-` traps below zero, so the depth never wraps; `-%` does not count.
+- The calls that pass the depth unchanged form no cycle, so every cycle lowers it.
+
+Such a recursion of n functions counts as at most (max + 1) n frames, max being 255 for `u8` and 65,535 for `u16`, whatever depth its callers pass, and `stack` lists each one as `depth-bounded recursion`. A recursion that breaks the rule is reported as before, with the cycle that prevents a bound. A walk that stops at 20,000 functions gives no bound either. Frames are counted, not bytes: a frame's size is known only after code generation.
 
 ## 6. API diff
 
