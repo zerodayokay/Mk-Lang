@@ -63,6 +63,7 @@ An `Arena` hands out memory that is freed all at once. It is a linear bump alloc
 | `Arena.New(h)` | An arena over the heap |
 | `Arena.NewIn(a)` | An arena whose chunks come from the allocator `a` and go back to it, so a budget bounds it ([a budget for an arena](mem.md#a-budget-for-an-arena)) |
 | `a.Sub()` | A child arena for scratch memory, freed before its parent |
+| `Arena.NewIn(a.Alloc())` | A frame: a child arena whose chunks come from `a` itself and go back to it when it ends, last in first out ([a frame per call](#a-frame-per-call)) |
 | `a.Put(x)` | Moves `x` into the arena and returns it `mut`; on `OutOfMemory` the caller keeps `x` |
 | `a.Slice[T](n)` | `n` zeroed elements of a zero-valid `T` (E0701 otherwise); a negative `n` panics (code 8) |
 | `a.SliceAligned[T](n, align)` | The same, with the first element at a multiple of `align` bytes, or of `T`'s alignment when that is larger |
@@ -73,6 +74,7 @@ An `Arena` hands out memory that is freed all at once. It is a linear bump alloc
 
 - `SliceAligned`'s `align` is a power of two from 1 to 65,536, else it panics (code 8). A slice made at compile time becomes static data aligned to `T`'s alignment only, so there an `align` over `T`'s is E0901. A static table that must be aligned has an `align(n)` element type, `n` up to 65,536, which static data keeps on every profile.
 - `Reset` keeps the first chunk, the current one and the current aligned one, and the next chunk size stays as it was. So a loop that resets its arena each turn settles. It takes nothing more from the heap when each request is at most 512 KiB and one turn fits in the current chunk (up to 1 MiB). Otherwise chunks go and come every turn.
+- A frame, `Arena.NewIn(a.Alloc())`, rewinds `a` when it ends: its chunks are blocks of `a`, freed newest first, and `a.Alloc()` gives back the last block it bumped and a chunk of its own while it is `a`'s newest. Frames nest as calls do, and each holds a loan on `a`, so `a` is not reset or freed while one lives. Once warm they take nothing more from the heap while the frames live at once fit in `a`'s current chunk (each takes at least 4 KiB of it, and `a`'s chunks grow to 1 MiB); a request too large for `a`'s chunks takes a chunk of its own from the heap and gives it back. A frame is not given back when `a` moved to a new chunk under it, or when it ends while a later block of `a` in the same chunk lives (a small value taken from `a` while the frame lived, or a newer frame's chunk): those bytes stay in `a` until its `Reset` or `Free`. So a call that takes a small value from `a` while its frame lives keeps 4 KiB or more of `a` on every call, and frames nested deeper than one chunk of `a` holds, about 250 of them, keep one more chunk of `a` on every round; there a `Sub` per call, which takes its first chunk from the heap, stays bounded.
 
 ### The heap and Alloc
 
@@ -1223,6 +1225,58 @@ kept for the whole run, 42, longest label 10
 - `Reset` keeps the chunks this loop uses, so the loop settles and stops taking memory from the heap.
 - A server does the same with one arena per request: see [Use one arena per request](../cookbook.md#use-one-arena-per-request).
 
+### A frame per call
+
+Calls that nest, each needing scratch memory for its own duration, share one arena through frames: each call takes `Arena.NewIn(scratch.Alloc())` and frees it when it returns. A `Sub` would take its first chunk from the heap on every call; a frame takes its chunks from the shared arena and gives them back, last in first out.
+
+```mk
+// verdict: ok
+// Digits writes n in base 10 into a frame of the shared scratch arena, and
+// Sum calls itself through it: each call's frame ends before its caller's.
+Digits(scratch: &Arena, n: int): OutOfMemory!int {
+    var frame := try Arena.NewIn(scratch.Alloc())
+    defer frame.Free()
+    s := try frame.Fmt("{n}", (n,))
+    return s.Len()
+}
+
+Sum(scratch: &Arena, depth: int): OutOfMemory!int {
+    var frame := try Arena.NewIn(scratch.Alloc())
+    defer frame.Free()
+    xs := try frame.Slice[int](depth + 1)
+    for i in 0..xs.Len() {
+        xs[i] = i
+    }
+    var total := try Digits(&frame, depth * 1000)
+    if depth > 0 {
+        total += try Sum(scratch, depth - 1)
+    }
+    for x in xs {
+        total += x
+    }
+    return total
+}
+
+export Main(sys: &System): OutOfMemory|WriteError!void {
+    var scratch := try Arena.New(sys.heap)
+    defer scratch.Free()
+    for _ in 0..3 {
+        n := try Sum(&scratch, 3)
+        try sys.Print("{n}\n", (n,))
+    }
+}
+```
+
+```text
+$ mk run frames.mk
+23
+23
+23
+```
+
+- Every call's frame is freed before its caller's. Once the shared arena's chunks hold the deepest call's frames, after the first turn here, each `Sum` leaves it where it found it, and the loop makes no heap call.
+- A frame is an `Arena`: a function that takes `&Arena` takes `&frame`.
+
 ## API
 
 Generated from the module's doc comments by `mk doc --std std.core` ([reading the API](README.md#reading-an-api-section)).
@@ -1299,7 +1353,10 @@ export Arena.Alloc(&self): &Alloc
 - Flows: The result borrows from self.
 
 The arena as an Alloc, the same one on every call, for containers that
-take a &Alloc and should live in the arena. O(1).
+take a &Alloc and should live in the arena. O(1). Its free gives back
+the last block bumped, or a block that has a chunk of its own while
+that chunk is the arena's newest; any other block stays until Reset or
+Free.
 
 ### `Arena.Dup`
 
@@ -1373,6 +1430,20 @@ mem.Fixed frees only its last block, so it gets bytes back only for
 chunks freed in last-in first-out order: an arena that served a value
 aligned over 8, or a Sub freed before its parent's later chunks, leaves
 part of the Fixed used until Fixed.Reset.
+
+Arena.NewIn(p.Alloc()) is a frame of the arena p: scratch memory for
+one call, freed before p's later allocations. Its chunks are blocks of
+p, at least FirstChunk (4 KiB) each, and Free gives them back newest
+first, so p is back where it was. Nested frames whose chunks fit in p's
+current chunk (p's chunks grow to 1 MiB) take nothing more from p's
+source once warm; a request too large for p's chunks takes a chunk of
+its own from the source and gives it back. p keeps a frame's bytes until
+its Reset or Free when p started a new chunk while the frame lived, or
+when the frame ends while a later block of p in the same chunk lives: a
+value p gave there while the frame lived, or a newer frame's chunk. So a
+call that takes a small value from p while its frame lives keeps 4 KiB
+or more of p on every call, and frames nested deeper than one chunk of
+p holds keep one more chunk on every round: Sub suits those.
 
 ### `Arena.Put`
 
@@ -1457,7 +1528,10 @@ A new, independent arena on the same chunk source, as Arena.New or
 Arena.NewIn would make; it holds a loan on self, so it ends before self
 does. Use it for scratch memory that is freed before the parent's.
 OutOfMemory when the source refuses the first chunk. O(1): one
-allocation from the source, the first chunk.
+allocation from the source, the first chunk. Scratch for each of many
+calls is cheaper as a frame, Arena.NewIn(self.Alloc()), whose chunks
+come from self, while the frames live at once fit in one chunk of self
+(see NewIn).
 
 ### `Block`
 

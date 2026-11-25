@@ -198,8 +198,9 @@ const MemLife = [0; 1][ArenaCounted()]
 // Arena.Alloc() at compile time: a negative size, a zero alignment, an
 // alignment that is not a power of two and one over 8 are null (the
 // table's failure value), never a panic; resize grows and shrinks the last
-// block in place and refuses any other; free gives back the last block only
-// (a LIFO pair unwinds in turn) and ignores a wrong size, null or another block.
+// block in place and refuses any other; free gives back the last block of
+// the current chunk only (a LIFO pair unwinds in turn) and ignores a wrong
+// size, null or another block.
 func TestArenaAllocTableEdges(t *testing.T) {
 	t.Parallel()
 	expectClean(t, "mem_table", countingHeap+`

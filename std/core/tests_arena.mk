@@ -754,3 +754,1020 @@ test "the block after a large Slice does not overlap it, on every line path" (sy
     big := try plain.Slice[u8](16384)
     Assert(TaOff(raw.Data(big[..]), 64) == 16)
 }
+
+// A frame: an arena on another arena's Alloc(), taken and freed per call,
+// nested as calls nest. Its chunks come from the arena under it and go back
+// last-in first-out, so a call gives back what it took and nothing else.
+// TaFrame takes a frame, fills small, large and align(4096) slices, nests
+// depth more frames, and checks its own bytes after the inner ones are gone.
+// Its aligned slice is two pages, or big's bytes when big is over half of
+// MaxChunk: four frames' aligned chunks then fit in one current aligned
+// chunk of the arena under them, or take chunks of their own there.
+TaFrame(under: &Arena, depth: int, big: int): OutOfMemory!void {
+    var f := try Arena.NewIn(under.Alloc())
+    defer f.Free()
+    small := try f.Slice[u8](100)
+    large := try f.Slice[u8](big)
+    var np := 2
+    if big > MaxChunk / 2 {
+        np = big / 4096 + 1
+    }
+    pages := try f.Slice[TaPage](np)
+    for i in 0..small.Len() {
+        small[i] = 0x11
+    }
+    for i in 0..large.Len() {
+        large[i] = 0x22
+    }
+    pages[pages.Len() - 1].a = 0x33
+    Assert(TaOff(raw.Of(&pages[0]), 4096) == 0)
+    if depth > 0 {
+        try TaFrame(under, depth - 1, big)
+    }
+    _ = try f.Dup("after the inner frames")
+    Assert(TaFillCheck(small[..], 0x11, large, 0x22) && pages[pages.Len() - 1].a == 0x33)
+}
+
+// Frames whose large requests take chunks of their own in the arena under
+// them (600,000 bytes, over half of MaxChunk, and as many align(4096)
+// bytes), nested three deep: once warm, the heap blocks live and the
+// arena under the frames stay the same from round to round (a request that
+// size takes its chunk from the heap and returns it on every round).
+test "frames on an arena's Alloc give their chunks back, large ones included" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    keep := try root.Put(TaPair(a: 1, b: 2))
+    for big in [3_000, 100_000, 600_000] {
+        var live := 0
+        var held := 0
+        for round in 0..12 {
+            try TaFrame(&root, 3, big)
+            if round == 3 {
+                live = TaAllocs(cp)
+                held = ArenaHeld(&root)
+            }
+        }
+        Assert(TaAllocs(cp) == live && ArenaHeld(&root) == held)
+    }
+    Assert(keep.a == 1 && keep.b == 2)
+}
+
+// Frames freed out of order, each with a request over MaxChunk, which takes
+// a chunk of its own in the arena under them: the older one's is not the newest,
+// so it stays in the arena under them, and the newer frame's bytes are
+// untouched; freeing the newer one then returns its two large chunks (one
+// ordinary, one align(4096)), the newest. Free of the root returns the
+// rest (the counting heap's leak check).
+test "a frame freed before a newer one leaves the newer one's bytes alone" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    var older := try Arena.NewIn(root.Alloc())
+    a := older.Slice[u8](1_100_000) else {
+        raw.Fail(8, "out of memory")
+    }
+    var newer := Arena.NewIn(root.Alloc()) else {
+        raw.Fail(8, "out of memory")
+    }
+    b := newer.Slice[u8](1_100_000) else {
+        raw.Fail(8, "out of memory")
+    }
+    p := newer.Slice[TaPage](150) else {
+        raw.Fail(8, "out of memory")
+    }
+    for i in 0..b.Len() {
+        b[i] = 0x44
+    }
+    p[149].a = 7
+    a[0] = 1
+    live := TaAllocs(cp)
+    older.Free()
+    Assert(TaAllocs(cp) == live)
+    var ok := true
+    for i in 0..b.Len() {
+        ok = ok && b[i] == 0x44
+    }
+    Assert(ok && p[149].a == 7)
+    newer.Free()
+    Assert(TaAllocs(cp) == live - 2)
+}
+
+// A frame's aligned chunk is a 4096-aligned block of the current aligned
+// chunk under it. Here that block fills the root's 8 KiB aligned chunk to
+// its end, above a slice of the root's at 32, and the root starts a new
+// aligned chunk while the frame lives: the old one is right below the
+// current aligned chunk, with an own chunk's shift, size and offset for
+// the frame's block. Freeing the frame gives back its block only; the
+// chunk stays with the slice in it.
+test "a frame's aligned block that fills an aligned chunk under it leaves that chunk" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    first := try root.Put(TaLine(a: 1))
+    s := try root.SliceAligned[u8](4050, 16)
+    for i in 0..s.Len() {
+        s[i] = 0x5a
+    }
+    var f := try Arena.NewIn(root.Alloc())
+    inner := f.Put(TaLine(a: 2)) else {
+        raw.Fail(8, "out of memory")
+    }
+    next := root.Put(TaLine(a: 3)) else {
+        raw.Fail(8, "out of memory")
+    }
+    Assert(inner.a == 2)
+    live := TaAllocs(cp)
+    f.Free()
+    Assert(TaAllocs(cp) == live)
+    var ok := true
+    for x in s {
+        ok = ok && x == 0x5a
+    }
+    Assert(ok && first.a == 1 && next.a == 3)
+}
+
+// A fuzz of FreeOwnChunk, the free that returns a chunk to the source: a
+// chunk returned while a block in it lives is a use after free. The root's
+// source is a ledger that poisons each block it is given back and refuses
+// a free of anything it did not give; every live block's bytes and every
+// header's chunk list are checked after each operation.
+
+// The ledger: each block live at the source, with its size and alignment.
+// A free of anything else counts as bad and is not forwarded; a block freed
+// is filled with 0xDD first, so a chunk returned with a live block in it
+// shows in that block's bytes.
+struct TaFzLedger {
+    inner: *Alloc
+    p: [1024]*u8
+    size: [1024]int
+    align: [1024]int
+    n: int
+    allocs: int
+    frees: int
+    bad: int
+    qp: [64]*u8
+    qsize: [64]int
+    qalign: [64]int
+    qn: int
+}
+
+// TaFzQuit gives the source the oldest quarantined block, or all of them.
+TaFzQuit(l: *TaFzLedger, all: bool) {
+    unsafe "l is the test's live TaFzLedger; its quarantine holds freed blocks" {
+        for (*l).qn > 0 && (all || (*l).qn == 64) {
+            FreeBytes(&*(*l).inner, (*l).qp[0], (*l).qsize[0], (*l).qalign[0])
+            n := (*l).qn - 1
+            for j in 0..n {
+                (*l).qp[j] = (*l).qp[j + 1]
+                (*l).qsize[j] = (*l).qsize[j + 1]
+                (*l).qalign[j] = (*l).qalign[j + 1]
+            }
+            (*l).qn = n
+        }
+    }
+}
+
+// Eight poison bytes read as one word.
+const TaFzPoison = -2459565876494606883
+
+TaFzLAlloc(ctx: *u8, size: int, align: int): *u8 {
+    unsafe "ctx is the test's live TaFzLedger" {
+        l := raw.PtrCast[u8, TaFzLedger](ctx)
+        p := AllocBytes(&*(*l).inner, size, align)
+        if raw.IsNull(p) {
+            return p
+        }
+        if (*l).n == 1024 {
+            (*l).bad += 1000
+            return p
+        }
+        i := (*l).n
+        (*l).p[i] = p
+        (*l).size[i] = size
+        (*l).align[i] = align
+        (*l).n = i + 1
+        (*l).allocs += 1
+        return p
+    }
+}
+
+TaFzLResize(ctx: *u8, p: *u8, old: int, new: int, align: int): bool {
+    return false
+}
+
+TaFzLFree(ctx: *u8, p: *u8, size: int, align: int) {
+    unsafe "ctx is the test's live TaFzLedger" {
+        l := raw.PtrCast[u8, TaFzLedger](ctx)
+        var at := -1
+        for i in 0..(*l).n {
+            if raw.Same((*l).p[i], p) {
+                at = i
+            }
+        }
+        if at < 0 || (*l).size[at] != size || (*l).align[at] != align {
+            (*l).bad += 1
+            return
+        }
+        raw.Fill(p, 0xDD, size)
+        n := (*l).n - 1
+        (*l).p[at] = (*l).p[n]
+        (*l).size[at] = (*l).size[n]
+        (*l).align[at] = (*l).align[n]
+        (*l).n = n
+        (*l).frees += 1
+        // Quarantined, so the poison stays readable until the checks after
+        // this operation; the source gets it 64 frees later.
+        TaFzQuit(l, false)
+        q := (*l).qn
+        (*l).qp[q] = p
+        (*l).qsize[q] = size
+        (*l).qalign[q] = align
+        (*l).qn = q + 1
+    }
+}
+
+const TaFzLTable = AllocTable(alloc: TaFzLAlloc, resize: TaFzLResize, free: TaFzLFree)
+
+// TaFzHas reports whether the ledger holds p with size bytes at align.
+TaFzHas(l: *TaFzLedger, p: *u8, size: int, align: int): bool {
+    unsafe "l is the test's live TaFzLedger" {
+        for i in 0..(*l).n {
+            if raw.Same((*l).p[i], p) {
+                return (*l).size[i] == size && (*l).align[i] == align
+            }
+        }
+    }
+    return false
+}
+
+// The blocks the fuzz holds: from an arena's Alloc() (typed false), or a
+// typed value of the root's (Put, Slice, SliceAligned), never freed.
+struct TaFzState {
+    p: [160]*u8
+    size: [160]int
+    align: [160]int
+    tag: [160]u8
+    owner: [160]int
+    typed: [160]bool
+    from: [160]*Alloc
+    n: int
+    seed: u64
+    ids: int
+    bad: int
+    ops: int
+    frees: int
+    rets: int
+    arets: int
+    ledger: *TaFzLedger
+}
+
+TaFzRand(sp: *TaFzState, n: int): int {
+    unsafe "sp is the test's live state" {
+        s := (*sp).seed *% 6364136223846793005 +% 1442695040888963407
+        (*sp).seed = s
+        return Trunc[int](s >> 33) % n
+    }
+}
+
+TaFzBad(sp: *TaFzState, why: int) {
+    unsafe "sp is the test's live state" {
+        if (*sp).bad == 0 {
+            (*sp).bad = why
+        }
+    }
+}
+
+TaFzOk(sp: *TaFzState): bool {
+    unsafe "sp is the test's live state" {
+        return (*sp).bad == 0
+    }
+}
+
+// TaFzCheck samples every held block: its first and last byte and every
+// 509th must still be its tag.
+TaFzCheck(sp: *TaFzState) {
+    if !TaFzOk(sp) {
+        return
+    }
+    unsafe "sp is the test's live state; its blocks are live" {
+        for i in 0..(*sp).n {
+            p := (*sp).p[i]
+            n := (*sp).size[i]
+            t := (*sp).tag[i]
+            var j := 0
+            for j < n {
+                if raw.Read(raw.Offset(p, j)) != t {
+                    TaFzBad(sp, 10)
+                }
+                j += 509
+            }
+            if n > 0 && raw.Read(raw.Offset(p, n - 1)) != t {
+                TaFzBad(sp, 11)
+            }
+        }
+    }
+}
+
+// TaFzHdr checks an arena's chunk list: CurBit only on the head, never
+// with OwnBit; OwnBit only on an aligned chunk; an ordinary chunk's top
+// byte 0; the last chunk the first (the header right after its record);
+// the current free bytes in one listed chunk; and, for the root, every
+// chunk a live ledger block of its size and alignment.
+TaFzHdr(sp: *TaFzState, a: &Arena, root: bool) {
+    if !TaFzOk(sp) {
+        return
+    }
+    unsafe "a's header is live" {
+        h := a.hdr
+        var c := (*h).chunks
+        var k := 0
+        var base := false
+        for !raw.IsNull(c) {
+            k += 1
+            if k > 100000 {
+                TaFzBad(sp, 20)
+                return
+            }
+            sz := (*c).size
+            // A chunk record the ledger poisoned: a chunk of the arena
+            // under this one was returned with this one's chunk in it.
+            if sz == TaFzPoison || raw.Read(raw.PtrCast[Chunk, int](c)) == TaFzPoison {
+                TaFzBad(sp, 28)
+                return
+            }
+            sh := ChunkShift(c)
+            if (sz & CurBit) != 0 && (k != 1 || (sz & OwnBit) != 0 || sh == 0) {
+                TaFzBad(sp, 21)
+            }
+            if (sz & OwnBit) != 0 && sh == 0 {
+                TaFzBad(sp, 22)
+            }
+            if sh == 0 && (sz >> ShiftAt) != 0 {
+                TaFzBad(sp, 23)
+            }
+            if raw.IsNull((*c).prev) {
+                if !raw.Same(raw.Offset(raw.PtrCast[Chunk, u8](c), SizeOf[Chunk]()), raw.PtrCast[ArenaHdr, u8](h)) {
+                    TaFzBad(sp, 24)
+                }
+            }
+            if sh == 0 && IsCurrent(h, c) {
+                base = true
+            }
+            if root {
+                var al := ChunkSrc(h)
+                if sh != 0 {
+                    al = 1 << sh
+                }
+                if !TaFzHas((*sp).ledger, raw.PtrCast[Chunk, u8](c), sz & SizeMask(), al) {
+                    TaFzBad(sp, 25)
+                }
+            }
+            c = (*c).prev
+        }
+        if !base {
+            TaFzBad(sp, 26)
+        }
+        if root && k != (*(*sp).ledger).n {
+            TaFzBad(sp, 27)
+        }
+    }
+}
+
+TaFzAdd(sp: *TaFzState, p: *u8, size: int, align: int, owner: int, typed: bool, from: *Alloc) {
+    unsafe "sp is the test's live state; p a fresh block of size bytes" {
+        i := (*sp).n
+        t := Trunc[u8]((*sp).ops % 200 + 1)
+        raw.Fill(p, t, size)
+        (*sp).p[i] = p
+        (*sp).size[i] = size
+        (*sp).align[i] = align
+        (*sp).tag[i] = t
+        (*sp).owner[i] = owner
+        (*sp).typed[i] = typed
+        (*sp).from[i] = from
+        (*sp).n = i + 1
+    }
+}
+
+// TaFzRemove drops entry i, keeping the order of the rest.
+TaFzRemove(sp: *TaFzState, i: int) {
+    unsafe "sp is the test's live state" {
+        n := (*sp).n - 1
+        for j in i..n {
+            (*sp).p[j] = (*sp).p[j + 1]
+            (*sp).size[j] = (*sp).size[j + 1]
+            (*sp).align[j] = (*sp).align[j + 1]
+            (*sp).tag[j] = (*sp).tag[j + 1]
+            (*sp).owner[j] = (*sp).owner[j + 1]
+            (*sp).typed[j] = (*sp).typed[j + 1]
+            (*sp).from[j] = (*sp).from[j + 1]
+        }
+        (*sp).n = n
+    }
+}
+
+// TaFzDrop forgets the blocks of an arena about to end.
+TaFzDrop(sp: *TaFzState, owner: int) {
+    unsafe "sp is the test's live state" {
+        var i := 0
+        for i < (*sp).n {
+            if (*sp).owner[i] == owner {
+                TaFzRemove(sp, i)
+            } else {
+                i += 1
+            }
+        }
+    }
+}
+
+// TaFzRoom is the room left for a block at align in a's current chunk,
+// or in its current aligned chunk for an align over ChunkAlign: a size that
+// fills it to its end.
+TaFzRoom(a: &Arena, align: int): int {
+    unsafe "a's header is live" {
+        h := a.hdr
+        if align <= ChunkAlign {
+            return (*h).size - AlignUp((*h).used, align)
+        }
+        c := (*h).chunks
+        if !IsAlignedCur(c) || align > (1 << ChunkShift(c)) {
+            return -1
+        }
+        ac := raw.PtrCast[Chunk, AlignedChunk](c)
+        return ((*ac).size & SizeMask()) - AlignUp((*ac).used, align)
+    }
+}
+
+// TaFzAlign: a third at most ChunkAlign, a third from 16 to 65536, and a
+// third the alignment of a's current aligned chunk (an aligned block there
+// can fill it to its end: the shape a returned chunk must not take).
+TaFzAlign(sp: *TaFzState, a: &Arena): int {
+    k := TaFzRand(sp, 3)
+    if k == 0 {
+        return 1 << TaFzRand(sp, 4)
+    }
+    if k == 2 {
+        unsafe "a's header is live" {
+            c := (*a.hdr).chunks
+            if IsAlignedCur(c) {
+                return 1 << ChunkShift(c)
+            }
+        }
+    }
+    return 1 << (4 + TaFzRand(sp, 13))
+}
+
+// TaFzSize: zero, small, medium, a power of two from 4 KiB to 1 MiB, the
+// room left at align (a block to its chunk's end), a little more than that
+// room (a new chunk with little in it), or over 500,000 bytes (a chunk of
+// its own, on either side of the 512 KiB line).
+TaFzSize(sp: *TaFzState, a: &Arena, align: int): int {
+    cls := TaFzRand(sp, 100)
+    if cls < 8 {
+        return 0
+    }
+    if cls < 34 {
+        return TaFzRand(sp, 200)
+    }
+    if cls < 48 {
+        return TaFzRand(sp, 9000)
+    }
+    if cls < 58 {
+        return 4096 << TaFzRand(sp, 9)
+    }
+    r := TaFzRoom(a, align)
+    if cls < 76 {
+        if r >= 0 {
+            return r
+        }
+        return TaFzRand(sp, 5000)
+    }
+    if cls < 90 {
+        if r >= 0 {
+            return r + 1 + TaFzRand(sp, 100)
+        }
+        return TaFzRand(sp, 5000)
+    }
+    return 500000 + TaFzRand(sp, 700000)
+}
+
+// One operation on arena a (id owner): an allocation from its Alloc(), a
+// free of one of its blocks (the last or any), a resize of its last block
+// to its chunk's end, or, on the root, a typed value.
+TaFzOp(sp: *TaFzState, a: &Arena, owner: int, isroot: bool) {
+    if !TaFzOk(sp) {
+        return
+    }
+    op := TaFzRand(sp, 100)
+    unsafe "sp is the test's live state" {
+        (*sp).ops += 1
+        if (*sp).n >= 150 {
+            // Full: free instead.
+            TaFzFreeOne(sp, owner, true)
+            return
+        }
+        if op < 42 {
+            align := TaFzAlign(sp, a)
+            size := TaFzSize(sp, a, align)
+            if size > 1200000 {
+                return
+            }
+            p := AllocBytes(a.Alloc(), size, align)
+            if raw.IsNull(p) {
+                TaFzBad(sp, 30)
+                return
+            }
+            TaFzAdd(sp, p, size, align, owner, false, raw.Of(a.Alloc()))
+            return
+        }
+        if op < 72 {
+            TaFzFreeOne(sp, owner, TaFzRand(sp, 2) == 0)
+            return
+        }
+        if op < 84 {
+            var i := (*sp).n - 1
+            for i >= 0 && ((*sp).owner[i] != owner || (*sp).typed[i]) {
+                i -= 1
+            }
+            if i < 0 {
+                return
+            }
+            old := (*sp).size[i]
+            al := (*sp).align[i]
+            if TaFzRoom(a, al) < 0 {
+                return
+            }
+            // To its chunk's end from the block's end, and one byte either
+            // side: only the last block, the one that ends where the free
+            // bytes start, resizes in place.
+            var room := 0
+            if al <= ChunkAlign {
+                h := a.hdr
+                room = (*h).size - (*h).used
+            } else {
+                ac := raw.PtrCast[Chunk, AlignedChunk]((*a.hdr).chunks)
+                room = ((*ac).size & SizeMask()) - (*ac).used
+            }
+            var new := old + room + TaFzRand(sp, 3) - 1
+            if new < 0 {
+                new = 0
+            }
+            p := (*sp).p[i]
+            if ResizeBytes(a.Alloc(), p, old, new, al) {
+                if new > old {
+                    raw.Fill(raw.Offset(p, old), (*sp).tag[i], new - old)
+                }
+                (*sp).size[i] = new
+            }
+            return
+        }
+        if !isroot {
+            return
+        }
+        TaFzTyped(sp, a, owner)
+    }
+}
+
+// TaFzFreeOne frees a block of owner's: its last one, or any.
+TaFzFreeOne(sp: *TaFzState, owner: int, last: bool) {
+    unsafe "sp is the test's live state" {
+        var cand := 0
+        for i in 0..(*sp).n {
+            if (*sp).owner[i] == owner && !(*sp).typed[i] {
+                cand += 1
+            }
+        }
+        if cand == 0 {
+            return
+        }
+        var pick := cand - 1
+        if !last {
+            pick = TaFzRand(sp, cand)
+        }
+        for i in 0..(*sp).n {
+            if (*sp).owner[i] == owner && !(*sp).typed[i] {
+                if pick == 0 {
+                    l := (*sp).ledger
+                    f0 := (*l).frees
+                    FreeBytes(&*(*sp).from[i], (*sp).p[i], (*sp).size[i], (*sp).align[i])
+                    if (*l).frees > f0 {
+                        (*sp).rets += 1
+                        if (*sp).align[i] > ChunkAlign {
+                            (*sp).arets += 1
+                        }
+                    }
+                    (*sp).frees += 1
+                    TaFzRemove(sp, i)
+                    return
+                }
+                pick -= 1
+            }
+        }
+    }
+}
+
+// A typed value of the root's: an align(64) Put, a SliceAligned at any
+// alignment, or a Slice (a line one on a line arena when 4 KiB or more).
+TaFzTyped(sp: *TaFzState, a: &Arena, owner: int) {
+    k := TaFzRand(sp, 3)
+    if k == 0 {
+        q := a.Put(TaLine(a: 1)) else {
+            TaFzBad(sp, 31)
+            return
+        }
+        unsafe "q lives in the root until its Free" {
+            TaFzAdd(sp, raw.PtrCast[TaLine, u8](raw.OfMut(q)), 64, 64, owner, true, raw.Of(a.Alloc()))
+        }
+        return
+    }
+    if k == 1 {
+        al := 1 << TaFzRand(sp, 17)
+        var n := TaFzRand(sp, 6000)
+        r := TaFzRoom(a, al)
+        if TaFzRand(sp, 2) == 0 && r >= 0 {
+            n = r
+        }
+        s := a.SliceAligned[u8](n, al) else {
+            TaFzBad(sp, 32)
+            return
+        }
+        unsafe "s lives in the root until its Free" {
+            TaFzAdd(sp, raw.DataMut(s), n, al, owner, true, raw.Of(a.Alloc()))
+        }
+        return
+    }
+    n := 4096 + TaFzRand(sp, 20000)
+    s := a.Slice[u8](n) else {
+        TaFzBad(sp, 33)
+        return
+    }
+    unsafe "s lives in the root until its Free" {
+        TaFzAdd(sp, raw.DataMut(s), n, 1, owner, true, raw.Of(a.Alloc()))
+    }
+}
+
+TaFzNewId(sp: *TaFzState): int {
+    unsafe "sp is the test's live state" {
+        (*sp).ids += 1
+        return (*sp).ids
+    }
+}
+
+// TaFzAll checks the blocks and the root's chunk list.
+TaFzAll(sp: *TaFzState, root: &Arena) {
+    TaFzCheck(sp)
+    TaFzHdr(sp, root, true)
+}
+
+// TaFzForget ends an arena whose chunk list a failed check found broken,
+// without walking it.
+TaFzForget(a: Arena) {
+    Arena(hdr: p) := a
+    unsafe "a failed run: the arena's chunks are left to the process" {
+        raw.Forget(p)
+    }
+}
+
+// A level: two frames f and g on under (the root or a frame), and h, a
+// Sub of f (an arena on under's Alloc() too, which borrows f); operations
+// on the root, under, f, g and h in any order, a Reset of g, deeper levels
+// on f or g, and the three freed in one of three orders (h before f). Every
+// header is checked after each step; after a failed check nothing more
+// runs and nothing is freed.
+TaFzLevel(sp: *TaFzState, root: &Arena, under: &Arena, uid: int, level: int, steps: int) {
+    var f := Arena.NewIn(under.Alloc()) else {
+        TaFzBad(sp, 40)
+        return
+    }
+    var g := Arena.NewIn(under.Alloc()) else {
+        TaFzBad(sp, 41)
+        f.Free()
+        return
+    }
+    var h := f.Sub() else {
+        TaFzBad(sp, 42)
+        g.Free()
+        f.Free()
+        return
+    }
+    fid := TaFzNewId(sp)
+    gid := TaFzNewId(sp)
+    hid := TaFzNewId(sp)
+    var step := 0
+    for step < steps && TaFzOk(sp) {
+        step += 1
+        w := TaFzRand(sp, 100)
+        if w < 13 {
+            TaFzOp(sp, root, 0, true)
+        } else if w < 30 {
+            TaFzOp(sp, under, uid, uid == 0)
+        } else if w < 50 {
+            TaFzOp(sp, &f, fid, false)
+        } else if w < 70 {
+            TaFzOp(sp, &g, gid, false)
+        } else if w < 82 {
+            TaFzOp(sp, &h, hid, false)
+        } else if w < 85 {
+            TaFzDrop(sp, gid)
+            g.Reset()
+        } else if w < 93 {
+            if level < 3 {
+                if TaFzRand(sp, 2) == 0 {
+                    TaFzLevel(sp, root, &f, fid, level + 1, steps / 2)
+                } else {
+                    TaFzLevel(sp, root, &g, gid, level + 1, steps / 2)
+                }
+            }
+        } else if TaFzRand(sp, 3) == 0 {
+            step = steps
+        }
+        TaFzAll(sp, root)
+        TaFzHdr(sp, under, uid == 0)
+        TaFzHdr(sp, &f, false)
+        TaFzHdr(sp, &g, false)
+        TaFzHdr(sp, &h, false)
+    }
+    if !TaFzOk(sp) {
+        TaFzForget(h)
+        TaFzForget(f)
+        TaFzForget(g)
+        return
+    }
+    k := TaFzRand(sp, 3)
+    if k == 0 {
+        TaFzDrop(sp, hid)
+        h.Free()
+        TaFzAll(sp, root)
+        TaFzDrop(sp, fid)
+        f.Free()
+        TaFzAll(sp, root)
+        TaFzHdr(sp, &g, false)
+        TaFzDrop(sp, gid)
+        g.Free()
+    } else if k == 1 {
+        TaFzDrop(sp, hid)
+        h.Free()
+        TaFzAll(sp, root)
+        TaFzDrop(sp, gid)
+        g.Free()
+        TaFzAll(sp, root)
+        TaFzHdr(sp, &f, false)
+        TaFzDrop(sp, fid)
+        f.Free()
+    } else {
+        TaFzDrop(sp, gid)
+        g.Free()
+        TaFzAll(sp, root)
+        TaFzHdr(sp, &h, false)
+        TaFzDrop(sp, hid)
+        h.Free()
+        TaFzAll(sp, root)
+        TaFzDrop(sp, fid)
+        f.Free()
+    }
+    TaFzAll(sp, root)
+    TaFzHdr(sp, under, uid == 0)
+}
+
+// TaFzRounds runs rounds of levels on root, with a Reset of the root
+// after some, then frees it (or, after a failed check, forgets it).
+TaFzRounds(sp: *TaFzState, root: Arena, rounds: int, steps: int) {
+    var r := root
+    for _ in 0..rounds {
+        if TaFzOk(sp) {
+            TaFzLevel(sp, &r, &r, 0, 0, steps)
+        }
+        if TaFzOk(sp) && TaFzRand(sp, 3) == 0 {
+            TaFzDrop(sp, 0)
+            r.Reset()
+            TaFzAll(sp, &r)
+        }
+    }
+    TaFzDrop(sp, 0)
+    if TaFzOk(sp) {
+        r.Free()
+    } else {
+        TaFzForget(r)
+    }
+}
+
+// TaFzRun runs one seed on a root over a fresh ledger: a line arena
+// (Arena.New on the ledger's heap) or an arena by NewIn. It returns the
+// first failure's code: 0 when every check held and the ledger is empty
+// after the root's Free.
+TaFzRun(sys: &System, seed: u64, line: bool, rounds: int, steps: int, stats: mut [4]int): int {
+    var l := TaFzLedger(inner: raw.Of(sys.heap.Alloc()), p: [raw.Null[u8](); 1024], size: [0; 1024], align: [0; 1024], n: 0, allocs: 0, frees: 0, bad: 0, qp: [raw.Null[u8](); 64], qsize: [0; 64], qalign: [0; 64], qn: 0)
+    lp := raw.OfMut(mut l)
+    var st := TaFzState(p: [raw.Null[u8](); 160], size: [0; 160], align: [0; 160], tag: [0; 160], owner: [0; 160], typed: [false; 160], from: [raw.Null[Alloc](); 160], n: 0, seed: seed, ids: 0, bad: 0, ops: 0, frees: 0, rets: 0, arets: 0, ledger: lp)
+    sp := raw.OfMut(mut st)
+    unsafe "l and st are this frame's, live while the arenas are" {
+        ctx := raw.PtrCast[TaFzLedger, u8](lp)
+        var hp := MakeHeap(ctx, raw.Of(&TaFzLTable))
+        la := MakeAlloc(ctx, &TaFzLTable)
+        if line {
+            root := Arena.New(&hp) else {
+                return 1
+            }
+            TaFzRounds(sp, root, rounds, steps)
+        } else {
+            root := Arena.NewIn(&la) else {
+                return 2
+            }
+            TaFzRounds(sp, root, rounds, steps)
+        }
+        TaFzQuit(lp, true)
+        stats[0] += (*sp).ops
+        stats[1] += (*sp).frees
+        stats[2] += (*sp).rets
+        stats[3] += (*sp).arets
+        if (*sp).bad != 0 {
+            return (*sp).bad
+        }
+        if (*lp).bad != 0 {
+            return 50
+        }
+        if (*lp).n != 0 || (*lp).allocs != (*lp).frees {
+            return 51
+        }
+    }
+    return 0
+}
+
+// 192 seeds, alternating a line root and a NewIn one. Seeds 539492,
+// 777062, 840414, 1204688 and 1283878 (k 68, 98, 106, 152 and 162) find R1
+// (mem_arena.mk at 24aa785e). Frees through an Alloc() return over 100
+// ordinary and over 100 aligned chunks to the source across the seeds, so
+// the path under test runs.
+test "fuzz: frames and Alloc() frees on an arena keep every live block" (sys: &System) {
+    var fails := 0
+    var stats: [4]int = [0; 4]
+    for k in 0..192 {
+        seed := Trunc[u64](1000 + k * 7919)
+        code := TaFzRun(sys, seed, k % 2 == 0, 6, 60, mut stats)
+        if code != 0 {
+            fails += 1
+            try sys.Print("seed {s} line {l}: code {c}\n", (s: seed, l: k % 2 == 0, c: code))
+        }
+    }
+    Assert(fails == 0 && stats[2] - stats[3] > 100 && stats[3] > 100)
+}
+
+// R1 at align(4096): a frame's value of 254 pages (1,040,384 bytes) takes
+// an own chunk in the frame, a 4096-aligned block of 1,044,480 bytes in the
+// root. The root's current aligned chunk is a fresh 1 MiB one (its 512 KiB
+// one filled to 256 bytes short, then a 300-byte align(16) slice at 32), so
+// the block fills it from 4096 to its end: an own chunk's shift, size and
+// offset. The root starts a new aligned chunk while the frame lives;
+// freeing the frame gives back its block only, and the chunk stays with
+// the slice in it.
+test "a frame's align(4096) chunk that fills a 1 MiB aligned chunk under it leaves that chunk" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    _ = try root.SliceAligned[u8](200_000, 16)
+    _ = try root.SliceAligned[u8](324_000, 16)
+    s := try root.SliceAligned[u8](300, 16)
+    for i in 0..s.Len() {
+        s[i] = 0x5a
+    }
+    var f := try Arena.NewIn(root.Alloc())
+    pages := f.Slice[TaPage](254) else {
+        raw.Fail(8, "out of memory")
+    }
+    pages[253].a = 9
+    next := root.Put(TaLine(a: 3)) else {
+        raw.Fail(8, "out of memory")
+    }
+    Assert(pages[253].a == 9)
+    live := TaAllocs(cp)
+    f.Free()
+    Assert(TaAllocs(cp) == live)
+    var ok := true
+    for x in s {
+        ok = ok && x == 0x5a
+    }
+    Assert(ok && next.a == 3)
+}
+
+// Frames of align(65536) values: a small one bumps in the frame's aligned
+// chunk, a 64 KiB-aligned block of the root's current aligned chunk, and a
+// 983,040-byte one takes an own chunk in the frame and an own chunk
+// (OwnBit) in the root, the newest; freeing the frame returns that chunk
+// to the heap and rewinds the root's aligned chunk. Once warm, rounds make
+// one heap allocation and one free each (the large chunk), and the root's
+// own align(65536) and align(16) values keep their bytes; a root value
+// taken while the last frame lives stays too.
+test "frames of align(65536) values give their own chunks back to the root" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    h0 := try root.Slice[TaHuge](1)
+    h0[0].a = 1
+    t := try root.SliceAligned[u8](100, 16)
+    for i in 0..t.Len() {
+        t[i] = 0x77
+    }
+    var live := 0
+    var calls := 0
+    for round in 0..8 {
+        var f := try Arena.NewIn(root.Alloc())
+        small := f.Slice[TaHuge](1) else {
+            raw.Fail(8, "out of memory")
+        }
+        big := f.Slice[TaHuge](15) else {
+            raw.Fail(8, "out of memory")
+        }
+        small[0].a = 6
+        big[14].a = 5
+        Assert(small[0].a == 6 && big[14].a == 5)
+        before := TaAllocs(cp)
+        f.Free()
+        if round >= 2 {
+            Assert(TaAllocs(cp) == before - 1)
+        }
+        if round == 2 {
+            live = TaAllocs(cp)
+            calls = TaCalls(cp)
+        }
+    }
+    Assert(TaAllocs(cp) == live && TaCalls(cp) == calls + 5)
+    var f := try Arena.NewIn(root.Alloc())
+    big := f.Slice[TaHuge](15) else {
+        raw.Fail(8, "out of memory")
+    }
+    big[0].a = 2
+    q := root.SliceAligned[u8](64, 16) else {
+        raw.Fail(8, "out of memory")
+    }
+    for i in 0..q.Len() {
+        q[i] = 0x33
+    }
+    Assert(big[0].a == 2)
+    f.Free()
+    var ok := h0[0].a == 1
+    for x in t {
+        ok = ok && x == 0x77
+    }
+    for x in q {
+        ok = ok && x == 0x33
+    }
+    Assert(ok)
+}
+
+// A frame at compile time: an arena on the evaluation's arena, whose
+// 600,000-byte slice and 150 align(4096) pages take chunks of their own
+// there (over half of MaxChunk), returned by the frame's Free
+// (FreeOwnChunk's ordinary and aligned paths, in the evaluator). The
+// result is the bytes the arena under the frame held while the frame
+// lived, over what it held before, or -1 when Free left it holding more.
+// One warm-up frame first, so the frame's first chunk has its place.
+TaFrameHeld(ar: &Arena): int {
+    var w := Arena.NewIn(ar.Alloc()) else {
+        return -2
+    }
+    w.Free()
+    before := ArenaHeld(ar)
+    var f := Arena.NewIn(ar.Alloc()) else {
+        return -3
+    }
+    s := f.Slice[u8](600_000) else {
+        f.Free()
+        return -4
+    }
+    p := f.Slice[TaPage](150) else {
+        f.Free()
+        return -5
+    }
+    s[599_999] = 7
+    p[149].a = 9
+    during := ArenaHeld(ar)
+    ok := s[599_999] == 7 && p[149].a == 9
+    f.Free()
+    if !ok || ArenaHeld(ar) != before {
+        return -1
+    }
+    return during - before
+}
+
+const TaFrameHeldAtCompileTime = TaFrameHeld(EvalArena()) fuel 400_000_000
+
+test "a frame on the evaluation's arena gives its own chunks back at compile time" (sys: &System) {
+    // 600,016 + 16 bytes of record, and 150 pages + 4096 in the frame,
+    // one page more in the arena under it.
+    want := 600_032 + 150 * 4096 + 2 * 4096
+    Assert(TaFrameHeldAtCompileTime == want)
+    var ar := try Arena.New(sys.heap)
+    defer ar.Free()
+    Assert(TaFrameHeld(&ar) == want)
+}
