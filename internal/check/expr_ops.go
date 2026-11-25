@@ -699,8 +699,9 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 	case *ast.BinaryExpr, *ast.UnaryExpr:
 		// Operators over constants are a constant: judged
 		// by the value check folds; one naming a const whose value is not
-		// known yet is accepted rather than reported falsely.
-		if !u.m.constShaped(u.fx, arg) {
+		// known yet is accepted rather than reported falsely. An operator
+		// over float consts is not judged: the fold has no float value.
+		if u.isFloat(from) || !u.m.constShaped(u.fx, arg) {
 			return false
 		}
 		f := u.constFolder()

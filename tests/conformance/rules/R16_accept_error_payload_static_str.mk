@@ -1,7 +1,11 @@
 // verdict: ok
 // rule: R16
-// note: an error's str payload takes a literal, a const, a global, a result that comes from no parameter, and another error's static str
+// note: an error's str payload takes a literal, a const, a global, a result that comes from no parameter, and another error's static str, read directly or through a reference; an error set holding it formats
 error Bad(msg: str, at: int)
+
+error Other(code: int)
+
+error Wrap(inner: (Bad | Other))
 
 const Fixed: str = "fixed"
 
@@ -29,4 +33,16 @@ Rethrow(k: int): Bad!void {
         again.msg = e.msg
         fail again
     }
+}
+
+Peek(e: &Bad): str {
+    return e.msg
+}
+
+Copy(e: &Bad): Bad!void {
+    fail Bad(msg: e.msg, at: e.at + 1)
+}
+
+Show(e: &(Bad | Other), w: mut Writer): WriteError!void {
+    try e.Format(w)
 }

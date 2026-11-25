@@ -1091,7 +1091,7 @@ backtrace:
 
 - `int` and `uint` count as 64 bits, so `int(x)` takes an `i64` or a `u32`, and `int(u)` of a `uint` is E0303.
 - A constant whose value fits passes `T(x)`: `u8(200)`, `i32(Max)` for a `const Max: int = 100`.
-- A float literal or named float constant whose value is exactly an `f32` passes `f32(x)`: `f32(0.5)`, `f32(-1.5e3)`, `f32(Half)` for a `const Half: f64 = 0.5`. `f32(0.1)` and `f32(1e39)` would round or overflow, so they are E0303, and so is an operator over float literals, `f32(0.25 + 0.25)`, which is not judged by its value: write `x: f32 = 0.1`, where the literal takes `f32` and is rounded once, or `Cast[f32](0.1)`.
+- A float literal or named float constant whose value is exactly an `f32` passes `f32(x)`: `f32(0.5)`, `f32(-1.5e3)`, `f32(Half)` for a `const Half: f64 = 0.5`. `f32(0.1)` and `f32(1e39)` would round or overflow, so they are E0303, and so is an operator over float literals or constants, `f32(0.25 + 0.25)` or `f32(Half + Half)`, which is not judged by its value: write `x: f32 = 0.1`, where the literal takes `f32` and is rounded once, or `Cast[f32](0.1)`.
 - `Cast` to an integer truncates a float toward zero, and panics on NaN, an infinity or a value out of range.
 - `Cast` from an integer to a float rounds to the nearest value, ties to even, and never panics: `Cast[f64](n)`.
 - `Cast` from `f64` to `f32` rounds to nearest-even. It panics only when a finite value rounds to an infinity; NaN and the infinities pass through.
@@ -5207,7 +5207,7 @@ line 4
 - A payload is plain data: integers, floats, `bool`, `char`, and arrays, records, structs and enums of plain data. A field may also be a `str`.
 - A payload holds no other reference, so no slice, `&T`, `?str`, `[N]str` or struct holding a `str` (E0408).
 - A `str` field holds only a static string: a literal, a `const`, a global, or a `str` a function returns that comes from none of its parameters. Building the error with any other `str`, such as a parameter or a view of a local buffer, is E0605, and so are assigning such a `str` to the field and a `mut` borrow of the field. An error never borrows from the function that failed, so it can always travel up the stack and into another task. To carry text made at run time, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`, or a position or an id from which the caller formats the message.
-- Since an error's `str` is static, a copy of the error gives it back with no loan: for `e: &Bad`, `b := *e` then `b.msg` borrows nothing, where `e.msg` holds a loan of `e` as any read through a reference does. A `match` on a `mut` of the error would bind the field as a `mut str`, which is E0605; match a copy.
+- Since an error's `str` is static, reading it gives a `str` that borrows nothing, even through a reference: for `e: &Bad`, `e.msg` outlives `e`. A `match` on a `mut` of the error would bind the field as a `mut str`, which is E0605: bind the error, as `err(e)`, and read `e.msg`.
 - Construction names every field, `BadByte(offset: 3, value: 200)`, as for a struct (E0305).
 - An error has no type parameters.
 

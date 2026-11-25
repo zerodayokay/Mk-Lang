@@ -692,7 +692,7 @@ func (m *Module) errorPayload(x *tctx, fd types.FieldDecl, at source.Span) {
 	if f.Kind == types.Plain && !f.Carrier {
 		return
 	}
-	x.errorf(diag.E0408, at, "an error payload must be plain data with no references").
+	x.errorf(diag.E0408, at, "an error payload must be plain data with no references but a `str`").
 		Text("type", x.str(fd.Type)).Text("reason", "error-payload")
 }
 
