@@ -121,7 +121,7 @@ Fix it in one of four ways:
 | E0601, E0602, E0607, E0608 | A result's sources: missing, wrong, or not allowed | R9, R10 |
 | E0603 | A result that borrows a local | R9 |
 | E0604 | A store into a parameter with no `into` clause | R11 |
-| E0605 | A short-lived loan stored in a global | R16 |
+| E0605 | A short-lived loan stored in a global or in an error's payload | R16 |
 | E0609 | A `fn` literal that captures more than it may | R13 |
 | E1001 to E1003 | A value that may not cross into a task, or a misused `Scope` | R17 |
 
@@ -1624,6 +1624,7 @@ Fix: store a value, not a reference to a local: `Mutex[?i32]` and `g.Store(some(
 | `const` | A compile-time value. Its type must be plain. `&Limit` is valid |
 | `var` | One instance. Its type must be `Share` (E1002). It is never assigned, moved or borrowed `mut`. It is reached only through `&` |
 | Static pseudo-loan | A reference to a global holds it. It never conflicts. Storing a value into anything reachable from it needs the value to hold no loan but the static one (E0605) |
+| Error payload | An error travels up the stack and across tasks, so a `str` in its payload is held to the same rule: the value given when the error is built or assigned to the field holds no loan but the static one, and a `mut` borrow of the field is E0605. A literal, a `const` and a result that comes from no parameter hold none |
 
 ```mk
 // verdict: reject E1002
@@ -1631,6 +1632,19 @@ var Counter: Cell[i32] = Cell.New(0) // <- E1002
 ```
 
 Fix: a `Cell` is not `Share`; use an `atomic.Atomic[i32]` from `std.atomic`, or a `Mutex[i32]`.
+
+**Error payloads.** A `str` in an error's payload follows the static rule:
+
+```mk
+// verdict: reject E0605
+error NoSuchKey(key: str)
+
+Find(key: str): NoSuchKey!int {
+    fail NoSuchKey(key: key) // <- E0605
+}
+```
+
+Fix: carry what the caller cannot recompute, such as an index, and let the caller format the key it passed in; a literal such as `NoSuchKey(key: "config")` is accepted.
 
 **Global memory reached through a call.** A function may return a reference to global memory that takes stores, such as a global `Mutex`. Its caller must not store a loan on a local through it, so the result holds the static pseudo-loan:
 

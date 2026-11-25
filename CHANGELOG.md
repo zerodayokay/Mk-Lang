@@ -6,6 +6,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Language
 
+- An error's payload may hold a `str`, if the string lives as long as the program: `error Unsupported(feature: str)` built with a literal, a `const`, a global, or a `str` a function returns that comes from none of its parameters. A `str` field was E0408, so a message had to be a code or a fixed array and a length. A `str` that borrows, such as a parameter or a view of a local buffer, is E0605 where the error is built or the field assigned, and a `mut` borrow of the field is E0605, so an error still borrows from no frame and travels up the stack and into other tasks. A slice, `&T`, `?str`, `[N]str` or a struct holding a `str` is still E0408 ([declaring errors](doc/reference.md#declaring-errors)).
 - `void` may be written as a type argument of a generic call wherever inference may choose it: `raw.Null[void]()`, `raw.FromAddr[void](a)` and `raw.PtrCast[T, void](p)` build a `*void`, C's `void *`, and `raw.PtrCast[void, T](p)` gives the typed pointer back. The written argument was E0301 (`void` is only a result type), while `raw.Addr(p)` of a `*void` inferred the same argument, so a `void *` parameter of a C function could be passed only what C had returned. `void` as the argument of a generic type (`Box[void]`), in `SizeOf[void]()` and as a local's type is E0301 as before.
 
 ### Runtime

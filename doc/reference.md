@@ -1532,7 +1532,7 @@ Pair(): (a: int, b: int) {
 An error set `A | B` is the one union type that you write with `|`: a value of it is one of the errors listed. `E!T` is either an error from the set `E` or a value `T`. Both are described in [section 9](#9-errors).
 
 - Their rules are in [error sets](#error-sets) and [results](#results-et).
-- `E!T` has the kind of `T`. An error payload holds plain data and no references: a `str`, slice or `&T` field is E0408.
+- `E!T` has the kind of `T`. An error payload holds plain data and static strings: a `str` field holds only a string that lives as long as the program (E0605), and a slice, `&T`, or any other type holding a reference is E0408 ([declaring errors](#declaring-errors)).
 
 ### Optionals: `?T`
 
@@ -2025,7 +2025,7 @@ export Main(sys: &System): WriteError!void {
 | E0308 | no-operator | `==` on a type without it; arithmetic on `char`; indexing a `str` |
 | E0401 | use-after-move | A unique or linear value used after it moved ([kinds](#kinds)) |
 | E0402 | not-consumed | A linear value not consumed on some path ([linear values](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)) |
-| E0408 | not-plain | An error payload with a reference ([error sets and results](#error-sets-and-results)) |
+| E0408 | not-plain | An error payload with a reference other than a `str` ([error sets and results](#error-sets-and-results)) |
 | E0410 | must-declare-kind | An exported struct whose private fields make it `view`, `mut view` or `linear`, without the keywords ([exported kinds](#exported-kinds)) |
 | E0507 | mut-through-shared | Writing an element through a `[]T` ([slices](#slices-t-and-mut-t)) |
 | E0508 | mut-of-immutable | `mut x` of a local that is not `var` ([references](#references-t-and-mut-t)) |
@@ -5204,15 +5204,51 @@ BadByte(offset: 2, value: 200) at offset 2
 line 4
 ```
 
-- A payload is plain data: integers, floats, `bool`, `char`, and arrays, records, structs and enums of plain data.
-- A payload holds no references, so no `str`, slice or `&T` (E0408). An error never borrows from the function that failed, so it can always travel up the stack. To carry a short name, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`. Usually a position or an id is better: the caller formats the message.
+- A payload is plain data: integers, floats, `bool`, `char`, and arrays, records, structs and enums of plain data. A field may also be a `str`.
+- A payload holds no other reference, so no slice, `&T`, `?str`, `[N]str` or struct holding a `str` (E0408).
+- A `str` field holds only a static string: a literal, a `const`, a global, or a `str` a function returns that comes from none of its parameters. Building the error with any other `str`, such as a parameter or a view of a local buffer, is E0605, and so are assigning such a `str` to the field and a `mut` borrow of the field. An error never borrows from the function that failed, so it can always travel up the stack and into another task. To carry text made at run time, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`, or a position or an id from which the caller formats the message.
 - Construction names every field, `BadByte(offset: 3, value: 200)`, as for a struct (E0305).
 - An error has no type parameters.
 
 ```mk
 // verdict: reject E0408
-error NoSuchKey(key: str) // <- E0408
+error NoSuchKey(key: []u8) // <- E0408
 ```
+
+A `str` field holds text that lives as long as the program:
+
+```mk
+// verdict: ok
+error Unsupported(feature: str, line: int)
+
+const Generators: str = "generators"
+
+Feature(code: u8): str {
+    return match code {
+        1 { "classes" }
+        _ { "modules" }
+    }
+}
+
+Compile(code: u8, line: int): Unsupported!void {
+    if code == 0 {
+        fail Unsupported(feature: Generators, line: line)
+    }
+    fail Unsupported(feature: Feature(code), line: line) // Feature's result borrows nothing
+}
+
+export Main(sys: &System): WriteError!void {
+    Compile(1, 7) else e {
+        try sys.Print("{e}\n", (e))
+    }
+}
+```
+
+```text
+Unsupported(feature: classes, line: 7)
+```
+
+A `str` that borrows from the failing function, or from its caller, could outlive its bytes, so `fail NoSuchKey(key: key)` with a parameter `key` is E0605 ([the memory model](memory.md#r16-globals) has the example). Carry what the caller cannot recompute, such as an index, and let the caller format the key it passed in.
 
 A payload is built by naming its fields:
 
@@ -6145,9 +6181,10 @@ See also: [`mk query panics`](tools.md#51-member-wide-panic-sites), which lists 
 | E0306 | non-exhaustive | A `match` that misses an error, or lacks `_` on an open set ([sets](#error-sets)) |
 | E0307 | not-optional | `else x` on a `?T`, which has no error to bind ([`else`](#else)) |
 | E0402 | not-consumed | A linear temporary still live when `try` or `else` leaves the statement (example in [the memory model](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)) |
-| E0408 | not-plain | A payload field that holds a reference or a `str` ([declaring](#declaring-errors)) |
+| E0408 | not-plain | A payload field that holds a reference other than a `str` ([declaring](#declaring-errors)) |
 | E0411 | moved-before-failure | A by-value argument changed before a later failure (example in [section 8](#fallible-calls-consume-only-on-success)) |
 | E0412 | private-in-signature | A private error in an exported signature ([modules](#errors-across-modules)) |
+| E0605 | loan-into-global | A payload `str` that is not static, stored when the error is built or assigned, or a `mut` borrow of such a field ([declaring](#declaring-errors), example in [the memory model](memory.md#r16-globals)) |
 | E0704 | impl-conflict | `impl Format` for an error ([printing](#how-errors-print)) |
 | E0706 | requires-failed | An error with no `Format` in a format string ([printing](#how-errors-print)) |
 | E0801 | error-not-in-set | A `fail` or `try` whose error is not in the function's set ([`fail`](#fail), [`try`](#try)) |

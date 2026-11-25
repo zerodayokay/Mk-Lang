@@ -3,10 +3,15 @@
 //
 // What: held and behind (H and B), setHeld and the holders indexes, kill
 // and purge, statement, asm, valueH, operand and the operand table, e0409,
-// lenRead, rvalueFV and rvalueOne (the rvalue table), and slice.
+// lenRead, rvalueFV and rvalueOne (the rvalue table), slice, and
+// staticPayload and errorStrField (E0605 for an error's str payload).
 //
 // How: each statement reads its operands (checking init and conflicts),
 // computes the set its rvalue holds, and writes it to the destination.
+// An error is no carrier, so no loan it could hold is tracked after it is
+// built: the str its payload may hold is judged static where it is stored
+// (the error's aggregate, an assignment to the field) and the field takes
+// no `mut` borrow.
 // setHeld is the one primitive that writes a held set and keeps the
 // body-wide holders index a superset, so a kill or purge subtracts from
 // exactly the roots that may hold the loan.
@@ -854,6 +859,9 @@ func (c *checker) rvalueFV(st *state, ctx *stmtCtx, s *mir.Statement) (setID, fv
 		for i, o := range ops {
 			sets[i], fvs[i] = c.operandFV(st, ctx, o)
 			out = c.sets.unite(out, sets[i])
+			if rv.Agg == mir.AggError && c.body.OperandType(o) == types.Str {
+				c.staticPayload(ctx, sets[i])
+			}
 		}
 		dt := c.body.PlaceType(s.Place)
 		if !c.w.carrier(dt) {
@@ -872,6 +880,9 @@ func (c *checker) rvalueOne(st *state, ctx *stmtCtx, s *mir.Statement) setID {
 	case mir.RvUse:
 		return c.operand(st, ctx, rv.A)
 	case mir.RvRef:
+		if rv.Borrow == mir.Exclusive && c.report && c.errorStrField(rv.Place) {
+			c.errAt(diag.E0605, ctx.span, "an error's str payload takes no `mut` borrow: a store through it could hold a loan that is not static")
+		}
 		c.collapseFor(st, rv.Place, rv.Borrow == mir.Exclusive)
 		p := c.paths.ofPlace(c.body, c.tab, rv.Place)
 		return c.borrow(st, ctx, s, p, rv.Borrow == mir.Exclusive)
@@ -960,4 +971,34 @@ func (c *checker) slice(st *state, ctx *stmtCtx, s *mir.Statement) setID {
 		return c.borrow(st, ctx, s, dp, rv.Borrow == mir.Exclusive)
 	}
 	return c.borrow(st, ctx, s, p, rv.Borrow == mir.Exclusive)
+}
+
+// staticPayload is E0605 for each loan of S that is not static, S being a
+// str stored into an error's payload: an error never borrows from the
+// function that failed, so it travels up the stack and across tasks freely.
+func (c *checker) staticPayload(ctx *stmtCtx, S setID) {
+	if !c.report {
+		return
+	}
+	for _, l := range c.sets.get(S) {
+		if !c.loans[l].static {
+			c.errAt(diag.E0605, ctx.span, "an error payload may hold only static loans").
+				Fact("loan", c.loanFact(loanID(l)))
+		}
+	}
+}
+
+// errorStrField reports whether place p is a str field of an error's
+// payload, the one payload field that may hold a loan.
+func (c *checker) errorStrField(p mir.Place) bool {
+	proj := c.body.Proj(p)
+	n := len(proj)
+	if n == 0 || proj[n-1].Kind != mir.ProjField || proj[n-1].Type != types.Str {
+		return false
+	}
+	base := c.body.Locals[p.Local].Type
+	if n > 1 {
+		base = proj[n-2].Type
+	}
+	return c.tab.Get(base).Kind == types.KErrorSet
 }

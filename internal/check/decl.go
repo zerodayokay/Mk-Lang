@@ -682,9 +682,10 @@ func (m *Module) declError(it *types.Item, x *tctx, n *ast.ErrorDecl) {
 }
 
 // errorPayload is E0408 for a payload field that is not Plain or is a
-// carrier; fn values are allowed.
+// carrier; fn values are allowed, and so is a str, which the loan checker
+// holds to static loans wherever it is stored (E0605).
 func (m *Module) errorPayload(x *tctx, fd types.FieldDecl, at source.Span) {
-	if fd.Type == types.Poison {
+	if fd.Type == types.Poison || fd.Type == types.Str {
 		return
 	}
 	f := m.c.FactsIn(m.c.NewEnv(nil), fd.Type)
