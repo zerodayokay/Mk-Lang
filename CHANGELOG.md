@@ -4,6 +4,10 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
+### Language
+
+- `void` may be written as a type argument of a generic call wherever inference may choose it: `raw.Null[void]()`, `raw.FromAddr[void](a)` and `raw.PtrCast[T, void](p)` build a `*void`, C's `void *`, and `raw.PtrCast[void, T](p)` gives the typed pointer back. The written argument was E0301 (`void` is only a result type), while `raw.Addr(p)` of a `*void` inferred the same argument, so a `void *` parameter of a C function could be passed only what C had returned. `void` as the argument of a generic type (`Box[void]`), in `SizeOf[void]()` and as a local's type is E0301 as before.
+
 ### Diagnostics
 
 - A `gen` line that emits nothing because a module it depends on failed to check (the generator's own module, a module the generator imports, directly or not, or the module of a type argument or of the fuel const; a borrow error included) no longer hides that error behind the E0201s on the names its output would have declared: the module's first error, in report order, is reported with them as their cause, whatever its phase, and each E0201 cites the gen line and names the module. A borrow error, which rejects only its own function, is the cause only when no module the line depends on has another error. A line that read a type of its own module it cannot see before checking keeps the old note.

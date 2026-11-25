@@ -1165,7 +1165,7 @@ backtrace:
   Main (main.mk)
 ```
 
-- `void` appears only as a result type, as the `T` of `E!void`, and as the pointee of `*void`. A local or field of type `void` is E0301.
+- `void` appears only as a result type, as the `T` of `E!void`, as the pointee of `*void`, and as a type argument of a generic call, written or inferred (`raw.Null[void]()` is a null `*void`). A local or field of type `void` is E0301, and so is `void` as the argument of a generic type, `Box[void]`.
 - A `never` function must not return. `return` in one is E0301; every path ends in a call of another `never` function, such as `Panic`, or loops forever. A body that can reach its end is E0805 ([functions](#functions-and-methods)).
 - A call of a `never` function ends its path, so it may close an `else` block or a `match` arm where a value is expected.
 
@@ -1674,7 +1674,7 @@ Push(a: &Arena, head: ?&Node into a, v: int): OutOfMemory!&Node from a, head {
 
 ### Raw pointer types: `*T`
 
-`*T` is an address with no checks: it may be null, dangle or alias. You need one only to talk to C, to hardware, or to build a container the borrow rules cannot express. A raw pointer is plain and 8 bytes; `*void` is an untyped address.
+`*T` is an address with no checks: it may be null, dangle or alias. You need one only to talk to C, to hardware, or to build a container the borrow rules cannot express. A raw pointer is plain and 8 bytes; `*void` is an untyped address, C's `void *`, made from a typed pointer with `raw.PtrCast[T, void](p)`.
 
 ```mk
 // verdict: ok

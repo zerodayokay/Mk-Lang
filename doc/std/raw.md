@@ -43,6 +43,8 @@ A raw pointer `*T` is an address and nothing more: the compiler tracks no loan t
 
 A raw pointer has no arithmetic: `p + 1` is E0301. Move a pointer by `n` elements with `Offset(p, n)`.
 
+`*void` is C's `void *`, an address with no element type. Make one with `void` as the type argument: `PtrCast[T, void](p)` from a typed pointer, `Null[void]()`, or `FromAddr[void](a)`; `PtrCast[void, T](p)` gives the typed pointer back. `Addr`, `IsNull` and `Same` take a `*void` as they take any pointer. A `*void` has no element, so its element size is zero: cast it to a typed pointer before you read, write or `Offset` through it.
+
 ## Who may import it
 
 `std.raw` is internal to the standard library. Outside std, only a module that the package lists in its manifest's `unsafe_modules` may import it, on every target, freestanding included. Any other import is E0202 (`reason: std-internal`). See [grants for unsafe code](../packages.md#11-grants-for-unsafe-code).
@@ -703,7 +705,8 @@ Needs unsafe.
 export FromAddr[T](a: uint): *T
 ```
 
-FromAddr is the address a as a pointer to T. Needs unsafe.
+FromAddr is the address a as a pointer to T, which may be void. Needs
+unsafe.
 
 ### `HasFree`
 
@@ -754,7 +757,7 @@ bits and lo its low 64. Safe.
 export Null[T](): *T
 ```
 
-Null is the null pointer. Safe.
+Null is the null pointer. Null[void]() is a null *void. Safe.
 
 ### `Of`
 
@@ -795,7 +798,8 @@ Popcount64 counts x's one bits. Safe.
 export PtrCast[T, U](p: *T): *U
 ```
 
-PtrCast is p as a pointer to U, at the same address. Needs unsafe.
+PtrCast is p as a pointer to U, at the same address. T or U may be
+void: PtrCast[T, void](p) is p as C's untyped `void *`. Needs unsafe.
 
 ### `Read`
 
