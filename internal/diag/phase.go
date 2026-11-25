@@ -16,8 +16,8 @@ import "strconv"
 
 // Phase is the report group a diagnostic belongs to. The earliest-phase rule of
 // doc/tools.md keeps only the lowest Phase present, plus every
-// PhaseInternal diagnostic. The numbering is the order of the rule and is
-// visible in JSON only through String.
+// PhaseInternal diagnostic and every cause a kept one names. The numbering
+// is the order of the rule and is visible in JSON only through String.
 type Phase uint8
 
 const (

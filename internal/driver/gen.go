@@ -87,6 +87,9 @@ func (b *build) stage4(m *modNode, rm *resolve.Module) {
 	// reach the module cache only here.
 	for i := range st.out.Lines {
 		lr := &st.out.Lines[i]
+		if lr.Fail != nil && m.genFail == nil && i < len(lines) {
+			m.genFailAt, m.genFail = lines[i].Span, lr.Fail
+		}
 		if lr.Poisoned {
 			m.evalPoison.Store(true)
 			if i < len(lines) {
@@ -122,7 +125,7 @@ func (b *build) settleGen(m *modNode, rm *resolve.Module, gs []*diag.Diagnostic)
 	}
 	out := make([]*diag.Diagnostic, 0, len(gs))
 	for _, d := range gs {
-		m.notePoison(d)
+		m.noteGen(d)
 		out = append(out, gen.Wrap(d, m.gen.out))
 	}
 	return append(out, m.gen.ctx.Finish(m.gen.out, func(n source.Symbol) types.ItemID {
@@ -138,7 +141,7 @@ func (b *build) settleGen(m *modNode, rm *resolve.Module, gs []*diag.Diagnostic)
 // gen line.
 func (m *modNode) genWrap(ds []*diag.Diagnostic) []*diag.Diagnostic {
 	for _, d := range ds {
-		m.notePoison(d)
+		m.noteGen(d)
 	}
 	if m.gen == nil || m.gen.out.File == nil {
 		return ds
@@ -150,20 +153,45 @@ func (m *modNode) genWrap(ds []*diag.Diagnostic) []*diag.Diagnostic {
 	return out
 }
 
-// notePoison adds to an unknown-name E0201 of m the first gen line of m
-// whose run ended in poison and emitted nothing: the name may be one it
-// would have declared, and the cause (a type the generator read and the
-// stage-4 view could not see) may have no diagnostic of its own.
-func (m *modNode) notePoison(d *diag.Diagnostic) {
-	if d.Code != diag.E0201 || len(m.genPoison) == 0 {
+// noteGen marks an unknown-name E0201 of m that a gen line may cause: the
+// name may be one the line's output would have declared, and the output is
+// empty. The line is m's, or dep's for a member miss `dep.X`
+// (resolve.MissedIn). A line that failed with its own error makes the E0201
+// its consequence, so the report holds that error whatever its phase
+// (diag.Order); a line of m whose run ended in poison is only cited, since
+// its cause (a type the generator read and the stage-4 view could not see)
+// may have no diagnostic of its own. A label, type parameter or parameter
+// is local to its function, so no gen line declares one.
+func (m *modNode) noteGen(d *diag.Diagnostic) {
+	if d.Code != diag.E0201 {
 		return
 	}
-	for _, f := range d.Facts {
-		if f.Key == "gen_line" {
+	if _, ok := d.FactValue("gen_line"); ok {
+		return
+	}
+	if e, ok := d.FactValue("expected"); ok && (e.Str == "label" || e.Str == "type parameter" || e.Str == "parameter") {
+		return
+	}
+	owner, at := m, "this module"
+	if p := resolve.MissedIn(d); p != "" {
+		owner = nil
+		for _, dep := range m.deps {
+			if dep.path == p {
+				owner, at = dep, "`"+dep.path+"`"
+				break
+			}
+		}
+		if owner == nil || owner.genFail == nil {
 			return
 		}
 	}
-	d.Loc("gen_line", m.genPoison[0]).Text("gen", "a gen line of this module emitted nothing: it read a type that failed to check, or one it cannot see before checking")
+	switch {
+	case owner.genFail != nil:
+		d.ConsequenceOf(owner.genFail.Code, owner.genFail.At)
+		d.Loc("gen_line", owner.genFailAt).Text("gen", "a gen line of "+at+" failed and emitted nothing: the name may be one it would have declared")
+	case len(owner.genPoison) > 0:
+		d.Loc("gen_line", owner.genPoison[0]).Text("gen", "a gen line of this module emitted nothing: it read a type that failed to check, or one it cannot see before checking")
+	}
 }
 
 // genLine translates one of resolve's gen lines (first pass, gen/ empty).

@@ -354,8 +354,11 @@ func (b *build) resolveModule(m *modNode) {
 	b.stage4(m, rm)
 	ds, gs := rm.Settle()
 	gs = b.settleGen(m, rm, gs)
+	for _, d := range m.info.Diags {
+		m.noteGen(d)
+	}
 	for _, d := range ds {
-		m.notePoison(d)
+		m.noteGen(d)
 	}
 	m.diags = append(m.diags, m.info.Diags...)
 	m.diags = append(m.diags, ds...)

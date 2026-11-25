@@ -4,6 +4,10 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
+### Diagnostics
+
+- A `gen` line whose generator fails (E0903, or any error of its own that makes it emit nothing) is reported even when a name its output would have declared is used: that E0201 (in its module, also when another module exports the spelling, or an importer's `m has no item`) and the E0905 of another gen line's output that names it are now its consequences and no longer hide it under the earliest-phase rule; an E0201 cites the gen line. The rule now keeps every error a reported error names as its cause, whatever its phase, and `--max-diagnostics` never cuts such a cause.
+
 ### Tools
 
 - `mk query stack` bounds a recursion whose depth parameter (a `u8` or `u16` parameter that every call inside the recursion passes on unchanged or less a positive constant, lowered around every cycle) bounds it, counting it as at most (max + 1) frames per function, and lists it as `depth-bounded recursion`; any other recursion still answers `no static bound` ([tools](doc/tools.md#52-depth-bounded-recursion)).

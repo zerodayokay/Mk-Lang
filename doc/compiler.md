@@ -35,7 +35,7 @@ Modules are compiled in import order. Modules whose imports are all done run in 
 
 Some name errors need types, so a few E02xx codes come from stages 5 and 6. C imports (`import c.x`) are translated before stage 2 of the package's own modules, by running Clang ([C import](#7-generators-and-c-import)).
 
-`mk check` runs stages 1 to 7b, then stage 8's instance-limit walk, which keeps no bodies. So `check` and `build` accept the same programs. It emits no code, which makes it the fastest loop. Only the earliest failing stage's diagnostics are reported.
+`mk check` runs stages 1 to 7b, then stage 8's instance-limit walk, which keeps no bodies. So `check` and `build` accept the same programs. It emits no code, which makes it the fastest loop. Only the earliest failing stage's diagnostics are reported, with the later-stage errors they name as their cause.
 
 Before stages 3 to 7 of a module, the driver looks the module up in the cache. On a hit it loads the interface and skips them. On a miss it runs them, and reuses each function's cached result when that function's own key hits.
 

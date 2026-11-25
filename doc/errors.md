@@ -20,7 +20,7 @@ src/main.mk:4:9: E0207 naming: `Total` is written `total`
 - The location is `file:line:column`, with the column counted in bytes from 1.
 - The fact lines (`declared`, `declared_at`) are what the compiler knew when it stopped: a type and its members, the loan that conflicts and the use that keeps it live, a call path.
 - A `fix` line names a fix and its class. A `try` line names an alternative for you to choose.
-- The compiler reports every error of the earliest phase that fails, and nothing from later phases. Fix those, and the next phase runs, so new errors can appear after a fix.
+- The compiler reports every error of the earliest phase that fails, and nothing from later phases except the errors those follow from. Fix those, and the next phase runs, so new errors can appear after a fix. A `gen` line whose generator fails emits nothing, so a name its output would have declared is unknown (E0201, names, or E0905 in another gen line's output). The error of the module's first failed line, E0903 (types) for a `g.Fail`, is reported with it as its cause, and the E0201 cites that line. A second failed line's error shows once the first is fixed.
 
 With `--json`, the same report is one JSON document, which [the tools guide](tools.md#3-diagnostics) describes. `mk fix` applies the proven fixes for you ([fix classes](#fix-classes)).
 
