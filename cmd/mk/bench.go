@@ -3,9 +3,9 @@
 //
 // What: runBench, the `mk bench [flags] [name] [path]` command: it runs the
 // test blocks that call testing.Bench or testing.BenchSys, in a release
-// build unless --dev, and
-// prints each one's median time per call, its 95% interval and the
-// repetitions, under the machine, the command and the time (driver/bench.go).
+// build unless --dev, and prints each one's median time per call, its 95%
+// interval and the repetitions, under the machine, the command and the time
+// (driver/bench.go).
 //
 // How: with one argument, an existing file or directory is the path and
 // anything else the name; with two, the name comes first. --baseline

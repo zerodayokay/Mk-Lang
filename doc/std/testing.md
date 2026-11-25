@@ -27,7 +27,7 @@ import std.testing
 | Run it over saved inputs | `mk test` |
 | Search for failing inputs | `mk test --fuzz <test name> [--fuzztime d]` |
 | Declare a benchmark | `testing.Bench(f)` in a `test` block, `f: fn(n: int)` |
-| Declare a benchmark that allocates | `testing.BenchSys(sys, f)` in a `test` block that takes `(sys: &System)`, `f: fn(sys: &System, n: int)` |
+| Declare a benchmark that allocates from the heap | `testing.BenchSys(sys, f)` in a `test` block that takes `(sys: &System)`, `f: fn(sys: &System, n: int)` |
 | Time the benchmarks | `mk bench [name]` |
 | Line coverage of the package | `mk test --cover` ([coverage](../tools.md#10-debugging-coverage-fuzzing-and-profiling)) |
 
@@ -67,7 +67,7 @@ A benchmark is a function `f: fn(n: int)` that does its work `n` times. One `tes
 - Plain `mk test` calls `f(1)` once, and so does any other run. So `mk test` checks that every benchmark works.
 - `mk bench` finds benchmarks by the text `testing.Bench(` or `testing.BenchSys(` in a test block. Import `std.testing` under its own name, and call `Bench` or `BenchSys` directly in the block.
 
-A function value captures nothing, so `f: fn(n: int)` cannot reach a `System`, and without one it cannot allocate: a hosted program's heap is `sys.heap`. A benchmark that allocates is a function `f: fn(sys: &System, n: int)`. Its test block takes `(sys: &System)` and calls `testing.BenchSys(sys, f)`, which calls `f(sys, n)` wherever `Bench` calls `f(n)`. `f` builds its fixture from `sys.heap` in each call, so the time includes it.
+A function value captures nothing, so `f: fn(n: int)` cannot reach a `System`, and without one it has no heap: a hosted program's heap is `sys.heap`, and such an `f` allocates only from a buffer of its own (`std.mem`'s `Fixed`). A benchmark that allocates from the heap is a function `f: fn(sys: &System, n: int)`. Its test block takes `(sys: &System)` and calls `testing.BenchSys(sys, f)`, which calls `f(sys, n)` wherever `Bench` calls `f(n)`. `f` builds its fixture from `sys.heap` in each call, and the time includes it; built once before `f`'s loop of `n`, its cost is spread over the `n` iterations.
 
 ## Memory and cost
 
@@ -315,7 +315,8 @@ BenchSys is Bench for a benchmark that needs the System, to allocate
 from sys.heap or to reach sys.io: the test block passes its own sys,
 and BenchSys calls f(sys, n) wherever Bench would call f(n), so
 `mk bench` times f(sys, n) and any other run calls f(sys, 1) once. f
-builds its fixture in each call, and the time includes it.
+builds its fixture in each call, and the time includes it; built once
+before f's loop of n, its cost is spread over the n iterations.
 
 BenchSys itself allocates nothing; O(the repetitions' calls of f).
 

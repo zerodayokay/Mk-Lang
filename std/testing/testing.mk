@@ -127,7 +127,8 @@ export Bench(f: fn(n: int)) {
 /// from sys.heap or to reach sys.io: the test block passes its own sys,
 /// and BenchSys calls f(sys, n) wherever Bench would call f(n), so
 /// `mk bench` times f(sys, n) and any other run calls f(sys, 1) once. f
-/// builds its fixture in each call, and the time includes it.
+/// builds its fixture in each call, and the time includes it; built once
+/// before f's loop of n, its cost is spread over the n iterations.
 ///
 /// BenchSys itself allocates nothing; O(the repetitions' calls of f).
 export BenchSys(sys: &System, f: fn(sys: &System, n: int)) {

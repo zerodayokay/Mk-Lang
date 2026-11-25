@@ -1,6 +1,6 @@
 // Why: tools that look for a call in Mk source text (mk bench's selection
-// matches testing.Bench( only in code) must not count a call that is only
-// mentioned in a comment or a string.
+// matches testing.Bench( and testing.BenchSys( only in code) must not count
+// a call that is only mentioned in a comment or a string.
 //
 // What: codeOnly, which blanks comments and literal bodies, and
 // codeNameByte. tools/gate's mkCodeOnly is a copy (the gate imports no
