@@ -2,7 +2,7 @@
 // surface first, and their read sets drive incremental rebuilds.
 // What: tests of type expressions, structs, enums, aliases, signatures,
 // Main, E0412, E0410, E0303, E0408 for error payloads, an error method's
-// receiver and declaration read sets.
+// receiver, a method prefix's type parameters and declaration read sets.
 // How: builds modules from source through syntax and resolve and compares
 // the diagnostics, layouts and read sets.
 
@@ -788,11 +788,11 @@ func TestE0408_ErrorPayload(t *testing.T) {
 	}
 }
 
-// TestErrorMethodReceiver (MKH-406): a method of an error has the error's
-// type, the set of that one error, as its receiver in each mode. Self was
-// Poison with no diagnostic, so lower raised its check-gap ICE at the
-// method and at every call.
+// TestErrorMethodReceiver: a method of an error has the error's type, the
+// set of that one error, as its receiver in each mode, never Poison, which
+// would reach lower with no diagnostic.
 func TestErrorMethodReceiver(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, true)
 	src := "error Bad(code: int)\n\nBad.Twice(&self): int {\n\treturn self.code + 100\n}\n\nBad.Bump(mut self) {\n\tself.code += 1\n}\n\nBad.Take(self): int {\n\treturn self.code\n}\n\nRun(): int {\n\tvar e := Bad(code: 1)\n\te.Bump()\n\treturn e.Twice() + e.Take()\n}\n"
 	b := checkCodes(t, w, "m", opt{}, "", src)
@@ -803,13 +803,38 @@ func TestErrorMethodReceiver(t *testing.T) {
 	}
 }
 
-// TestErrorFormatMethodCollides (MKH-406): an error's Format is the
-// compiler's impl method, so a Type.Name Format of the error is E0206 at
-// the method, as beside a struct's written impl; it was silently a second
-// Format that `e.Format(w)` called while `{e}` printed the provided one.
-// An alias of the error is the same owner; another method is not affected.
+// TestErrorFormatMethodCollides: an error's Format is the compiler's impl
+// method, so a Type.Name Format of the error is E0206 at the method, as
+// beside a struct's written impl, and `e.Format(w)` and `{e}` both reach
+// the provided one. An alias of the error is the same owner; another
+// method is not affected.
 func TestErrorFormatMethodCollides(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, true)
 	checkCodes(t, w, "m", opt{}, "E0206@3:5", "error Bad(code: int)\n\nBad.Format(&self, w: mut Writer): WriteError!void {\n\ttry w.Str(\"x\")\n}\n")
 	checkCodes(t, w, "a", opt{}, "E0206@4:3", "error Bad(code: int)\ntype E = Bad\n\nE.Format(&self): int {\n\treturn 1\n}\n\nE.Code(&self): int {\n\treturn self.code\n}\n")
+}
+
+// TestOwnerArgsArity: `A[T].M` whose prefix names another number of type
+// parameters than A takes is E0304 at the brackets: for a struct, for an
+// error, which takes none, and for an alias, which takes its own. The unit
+// gets the written parameters, as opaque ones, so a body and a call that
+// use them check.
+func TestOwnerArgsArity(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, src, want string }{
+		{"struct", "struct S {\n\tcode: int\n}\n\nS[T].M(&self, x: T): T {\n\treturn x\n}\n\nF(s: S): int {\n\treturn s.M(5)\n}\n", "E0304@5:2"},
+		{"error", "error Bad(code: int)\n\nBad[T].M(&self, x: T): T {\n\treturn x\n}\n\nF(e: Bad): int {\n\treturn e.M(5)\n}\n", "E0304@3:4"},
+		{"alias of a struct", "struct S {\n\tcode: int\n}\n\ntype A = S\n\nA[T].M(&self, x: T): T {\n\treturn x\n}\n\nF(s: S): int {\n\treturn s.M(5)\n}\n", "E0304@7:2"},
+		{"alias of an error", "error Bad(code: int)\n\ntype A = Bad\n\nA[T, U].M(&self): int {\n\treturn self.code\n}\n", "E0304@5:2"},
+		{"generic alias", "struct S[T] {\n\tv: T\n}\n\ntype V[T] = S[T]\n\nV[U].N(&self): int {\n\treturn 7\n}\n\nF(s: S[int]): int {\n\treturn s.N()\n}\n", ""},
+		{"generic alias, two written", "struct S[T] {\n\tv: T\n}\n\ntype V[T] = S[T]\n\nV[A, B].N(&self): int {\n\treturn 7\n}\n", "E0304@7:2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := newWorld(t, true)
+			checkCodes(t, w, "m", opt{}, tc.want, tc.src)
+		})
+	}
 }

@@ -83,10 +83,9 @@ func TestFactsOfPoisonIsCheckGap(t *testing.T) {
 	}
 }
 
-// TestPoisonParamIsCheckGap (MKH-406): a parameter of Poison type that
-// reaches lower with no diagnostic (an error's method receiver did) is the
-// tagged check-gap ICE at the parameter, reported as E0000 with a position,
-// never a panic.
+// TestPoisonParamIsCheckGap: a parameter of Poison type that reaches lower
+// with no diagnostic is the tagged check-gap ICE at the parameter, reported
+// as E0000 with a position, never a panic.
 func TestPoisonParamIsCheckGap(t *testing.T) {
 	w := newWorld(t, true)
 	b := w.add("m", opt{}, "F(x: int): int {\n\treturn x\n}\n")

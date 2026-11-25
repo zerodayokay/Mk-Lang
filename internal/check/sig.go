@@ -136,14 +136,8 @@ func (m *Module) ownerContext(it *types.Item, x *tctx, s *ast.Signature) []types
 		return d.Generics
 	case types.KindStruct, types.KindEnum, types.KindInterface:
 		gens := append([]types.GenericParam(nil), c.genericsOf(o)...)
-		if s.Name != nil && s.Name.OwnerArgs != nil && len(s.Name.OwnerArgs.Args) != len(gens) {
-			// `A[T].M` for an A with another number of parameters: resolve
-			// numbered the written names, so the unit gets exactly those, as
-			// opaque parameters, and Self is Poison.
-			x.errorf(diag.E0304, s.Name.OwnerArgs.Span(), "`"+c.cfg.Interner.Str(o.Name)+"` takes a different number of type arguments").
-				Text("reason", "type-arguments").Int("expected", int64(len(gens))).Int("found", int64(len(s.Name.OwnerArgs.Args)))
-			x.self = types.Poison
-			return writtenOwnerGens(s.Name.OwnerArgs.Args)
+		if g, bad := m.ownerArity(o, x, s, len(gens)); bad {
+			return g
 		}
 		if s.Name != nil && s.Name.OwnerArgs != nil {
 			for i, a := range s.Name.OwnerArgs.Args {
@@ -160,16 +154,35 @@ func (m *Module) ownerContext(it *types.Item, x *tctx, s *ast.Signature) []types
 			x.self = types.Poison
 			return nil
 		}
+		if g, bad := m.ownerArity(o, x, s, len(d.Generics)); bad {
+			return g
+		}
 		x.self = d.Type
 		return d.Generics
 	case types.KindError:
 		// An error takes no type parameters; Self is its type, the set of
 		// that one error, as an expression `E(...)` is typed.
+		if g, bad := m.ownerArity(o, x, s, 0); bad {
+			return g
+		}
 		x.self = errorType(tab, o.ID)
 		return nil
 	}
 	x.self = types.Poison
 	return nil
+}
+
+// ownerArity is E0304 for `A[T].M` whose prefix names another number of
+// type parameters than owner o's n: resolve numbered the written names, so
+// the unit gets exactly those, as opaque parameters, and Self is Poison.
+func (m *Module) ownerArity(o *types.Item, x *tctx, s *ast.Signature, n int) ([]types.GenericParam, bool) {
+	if s.Name == nil || s.Name.OwnerArgs == nil || len(s.Name.OwnerArgs.Args) == n {
+		return nil, false
+	}
+	x.errorf(diag.E0304, s.Name.OwnerArgs.Span(), "`"+m.c.cfg.Interner.Str(o.Name)+"` takes a different number of type arguments").
+		Text("reason", "type-arguments").Int("expected", int64(n)).Int("found", int64(len(s.Name.OwnerArgs.Args)))
+	x.self = types.Poison
+	return writtenOwnerGens(s.Name.OwnerArgs.Args), true
 }
 
 // writtenOwnerGens are opaque parameters named as written in `A[T, U].M`.

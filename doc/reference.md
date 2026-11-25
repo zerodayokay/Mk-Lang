@@ -2680,7 +2680,7 @@ export Main(sys: &System): WriteError!void {
 - A function without `self`, such as `Counter.New`, is called through the type's name. It is how a type offers constructors.
 - A struct, an enum and an [error](#declaring-errors) take methods. An error's `self` is its value, the set of that one error: a payload is plain, so `self` copies it, and `mut self` changes a `var` error in place.
 - A function in a type's namespace must be declared in that type's module. A method on `int` or on another module's type is E0704: write a free function that takes the value.
-- On a generic type, the prefix names the type parameters, `Stack2[T].Push`, and their bounds come from the type.
+- On a generic type, the prefix names the type parameters, `Stack2[T].Push`, and their bounds come from the type. A prefix with another number of parameters than its type or alias takes is E0304.
 - Mark a method `export`, `export Counter.Get(&self): int`, to make it part of the module's public API.
 - A method of an interface is declared inside its `impl` block ([section 10](#10-generics-and-interfaces)).
 
@@ -5365,7 +5365,7 @@ line 4
 - A `str` field holds only a static string: a literal, a `const`, a global, or a `str` a function returns that comes from none of its parameters. Building the error with any other `str`, such as a parameter or a view of a local buffer, is E0605, and so are assigning such a `str` to the field and a `mut` borrow of the field. An error never borrows from the function that failed, so it can always travel up the stack and into another task. To carry text made at run time, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`, or a position or an id from which the caller formats the message.
 - Since an error's `str` is static, reading it gives a `str` that borrows nothing, even through a reference: for `e: &Bad`, `e.msg` outlives `e`. A `match` on a `mut` of the error would bind the field as a `mut str`, which is E0605: bind the error, as `err(e)`, and read `e.msg`.
 - Construction names every field, `BadByte(offset: 3, value: 200)`, as for a struct (E0305).
-- An error has no type parameters.
+- An error has no type parameters: a type `Bad[int]` and a method's prefix `Bad[T].M` are E0304.
 - An error takes methods and `Type.Name` functions, declared in its module as for a struct ([methods](#methods)). Its `Format` is the compiler's impl method, so a method named `Format` is E0206. An error set of more than one error has no methods but `Format`.
 
 ```mk
@@ -6126,7 +6126,7 @@ Syntax(line: 3, ratio: 0.5, ok: true, c: x)
 - An error set's value prints the member it holds.
 - An error whose payload has a field with no `Format` has no `Format` either. Using one in a format string is E0706. When such an error leaves `Main`, only its name is printed.
 - Inside a program, an error prints without its module: `NotFound`. When it leaves `Main`, it prints with the module that declares it: `main.NotFound(id: 3)`, `fs.NotFound`.
-- You cannot write `impl Format` for an error (E0704). To print an error your own way, `match` on it.
+- You cannot write `impl Format` for an error (E0704), nor a method named `Format` (E0206). To print an error your own way, `match` on it or give it a method of another name.
 
 ```mk
 // verdict: reject E0704
