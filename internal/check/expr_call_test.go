@@ -162,6 +162,17 @@ func TestE0203_E0207_Members(t *testing.T) {
 		if len(f.List) != 1 || f.List[0].Str != "x" {
 			t.Errorf("members in the declaring module %+v, want [x]", f.List)
 		}
+		// Another module's error fields are readable (no E0204), so listed.
+		w = newWorld(t, true)
+		w.add("geo", opt{}, "export error Bad(n: int)\n")
+		b = w.add("m", opt{}, "import geo\n\nF(e: geo.Bad): int {\n\treturn e.z\n}\n")
+		ds = b.bodyDiags(t)
+		if got := codes(w, ds); got != "E0203@4:11" {
+			t.Fatalf("error: got %q\n%s", got, dump(w, ds))
+		}
+		if f, _ = ds[0].FactValue("members"); len(f.List) != 2 || f.List[1].Str != "n" {
+			t.Errorf("members of another module's error %+v, want [Format n]", f.List)
+		}
 	})
 }
 
