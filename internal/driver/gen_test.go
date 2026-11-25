@@ -186,11 +186,13 @@ func TestGenFailRootOfUnknownNames(t *testing.T) {
 // module of a type argument or of the fuel const, or a borrow error (stage
 // 7) in the generator's module; or an error before types (E0206) in the
 // generator's module, its import or a function argument's module, which
-// leaves the generator or the function with no declaration (MKH-476: never
-// an E0301 at the line). That module's first error, of a later
+// leaves the generator or the function with no declaration (never an E0301
+// at the line). That module's first error, of a later
 // phase, is reported with the E0201s on the names the output would have
 // declared (in the module, or an importer's `out.Made`), as their root, and
-// each E0201 cites the gen line and names the module. A borrow error, which
+// each E0201 cites the gen line and names the module. An error before
+// types is the root ahead of a later-phase error that sorts first, in its
+// module or another the line reads. A borrow error, which
 // leaves its module clean, is the root only when no module the line reads
 // has another error. A second error of the module waits for the first to
 // be fixed; a poisoned line with no failed module keeps the old note with
@@ -279,7 +281,9 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 			[]string{"g2/g2.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "g2/g2.mk:2:5", "g2", "out/out.mk:10:1"},
 		// An error before types (E0206) leaves its module and its importers
 		// unchecked, so the generator or a function argument has no
-		// declaration (MKH-476): the line is poison, never an E0301.
+		// declaration: the line is poison, never an E0301. Such an error is
+		// the root ahead of an E0208 or E0301 that sorts first, and the
+		// phase rule leaves those out.
 		{"declaration error in the generator's module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n" + emit + "\n" + twice},
 			[]string{"gn/gn.mk:12:1:E0206", "out/use.mk:2:12:E0201"}, "gn/gn.mk:12:1", "gn", ""},
 		{"declaration error in the generator's import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.F()\n" + emit,
@@ -289,6 +293,12 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 			"a/a.mk":     "export G(x: int): int {\n    return x\n}\n" + twice,
 			"out/out.mk": "import a\nimport gn\n\ngen gn.Make(a.G)\n"},
 			[]string{"a/a.mk:8:1:E0206", "out/use.mk:2:12:E0201"}, "a/a.mk:8:1", "a", ""},
+		{"declaration error after an unused import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.F()\n" + emit,
+			"a/a.mk": "import std.math\n\n" + twice},
+			[]string{"a/a.mk:7:1:E0206", "out/use.mk:2:12:E0201"}, "a/a.mk:7:1", "a", ""},
+		{"declaration error in a later import", map[string]string{"gn/gn.mk": "import a\nimport z\n\nexport Make(g: mut Gen) {\n    _ = a.One()\n    _ = z.F()\n" + emit,
+			"a/a.mk": "export One(): int {\n    return true\n}\n", "z/z.mk": twice},
+			[]string{"out/use.mk:2:12:E0201", "z/z.mk:5:1:E0206"}, "z/z.mk:5:1", "z", ""},
 		{"own type", map[string]string{"gn/gn.mk": reflect + emit,
 			"out/out.mk": "import gn\n\ninterface Local {\n    Get(&self): [2 * 2]u8\n}\n\ngen gn.Make(Local)\n"},
 			[]string{"out/use.mk:2:12:E0201"}, "", "", ""},

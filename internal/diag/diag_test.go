@@ -386,8 +386,8 @@ func TestCapKeepsLaterPhaseCause(t *testing.T) {
 }
 
 // TestCapKeepsSamePhaseCause: a cause of the failing phase that sorts after
-// the cap survives it too, and so does its own cause (MKH-476: a module's
-// E0206 behind the E0201s of an empty gen line's names, all of phase names);
+// the cap survives it too, and so does its own cause (a module's E0206
+// behind the E0201s of an empty gen line's names, all of phase names);
 // a diagnostic over the cap that no survivor follows from is still omitted.
 func TestCapKeepsSamePhaseCause(t *testing.T) {
 	sm, a, b := fixture()

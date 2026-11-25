@@ -32,7 +32,7 @@ func (c *Context) funcWorld() FuncWorld {
 // non-generic function. It returns the Method handle, or a diagnostic, or
 // poison: a function of another module with no declaration, never checked
 // because its module or one it imports has an error before types, which
-// has its own diagnostic (MKH-476).
+// has its own diagnostic.
 func (c *Context) bindFunction(r *run, a Arg, pt types.TypeID) (uint32, *diag.Diagnostic, bool) {
 	methodT := c.Types.Named(c.Known.Method, nil)
 	if c.Known.Method == types.NoItem || pt != methodT {

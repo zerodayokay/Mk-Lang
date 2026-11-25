@@ -210,16 +210,19 @@ func (m *modNode) noteGen(d *diag.Diagnostic) {
 // poisonRoot finds why a poisoned line emitted nothing. It walks from the
 // modules the line reads (the generator's, the fuel const's, each
 // argument's; m itself, not yet checked, is not walked) through their
-// imports in path order, twice. The first walk stops at a module that failed
-// to check, with an error before stage 7: it taints every module above it,
-// so every body a run enters there is poison. Only when no module has one
-// does the second stop at a module with a borrow error (stage 7), which
-// rejects only its own body and leaves the module clean; the walk cannot
-// tell which rejected body the run entered. The root is that module's error
-// of that kind the report prints first (firstDiag). It runs only for a
-// poisoned line, after every module it reaches is done. nil when no module
-// has one: the line read a type of its own module it cannot see before
-// checking.
+// imports in path order, three times. The first walk stops at a module with
+// an error before types: that module and every module above it are never
+// checked, so the generator or a function argument there has no
+// declaration, and the report is of that error's phase. Only when no module
+// has one does the second stop at a module that failed to check, with an
+// error before stage 7: it taints every module above it, so every body a
+// run enters there is poison. Only when no module has one either does the
+// third stop at a module with a borrow error (stage 7), which rejects only
+// its own body and leaves the module clean; the walk cannot tell which
+// rejected body the run entered. The root is that module's error of that
+// kind the report prints first (firstDiag). It runs only for a poisoned
+// line, after every module it reaches is done. nil when no module has one:
+// the line read a type of its own module it cannot see before checking.
 func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 	w, s := b.w, b.w.sem5
 	var from []*modNode
@@ -247,7 +250,7 @@ func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 		}
 		read(id)
 	}
-	for _, flow := range []bool{false, true} {
+	for walkNo := range 3 {
 		seen := map[*modNode]bool{m: true}
 		var walk func(x *modNode) (*diag.Diagnostic, string)
 		walk = func(x *modNode) (*diag.Diagnostic, string) {
@@ -256,10 +259,13 @@ func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 			}
 			seen[x] = true
 			ds := [][]*diag.Diagnostic{x.diags, x.cdiags}
-			if flow {
+			switch walkNo {
+			case 0:
+				ds = [][]*diag.Diagnostic{x.diags} // stage 3's
+			case 2:
 				ds = [][]*diag.Diagnostic{x.fdiags}
 			}
-			if d := b.firstDiag(x, ds); d != nil {
+			if d := b.firstDiag(x, ds, walkNo == 0); d != nil {
 				return d, x.path
 			}
 			for _, d := range x.deps {
@@ -282,12 +288,16 @@ func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
 // by path, line and column, code, message, then end, as diag.Order sorts,
 // and wrapped as checkDiags reports it, so a Cause naming it resolves. The
 // lists' order differs between a cold check and a cache hit; this order
-// does not. nil when ds holds none.
-func (b *build) firstDiag(x *modNode, ds [][]*diag.Diagnostic) *diag.Diagnostic {
+// does not. With early, only an error before types counts, as namesClean
+// judges one. nil when ds holds none.
+func (b *build) firstDiag(x *modNode, ds [][]*diag.Diagnostic, early bool) *diag.Diagnostic {
 	var best *diag.Diagnostic
 	var bs, be source.Position
 	for _, l := range ds {
 		for _, d := range l {
+			if early && (d.Phase == diag.PhaseInternal || d.Phase >= diag.PhaseTypes) {
+				continue
+			}
 			if x.gen != nil {
 				d = gen.Wrap(d, x.gen.out)
 			}

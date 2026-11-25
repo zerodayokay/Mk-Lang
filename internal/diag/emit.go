@@ -43,7 +43,7 @@ type Report struct {
 	// Diags are the kept diagnostics in emission order.
 	Diags []Emitted
 	// Omitted is how many diagnostics the cap dropped (internal errors and
-	// causes of a later phase are never dropped).
+	// the causes of a kept diagnostic, of any phase, are never dropped).
 	Omitted int
 }
 
@@ -167,7 +167,7 @@ func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
 // keepCapRoots clears over for each diagnostic of ds a survivor names as its
 // Cause, and theirs in turn: the cap never drops a root its consequences
 // are printed with (a failed module's first error sorting after the hundreds
-// of unknown names an empty gen line leaves, MKH-476).
+// of unknown names an empty gen line leaves).
 func keepCapRoots(ds []*Diagnostic, over []bool) {
 	at := make(map[Cause]int, len(ds))
 	for i, d := range ds {

@@ -271,8 +271,8 @@ func (c *Context) bind(l *Line, s *slot) bool {
 	}
 	fd, ok := g.Decl.(*types.FuncDecl)
 	if !ok {
-		// MKH-476: never checked, its module or one it imports having an
-		// error before types (Poisoned).
+		// Never checked: its module, or one it imports, has an error
+		// before types, reported there (Poisoned).
 		s.res.Poisoned = true
 		return false
 	}
