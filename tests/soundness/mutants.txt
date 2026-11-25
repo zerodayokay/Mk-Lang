@@ -405,10 +405,30 @@ mutant M-SB-below
 rule R11
 class R
 file internal/borrow/store.go
-anchor 		if ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
-replace 		if ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType {
-note the provenance cut taken for every frame root, whatever its type can write below itself: a holder that can store through what it borrows (a field holding a reference, a Cell behind a shared reference, a List of references, a generic field) passes no store on, so each witness is accepted and leaves a reference to a dead local in the caller's memory; expected VDeadScope
-witness SB-provenance-writer-reject.mk SB-cell-holder-reject.mk SB-list-carrier-reject.mk SB-generic-holder-reject.mk
+anchor \t\tif ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
+replace \t\tif ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType {
+note the provenance cut taken for every frame root, whatever its type can write below itself: a holder that can store through what it borrows (a field holding a reference, a Cell behind a shared reference, a List of references, a generic field, a raw pointer) passes no store on, so each witness is accepted and leaves a reference to a dead local in the caller's memory; expected VDeadScope
+witness SB-provenance-writer-reject.mk SB-cell-holder-reject.mk SB-list-carrier-reject.mk SB-generic-holder-reject.mk SB-view-raw-reject SB-raw-holder-reject SB-raw-shared-reject
+end
+
+mutant M-SB-raw
+rule R11
+class R
+file internal/borrow/storebelow.go
+anchor \t\t// viewBelow instead.\n\t\treturn true
+replace \t\t// viewBelow instead.\n\t\treturn false
+note a raw pointer outside a view taken to reach nothing: a struct that holds one beside a reference, and holds by its maker's signature a loan on what it points at, passes no store on, by value or behind a shared reference, so each witness is accepted and the cell keeps a reference to a dead local; expected VDeadScope
+witness SB-raw-holder-reject SB-raw-shared-reject
+end
+
+mutant M-SB-viewraw
+rule R11
+class R
+file internal/borrow/storebelow.go
+anchor p.Kind == types.KRawPtr && w.tab.Kind(p.Elem) != types.KParam {
+replace p.Kind == types.KRawPtr && !w.paramFrom(p.Elem, 0) {
+note a view's raw pointer trusted as typed whenever its pointee mentions a type parameter: V[u64] over `*Node[T]`, whose Node holds a `&Cell[?&i32]` beside T, passes no store on, so the witness is accepted and the cell keeps a reference to a dead local; expected VDeadScope
+witness SB-view-raw-reject
 end
 
 mutant M-C3-self

@@ -10,12 +10,19 @@
 //
 // How: a walk of the type's own bytes. An exclusive reference to a carrier,
 // a shared reference to memory that takes loan stores through `&`, a type
-// parameter, Self, fn or interface value, an allocator, a `mut view` or a
-// loan-interior-writable type, a view type argument that holds loans, and a
-// view's raw pointer to anything but its type arguments each answer yes.
-// Behind a shared step only loan-interior-writable memory and opaque types
-// do, as in the writable walk. The walk keeps a seen set per query and only
-// the top-level answer is memoized, so a cycle never caches a partial answer.
+// parameter, Self, fn or interface value, an allocator held by value, a `mut
+// view` or a loan-interior-writable type, a view type argument that holds
+// loans, and a raw pointer each answer yes. A raw pointer is opaque to the
+// walk, so only two are exempt: a view's own pointer to one of its type
+// parameters, whose storage the type argument stands for (R18), and, behind
+// a shared step, a read-only view's own pointers (R19 makes a view that
+// writes loans through `&self` a `mut view`) and the context of an Alloc or
+// Heap, which takes no store through `&`. Behind a shared step only memory
+// that takes loan stores through `&`, raw pointers and opaque types answer
+// yes, as in the writable walk. The walk keeps a seen set per query, stops
+// at recur's bound on a polymorphically recursive type with the answer an
+// ANY step gives, yes, and memoizes only the top-level answer, so a cycle
+// never caches a partial answer.
 
 package borrow
 
@@ -24,15 +31,15 @@ import "mk/internal/types"
 // storesBelow reports whether a write through a value of type t, below t's
 // own bytes, may store a loan: the writable walk passes no store on through
 // the loans a root of such a type holds when it does not. A type whose
-// answer is no is one through which no checked body, and so (R19) no unsafe
-// body with the same signatures, can reach a loan-holding slot: every
-// reference in it leads to memory with no carrier slot, or past a shared
-// step to memory that takes no store through `&`.
+// answer is no holds no raw pointer but the exempt ones (above), so a store
+// can reach memory only through its references, and every one of them leads
+// to memory with no carrier slot, or past a shared step to memory that takes
+// no store through `&`.
 func (w *walker) storesBelow(t types.TypeID) bool {
 	if b, ok := w.below[t]; ok {
 		return b
 	}
-	r := w.belowWalk(t, false, map[belowKey]bool{})
+	r := w.belowWalk(t, false, map[belowKey]bool{}, w.newRecur())
 	w.below[t] = r
 	return r
 }
@@ -44,8 +51,8 @@ type belowKey struct {
 
 // belowWalk walks t's own bytes. shared is set once the walk has stepped
 // through a shared reference: from there only memory that takes loan stores
-// through `&` can be written.
-func (w *walker) belowWalk(t types.TypeID, shared bool, seen map[belowKey]bool) bool {
+// through `&` can be written, and what raw pointers reach.
+func (w *walker) belowWalk(t types.TypeID, shared bool, seen map[belowKey]bool, r *recur) bool {
 	if t == types.NoType || t == types.Void {
 		return false
 	}
@@ -54,6 +61,11 @@ func (w *walker) belowWalk(t types.TypeID, shared bool, seen map[belowKey]bool) 
 		return false
 	}
 	seen[k] = true
+	if stop, leave := r.enter(t); stop {
+		return true // past the bound, as an ANY step answers (recur.go)
+	} else if leave != nil {
+		defer leave()
+	}
 	ty := w.tab.Get(t)
 	switch ty.Kind {
 	case types.KParam, types.KSelf, types.KInfer:
@@ -64,18 +76,20 @@ func (w *walker) belowWalk(t types.TypeID, shared bool, seen map[belowKey]bool) 
 		// stores only what its flows declare.
 		return !shared
 	case types.KRawPtr:
-		// A raw pointer holds no loans (R19); a view's raw pointers are
-		// judged by the view below.
-		return false
+		// A raw pointer holds no loans (R19), but the walk cannot see what
+		// it reaches, and a loan its holder holds by a signature (`from n`)
+		// may cover that memory. A view's own pointers are judged by
+		// viewBelow instead.
+		return true
 	case types.KStr:
 		return false
 	case types.KMut, types.KMutSlice:
 		if shared {
-			return w.carrier(ty.Elem) && w.belowWalk(ty.Elem, true, seen)
+			return w.carrier(ty.Elem) && w.belowWalk(ty.Elem, true, seen, r)
 		}
 		return w.carrier(ty.Elem)
 	case types.KRef, types.KSlice:
-		return w.carrier(ty.Elem) && (w.writableByType(ty.Elem) || w.belowWalk(ty.Elem, true, seen))
+		return w.carrier(ty.Elem) && (w.writableByType(ty.Elem) || w.belowWalk(ty.Elem, true, seen, r))
 	case types.KNamed:
 		if w.isInterfaceType(t) {
 			return true
@@ -84,15 +98,26 @@ func (w *walker) belowWalk(t types.TypeID, shared bool, seen map[belowKey]bool) 
 		if f.MutView || f.LoanInterior {
 			return true
 		}
-		if f.Allocator && !shared {
-			return true
+		if f.Allocator {
+			// An Arena is a mut view, above. Alloc and Heap may be replaced
+			// by value; behind `&` they take no loan store, whatever their
+			// context pointer reaches.
+			return !shared
 		}
-		if f.View && w.viewBelow(t, ty, shared, seen) {
-			return true
+		if f.View {
+			if w.viewBelow(t, ty, shared, seen, r) {
+				return true
+			}
+			for _, ft := range w.inlineFields(t) {
+				if w.tab.Kind(ft) != types.KRawPtr && w.belowWalk(ft, shared, seen, r) {
+					return true
+				}
+			}
+			return false
 		}
 	}
 	for _, ft := range w.inlineFields(t) {
-		if w.belowWalk(ft, shared, seen) {
+		if w.belowWalk(ft, shared, seen, r) {
 			return true
 		}
 	}
@@ -101,21 +126,27 @@ func (w *walker) belowWalk(t types.TypeID, shared bool, seen map[belowKey]bool) 
 
 // viewBelow is the part of a read-only or plain view that its fields do not
 // show: its storage holds values of its type arguments (R18), so a type
-// argument that is a carrier answers yes (behind a shared step, one that
-// takes loan stores through `&`); and a raw-pointer field whose declared
-// pointee mentions none of the view's type parameters erases what it points
-// at, so in the view's own bytes it answers yes.
-func (w *walker) viewBelow(t types.TypeID, ty *types.Type, shared bool, seen map[belowKey]bool) bool {
+// argument that is a carrier, or through which a store can be written,
+// answers yes (behind a shared step, only one through which a store can be
+// written). Its own raw-pointer fields are judged here: one whose declared
+// pointee is a type parameter points at that storage, and any other may
+// point at anything, so it answers yes. Behind a shared step none does: a
+// view whose code writes loans through `&self` behind raw pointers must be a
+// `mut view` (R19).
+func (w *walker) viewBelow(t types.TypeID, ty *types.Type, shared bool, seen map[belowKey]bool, r *recur) bool {
 	for _, a := range ty.Args {
-		if a.IsConst || !w.carrier(a.Type) {
+		if a.IsConst {
 			continue
 		}
-		if !shared || w.writableByType(a.Type) || w.belowWalk(a.Type, true, seen) {
+		if !shared && w.carrier(a.Type) || w.belowWalk(a.Type, shared, seen, r) {
 			return true
 		}
 	}
-	if shared || w.items == nil || ty.Item == types.NoItem {
+	if shared {
 		return false
+	}
+	if w.items == nil || ty.Item == types.NoItem {
+		return true // its fields cannot be read
 	}
 	_ = w.inlineFields(t) // records the declaration read
 	d, ok := w.items.Get(ty.Item).Decl.(*types.StructDecl)
@@ -123,25 +154,7 @@ func (w *walker) viewBelow(t types.TypeID, ty *types.Type, shared bool, seen map
 		return true
 	}
 	for _, fd := range d.Fields {
-		if w.erasedRaw(fd.Type, map[types.TypeID]bool{}) {
-			return true
-		}
-	}
-	return false
-}
-
-// erasedRaw reports whether a declared field type holds, in its own bytes, a
-// raw pointer whose pointee mentions no type parameter.
-func (w *walker) erasedRaw(t types.TypeID, seen map[types.TypeID]bool) bool {
-	if w.tab.Kind(t) == types.KRawPtr {
-		return !w.paramFrom(t, 0)
-	}
-	if seen[t] {
-		return false
-	}
-	seen[t] = true
-	for _, f := range w.inlineFields(t) {
-		if w.erasedRaw(f, seen) {
+		if p := w.tab.Get(fd.Type); p.Kind == types.KRawPtr && w.tab.Kind(p.Elem) != types.KParam {
 			return true
 		}
 	}

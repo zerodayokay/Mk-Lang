@@ -9,10 +9,12 @@
 //
 // How: the writable walk starts at the loans' targets; an exclusive step
 // keeps writing possible, a shared step ends it, a step into a Cell, Mutex,
-// Chan, Arena or view restores it. An allocator reached on a later hop is
-// itself the root a store writes, since its contents have no node of their
-// own. A store into a frame root, a parameter's node or a global is judged
-// against the body's signature (E0604, E0605).
+// Chan, Arena or view restores it. A local, temporary or argument slot whose
+// type can write no loan below its own bytes (storesBelow) receives the store
+// but passes it on through none of the loans it holds. An allocator reached
+// on a later hop is itself the root a store writes, since its contents have
+// no node of their own. A store into a frame root, a parameter's node or a
+// global is judged against the body's signature (E0604, E0605).
 
 package borrow
 
@@ -40,20 +42,21 @@ type hop struct {
 
 // writable is writable(L0): walking from the loans of L0, an exclusive step
 // keeps writing possible, a shared step ends it, a step into a Cell, Mutex,
-// Chan, Arena or view restores it; the walk does not pass an allocator. An
-// allocator reached on a later hop is itself a root the store writes: its
-// contents (a Cell put in it, a List's storage) have no node of their own, so
-// a loan stored into them is stored into the allocator; the call rule stores
-// into it without the loans it holds by being itself (allocSelf). The
-// exception is an allocator reached out of an allocator through a loan the
-// holder has by provenance (a sub-arena's parent, an arena's heap: the loan
-// its own value was made with), not one stored into its contents
-// (allocStored): what lives in the holder is not in the other allocator's
-// memory. A loan stored into the holder's contents is followed, since the
-// holder dies first and the write went into the other's memory. Roots come out
-// in walk order, each once; c.laterAlloc marks the allocators reached on a
-// later hop, and c.allocMem the roots reached only through an allocator's own
-// memory hop (memHop).
+// Chan, Arena or view restores it; the walk does not pass an allocator, nor
+// a local, temporary or argument slot whose type can write no loan below its
+// own bytes (storesBelow). An allocator reached on a later hop is itself a
+// root the store writes: its contents (a Cell put in it, a List's storage)
+// have no node of their own, so a loan stored into them is stored into the
+// allocator; the call rule stores into it without the loans it holds by
+// being itself (allocSelf). The exception is an allocator reached out of an
+// allocator through a loan the holder has by provenance (a sub-arena's
+// parent, an arena's heap: the loan its own value was made with), not one
+// stored into its contents (allocStored): what lives in the holder is not in
+// the other allocator's memory. A loan stored into the holder's contents is
+// followed, since the holder dies first and the write went into the other's
+// memory. Roots come out in walk order, each once; c.laterAlloc marks the
+// allocators reached on a later hop, and c.allocMem the roots reached only
+// through an allocator's own memory hop (memHop).
 //
 // An abstract node is an allocator only when it stands for allocators alone:
 // a parameter's allocators below its first level are p#A, reached through a
