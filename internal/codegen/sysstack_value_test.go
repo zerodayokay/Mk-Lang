@@ -1,14 +1,14 @@
 // Why: a stack-free assembly stub (one load, store or locked instruction and
 // ret) is called through a fn value so that it runs on the task's stack:
-// a direct call of the bodiless extern goes through mk_call_system, about
-// 125 instructions (MKH-480). The reference documents the fn value as the
-// way; this pins it.
+// a direct call of the bodiless extern goes through SystemStack,
+// mk_call_system and SystemStackDone. The reference documents the fn value
+// as the way; this pins it.
 // What: TestSystemStackFnValue: a call of an extern through a fn value never
 // names SystemStack or mk_call_system, in dev and release, while a direct
-// call of the same extern does; at -O2 the value call is folded to a direct
-// call or jump to the stub's own symbol.
+// call of the same extern does; at release's -O3 the value call is folded
+// to a direct call or jump to the stub's own symbol.
 // How: hand-built bodies emitted for x86_64-windows and x86_64-linux; the
-// release IR is compiled with clang -O2 -S and CallValue's assembly read.
+// release IR is compiled with clang -O3 -S and CallValue's assembly read.
 
 package codegen
 
@@ -50,12 +50,12 @@ func stubBodies(e *testEnv) ([]*mir.Body, []types.ItemID) {
 
 // TestSystemStackFnValue: the direct call of Stub switches stacks in both
 // profiles; the call through the fn value never does, and in release clang
-// -O2 turns it into a direct call or tail jump to Stub with no
-// mk_call_system and no indirect call.
+// -O3, the level release compiles packs at, turns it into a direct call or
+// tail jump to Stub with no mk_call_system and no indirect call.
 func TestSystemStackFnValue(t *testing.T) {
 	for _, target := range []types.Target{types.X86_64Windows, types.X86_64Linux} {
 		for _, prof := range []types.Profile{types.Dev, types.Release} {
-			t.Run(fmt.Sprintf("%s/%d", target.Name, prof), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s", target.Name, prof), func(t *testing.T) {
 				e := newTestEnv()
 				bodies, bodiless := stubBodies(e)
 				ll := emit(t, e, unitOf(e, bodies, bodiless...), target, prof)
@@ -70,7 +70,7 @@ func TestSystemStackFnValue(t *testing.T) {
 				if prof != types.Release {
 					return
 				}
-				asm := runTool(t, tool(needLLVM(t), "clang"), "--target="+target.LLVMTriple, "-S", "-O2",
+				asm := runTool(t, tool(needLLVM(t), "clang"), "--target="+target.LLVMTriple, "-S", "-O3",
 					"-Wno-override-module", "-o", "-", writeLL(t, ll))
 				body := asmFunc(asm, "mk.main.CallValue")
 				if body == "" {
@@ -79,18 +79,21 @@ func TestSystemStackFnValue(t *testing.T) {
 				direct := false
 				for _, line := range strings.Split(body, "\n") {
 					f := strings.Fields(line)
+					if len(f) > 0 && f[0] == "rex64" { // Windows' indirect tail jump: rex64 jmpq *%reg
+						f = f[1:]
+					}
 					if len(f) < 2 || !strings.HasPrefix(f[0], "call") && !strings.HasPrefix(f[0], "jmp") {
 						continue
 					}
 					if strings.HasPrefix(f[1], "*") {
-						t.Errorf("CallValue calls indirectly at -O2: %s\n%s", line, body)
+						t.Errorf("CallValue calls indirectly at -O3: %s\n%s", line, body)
 					}
 					if strings.TrimSuffix(f[1], "@PLT") == "Stub" {
 						direct = true
 					}
 				}
 				if !direct || strings.Contains(body, "mk_call_system") {
-					t.Errorf("CallValue at -O2 is not a direct call of Stub on the task stack:\n%s", body)
+					t.Errorf("CallValue at -O3 is not a direct call of Stub on the task stack:\n%s", body)
 				}
 			})
 		}

@@ -9325,7 +9325,7 @@ A module may write `unsafe` only if its package's manifest lists it in `unsafe_m
 | Operation | Outside `unsafe` |
 |---|---|
 | Reading or writing through a raw pointer, `*p` | E1103 |
-| Calling a bodiless `extern` function | E1101 |
+| Calling or naming a bodiless `extern` function | E1101 |
 | Calling or naming a `cpu` function whose features the caller lacks ([CPU features](#cpu-features)) | E1101 |
 | Calling or naming a `naked` function | E1101 |
 | `asm` | E1101 |
@@ -9743,11 +9743,11 @@ The manifest builds C and assembly files with the package:
 - A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works.
 - A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root instead.
 
-**Stubs that use no stack.** A direct call of an assembly symbol's `extern` switches to the system stack, as any `extern` call does ([the C stack](#functions-c-can-call-export-extern)): three runtime calls and a stack switch around a stub of one instruction. A stub that uses no stack beyond its return address and calls nothing, such as a load, a store or a `lock`-prefixed instruction followed by `ret`, can be called through a `fn` value instead. The call is then an ordinary call on the task's stack. When the value is named in the calling function, as below, `--release` compiles it to a direct `call` or jump to the stub. A value loaded from a table, a field or a global may stay an indirect call, still on the task's stack. Naming the `extern` as a value needs `unsafe`, and its reason is your claim that the stub uses no stack, never calls back into Mk or C, faults only where a Mk load or store of the same address would, and has the C ABI of the `fn` type. For one instruction, inline [`asm`](#inline-assembly) needs no call at all.
+**Stubs that use no stack.** A direct call of an assembly symbol's `extern` from a task switches to the system stack, as any `extern` call does ([the C stack](#functions-c-can-call-export-extern)): three runtime calls and a stack switch around a stub of one instruction. A stub that uses no stack beyond its return address and calls nothing, such as a load, a store or a `lock`-prefixed instruction followed by `ret`, can be called through a `fn` value instead. The call is then an ordinary call on the task's stack. When the value is named in the calling function, as below, `--release` compiles it to a direct `call` or jump to the stub. A value loaded from a table, a field or a global may stay an indirect call, still on the task's stack. Naming the `extern` as a value needs `unsafe`, and its reason is your claim that the stub uses no stack, never calls back into Mk or C, faults only where a Mk load or store of the same address would, and has the C ABI of the `fn` type. For one instruction, inline [`asm`](#inline-assembly) needs no call at all.
 
 ```mk
 // verdict: ok
-// load_u32 is the stub `movl (%rcx), %eax; retq` of an asm_sources file.
+// load_u32 is an asm_sources stub: one 32-bit load through its argument, then ret.
 extern load_u32(p: *u32): u32
 
 // SharedLoad calls load_u32 on the task's stack.
