@@ -553,6 +553,15 @@ func (in *checkInput) Call(id ast.NodeID) Call {
 	default:
 		return Call{}
 	}
+	if c.Errors != types.EmptyErrors && !in.calleeFails(c, e) {
+		// The call fails only when its callee can: a function or method
+		// whose result is a type parameter bound to an error union
+		// (raw.Read[E!int], that function as a fn value, Src[E!int]'s
+		// Get(&self): T) returns that E!T as a value, which
+		// try, else, match and Must then take as a stored E!T, not through
+		// an error edge the callee has none of.
+		c.Errors = types.EmptyErrors
+	}
 	if (c.Kind == CallFunc || c.Kind == CallIface) && c.Sig != nil && c.Sig.Receiver != types.NoReceiver {
 		if fe, ok := methodField(e.Fun); ok && in.use(fe.ID()).Kind == u.Kind {
 			switch in.Adjust(fe.X.ID()).Kind {
@@ -568,6 +577,23 @@ func (in *checkInput) Call(id ast.NodeID) Call {
 		}
 	}
 	return c
+}
+
+// calleeFails reports whether c's callee declares errors (mir.Validate's
+// M5): a function's or interface method's signature's set (check's E0707
+// keeps an impl from failing where its interface method cannot), or a fn
+// value's type's. Any other kind (a builtin, a construction) keeps the call
+// type's set.
+func (in *checkInput) calleeFails(c Call, e *ast.CallExpr) bool {
+	switch c.Kind {
+	case CallFunc, CallIface:
+		return c.Sig == nil || c.Sig.Errors != types.EmptyErrors
+	case CallValue:
+		if t := in.tab.Get(in.Type(e.Fun.ID())); t.Kind == types.KFn {
+			return t.Fn.Errors != types.EmptyErrors
+		}
+	}
+	return true
 }
 
 func (in *checkInput) Pattern(id ast.NodeID) Pat {

@@ -1943,7 +1943,9 @@ The iterators `Split`, `Lines`, `Words`, `Scalars`, `MapIter`, `TextMapIter`, `C
 
 A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, and [`mem.Zeroed[T]()`](std/mem.md#layout) returns one zeroed value, so both need one.
 
-A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, or an `E!T` whose `T` is zero-valid. A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not.
+A zero-valid type is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, an `E!T` whose `T` is zero-valid, or an atomic word or `Cell` of a zero-valid `T` (`raw.Atomic[T]`, `atomic.Atomic[T]`, `atomic.AtomicInt`, `atomic.AtomicBool`, `Cell[T]`). A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not, and neither is a linear type, a `view` or `mut view` struct, a type with an `unsafe impl` of `Send` or `Share`, or a `Mutex`, `Chan` or `Arena`, whatever their fields. The zero of an `E!T` is `ok` of `T`'s zero, whatever its errors carry, since error codes start at 1.
+
+An atomic or a `Cell` is unique, so `[e; n]`, which copies `e`, cannot build an array of them (E0408), but zero bytes are a fresh value, not a copy: a global table of atomic words is `var Table: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()`, every word 0, with no `unsafe`.
 
 ```mk
 // verdict: reject E0701
@@ -1953,7 +1955,7 @@ Names(a: &Arena): OutOfMemory!int {
 }
 ```
 
-`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is its result, so it is not an error union either: `mem.Zeroed[E!T]()` is E0701, and `mem.Zeroed[T]()` makes the value. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
+`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is not an error union either: `mem.Zeroed[E!T]()` is E0701, since the zero of an `E!T` is always `ok` of `T`'s zero, the value `mem.Zeroed[T]()` makes. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
 
 ```mk
 // verdict: ok
@@ -2509,6 +2511,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. The rules are in [globals](memory.md#r16-globals).
+- A table of atomics starts zeroed with [`mem.Zeroed`](#zero-valid-types), since `[e; n]` copies its `e` and an atomic is not Plain: `var Table: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()`.
 - Its initial value is computed at compile time, as a constant's is.
 
 ```mk
@@ -5594,7 +5597,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
-- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be stored, passed or returned as it is. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later, and a field or element of a [zeroed](#zero-valid-types) array, record or struct holds one, `ok` of its zero. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
 ```mk
@@ -5611,6 +5614,41 @@ Root(n: int): Negative!int {
 Twice(n: int): Negative!int {
     return Root(n) // <- E0802
 }
+```
+
+A function can fail only when its signature names an error set, as a result written `E!T` does. A generic whose result is its type parameter, called with an `E!T` for it, cannot fail, and neither can a function whose result is an alias of an `E!T`: each returns the `E!T` as a value, which the caller handles with `try`, `else` or `match` as any other. So does an interface method whose result is such a type parameter or alias, and an `impl` method must fail exactly when its interface method can (E0707).
+
+```mk
+// verdict: ok
+error Negative
+
+Root(n: int): Negative!int {
+    if n < 0 {
+        fail Negative
+    }
+    return n * 2
+}
+
+Copy[T: Plain](x: &T): T {
+    return *x
+}
+
+export Main(sys: &System): WriteError!void {
+    var a: Negative!int = Root(4)
+    var b: Negative!int = Root(-4)
+    for r in [&a, &b] {
+        v := Copy(r) else e { // Copy cannot fail: else handles the E!T it returns
+            try sys.Print("{e}\n", (e: e))
+            continue
+        }
+        try sys.Print("{v}\n", (v: v))
+    }
+}
+```
+
+```text
+8
+Negative
 ```
 
 ### `fail`
@@ -6705,7 +6743,7 @@ Total(s: &Shape): f64 { // <- E0301
 
 ### `impl`
 
-`impl I for T { ... }` makes `T` implement `I`. It holds one method for each method of `I`, with the same signature.
+`impl I for T { ... }` makes `T` implement `I`. It holds one method for each method of `I`, with the same signature. An impl's method fails exactly when the method of `I` names an error set (E0707). Where the result of `I`'s method is a type parameter of `I` and the impl's argument is an `E!T`, as `Get(&self): T` in an `impl Source[E!int]`, the method cannot fail: it returns the `E!T` as a value. A generic impl writes that result as its own type parameter, and any other as an alias of the `E!T` (`type R = E!int`, then `Get(&self): R`), since a result written `E!int` fails.
 
 ```mk
 // verdict: ok
@@ -7415,7 +7453,7 @@ Start(): int {
 | E0704 | impl-conflict | A duplicate, orphan or blanket `impl`, or an `impl` of `Plain` or `Fields[B]` ([`impl`](#impl)) |
 | E0705 | not-const | A const argument that is not constant, a misused `const` `fn` parameter ([const parameters](#const-parameters)) |
 | E0706 | requires-failed | A compile-time `requires` that is false or not restated ([requirements](#compile-time-requirements)) |
-| E0707 | impl-signature | An `impl` method missing, extra or with another signature ([`impl`](#impl)) |
+| E0707 | impl-signature | An `impl` method missing, extra or with another signature, or one that fails where its interface method cannot, or the reverse ([`impl`](#impl)) |
 | E0708 | instantiation-limit | Instantiation without end ([runaway instantiation](#runaway-instantiation)) |
 | E0709 | const-arithmetic | Arithmetic in a const argument inside a generic ([const arguments](#const-arguments-in-a-generic)) |
 | E0711 | cannot-infer | A type argument nothing fixes, or a generic value without its arguments ([generic functions](#generic-functions), [values](#generic-functions-as-values)) |
@@ -8407,7 +8445,7 @@ both: Bad(n: 2)
 body: Late
 ```
 
-- A task in a `Scope[E]` returns `E!void`, or `F!void` where every error of `F` is in `E` (E0801). A task returning `void` there is E0301.
+- A task in a `Scope[E]` returns `E!void`, or `F!void` where every error of `F` is in `E` (E0801). A task returning `void` there is E0301, and so is a call that [cannot fail](#results-et) and returns an `E!void` as a value, which the scope would drop.
 - The first error a task returns cancels the scope: the body and every other task. Those tasks see `Canceled` at their next cancellable operation, and their `Canceled` is not reported. After the join, `try scope` fails with the first error.
 - A `scope` over a `Scope[E]` must be written `try scope` (E0802). `try scope` over a plain `Scope` is E0804. There is no `else` form: to handle the error, put the scope in a function of its own and handle that function's error, as `Main` does above.
 - The function's error set must hold `E` (E0801), as for any `try`.
@@ -13643,7 +13681,7 @@ enum FlowKind {
 
 `std.raw` has no lines in the listing. Its functions, in full ([std.raw](std/raw.md)):
 
-**`std.raw`** is std-internal, except that a module listed in `unsafe_modules` may import it, on every target: it turns an address into a pointer and back, and reads and writes through one. Its functions are intrinsics, O(1) unless they copy: `Of(r: &T): *T` and `OfMut(r: mut T): *T`, `Null[T]()`, `IsNull`, `Same`, `Offset(p, n)` by `n` elements, `PtrCast[T, U](p): *U`, `Read(p): T`, `ReadUnaligned` (alignment 1, an integer `T`), `Write(p, x)` (the old value is not released), `Copy(dst, src, n)` and `Move` (which may overlap) of `n` elements, `Fill(dst, b, n)` and `Compare(a, b, n)` of bytes, `Slice(p, n): []T` and `SliceMut`, `Data(s): *T`, `DataMut` and `StrData(s)`, `Str(p, n): str` (the caller answers for UTF-8), `Addr(p): uint`, `FromAddr[T](a: uint): *T`, `Forget(x)`, which ends a value without releasing it, `Release(x, a)`, which frees it through `a` with `T`'s `Free`, else forgets it, `IsLinear[T]()` and `HasFree[T]()`, whether `T` is linear and whether it implements `Free`, and `Fail(code, msg): never`, which panics with that code. `Atomic[T: Plain]` is a word, of an integer type of 1, 2, 4 or 8 bytes, or a raw pointer, that tasks on any carrier read and write whole: `New(x)`, then `Load`, `Store`, `Add` (wrapping, an integer `T`), `Swap` and `Cas(old, new): bool`, sequentially consistent, and `LoadOrd`, `StoreOrd`, `SwapOrd`, `AddOrd`, `SubOrd`, `AndOrd`, `OrOrd`, `XorOrd` and `CasOrd(old, new, s, f, weak): (ok, value)`, each under a constant order `o`, `std.atomic`'s `Order` value (0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4 sequentially consistent, 5 unordered, for a load or a store only); `Fence()` and `FenceOrd(o)` are fences. `Ctz64`, `Clz64` and `Popcount64` count bits, `RotL64(x, n)` rotates left, `Mul128(a, b): (hi, lo)` is the full product, `F64Bits`, `F64From`, `F32Bits` and `F32From` reinterpret a float's encoding, `SqrtF64` is the correctly rounded square root, and `Select[T: Plain](c, a, b): T` is `a` when `c` holds, else `b`: the compiler is told `c` is unpredictable, so for an integer, `bool`, pointer or record `T` the choice is a conditional move, not a branch (a float `T` may still branch on x86_64). Of these, `Of`, `OfMut`, `Null`, `IsNull`, `Same`, `Data`, `DataMut`, `StrData`, `Addr`, `IsLinear`, `Fail`, `Fence`, `FenceOrd`, `Ctz64`, `Clz64`, `Popcount64`, `RotL64`, `Mul128`, `F64Bits`, `F64From`, `F32Bits`, `F32From`, `SqrtF64`, `Select` and every method of `Atomic` are safe, and the rest are called inside `unsafe` (E1101).
+**`std.raw`** is std-internal, except that a module listed in `unsafe_modules` may import it, on every target: it turns an address into a pointer and back, and reads and writes through one. Its functions are intrinsics, O(1) unless they copy: `Of(r: &T): *T` and `OfMut(r: mut T): *T`, `Null[T]()`, `IsNull`, `Same`, `Offset(p, n)` by `n` elements, `PtrCast[T, U](p): *U`, `Read(p): T`, `ReadUnaligned` (alignment 1, an integer `T`), `Write(p, x)` (the old value is not released), `WriteUnaligned` (alignment 1, an integer `T`), `Copy(dst, src, n)` and `Move` (which may overlap) of `n` elements, `Fill(dst, b, n)` and `Compare(a, b, n)` of bytes, `Slice(p, n): []T` and `SliceMut`, `Data(s): *T`, `DataMut` and `StrData(s)`, `Str(p, n): str` (the caller answers for UTF-8), `Addr(p): uint`, `FromAddr[T](a: uint): *T`, `Forget(x)`, which ends a value without releasing it, `Release(x, a)`, which frees it through `a` with `T`'s `Free`, else forgets it, `IsLinear[T]()` and `HasFree[T]()`, whether `T` is linear and whether it implements `Free`, and `Fail(code, msg): never`, which panics with that code. `Atomic[T: Plain]` is a word, of an integer type of 1, 2, 4 or 8 bytes, or a raw pointer, that tasks on any carrier read and write whole: `New(x)`, then `Load`, `Store`, `Add` (wrapping, an integer `T`), `Swap` and `Cas(old, new): bool`, sequentially consistent, and `LoadOrd`, `StoreOrd`, `SwapOrd`, `AddOrd`, `SubOrd`, `AndOrd`, `OrOrd`, `XorOrd` and `CasOrd(old, new, s, f, weak): (ok, value)`, each under a constant order `o`, `std.atomic`'s `Order` value (0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4 sequentially consistent, 5 unordered, for a load or a store only); `Fence()` and `FenceOrd(o)` are fences. `Ctz64`, `Clz64` and `Popcount64` count bits, `RotL64(x, n)` rotates left, `Mul128(a, b): (hi, lo)` is the full product, `F64Bits`, `F64From`, `F32Bits` and `F32From` reinterpret a float's encoding, `SqrtF64` is the correctly rounded square root, and `Select[T: Plain](c, a, b): T` is `a` when `c` holds, else `b`: the compiler is told `c` is unpredictable, so for an integer, `bool`, pointer or record `T` the choice is a conditional move, not a branch (a float `T` may still branch on x86_64). Of these, `Of`, `OfMut`, `Null`, `IsNull`, `Same`, `Data`, `DataMut`, `StrData`, `Addr`, `IsLinear`, `Fail`, `Fence`, `FenceOrd`, `Ctz64`, `Clz64`, `Popcount64`, `RotL64`, `Mul128`, `F64Bits`, `F64From`, `F32Bits`, `F32From`, `SqrtF64`, `Select` and every method of `Atomic` are safe, and the rest are called inside `unsafe` (E1101).
 
 ## 19. Test prelude
 

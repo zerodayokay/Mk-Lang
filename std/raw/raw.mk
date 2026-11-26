@@ -39,6 +39,9 @@ export ReadUnaligned[T: Plain](p: *T): T
 /// Write stores x at p, which must be aligned to AlignOf[T](). The value
 /// that was there is overwritten, not released. Needs unsafe.
 export Write[T](p: *T, x: T)
+/// WriteUnaligned stores an integer x at p, at any alignment; any other
+/// T is E0701. The value that was there is overwritten. Needs unsafe.
+export WriteUnaligned[T: Plain](p: *T, x: T)
 
 /// Copy copies n elements from src to dst; the two ranges must not
 /// overlap. O(n). Needs unsafe.

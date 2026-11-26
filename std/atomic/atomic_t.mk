@@ -41,7 +41,8 @@ import std.raw
 ///
 /// An Atomic is unique, Send and Share whatever its T: reading through a
 /// pointer it holds is for unsafe code to justify. A `var` global may hold
-/// one.
+/// one, and an array of them starts zeroed with `mem.Zeroed`, as `[e; n]`
+/// copies e and an Atomic is not Plain.
 export struct Atomic[T: Plain] {
     v: raw.Atomic[T]
 }

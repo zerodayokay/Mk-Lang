@@ -153,7 +153,7 @@ $ mk run layout.mk
 size at 4, next at 8, 16 bytes
 ```
 
-`Zeroed[T]()` is a `T` whose bytes are all zero: every integer and float 0, every `bool` false, every raw pointer null, every optional `none`. It fills a record of many fields without naming each one, as C's `= {0}` does, and is the way to start a C import's struct ([C imports](../reference.md#c-imports)). `T` must be [zero-valid](../reference.md#zero-valid-types), or the call is E0701, so it is safe: a `str`, slice, reference, `fn` value or struct with an `invariant` cannot be zero. `T` is the result, so it is not an error union (E0701): zero the value type instead. O(size of `T`); allocates nothing; also at compile time.
+`Zeroed[T]()` is a `T` whose bytes are all zero: every integer and float 0, every `bool` false, every raw pointer null, every optional `none`, every `E!T` field or element `ok` of its zero. It fills a record of many fields without naming each one, as C's `= {0}` does, and is the way to start a C import's struct ([C imports](../reference.md#c-imports)). `T` must be [zero-valid](../reference.md#zero-valid-types), or the call is E0701, so it is safe: a `str`, slice, reference, `fn` value or struct with an `invariant` cannot be zero. `T` itself is not an error union (E0701): the zero of an `E!T` is always `ok` of the value type's zero, so zero the value type instead. O(size of `T`); allocates nothing; also at compile time.
 
 ```mk
 // verdict: ok
@@ -180,6 +180,28 @@ export Main(sys: &System): WriteError!void {
 ```text
 $ mk run zeroed.mk
 640 0 false
+```
+
+An atomic word or a `Cell` of a zero-valid `T` is zero-valid too, and so is a struct or array unique only through them: zero bytes make fresh words, never copies. That is how a global table of atomics starts, which `[e; n]` cannot build, since it copies `e` and an atomic is not Plain (E0408).
+
+```mk
+// verdict: ok
+import std.atomic
+import std.mem
+
+var Claims: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()
+
+export Main(sys: &System): WriteError!void {
+    Claims[7].Store(42, atomic.Release)
+    a := Claims[7].Load(atomic.Acquire)
+    b := Claims[8].Load(atomic.Acquire)
+    try sys.Print("{a} {b}\n", (a, b))
+}
+```
+
+```text
+$ mk run claims.mk
+42 0
 ```
 
 ## Examples
@@ -1086,7 +1108,8 @@ export Zeroed[T](): T
 A T whose bytes are all zero: every integer and float 0, every bool
 false, every raw pointer null, every optional none. T must be zero-valid
 and not an error union (E0701 otherwise): a C import's struct of any
-size, or an array or struct of such parts. O(size of T); allocates
-nothing.
+size, an atomic word or Cell of a zero-valid T, or an array or struct
+of such parts, so it starts a global table of atomics. O(size of T);
+allocates nothing.
 
 <!-- api:end -->
