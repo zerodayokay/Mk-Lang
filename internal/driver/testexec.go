@@ -416,8 +416,9 @@ func (s *Session) testModules() []*modNode {
 // runChild runs test index i of the runner and fills tc. A child still
 // running after timeout (when nonzero) is killed with its process tree
 // (killTree) and reported timeout.
-func runChild(tc *TestCase, argv, env []string, i int, timeout time.Duration, beforeKill ...func()) {
+func runChild(tc *TestCase, argv, env []string, i int, dir string, timeout time.Duration, beforeKill ...func()) {
 	cmd := exec.Command(argv[0], append(argv[1:], strconv.Itoa(i))...)
+	cmd.Dir = dir
 	cmd.Env = env
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out // one writer: one goroutine writes

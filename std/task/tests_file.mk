@@ -80,8 +80,13 @@ FlTmp(b: mut [256]u8): int {
 
 // FlName is "<tmp>rtsf-<pid>-<tag>-<k>" in b (FlTmp).
 FlName(b: mut [256]u8, tag: str, k: int): str from b {
-    var n := FlTmp(b)
-    n = FlPut(b, n, "rtsf-")
+    n := FlTmp(b)
+    return FlNameAt(b, n, tag, k)
+}
+
+// FlNameAt writes the per-process basename after the first at bytes of b.
+FlNameAt(b: mut [256]u8, at: int, tag: str, k: int): str from b {
+    var n := FlPut(b, at, "rtsf-")
     n = FlNum(b, n, Trunc[i64](sys.Pid()))
     n = FlPut(b, n, "-")
     n = FlPut(b, n, tag)

@@ -1,8 +1,7 @@
 // std.net's surface, over loopback in one process: a
 // listener made with options, a stream's no-delay and keep-alive options, its local and peer
 // addresses, a half-close the peer reads as the end of input, the same stream erased into a
-// net.Conn, a Unix-domain socket in the system's temporary directory (a Linux run directory on
-// the Windows drive cannot hold one), an Accept cut by a deadline and called again, and
+// net.Conn, a Unix-domain socket, an Accept cut by a deadline and called again, and
 // the errors of a refused dial and a bad address. Ports and paths are never printed.
 import std.fs
 import std.net
@@ -143,13 +142,11 @@ Tcp(w: mut Writer, a: &Arena, io: Io): WriteError!void {
     try Print(w, "tcp: addresses {addrs}, reply {reply}\n", (addrs: addrs, reply: reply))
 }
 
-// Unix serves one connection with Upper over a Unix-domain socket in the system's temporary
-// directory.
+// Unix serves one connection with Upper. On Windows the corpus runs in
+// its own directory, giving the socket a short relative name. Else use the
+// system's temporary directory (a WSL run directory cannot host a socket).
 Unix(w: mut Writer, a: &Arena, io: Io): WriteError!void {
-    dir := fs.TempDir(a, io) else e {
-        try Print(w, "temp dir: {e}\n", (e: e))
-        return
-    }
+    dir := if Target.os == Os.Windows { "." } else { "" }
     (file, path) := fs.CreateTemp(a, io, dir, "mk-sockets-") else e {
         try Print(w, "temp name: {e}\n", (e: e))
         return

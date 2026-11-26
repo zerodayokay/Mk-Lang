@@ -2,19 +2,19 @@
 // must behave like TCP ones: echo, refusals, backlog waits and cancels.
 // What: RT8-Unix-Echo, -Refused, -Backlog and -AcceptCancel (UxName, UxPhase).
 // How: a cancel or a deadline must end a waiting accept or dial with nothing
-// held, so it can be repeated. The socket files are in the temporary
-// directory (FlName: TEMP on Windows, TMPDIR or /tmp on Linux, the
-// distribution's own file system: WSL's Windows drive refuses a bind). Run
+// held, so it can be repeated. Windows uses a relative socket name in the
+// child's scratch working directory, within the sun_path limit. Linux uses
+// TMPDIR or /tmp on the distribution's file system (WSL's Windows drive
+// refuses a bind). Run
 // by the scheduler harness, and at 1 and 16 carriers by std/rt_deadline_test.go.
 
 import std.core
 import std.raw
 import std.rt
 
-// UxName is a socket path in the temporary directory, removed first so a
-// file left by an earlier run does not make the listen AddrInUse.
+// UxName removes a socket left by an earlier run before listening.
 UxName(io: Io, b: mut [256]u8, tag: str): str from b {
-    name := FlName(b, tag, 0)
+    name := if Target.os == core.Os.Windows { FlNameAt(b, 0, tag, 0) } else { FlName(b, tag, 0) }
     _ = NativeRemove(io, name)
     return name
 }

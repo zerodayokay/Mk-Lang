@@ -4,9 +4,10 @@
 // addresses and options a Unix stream lacks, a path in use, refused paths)
 // and handle passing with SendHandles and RecvHandles (SCM_RIGHTS on Linux,
 // Unsupported on Windows), and a Write cut by its deadline.
-// How: socket files go in MK_LINUX_TMP when the harness gives one (WSL's
-// Windows drive refuses a bind), else TEMP, TMPDIR or /tmp, under a random
-// name, removed afterwards. Run by mk test --std=std.net and
+// How: on Windows a random relative name in the child's scratch working
+// directory fits sun_path even when TEMP does not. Else use MK_LINUX_TMP
+// (WSL's Windows drive refuses a bind), TEMP, TMPDIR or /tmp. Remove the
+// socket afterwards. Run by mk test --std=std.net and
 // std/std-net_connblocks_test.go.
 
 import std.core
@@ -15,6 +16,9 @@ import std.time
 
 // UxDir is the directory for socket files.
 UxDir(sys: &System): str from sys {
+    if Target.os == core.Os.Windows {
+        return "."
+    }
     for name in ["MK_LINUX_TMP", "TEMP", "TMPDIR"] {
         if d := sys.Env(name) {
             if d.Len() > 0 {
