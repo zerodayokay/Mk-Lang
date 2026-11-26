@@ -219,6 +219,7 @@ func (c *checker) destinationFV(st *state, ctx *stmtCtx, dst mir.Place, S setID,
 		e = st.get(root)
 		e.init = initI
 		e.moved = emptySet
+		e.cover = emptySet
 		e.fv = 0 // a whole assignment replaces the value and its field sets
 		c.put(st, root, e)
 		c.setSplit(st, root, S, fv)

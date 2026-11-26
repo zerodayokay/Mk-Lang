@@ -251,6 +251,28 @@ Over() {
 ```
 
 - `_ = e` does not consume a linear value (E0402).
+- An arm of a by-value `match` consumes a linear value only when its pattern binds each linear part, or tests it to a variant that holds nothing linear. `_` consumes nothing, also inside a constructor such as `some(_)`, so an arm that leaves a linear part in the value is E0402. A field matched by `_` or left out is E0408:
+
+```mk
+// verdict: reject E0402
+linear struct Pair {
+    a: ?Res
+    b: ?Res
+}
+
+Drop(p: Pair) {
+    match p { // <- E0402
+        Pair(a: some(r), b: some(_)) { // b's Res is left in p
+            r.Close()
+        }
+        Pair(a, b) {
+            Take(a)
+            Take(b)
+        }
+    }
+}
+```
+
 - Leaving a statement by `try` or `else` while a linear temporary of it is still live is E0402.
 
 **Fallible calls consume only on success.** A function returning `E!T` that takes a non-plain argument by value consumes it only when it succeeds. On the error edge of `try` or `else`, the caller still owns the argument and must still consume it, for example in an `onerr`:

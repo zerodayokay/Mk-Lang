@@ -691,16 +691,17 @@ func (c *checker) operand(st *state, ctx *stmtCtx, o mir.Operand) setID {
 	}
 	if c.roots[root].kind == rkTemp && pi.onlyFieldSteps() {
 		// A take: the value holds H(t), or of a split t the field the
-		// take names; t becomes {T}.
+		// take names; t becomes {T}, or {T, I} while a linear part of t
+		// is left (consumePart).
 		c.useCheck(st, ctx, root, true)
 		h := c.held(st, root)
 		if s, _, ok := c.splitRead(st, p); ok {
 			h = s
 		}
 		e := st.get(root)
-		e.init = initT
 		e.moved = c.sets.add(e.moved, c.site(ctx))
 		c.put(st, root, e)
+		c.consumePart(st, root, p, true)
 		return h
 	}
 	c.e0409(st, ctx, p)
@@ -716,6 +717,7 @@ func (c *checker) moveRoot(st *state, ctx *stmtCtx, r rootID, e0411 bool) {
 	c.setHeld(st, r, emptySet)
 	e := st.get(r)
 	e.init = initM
+	e.cover = emptySet
 	e.moved = c.sets.add(e.moved, c.site(ctx))
 	if e0411 && c.e0411Param(r) {
 		e.changed = c.sets.add(e.changed, c.site(ctx))

@@ -96,9 +96,10 @@ func (c *checker) switchOuts(st *state, t *mir.Terminator) []out {
 	return outs
 }
 
-// narrow makes the temporary of path p {T} on an edge whose selected
-// variants all have only plain payload fields, keeping its held set, when
-// its init is {I} or {T}.
+// narrow records that the temporary of path p holds nothing linear at p on
+// an edge whose selected variants all have only plain payload fields,
+// keeping its held set, when it holds its value on every path
+// (consumePart).
 func (c *checker) narrow(st *state, p pathID, selected func(uint64) bool) {
 	pi := c.paths.get(p)
 	vs := c.variantsOf(pi.typ())
@@ -110,12 +111,10 @@ func (c *checker) narrow(st *state, p pathID, selected func(uint64) bool) {
 			return
 		}
 	}
-	e := st.get(pi.root)
-	if in := initOf(e); in != initI && in != initT {
+	if initOf(st.get(pi.root))&(initU|initM) != 0 {
 		return
 	}
-	e.init = initT
-	c.put(st, pi.root, e)
+	c.consumePart(st, pi.root, p, false)
 }
 
 type variantFact struct {

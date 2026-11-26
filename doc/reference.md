@@ -3397,6 +3397,7 @@ rect 3 by 4
 - The arms cover every value of the type (E0306). See [exhaustiveness](#exhaustiveness).
 - Each arm is a pattern and a block, one arm per line. There is no fall-through between arms and no guard: test a condition inside the arm.
 - `match e` moves a value that is not plain, and `match &e` and `match mut e` do not. See [what a binding holds](#what-a-binding-holds).
+- On a linear value, each arm of `match e` consumes all of it: every linear part is bound, or tested to a variant that holds nothing linear. `_`, also inside a constructor (`some(_)`, `ok(_)`), consumes nothing, so an arm that leaves a linear part is E0402 ([R2](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)).
 - A `match` on a result or an error set is in [section 9](#match-on-a-result).
 
 A match that moves its scrutinee:
