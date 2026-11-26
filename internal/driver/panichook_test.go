@@ -1,13 +1,17 @@
-// Why: a hosted program may define MkPanicHook to see a panic before the
-// runtime reports it, and the hook's call order and arguments are part of
+// Why: a hosted program or library may define MkPanicHook to see a panic before
+// the runtime reports it, and the hook's call order and arguments are part of
 // the runtime's contract.
-// What: hookProgram and TestPanicHook_Hosted.
-// How: builds a Windows program whose hook writes the PanicInfo through
-// Win32, runs it, and matches stderr and the exit status 101.
+// What: TestPanicHook_Hosted, TestPanicHook_SuspendInCallback,
+// TestPanicHook_LibAfterStop and TestPanicHook_Unresolved, with their
+// sample programs and C hosts.
+// How: builds Windows programs and a library whose hook writes the PanicInfo
+// through Win32, runs them in dev and release, and matches stderr and the exit
+// status 101.
 
 package driver
 
 import (
+	"context"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -83,6 +87,229 @@ func TestPanicHook_Hosted(t *testing.T) {
 		}
 		_, errOut, code := runExe(t, types.X86_64Windows, paths[0], "")
 		want := regexp.MustCompile(`^hook bounds main\.mk code 2 at 30:9\npanic: bounds at main\.mk:30:9\n$`)
+		if code != 101 || !want.MatchString(dropBacktrace(errOut)) || strings.Count(errOut, "hook ") != 1 {
+			t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
+		}
+	}
+}
+
+const suspendHookC = `#include <stdint.h>
+extern void SuspendCb(uintptr_t arg);
+void call_cb(uintptr_t arg) {
+    SuspendCb(arg);
+}
+`
+
+const suspendHookProgram = `import std.raw
+import std.runtime
+import std.time
+
+extern GetStdHandle(n: u32): *u8
+extern WriteFile(h: *u8, buf: *u8, n: u32, done: *u32, ov: *u8): i32
+extern call_cb(arg: uint)
+
+Say(s: str) {
+    var done: u32 = 0
+    unsafe "a console write of s's bytes" {
+        _ = WriteFile(GetStdHandle(0xFFFFFFF4), raw.StrData(s), Trunc[u32](s.Len()), raw.Of(&done), raw.Null[u8]())
+    }
+}
+
+export extern MkPanicHook(info: &runtime.PanicInfo) {
+    Say("hook ")
+    Say(info.message)
+    if info.code == 16 {
+        Say(" code 16")
+    }
+    Say("\n")
+}
+
+export extern SuspendCb(io_addr: uint) {
+    unsafe "io_addr points to io in Main while call_cb runs" {
+        io := raw.Read(raw.FromAddr[Io](io_addr))
+        _ = io.Sleep(time.Millis(1)) else {}
+    }
+}
+
+export Main(sys: &System): void {
+    var io := sys.io
+    unsafe "io outlives call_cb, which runs SuspendCb on the carrier system stack" {
+        call_cb(raw.Addr(raw.Of(&io)))
+    }
+}
+`
+
+// TestPanicHook_SuspendInCallback: suspending inside a callback called from an
+// extern C frame passes PanicSuspendInCallback (16) to MkPanicHook.
+func TestPanicHook_SuspendInCallback(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("SKIP: the hook writes through Win32")
+	}
+	tools := needTools(t)
+	root := writeTree(t, map[string]string{
+		"pkg.mk": manifest(map[string]string{
+			"name":           `"hook16"`,
+			"bins":           `[pkg.Bin(name: "hook16", root: ".", link_script: "", cpu: "", subsystem: "", kind: "", abi: "")]`,
+			"c_sources":      `[pkg.CSource(path: "cb.c", flags: [])]`,
+			"unsafe_modules": `["."]`,
+		}),
+		"cb.c":    suspendHookC,
+		"main.mk": suspendHookProgram,
+	})
+	for _, prof := range []types.Profile{types.Dev, types.Release} {
+		s, err := NewSession(Config{Root: root, Target: types.X86_64Windows, Profile: prof, Tools: tools, CacheDir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, paths, err := s.Build(filepath.Join(t.TempDir(), "hook16.exe"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Report.Diags) > 0 || len(paths) != 1 {
+			t.Fatalf("build: %d paths\n%s", len(paths), r.Report.Text(r.Sources))
+		}
+		_, errOut, code := runExe(t, types.X86_64Windows, paths[0], "")
+		want := regexp.MustCompile(`^hook suspend in callback code 16\npanic: suspend in callback\n$`)
+		if code != 101 || !want.MatchString(dropBacktrace(errOut)) || strings.Count(errOut, "hook ") != 1 {
+			t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
+		}
+	}
+}
+
+const libAfterStopProgram = `import std.raw
+import std.runtime
+
+extern GetStdHandle(n: u32): *u8
+extern WriteFile(h: *u8, buf: *u8, n: u32, done: *u32, ov: *u8): i32
+
+Say(s: str) {
+    var done: u32 = 0
+    unsafe "a console write of s's bytes" {
+        _ = WriteFile(GetStdHandle(0xFFFFFFF4), raw.StrData(s), Trunc[u32](s.Len()), raw.Of(&done), raw.Null[u8]())
+    }
+}
+
+export extern MkPanicHook(info: &runtime.PanicInfo) {
+    Say("hook ")
+    Say(info.message)
+    if info.code == 16 {
+        Say(" code 16")
+    }
+    Say("\n")
+}
+
+export extern Ping(): i32 {
+    return 1
+}
+`
+
+const libAfterStopC = `#include "libhook16.h"
+__declspec(dllimport) void __stdcall ExitProcess(unsigned code);
+void start(void) {
+    if (libhook16_mk_start(0) != 0) ExitProcess(10);
+    if (Ping() != 1) ExitProcess(11);
+    if (libhook16_mk_stop() != 0) ExitProcess(12);
+    Ping();
+    ExitProcess(0);
+}
+`
+
+// TestPanicHook_LibAfterStop: a call into a library after its stop passes
+// PanicSuspendInCallback (16) and the formatted post-stop message to
+// MkPanicHook in dev and release.
+func TestPanicHook_LibAfterStop(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("SKIP: the hook writes through Win32")
+	}
+	tools := needTools(t)
+	root := writeTree(t, map[string]string{
+		"pkg.mk": manifest(map[string]string{
+			"name":           `"libhook16"`,
+			"bins":           `[` + libBin("libhook16", ".", "dynamic", "") + `]`,
+			"unsafe_modules": `["."]`,
+		}),
+		"lib.mk": libAfterStopProgram,
+	})
+	for _, prof := range []types.Profile{types.Dev, types.Release} {
+		t.Run(prof.String(), func(t *testing.T) {
+			k32 := filepath.Join(t.TempDir(), "k32.lib")
+			if err := tools.ImportLib(context.Background(), "kernel32.dll", []string{"ExitProcess"}, "x64", k32); err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			buildLib(t, root, types.X86_64Windows, prof, dir)
+			exe := clangHost(t, tools, dir, "afterstop", libAfterStopC, filepath.Join(dir, "libhook16.lib"), k32)
+			_, errOut, code := runExe(t, types.X86_64Windows, exe, "")
+			want := regexp.MustCompile(`^hook suspend in callback: a call after the library's stop code 16\npanic: suspend in callback: a call after the library's stop\n$`)
+			if code != 101 || !want.MatchString(dropBacktrace(errOut)) || strings.Count(errOut, "hook ") != 1 {
+				t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
+			}
+		})
+	}
+}
+
+// unresolvedHookProgram calls MkGone, which binds lazily to mkgone.dll, a
+// DLL no machine has; its MkPanicHook writes the PanicInfo it gets.
+const unresolvedHookProgram = `import std.runtime
+import std.raw
+
+extern GetStdHandle(n: u32): *u8
+extern WriteFile(h: *u8, buf: *u8, n: u32, done: *u32, ov: *u8): i32
+extern MkGone(): i32
+
+Say(s: str) {
+    var done: u32 = 0
+    unsafe "a console write of s's bytes" {
+        _ = WriteFile(GetStdHandle(0xFFFFFFF4), raw.StrData(s), Trunc[u32](s.Len()), raw.Of(&done), raw.Null[u8]())
+    }
+}
+
+export extern MkPanicHook(info: &runtime.PanicInfo) {
+    Say("hook ")
+    Say(info.message)
+    if info.code == 17 {
+        Say(" code 17")
+    }
+    Say("\n")
+}
+
+export Main(sys: &System): void {
+    unsafe "mkgone.dll's function, which cannot be loaded" {
+        _ = MkGone()
+    }
+}
+`
+
+// TestPanicHook_Unresolved: the call of a lazily bound function whose DLL
+// cannot be loaded passes PanicUnresolved (17) and the message naming the
+// function and the DLL to MkPanicHook, once, before the report; exit 101.
+func TestPanicHook_Unresolved(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("SKIP: lazy binding and the hook's writes are Windows'")
+	}
+	tools := needTools(t)
+	root := writeTree(t, map[string]string{
+		"pkg.mk": manifest(map[string]string{"name": `"hook17"`,
+			"bins":           `[pkg.Bin(name: "hook17", root: ".", link_script: "", cpu: "", subsystem: "", kind: "", abi: "")]`,
+			"unsafe_modules": `["."]`,
+			"links":          `[pkg.Link(name: "mkgone.dll", kind: "lazy", path: "mkgone.def", target: "x86_64-windows")]`}),
+		"mkgone.def": "MkGone\n",
+		"main.mk":    unresolvedHookProgram,
+	})
+	for _, prof := range []types.Profile{types.Dev, types.Release} {
+		s, err := NewSession(Config{Root: root, Target: types.X86_64Windows, Profile: prof, Tools: tools, CacheDir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, paths, err := s.Build(filepath.Join(t.TempDir(), "hook17.exe"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Report.Diags) > 0 || len(paths) != 1 {
+			t.Fatalf("build: %d paths\n%s", len(paths), r.Report.Text(r.Sources))
+		}
+		_, errOut, code := runExe(t, types.X86_64Windows, paths[0], "")
+		want := regexp.MustCompile(`^hook unresolved function: MkGone of mkgone\.dll: the library could not be loaded code 17\npanic: unresolved function: MkGone of mkgone\.dll: the library could not be loaded( at \S+)?\n$`)
 		if code != 101 || !want.MatchString(dropBacktrace(errOut)) || strings.Count(errOut, "hook ") != 1 {
 			t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
 		}

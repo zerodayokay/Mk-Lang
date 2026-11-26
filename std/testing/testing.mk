@@ -1,13 +1,16 @@
 // Why: fuzzing and benchmarking should need no new syntax: a test block
 // calls a function, and the driver decides what happens.
 //
-// What: Fuzz, Bench, RunSeeds, the mutation loop (Loop, Mutate, Guided)
-// and the small decimal helpers it reads and writes with.
+// What: Fuzz, Bench, BenchSys, ExpectPanic, RunSeeds, the mutation
+// loop (Loop, Mutate, Guided) and the small decimal helpers it reads
+// and writes with.
 //
-// How: the driver (internal/driver/fuzz.go and bench.go) tells the test
-// child what to do through environment variables; with none set, Fuzz
-// calls nothing and Bench calls f(1) once, so a plain test run passes over
-// both. The protocol (environment variables, read once):
+// How: the driver (internal/driver/fuzz.go, bench.go and testing.go)
+// tells the test child what to do through environment variables; with
+// none set, Fuzz calls nothing, Bench calls f(1) once (BenchSys
+// f(sys, 1)), so a plain test run passes over all three, and
+// ExpectPanic does nothing. The protocol (environment variables, read
+// once):
 //
 //   - MK_TESTING_FUZZ: "run" calls f once per seed of the input file, in
 //     its order, writing "fuzz input <name>" to standard error before each
@@ -32,6 +35,11 @@
 //   - MK_TESTING_BENCH: "<n> <reps>", a decimal n (0: grow n from 1 until
 //     one call of f takes at least 20 ms) and a decimal repetition count;
 //     each repetition writes "mkbench <n> <nanoseconds>" to standard error.
+//   - MK_TESTING_EXPECT: a token of the mk test run, set for plain test
+//     children only; ExpectPanic writes "mkexpectpanic <token> <length>
+//     <want>" to standard error, and the driver (testing.go's
+//     judgeExpectedPanic) passes the child on a panic whose report matches.
+//     The token keeps text a test prints from passing for the line.
 //
 // The loop mutates by bit flips, byte sets, inserts, deletes, splices of
 // another input and dictionary tokens, and is guided by the package's live
@@ -100,8 +108,9 @@ export Fuzz(f: fn([]u8)) {
 /// error, from which `mk bench` computes its statistics. Anywhere else,
 /// plain `mk test` included, it calls f(1) once, so a test run checks that
 /// the benchmark works. `mk bench` finds a benchmark by the text
-/// `testing.Bench(` in its test block, so import std.testing under its own
-/// name.
+/// `testing.Bench(` or `testing.BenchSys(` in its test block, so import
+/// std.testing under its own name. A benchmark that allocates takes a
+/// System: see BenchSys.
 ///
 /// Bench itself allocates nothing; O(the repetitions' calls of f).
 export Bench(f: fn(n: int)) {
@@ -109,36 +118,106 @@ export Bench(f: fn(n: int)) {
         f(1)
         return
     }
-    b := spec.AsBytes()
-    first := Decimal(b, 0)
-    var n := first.n
-    reps := Decimal(b, first.end + 1).n
+    var n := SpecN(spec)
     if n <= 0 {
         n = 1
-        for {
-            t := Time(f, n)
-            if t >= BenchTarget || n >= MaxBenchN {
-                break
-            }
+        for Time(f, n) < BenchTarget && n < MaxBenchN {
             n *= 2
         }
     }
-    for _ in 0..reps {
-        t := Time(f, n)
-        var line: [64]u8 = [0; 64]
-        var w := Put(mut line[..], 0, "mkbench ")
-        w = PutInt(mut line[..], w, Trunc[i64](n))
-        w = Put(mut line[..], w, " ")
-        w = PutInt(mut line[..], w, t)
-        w = Put(mut line[..], w, "\n")
-        rt.WriteErr(line[0..w])
+    for _ in 0..SpecReps(spec) {
+        Report(n, Time(f, n))
     }
+}
+
+/// ExpectPanic makes the test block that calls it pass only if it panics
+/// after the call, and its panic's report ("panic: assert at
+/// main.mk:4:5") contains want after its "panic: "; an empty want matches
+/// every panic. The test then fails if its body returns, and a panic
+/// before the call fails it as any panic does. The last call wins. Under
+/// `mk test` it writes the line "mkexpectpanic <token> <length of want>
+/// <want>" to standard error, with the run's token from
+/// MK_TESTING_EXPECT, and `mk test` judges the child from it and leaves
+/// the line out of the test's output. Anywhere else, `mk test --fuzz` and
+/// `mk bench` included, it does nothing.
+///
+/// Allocates nothing; O(want + the environment).
+export ExpectPanic(want: str) {
+    token := rt.Env("MK_TESTING_EXPECT") else {
+        return
+    }
+    var n: [24]u8 = [0; 24]
+    var w := Put(mut n[..], 0, " ")
+    w = PutInt(mut n[..], w, Trunc[i64](want.Len()))
+    w = Put(mut n[..], w, " ")
+    rt.WriteErr("mkexpectpanic ".AsBytes())
+    rt.WriteErr(token.AsBytes())
+    rt.WriteErr(n[0..w])
+    rt.WriteErr(want.AsBytes())
+    rt.WriteErr("\n".AsBytes())
+}
+
+/// BenchSys is Bench for a benchmark that needs the System, to allocate
+/// from sys.heap or to reach sys.io: the test block passes its own sys,
+/// and BenchSys calls f(sys, n) wherever Bench would call f(n), so
+/// `mk bench` times f(sys, n) and any other run calls f(sys, 1) once. f
+/// builds its fixture in each call, and the time includes it; built once
+/// before f's loop of n, its cost is spread over the n iterations.
+///
+/// BenchSys itself allocates nothing; O(the repetitions' calls of f).
+export BenchSys(sys: &System, f: fn(sys: &System, n: int)) {
+    spec := rt.Env("MK_TESTING_BENCH") else {
+        f(sys, 1)
+        return
+    }
+    var n := SpecN(spec)
+    if n <= 0 {
+        n = 1
+        for TimeSys(sys, f, n) < BenchTarget && n < MaxBenchN {
+            n *= 2
+        }
+    }
+    for _ in 0..SpecReps(spec) {
+        Report(n, TimeSys(sys, f, n))
+    }
+}
+
+// SpecN is the n of a MK_TESTING_BENCH spec "<n> <reps>"; 0 asks for
+// calibration.
+SpecN(spec: str): int {
+    return Decimal(spec.AsBytes(), 0).n
+}
+
+// SpecReps is the repetition count of a MK_TESTING_BENCH spec.
+SpecReps(spec: str): int {
+    b := spec.AsBytes()
+    return Decimal(b, Decimal(b, 0).end + 1).n
+}
+
+// Report writes the line "mkbench <n> <t>" to standard error: one
+// repetition's n and its nanoseconds.
+Report(n: int, t: i64) {
+    var line: [64]u8 = [0; 64]
+    var w := Put(mut line[..], 0, "mkbench ")
+    w = PutInt(mut line[..], w, Trunc[i64](n))
+    w = Put(mut line[..], w, " ")
+    w = PutInt(mut line[..], w, t)
+    w = Put(mut line[..], w, "\n")
+    rt.WriteErr(line[0..w])
 }
 
 // Time is the nanoseconds one call f(n) takes on the monotonic clock.
 Time(f: fn(n: int), n: int): i64 {
     t0 := sys.Now()
     f(n)
+    return sys.Now() - t0
+}
+
+// TimeSys is the nanoseconds one call f(s, n) takes on the monotonic
+// clock.
+TimeSys(s: &System, f: fn(sys: &System, n: int), n: int): i64 {
+    t0 := sys.Now()
+    f(s, n)
     return sys.Now() - t0
 }
 

@@ -1,7 +1,7 @@
 // Why: the Mk fuzz scan and the apidiff step decide what the gate runs and
 // fails on, from text and JSON.
-// What: tests of mkFuzzTargets (on files and on the tree), apidiffBreaking,
-// namesItem, apidiffVerdict and extractStd.
+// What: tests of mkFuzzTargets (on files and on the tree), fuzzArgv,
+// apidiffBreaking, namesItem, apidiffVerdict and extractStd.
 // How: writes small trees and a scratch git repository under t.TempDir().
 
 package main
@@ -67,6 +67,32 @@ func TestGateMkFuzzTargets(t *testing.T) {
 	writeGateFiles(t, root, map[string]string{"pkgs/parser/testdata/fuzz/lex { }/seed": "x"})
 	if d2, _ := mkDirDigest(filepath.Join(root, "pkgs", "parser")); d2 == d1 {
 		t.Error("a new corpus file leaves the digest unchanged")
+	}
+}
+
+// TestGateFuzzArgv: a go fuzz target's command, with -parallel when the
+// pool sets it and -fuzzminimizetime for the targets of fuzzMinimizeTime,
+// each of which is a listed untrusted-input target.
+func TestGateFuzzArgv(t *testing.T) {
+	g := &gate{goExe: "go", fuzzTime: 5 * time.Minute}
+	plain := strings.Join(g.fuzzArgv(fuzzTarget{"./std", "FuzzStdUrl_Parse", false}, 0), " ")
+	if plain != "go test -run=^$ -fuzz=^FuzzStdUrl_Parse$ -fuzztime=5m0s -timeout=35m0s ./std" {
+		t.Errorf("argv %s", plain)
+	}
+	capped := strings.Join(g.fuzzArgv(fuzzTarget{"./std", "FuzzStdHttpFields_Huffman", false}, 4), " ")
+	if capped != "go test -run=^$ -fuzz=^FuzzStdHttpFields_Huffman$ -parallel=4 -fuzzminimizetime=100x -fuzztime=5m0s -timeout=35m0s ./std" {
+		t.Errorf("argv %s", capped)
+	}
+	listed := map[string]bool{}
+	for _, e := range untrusted {
+		for _, n := range e.targets {
+			listed[untrustedPkgOf(n)+" "+n] = true
+		}
+	}
+	for k := range fuzzMinimizeTime {
+		if !listed[k] {
+			t.Errorf("fuzzMinimizeTime names %q, which is no listed untrusted-input target", k)
+		}
 	}
 }
 

@@ -312,7 +312,7 @@ export Accept(h: &Heap, io: Io, req: &http.Request, t: http.Taken, protocols: []
 ```
 
 - Flows: The result borrows from h and t.
-- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
+- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
 
 Accepts the WebSocket handshake of req on the server side, over t, the
 connection the HTTP handler took with Link.Takeover. The connection
@@ -369,7 +369,7 @@ nothing.
 export Conn.Close(self, io: Io, code: u16, reason: str): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
+- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
 
 Closes the connection: sends a Close frame with code and reason (code
 0 sends none and no reason), reads to the peer's Close frame, then
@@ -392,7 +392,7 @@ failed state, to Abandon (`onerr c.Abandon()` with
 export Conn.Ping(&self, io: Io, data: []u8): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
+- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
 
 Sends a Ping with data, at most 125 bytes (TooLarge otherwise, which
 sends nothing). Recv reads the peer's Pong and drops it. Errors, and
@@ -419,7 +419,7 @@ export Conn.Recv(&self, a: &Arena, io: Io): Error!Message from a
 ```
 
 - Flows: The result borrows from a.
-- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
+- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
 
 Receives the next data message, its fragments joined, into a, after
 answering the Pings and the Close that come before it. A second Recv of
@@ -443,7 +443,7 @@ allocates the message in a, and a fragmented one first on the heap.
 export Conn.Send(&self, io: Io, kind: Kind, data: []u8): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
+- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
 
 Sends data as one message of kind, in one frame, masked on the client
 side. Errors: Protocol(1007) for text that is not UTF-8, which sends
@@ -471,7 +471,7 @@ export Dial(h: &Heap, a: &Arena, io: Io, u: &url.Url, o: &Options): Error!Conn f
 ```
 
 - Flows: The result borrows from h.
-- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
+- Errors: Error (Canceled, Closed, OutOfMemory, http.NoSecureTransport, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Handshake(status: int), PeerClosed(code: u16), Protocol(code: u16), TooLarge)
 
 Opens a WebSocket connection to u, a ws or wss URL, with o's header
 fields, subprotocols, connector and limits. The Conn keeps h, never u

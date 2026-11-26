@@ -95,16 +95,16 @@ ParseSplit(nd: int, k: int): int {
 // recursion: the high half's words, then the high half's own scratch or
 // the product and its multiplication scratch, whichever is larger; the low
 // half's scratch is used before the high half exists.
-ParseTmp(nd: int, base: int, k: int, table: [][]u64): int {
-    if nd <= ParseLeafDigits {
+ParseTmp(nd: int, base: int, k: int, table: [][]u64, depth: u8): int {
+    if nd <= ParseLeafDigits || depth == 0 {
         return 0
     }
     t := ParseSplit(nd, k)
     pl := table[t].Len()
     lo := k << t
     hn := WordsFor(nd - lo, base)
-    low := ParseTmp(lo, base, k, table)
-    high := ParseTmp(nd - lo, base, k, table)
+    low := ParseTmp(lo, base, k, table, depth - 1)
+    high := ParseTmp(nd - lo, base, k, table, depth - 1)
     prod := hn + pl + MulScratch(hn, pl)
     deeper := if high > prod { high } else { prod }
     inner := hn + deeper
@@ -113,10 +113,10 @@ ParseTmp(nd: int, base: int, k: int, table: [][]u64): int {
 
 // ParseInto sets z to the value of the digits d in base ub; z holds any
 // number of d.Len() digits, table[i] is bb^(2^i) for every split below, and
-// tmp has ParseTmp(d.Len()) words.
-ParseInto(z: mut []u64, d: []u8, base: int, ub: u64, k: int, table: [][]u64, tmp: mut []u64) {
+// tmp has ParseTmp(d.Len(), depth) words. At depth 0 it takes Horner's rule.
+ParseInto(z: mut []u64, d: []u8, base: int, ub: u64, k: int, table: [][]u64, tmp: mut []u64, depth: u8) {
     nd := d.Len()
-    if nd <= ParseLeafDigits {
+    if nd <= ParseLeafDigits || depth == 0 {
         ParseHorner(z, d, ub, k)
         return
     }
@@ -127,10 +127,10 @@ ParseInto(z: mut []u64, d: []u8, base: int, ub: u64, k: int, table: [][]u64, tmp
     hn := WordsFor(hd, base)
     // The low half is below pw, so it fits in pl words, and pl words fit in
     // z: pw is below base^nd.
-    ParseInto(mut z[..pl], d[hd..], base, ub, k, table, mut tmp[..])
+    ParseInto(mut z[..pl], d[hd..], base, ub, k, table, mut tmp[..], depth - 1)
     Clear(mut z[pl..])
     (left: hi, right: rest) := tmp.SplitAt(hn)
-    ParseInto(mut hi[..], d[..hd], base, ub, k, table, mut rest[..])
+    ParseInto(mut hi[..], d[..hd], base, ub, k, table, mut rest[..], depth - 1)
     (left: prod, right: mt) := rest.SplitAt(hn + pl)
     MulNat(mut prod[..], hi[..], pw, mut mt[..])
     // The sum is the value of d, so it fits in z.
@@ -154,6 +154,6 @@ ParseLarge(a: &Arena, z: mut []u64, d: []u8, base: int, ub: u64): OutOfMemory!vo
         try table.Push(try MulMag(&s, last, last))
     }
     all := table.Done()
-    tmp := try s.Slice[u64](ParseTmp(d.Len(), base, k, all[..]))
-    ParseInto(z, d, base, ub, k, all[..], mut tmp[..])
+    tmp := try s.Slice[u64](ParseTmp(d.Len(), base, k, all[..], DepthLimit))
+    ParseInto(z, d, base, ub, k, all[..], mut tmp[..], DepthLimit)
 }

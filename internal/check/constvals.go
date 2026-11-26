@@ -2,8 +2,8 @@
 // and must produce them in exactly the form the evaluator and codegen read.
 //
 // What: scalarConst, strConst, bytesConst, intConst and intArg (interning
-// values), strBytes and constInt (reading them back), parseIntLit and
-// intFits.
+// values), strBytes and constInt (reading them back), parseIntLit,
+// intFits and floatLitFitsF32.
 //
 // How: every value is types.ConstValue's canonical little-endian bytes; a
 // str is a {ptr, len} pair whose pointer word relocates to a [N]u8 const.
@@ -11,6 +11,7 @@
 package check
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -120,4 +121,12 @@ func intFits(v uint64, neg bool, bits uint, signed bool) bool {
 		return v <= 1<<(bits-1)
 	}
 	return v < 1<<(bits-1)
+}
+
+// floatLitFitsF32 reports whether a float literal's f64 value is exactly an
+// f32, so that `f32(x)` changes no value; a literal that rounds or
+// overflows in f32 does not fit (E0303).
+func floatLitFitsF32(raw string) bool {
+	f, err := strconv.ParseFloat(strings.ReplaceAll(raw, "_", ""), 64)
+	return err == nil && !math.IsInf(f, 0) && float64(float32(f)) == f
 }

@@ -323,13 +323,7 @@ func (qx *queryIndex) siteAt(b *mir.Body, sp mir.SpanID) (string, int, int) {
 	if int(sp) >= len(b.Spans) {
 		return "?", 0, 0
 	}
-	s := b.Spans[sp]
-	f := qx.w.sm.File(s.File)
-	if f == nil {
-		return "?", 0, 0
-	}
-	lc := f.LineCol(s.Start)
-	return filepath.ToSlash(qx.w.sitePath(s.File)), int(lc.Line), int(lc.Col)
+	return qx.spanAt(b.Spans[sp])
 }
 
 // isGeneric reports whether id, or the function a literal or predicate

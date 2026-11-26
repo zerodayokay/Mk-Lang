@@ -27,6 +27,14 @@ struct Options {
     parallel: bool
     handshake: bool
     tls12: bool
+    h2: bool
+    h2c: bool
+    h2_window: ?int
+    h3: bool
+    h3_only: bool
+    drive: bool
+    origin_h2: bool
+    origin_h3: bool
     alpn: List[str]
     follow: bool
     max_redirs: int
@@ -46,6 +54,7 @@ struct Options {
     tls_chain: ?str
     tls_key: ?str
     seed: ?u64
+    udp_loss: ?u32
     faults: List[str]
     // the WebSocket steps in order, each a kind (b't' text, b'b' binary,
     // b'p' ping) and its text
@@ -66,7 +75,7 @@ error NoUrl
 type OptionError = Usage | MissingValue | BadValue | NoUrl | OutOfMemory
 
 // the options that take a value, long and short spellings
-const ValueOptions: []str = ["-o", "--output", "-H", "--header", "-X", "--request", "-d", "--data", "--data-file", "-u", "--user", "--query", "--max-redirs", "--max-time", "--retry", "--retry-delay", "--fetch-limit", "--max-memory", "--decode", "--deny", "-b", "--cookies", "-c", "--cookie-jar", "--cacert", "--alpn", "--time-cond", "--origin", "--tls-chain", "--tls-key", "--seed", "--fault", "--ws-send", "--ws-binary", "--ws-ping", "--ws-max", "--ws-protocol"]
+const ValueOptions: []str = ["-o", "--output", "-H", "--header", "-X", "--request", "-d", "--data", "--data-file", "-u", "--user", "--query", "--max-redirs", "--max-time", "--retry", "--retry-delay", "--fetch-limit", "--max-memory", "--decode", "--deny", "-b", "--cookies", "-c", "--cookie-jar", "--cacert", "--alpn", "--http2-window", "--time-cond", "--origin", "--tls-chain", "--tls-key", "--seed", "--udp-loss", "--fault", "--ws-send", "--ws-binary", "--ws-ping", "--ws-max", "--ws-protocol"]
 
 NewOptions(a: &Arena): Options {
     return Options(
@@ -88,6 +97,14 @@ NewOptions(a: &Arena): Options {
         parallel: false,
         handshake: false,
         tls12: false,
+        h2: false,
+        h2c: false,
+        h2_window: none,
+        h3: false,
+        h3_only: false,
+        drive: false,
+        origin_h2: false,
+        origin_h3: false,
         alpn: List[str].New(a),
         follow: false,
         max_redirs: 10,
@@ -106,6 +123,7 @@ NewOptions(a: &Arena): Options {
         tls_chain: none,
         tls_key: none,
         seed: none,
+        udp_loss: none,
         faults: List[str].New(a),
         ws_kinds: List[u8].New(a),
         ws_texts: List[str].New(a),
@@ -185,6 +203,20 @@ Set(o: mut Options, name: str, value: str into o, at: int): OptionError!void {
         "--parallel" { o.parallel = true }
         "--handshake" { o.handshake = true }
         "--tlsv1.2" { o.tls12 = true }
+        "--http2" { o.h2 = true }
+        "--http2-prior-knowledge" { o.h2c = true }
+        "--http2-window" {
+            n := try Count(value, at)
+            if n == 0 {
+                fail BadValue(arg: at)
+            }
+            o.h2_window = some(n)
+        }
+        "--http3" { o.h3 = true }
+        "--http3-only" { o.h3_only = true }
+        "--drive" { o.drive = true }
+        "--origin-h2" { o.origin_h2 = true }
+        "--origin-h3" { o.origin_h3 = true }
         "--alpn" {
             for p in value.Split(",") {
                 try o.alpn.Push(p)
@@ -225,6 +257,13 @@ Set(o: mut Options, name: str, value: str into o, at: int): OptionError!void {
         "--tls-chain" { o.tls_chain = some(value) }
         "--tls-key" { o.tls_key = some(value) }
         "--seed" { o.seed = some(Cast[u64](try Count(value, at))) }
+        "--udp-loss" {
+            n := try Count(value, at)
+            if n > 1000000 {
+                fail BadValue(arg: at)
+            }
+            o.udp_loss = some(Cast[u32](n))
+        }
         "--fault" {
             if !Faults.Has(&value) {
                 fail BadValue(arg: at)

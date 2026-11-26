@@ -545,7 +545,7 @@ func supportUnwindWin64(t *testing.T, bin string, traps bool) {
 			symSwitch: "push rbp; push rbx; push rdi; push rsi; push r12; push r13; push r14; push r15; alloc 168; " +
 				"xmm6@0; xmm7@16; xmm8@32; xmm9@48; xmm10@64; xmm11@80; xmm12@96; xmm13@112; xmm14@128; xmm15@144",
 			symTaskStart:  "alloc 32",
-			symCallSystem: "push rbx; push rsi; push rdi; push r12; frame rbx+0",
+			symCallSystem: "push rbx; push rsi; push rdi; push r12; push r13; frame rbx+0",
 			// The machine frame it writes, then the shadow space.
 			symTrapCall: "machframe; alloc 32",
 		}

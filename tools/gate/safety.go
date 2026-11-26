@@ -38,6 +38,7 @@ var untrusted = []untrustedEntry{
 	{"url.Parse and the URL setters", "std.url", []string{"FuzzStdUrl_Parse", "FuzzStdUrl_Set", "FuzzStdUrl_ParseQuery", "FuzzStdUrl_DomainToAscii"}},
 	{"the HTTP request parser", "std.http", []string{"FuzzHttp_ReadRequest", "FuzzStdHttp_ServeWith"}},
 	{"the HTTP response parser", "std.http", []string{"FuzzStdHttp_ClientReply"}},
+	{"the HTTP Alt-Svc parser", "std.http", []string{"FuzzStdHttp_AltSvc"}},
 	{"WebSocket frames", "std.websocket", []string{"FuzzStdWs_Frames", "FuzzStdWs_Request", "FuzzStdWs_Reply"}},
 	{"Unzlib and the zlib stream", "std.compress", []string{"FuzzCompress_Unzlib", "FuzzCompress_ZlibStream"}},
 	{"the zstd decoder", "std.compress", []string{"FuzzCompress_Zstd", "FuzzCompress_ZstdWrap"}},
@@ -54,8 +55,19 @@ var untrusted = []untrustedEntry{
 	{"the CSV reader", "std.csv", []string{"FuzzSTDCSV_Records"}},
 	{"big.Parse", "std.big", []string{"FuzzBig_Parse"}},
 	{"x509.Parse and x509.ParsePem", "std.x509", []string{"FuzzX509_Parse", "FuzzX509_ParsePem", "FuzzX509_Verify"}},
-	{"the TLS record and handshake parsers", "std.tls", []string{"FuzzStdTls_Messages", "FuzzStdTls_Records", "FuzzStdTls_Logic", "FuzzStdTls_Messages12", "FuzzStdTls_Records12"}},
+	{"the TLS record and handshake parsers", "std.tls", []string{"FuzzStdTls_Messages", "FuzzStdTls_Records", "FuzzStdTls_Logic", "FuzzStdTls_Messages12", "FuzzStdTls_Records12", "FuzzStdTls_QuicHandshake"}},
+	{"the QUIC packet, frame and parameter parsers", "std.quic", []string{"FuzzStdQuic_Packets", "FuzzStdQuic_Frames", "FuzzStdQuic_Params"}},
 	{"key parsing", "std.crypto", []string{"FuzzSTDCRYPTO_Keys"}},
+	{"image.DecodePng", "std.image", []string{"FuzzStdImage_DecodePng"}},
+	{"gpu.CheckShader (SPIR-V reader)", "std.gpu", []string{"FuzzStdGpu_Spirv"}},
+	{"gpu DXIL container reader", "std.gpu", []string{"FuzzStdGpu_Dxil"}},
+	{"the HPACK decoder and Huffman decoding", "std.http.fields", []string{"FuzzStdHttpFields_Hpack", "FuzzStdHttpFields_Huffman"}},
+	{"the QPACK decoder and encoder-stream instructions", "std.http.fields", []string{"FuzzStdHttpFields_Qpack"}},
+	{"HTTP field validation", "std.http.fields", []string{"FuzzStdHttpFields_Check"}},
+	{"the HTTP/2 frame and SETTINGS parsers", "std.http.h2", []string{"FuzzStdHttpH2_Frames", "FuzzStdHttpH2_Server", "FuzzStdHttpH2_Client"}},
+	{"QUIC ACK range and recovery state", "std.quic", []string{"FuzzStdQuic_Ack"}},
+	{"the HTTP/3 frame, SETTINGS and stream parsers", "std.http.h3", []string{"FuzzStdHttpH3_Frames"}},
+	{"QUIC endpoint demux, Retry token and stateless reset", "std.quic", []string{"FuzzStdQuic_Endpoint"}},
 	// Further entry points held to the same bar (their fuzz files say so).
 	{"net.ParseAddr", "std.net", []string{"FuzzStdNet_ParseAddr"}},
 	{"AesGcm.Open, HKDF and HMAC on peer bytes", "std.crypto", []string{"FuzzSTDCRYPTO_TlsPrimitives"}},
@@ -158,6 +170,8 @@ var cancelSafety = []cancelTest{
 	{"./std", "TestX509_SystemRootsLinksLinux", "std.x509", true},
 	{"./std", "TestStdWs_Blocks", "std.websocket", false},
 	{"./std", "TestX509_SystemRootsLinux", "std.x509", true},
+	{"./std", "TestStdSyncLead_PctCancel", "std.sync.lead", false},
+	{"./std", "TestStdQuic_SimCancel", "std.quic", false},
 }
 
 // cancelExempt are the top-level tests of std that the cancel-safety scan

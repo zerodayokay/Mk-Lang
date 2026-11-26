@@ -232,7 +232,8 @@ TapeOp(op: u32): bool {
         op == core.IoOpSetMode || op == core.IoOpSymlink || op == core.IoOpReadLink || op == core.IoOpCwd ||
         op == core.IoOpAbsolute || op == core.IoOpCopy || op == core.IoOpSockOpt || op == core.IoOpShutdown ||
         op == core.IoOpIsTerminal || op == core.IoOpTermSize || op == core.IoOpTimeZone ||
-        op == core.IoOpDataSync || op == core.IoOpDirOpenAt || op == core.IoOpRemoveAt || op == core.IoOpListen
+        op == core.IoOpDataSync || op == core.IoOpDirOpenAt || op == core.IoOpRemoveAt || op == core.IoOpListen ||
+        op == core.IoOpUdpConnect || op == core.IoOpTryRecvFrom
 }
 
 // CountOp: op's value is the count of out bytes it wrote.
@@ -270,6 +271,12 @@ TCall(io: Io, a: *core.IoCallArgs): core.IoResult {
     }
     if op == core.IoOpWall {
         return TWall(io, a)
+    }
+    if op == core.IoOpUdpConnect {
+        return TUdpConnect(io, a)
+    }
+    if op == core.IoOpTryRecvFrom {
+        return TTryRecvFrom(io, a)
     }
     if !TapeOp(op) {
         return core.InertCall(io, a)
@@ -863,6 +870,96 @@ TSendTo(io: Io, h: uint, data: []u8, to: core.IoAddr): core.IoResult {
     }
     r := core.IoSendTo(m.inner, h, data, to)
     Post(io, OSendTo, h, d, r, nil[..])
+    return r
+}
+
+TUdpConnect(io: Io, a: *core.IoCallArgs): core.IoResult {
+    var h: uint = 0
+    var to := core.IoAddr(ip: [0; 16], port: 0, v6: false, zone: 0)
+    var has_addr := false
+    unsafe "a is the caller's record, live until this returns" {
+        h = (*a).h
+        if (*a).pn >= SizeOf[core.IoAddr]() {
+            to = raw.Read(raw.PtrCast[u8, core.IoAddr]((*a).p))
+            has_addr = true
+        }
+    }
+    d := if has_addr { FnvAddr(FnvSeed, to) } else { FnvSeed }
+    m := ModeOf(io)
+    var nil := NoOut()
+    if !m.ok {
+        return Dead()
+    }
+    if m.replay {
+        r := Take(io, OUdpConnect, h, d, mut nil[..], HNone)
+        unsafe "a is the caller's record, live until this returns" {
+            (*a).res = r
+        }
+        return r
+    }
+    r := core.IoCall(m.inner, a)
+    Post(io, OUdpConnect, h, d, r, nil[..])
+    return r
+}
+
+TTryRecvFrom(io: Io, a: *core.IoCallArgs): core.IoResult {
+    var h: uint = 0
+    var outn := 0
+    unsafe "a is the caller's record, live until this returns" {
+        h = (*a).h
+        outn = (*a).outn
+    }
+    d := FnvI(FnvSeed, i64(outn))
+    m := ModeOf(io)
+    if !m.ok {
+        return Dead()
+    }
+    if m.replay {
+        var tmp: [65560]u8 = [0; 65560]
+        var empty: [0]u8 = [0; 0]
+        var got := 0
+        r := TakeV2(io, OTryRecvFrom, h, d, mut tmp[..], mut empty[..], HNone, Bound(max: -1, hdr: 0, unit: 0), mut got)
+        if r.err == core.SysErr.None && r.value >= 0 {
+            if r.value > i64(outn) || i64(AddrSize) + r.value > i64(got) {
+                e := EnterTape(io)
+                if e.ok {
+                    TapeOf(&e).diverged = true
+                    UnlockSlot(e.slot)
+                }
+                return Fail(core.SysErr.Canceled)
+            }
+            from := GetAddr(tmp[..], 0)
+            n := Cast[int](r.value)
+            unsafe "TakeV2 and the check above bound n <= outn and AddrSize + n <= got" {
+                if (*a).qn >= SizeOf[core.IoAddr]() {
+                    raw.Write(raw.PtrCast[u8, core.IoAddr]((*a).q), from)
+                }
+                if n > 0 {
+                    raw.Copy((*a).out, raw.Data(tmp[AddrSize..AddrSize + n]), n)
+                }
+                (*a).res = r
+            }
+        } else {
+            unsafe "a is the caller's record, live until this returns" {
+                (*a).res = r
+            }
+        }
+        return r
+    }
+    r := core.IoCall(m.inner, a)
+    var ab: [24]u8 = [0; 24]
+    if r.err == core.SysErr.None && r.value >= 0 && r.value <= 65535 && r.value <= i64(outn) {
+        unsafe "a is the caller's record, out holds outn bytes, q holds IoAddr" {
+            var from := core.IoAddr(ip: [0; 16], port: 0, v6: false, zone: 0)
+            if (*a).qn >= SizeOf[core.IoAddr]() {
+                from = raw.Read(raw.PtrCast[u8, core.IoAddr]((*a).q))
+            }
+            PutAddr(mut ab[..], 0, from)
+            Post2(io, OTryRecvFrom, h, d, r, ab[0..AddrSize], raw.Slice((*a).out, Cast[int](r.value)))
+        }
+    } else {
+        Post(io, OTryRecvFrom, h, d, r, ab[0..0])
+    }
     return r
 }
 

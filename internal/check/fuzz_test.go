@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"mk/internal/diag"
+	"mk/internal/resolve"
 	"mk/internal/source"
 	"mk/internal/types"
 )
@@ -106,6 +107,15 @@ func checkNoICEWith(t *testing.T, o opt, src string, before ...func(*world)) (*w
 		t.Fatalf("ICE before stage 6: %v\n%s", ie, src)
 	}
 	ds := append([]*diag.Diagnostic(nil), b.diags()...)
+	// The driver reports unknown imports during its import step. This
+	// harness has only the fake prelude and explicitly supplied modules.
+	for _, file := range b.files {
+		for _, imp := range resolve.ImportsOf(file, w.in) {
+			if _, ok := w.mods[imp.Path]; !ok {
+				ds = append(ds, diag.New(diag.E0202, imp.PathSpan, "no module "+imp.Path))
+			}
+		}
+	}
 	for _, id := range b.m.Units() {
 		it := w.items.Get(id)
 		var body *Body

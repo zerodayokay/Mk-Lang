@@ -208,7 +208,9 @@ func (t *Table) check(ty *Type) {
 			bad("element %d", ty.Elem)
 		}
 	case KArray:
-		if !t.valid(ty.Elem) || ty.Len.Kind == CANone {
+		// A length of kind CANone with a Param is a const generic a call has
+		// not inferred yet (check's infer), as a KInfer element is a type one.
+		if !t.valid(ty.Elem) || ty.Len.Kind == CANone && ty.Len.Param == 0 {
 			bad("element %d, length kind %d", ty.Elem, ty.Len.Kind)
 		}
 	case KErrorUnion:

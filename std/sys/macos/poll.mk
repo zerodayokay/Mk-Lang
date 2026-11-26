@@ -53,6 +53,9 @@ struct PollPage {
     token: raw.Atomic[u32]
     sleepers: raw.Atomic[i64]
     sem: Sem
+    main_sem: Sem
+    main_waiter: raw.Atomic[u32]
+    main_pending: raw.Atomic[u32]
     done_lock: raw.Atomic[u32]
     done_head: *Op
     done_tail: *Op
@@ -381,7 +384,7 @@ export PollInit(force_epoll: bool): u32 {
     }
     unsafe "the fresh state page" {
         pp := raw.PtrCast[u8, PollPage](p)
-        if !SemInit(mut (*pp).sem) {
+        if !SemInit(mut (*pp).sem) || !SemInit(mut (*pp).main_sem) {
             return 0
         }
         // PollInit runs once at startup, before any other poll call: the
@@ -769,12 +772,51 @@ export PollCancel(op: *Op) {
 /// the token by rule 2.
 /// O(out.Len()) besides the wait; allocates nothing.
 export PollWait(timeout_ns: i64, out: mut []*Op): int {
+    return PollWaitOn(timeout_ns, out, false)
+}
+
+/// Waits as PollWait does, with an additional directed wake for carrier zero.
+/// O(1) besides the wait; allocates nothing.
+export PollWaitMain(timeout_ns: i64, out: mut []*Op): int {
+    return PollWaitOn(timeout_ns, out, true)
+}
+
+/// Consumes a directed wake before running main-thread work. Only the
+/// initial thread may consume it. O(1); allocates nothing.
+export PollTakeMainWake(): bool {
+    unsafe "the poll page was published at program startup" {
+        return (*PP()).main_pending.Swap(0) != 0
+    }
+}
+
+/// Records main-thread work and wakes its scheduler if it is idle.
+/// O(1) system calls; allocates nothing.
+export PollWakeMain() {
+    pp := PP()
+    unsafe "the poll page was published at program startup" {
+        // Publish before waking either place the main thread can sleep:
+        // kevent with the token, or its own semaphore without it.
+        (*pp).main_pending.Store(1)
+        WakeMainParker(pp)
+        PollWake()
+    }
+}
+
+WakeMainParker(pp: *PollPage) {
+    unsafe "the live poll page; only the main thread parks on its semaphore" {
+        if (*pp).main_waiter.Load() != 0 && (*pp).main_waiter.Cas(1, 0) {
+            SemPost(&(*pp).main_sem, 1)
+        }
+    }
+}
+
+PollWaitOn(timeout_ns: i64, out: mut []*Op, main: bool): int {
     if out.Len() == 0 {
         return 0
     }
     pp := PP()
     var k := TakeDone(out, 0)
-    if k > 0 || timeout_ns == 0 {
+    if k > 0 || timeout_ns == 0 || (main && MainWakePending(pp)) {
         return KqReap(0, out, k)
     }
     deadline := Deadline(timeout_ns)
@@ -785,7 +827,10 @@ export PollWait(timeout_ns: i64, out: mut []*Op): int {
         // the release/acquire edge of a lock). sleepers: the Dekker pair
         // with token argued above.
         if (*pp).token.Cas(0, 1) {
-            return HoldAndWait(timeout_ns, out)
+            return HoldAndWait(if main && MainWakePending(pp) { 0 } else { timeout_ns }, out)
+        }
+        if main {
+            return WaitMainParker(pp, deadline, out)
         }
         TestPark()
         _ = (*pp).sleepers.Add(1)
@@ -820,6 +865,36 @@ export PollWait(timeout_ns: i64, out: mut []*Op): int {
     return k
 }
 
+MainWakePending(pp: *PollPage): bool {
+    unsafe "the poll page was published at program startup" {
+        return (*pp).main_pending.Load() != 0
+    }
+}
+
+WaitMainParker(pp: *PollPage, deadline: i64, out: mut []*Op): int {
+    unsafe "only the main thread announces itself on the poll page's main semaphore" {
+        for {
+            // If a signal missed the announcement, its pending bit is
+            // visible here. If the token release missed it, the Cas can take
+            // the token without waiting.
+            (*pp).main_waiter.Store(1)
+            if MainWakePending(pp) {
+                (*pp).main_waiter.Store(0)
+                break
+            }
+            if (*pp).token.Cas(0, 1) {
+                (*pp).main_waiter.Store(0)
+                return HoldAndWait(if MainWakePending(pp) { 0 } else { Left(deadline) }, out)
+            }
+            if !SemWait(&(*pp).main_sem, Left(deadline)) {
+                (*pp).main_waiter.Store(0)
+                break
+            }
+        }
+    }
+    return KqReap(0, out, TakeDone(out, 0))
+}
+
 // PassOn is rule 3 of PollWait: a parker that took a post and leaves
 // without the token posts again when the token is free and a parker still
 // sleeps. Its sleepers.Add(-1) came first, so it does not count itself;
@@ -850,6 +925,7 @@ HoldAndWait(timeout_ns: i64, out: mut []*Op): int {
         // Edge: the Store(0) releases the token to the next Cas; the sleepers
         // Load after it is the releaser's half of the Dekker pair (rule 1).
         (*pp).token.Store(0)
+        WakeMainParker(pp)
         if (*pp).sleepers.Load() > 0 {
             SemPost(&(*pp).sem, 1)
         }

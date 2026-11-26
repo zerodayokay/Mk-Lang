@@ -1,0 +1,8 @@
+# Two deep C calls on one carrier. The first grows the system stack, so Windows lowers the
+# thread's StackLimit; the second must start from that limit. mk_call_system installed the
+# StackLimit read when the carrier started, so the second call ran below it, where a storing
+# stack probe (MSVC's __chkstk) writes over live frames: two D3DCompile calls crashed.
+# Windows only: NT_TIB is Win64's. cstacklimit/app/main.mk says which calls run.
+case ok
+target x86_64-windows
+stdout cstacklimit.out

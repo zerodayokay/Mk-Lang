@@ -5,7 +5,7 @@
 // What: depPkg and depWalk, resolveDeps (the walk of the manifest step),
 // identityOf, canonicalID and urlCID, walk and source (one Dep's package),
 // depBuilds, and the display side: displayNames, localizeText,
-// localizeDiags, localizeAnswer, plus resolvedImports for the cache key.
+// localizeDiags, plus resolvedImports for the cache key.
 //
 // How: the walk goes by identity:
 //
@@ -847,20 +847,6 @@ func (s *Session) localizeDiags(ds []*diag.Diagnostic) {
 			d.Alternatives[i] = localizeText(a, names)
 		}
 	}
-}
-
-// localizeAnswer rewrites a query answer's lines with the root's local
-// names, so mk query shows a dependency as the root imports it (the hook
-// is in query.go). nil stays nil.
-func (s *Session) localizeAnswer(a *QueryAnswer) *QueryAnswer {
-	if a == nil || len(s.depRoot) == 0 {
-		return a
-	}
-	names := s.displayNames(nil)
-	for i, l := range a.Answer {
-		a.Answer[i] = localizeText(l, names)
-	}
-	return a
 }
 
 // localizeFact rewrites a text fact and the text facts inside a list.

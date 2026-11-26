@@ -2,17 +2,23 @@
 // assembly sources (c_sources, asm_sources); the driver must turn those
 // into Mk modules and link objects as a cached native step.
 //
-// What: validateC (the manifest's C fields), cImports and cImportsOf (the
+// What: validateC (the manifest's C fields), cIncludeDirs (the -I
+// directories of a package's C), cImports and cImportsOf (the
 // translated imports of one package), prune, translateC and vendoredViews,
 // the C object builds (cObjects, cObjectsOf, asmSourcesFor) with their
-// cache keys (cobjObjKey, cobjCandidate, saveCobjCandidate), and
-// Session.CImports for the tools.
+// cache keys (cobjObjKey, cobjCandidate, saveCobjCandidate,
+// cobjSearchDirs), and Session.CImports for the tools.
 //
 // How: the package's C imports are translated once per target
 // (internal/cimport) into one memory build whose modules are c.<name>; the
 // readable binding is written to gen/<target>/c/<name>.mk, and the shim,
 // the C sources and the assembly sources become objects of the link. A C
-// object's key covers the content hash of every header its -MD file lists.
+// object's key covers the content hash of every header its -MD file lists,
+// and its cache entry the negative lookups a translation's entry keeps:
+// a header added earlier on the search path is a miss.
+// The translation, the shim and the C sources search the same -I
+// directories: the package root, then every C import's include_dirs (the
+// package's C imports are one translation unit, so they share one path).
 
 package driver
 
@@ -23,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -37,7 +44,9 @@ import (
 )
 
 // validateC checks the manifest's C fields: a CImport's name is one
-// import path segment, unique, with at least one header; a C source is a
+// import path segment, unique, with at least one header, and each of its
+// include_dirs a directory inside the package other than its root, written
+// relative with / separators; a C source is a
 // package file ending in .c, an assembly source one ending in .s or .S
 // whose target is "" or a target mk knows.
 func validateC(m *Manifest, t *srcTree) []*diag.Diagnostic {
@@ -69,6 +78,20 @@ func validateC(m *Manifest, t *srcTree) []*diag.Diagnostic {
 				fail(ci.Field+".defines["+strconv.Itoa(i)+"]", "define %q is not NAME or NAME=VALUE", d)
 			}
 		}
+		for i, d := range ci.IncludeDirs {
+			f := ci.Field + ".include_dirs[" + strconv.Itoa(i) + "]"
+			c := path.Clean(d)
+			switch {
+			case d == "" || strings.ContainsAny(d, "\\:\n") || path.IsAbs(d):
+				fail(f, "include directory %q is not a relative directory with / separators", d)
+			case c == "..", strings.HasPrefix(c, "../"):
+				fail(f, "include directory %q is not a directory inside the package", d)
+			case c == ".":
+				fail(f, "include directory %q is the package root, which is always searched first", d)
+			case t.osRoot != "" && !t.isDir(c):
+				fail(f, "include directory %s does not exist (as spelled)", d)
+			}
+		}
 	}
 	for _, cs := range m.CSources {
 		if !strings.HasSuffix(cs.Path, ".c") {
@@ -94,6 +117,23 @@ func validateC(m *Manifest, t *srcTree) []*diag.Diagnostic {
 	return out
 }
 
+// cIncludeDirs are the -I directories of man's C, absolute: the package
+// root osRoot, then each C import's include_dirs in order, each once.
+func cIncludeDirs(man *Manifest, osRoot string) []string {
+	out := []string{osRoot}
+	seen := map[string]bool{}
+	for _, c := range man.CImports {
+		for _, d := range c.IncludeDirs {
+			d = path.Clean(d)
+			if !seen[d] {
+				seen[d] = true
+				out = append(out, filepath.Join(osRoot, filepath.FromSlash(d)))
+			}
+		}
+	}
+	return out
+}
+
 // cImports is the translated C imports of the package for the session's
 // target: one build of c.<name> modules, and what the link adds.
 type cImports struct {
@@ -104,6 +144,9 @@ type cImports struct {
 	man    *Manifest
 	hit    bool
 	sysdir []string
+	// sysFlags are the Clang flags the headers' triple fixes
+	// (cimport.TripleFlags), for the shim and the C sources.
+	sysFlags []string
 	// names, full and trees: each import's name, its whole binding, and
 	// the memory tree its module reads, which prune fills before the read step.
 	names []string
@@ -121,6 +164,13 @@ type cImports struct {
 	// vendoredShim are the externs (c.<name>.<item>) only a shim defines
 	// in vendored views read in place of a translation.
 	vendoredShim []string
+	// imports and shimFuncs are the translation's imports and the
+	// functions of its whole shim; prune sets shim to those of them the
+	// program names.
+	imports   []cimport.Import
+	shimFuncs []cimport.ShimFunc
+	funcLike  [][]string
+	merged    []map[string]string
 }
 
 // otherBinding is a package's C bindings for another target.
@@ -186,7 +236,11 @@ func (s *Session) cImportsOf(stdB *build, man *Manifest, osRoot, dep, treePrefix
 	ci := &cImports{root: osRoot, man: man, dep: dep, treePrefix: treePrefix}
 	// The C and assembly sources see the target's system headers
 	// whether or not the package also imports C.
-	ci.sysdir = sysrootFor(target, os.Getenv)
+	sys, d := s.cSystem(target, man)
+	if d != nil {
+		return nil, []*diag.Diagnostic{d}
+	}
+	ci.sysdir, ci.sysFlags = sys.Dirs, cimport.TripleFlags(sys.Triple)
 	if len(man.CImports) == 0 {
 		// Only c_sources or asm_sources: nothing to translate, objects to
 		// compile (cObjects).
@@ -208,7 +262,7 @@ func (s *Session) cImportsOf(stdB *build, man *Manifest, osRoot, dep, treePrefix
 			if t.Name == target {
 				continue
 			}
-			if len(sysrootFor(t.Name, os.Getenv)) == 0 && !allVendored(man) {
+			if dirs, _ := s.sysrootOf(t.Name, man); len(dirs) == 0 && !allVendored(man) {
 				return nil, []*diag.Diagnostic{cimport.NoSysroot(at, t.Name)}
 			}
 			mods, _, ds := s.translateC(imports, man, osRoot, t.Name, at, &cImports{dep: dep})
@@ -257,10 +311,11 @@ func prefixOfDep(dep string) string {
 func cModPath(dep, name string) string { return prefixOfDep(dep) + "c." + name }
 
 // prune gives each binding module only the items the other builds'
-// files use, transitively (lazy items); the views on disk stay whole, and
-// every kept line keeps its line there. It runs in the read step
-// just before the C build is read: the builds before it are read, and the
-// package's files, read after it, are read here too.
+// files use, transitively (lazy items), and the shim only their functions;
+// the views on disk stay whole, and every kept line keeps its line there.
+// It runs in the read step just before the C build is read: the builds
+// before it are read, and the package's files, read after it, are read
+// here too.
 func (ci *cImports) prune(w *world, builds []*build) {
 	if w.cfg.TestHooks.CImportWhole {
 		return
@@ -282,11 +337,19 @@ func (ci *cImports) prune(w *world, builds []*build) {
 			}
 		}
 	}
+	if d := ci.shareViews(w, builds); d != nil { // sdkimport.go
+		ci.mismatch = append(ci.mismatch, d)
+	}
 	used := cloneWant(want)
 	pruned := cimport.PruneAll(ci.names, ci.full, want)
 	for i, text := range pruned {
 		ci.trees[i].mem[ci.names[i]+".mk"] = text
 	}
+	// The shim defines only the functions the files name (used, before
+	// PruneAll adds what kept items mention): an unused static inline
+	// function may call what nothing links. Its text, and so its object's
+	// key, follows the functions used.
+	ci.shim = cimport.KeptShim(ci.imports, ci.shimFuncs, used)
 	target := w.cfg.Target.Name
 	for _, o := range ci.others {
 		theirs := cimport.PruneAll(ci.names, o.full, cloneWant(used))
@@ -353,8 +416,10 @@ func (s *Session) translateC(imports []cimport.Import, man *Manifest, osRoot, ta
 	if err != nil {
 		return nil, "", []*diag.Diagnostic{toolErr(err, "clang did not report its resource directory")}
 	}
-	req := cimport.Request{Target: target, Triple: cimport.ParseTriple(target), Imports: imports,
-		Include: []string{osRoot}, Sysroot: sysrootFor(target, os.Getenv)}
+	req, d := s.cRequest(imports, man, osRoot, target)
+	if d != nil {
+		return nil, "", []*diag.Diagnostic{d}
+	}
 	ci.sysdir = req.Sysroot
 	st := w.openStore(s.cacheDir())
 	// The build ID is in the key: the mapping is code inside the mk binary.
@@ -387,7 +452,8 @@ func (s *Session) translateC(imports []cimport.Import, man *Manifest, osRoot, ta
 		}
 		cimport.Save(st, key, res)
 	}
-	ci.hit, ci.stats = hit, res.Stats
+	ci.hit, ci.stats, ci.funcLike, ci.merged = hit, res.Stats, res.FuncLike, res.Merged
+	ci.imports, ci.shimFuncs = imports, res.ShimFuncs
 	for i := range imports {
 		if ci.dep == "" {
 			writeCView(views[i], res.Modules[i], target)
@@ -584,6 +650,7 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 		}
 		libcDir = d
 	}
+	include := cIncludeDirs(ci.man, ci.root)
 	dh := cimport.NewDepHasher(st)
 	defer dh.Save()
 	var objs []string
@@ -595,10 +662,11 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 			system = append([]string{libcDir}, ci.sysdir...)
 		}
 		cj := toolchain.CJob{Triple: triple, Input: j.in, Output: out, Opt: opt, ResourceDir: rd,
-			Include: []string{ci.root}, System: system, Sysroot: sysroot, Flags: j.flags, Hosted: j.shim}
+			Include: include, System: system, Sysroot: sysroot, Flags: j.flags, Hosted: j.shim}
 		if !j.asm {
-			// The bin's target flags come before the manifest's own (cTargetFlags).
-			cj.Flags = append(append([]string{}, cflags...), j.flags...)
+			// The bin's target flags (cTargetFlags), then those the headers'
+			// triple fixes, come before the manifest's own.
+			cj.Flags = append(append(append([]string{}, cflags...), ci.sysFlags...), j.flags...)
 		}
 		src, err := os.ReadFile(j.in)
 		if err != nil {
@@ -644,7 +712,7 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 			}
 			return nil, nil, []*diag.Diagnostic{toolErrIn(cerr, "clang", what+" did not compile", work)}
 		}
-		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in)
+		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in, cobjSearchDirs(cj))
 		if st != nil && ok {
 			saveCobjCandidate(st, base, cand)
 			_ = st.PutFile(cache.KindCObj, key, out)
@@ -676,11 +744,15 @@ func asmSourcesFor(man *Manifest, target string) []int {
 }
 
 // cobjCand is one candidate of a C object's KindManifest entry: the files
-// the compile read (-MD), with their content hashes. The object's key is
-// cobjObjKey of the entry's base and these (the content hash of every
-// -MD file).
+// the compile read (-MD), with their content hashes, and the negative
+// lookups (cimport.Negatives over the compile's search path), none of
+// which may hold a file (a directory there is none): a header added to an
+// earlier search directory would shadow a dependency. The object's key is
+// cobjObjKey of the entry's base and the dependencies (the negatives
+// follow from them and the search path, which base holds).
 type cobjCand struct {
 	Deps []cobjDep
+	Neg  []string `json:",omitempty"`
 }
 
 type cobjDep struct {
@@ -706,13 +778,16 @@ func cobjObjKey(base source.Hash, c cobjCand) source.Hash {
 
 // cobjListKey is the KindManifest key of a C object's candidates.
 func cobjListKey(base source.Hash) source.Hash {
-	h := source.NewHasher("mk.driver.cobj.cands.v1")
+	// The domain names the candidates' format, which carries negative
+	// lookups: a list written without them is never read.
+	h := source.NewHasher("mk.driver.cobj.cands.v2")
 	h.Hash(base)
 	return h.Sum()
 }
 
 // cobjCandidate finds, among base's candidates, the first whose every
-// dependency still has its hash, and returns that object's key.
+// dependency still has its hash and whose every negative lookup still
+// finds nothing, and returns that object's key.
 func cobjCandidate(st *cache.Store, dh *cimport.DepHasher, base source.Hash) (source.Hash, bool) {
 	raw, ok, _ := st.Get(cache.KindManifest, cobjListKey(base))
 	if !ok {
@@ -729,6 +804,11 @@ next:
 				continue next
 			}
 		}
+		for _, n := range c.Neg {
+			if dh.Exists(n) {
+				continue next
+			}
+		}
 		return cobjObjKey(base, c), true
 	}
 	return source.Hash{}, false
@@ -736,11 +816,13 @@ next:
 
 // cobjKey reads the dependency file a compile wrote (none for a plain .s
 // file, whose only input is the source) and returns the object's key and
-// its candidate; false when a dependency cannot be read (the object is
-// then not stored).
-func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string) (source.Hash, cobjCand, bool) {
+// its candidate, with the negative lookups of dirs, the compile's ordered
+// header search path (cobjSearchDirs); false when a dependency cannot be
+// read (the object is then not stored).
+func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dirs []string) (source.Hash, cobjCand, bool) {
 	var c cobjCand
 	if depFile != "" {
+		var deps []string
 		text, err := os.ReadFile(depFile)
 		if err != nil {
 			return base, c, false
@@ -758,9 +840,23 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string) (so
 				return base, c, false
 			}
 			c.Deps = append(c.Deps, cobjDep{Path: p, Hash: h})
+			deps = append(deps, p)
 		}
+		c.Neg = cimport.Negatives(deps, dirs)
 	}
 	return cobjObjKey(base, c), c, true
+}
+
+// cobjSearchDirs is the ordered header search path of the compile cj, as
+// Clang searches it under -nostdinc: every -I, then the -isystem
+// directories in command-line order (cArgs: the resource headers first,
+// then cj.System). A directory the manifest's own flags add is not in it.
+func cobjSearchDirs(cj toolchain.CJob) []string {
+	out := append([]string{}, cj.Include...)
+	if cj.ResourceDir != "" {
+		out = append(out, filepath.Join(cj.ResourceDir, "include"))
+	}
+	return append(out, cj.System...)
 }
 
 // saveCobjCandidate puts c first among base's candidates.
@@ -820,6 +916,9 @@ func (b *build) cImportNames() []string {
 	return out
 }
 
+// SkippedCDecl is one C declaration, macro or member skipped during translation.
+type SkippedCDecl = cimport.SkippedDecl
+
 // CImportInfo is one C import of the package after Check, as mk cimport
 // prints it: the view written for the session's target and how much of
 // the headers it binds.
@@ -830,6 +929,7 @@ type CImportInfo struct {
 	Direct       int    // bound as plain Mk items
 	Generated    int    // bound through accessors or shims
 	Skipped      map[string]int
+	SkippedDecls []SkippedCDecl
 	CacheHit     bool // the translation came from the cache
 }
 
@@ -846,7 +946,39 @@ func (s *Session) CImports() []CImportInfo {
 		out[i] = CImportInfo{Name: n, Target: target, View: filepath.Join(ci.root, "gen", target, "c", n+".mk"), CacheHit: ci.hit}
 		if i < len(ci.stats) {
 			st := ci.stats[i]
-			out[i].Decls, out[i].Direct, out[i].Generated, out[i].Skipped = st.Decls, st.Direct, st.Generated, st.Skipped
+			out[i].Decls, out[i].Direct, out[i].Generated, out[i].Skipped, out[i].SkippedDecls = st.Decls, st.Direct, st.Generated, st.Skipped, st.SkippedDecls
+		}
+	}
+	return out
+}
+
+// CImportWhy explains what happened to C name cname across the package's
+// translated C imports, returning one line per import that mentions it.
+func (s *Session) CImportWhy(cname string) []string {
+	ci := s.w.cimports
+	if ci == nil {
+		return nil
+	}
+	var out []string
+	for i, n := range ci.names {
+		var text string
+		if i < len(ci.full) {
+			text = ci.full[i]
+		}
+		var skipped []cimport.SkippedDecl
+		if i < len(ci.stats) {
+			skipped = ci.stats[i].SkippedDecls
+		}
+		var fl []string
+		if i < len(ci.funcLike) {
+			fl = ci.funcLike[i]
+		}
+		var merged map[string]string
+		if i < len(ci.merged) {
+			merged = ci.merged[i]
+		}
+		if exp, ok := cimport.ExplainWhy(n, text, skipped, fl, merged, cname); ok {
+			out = append(out, exp)
 		}
 	}
 	return out

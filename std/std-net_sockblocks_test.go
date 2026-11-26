@@ -51,8 +51,8 @@ func TestNet_LinuxBlocks(t *testing.T) {
 }
 
 func net2Blocks(t *testing.T, h ioHost) {
-	// Every std.net block: TCP (tests_net.mk) and UDP (tests_udp.mk).
-	names := ioBlockNames(t, []string{"net/tests_net.mk", "net/tests_udp.mk"})
+	// Every TCP and UDP block, including the shared datagram tests.
+	names := ioBlockNames(t, []string{"net/tests_net.mk", "net/tests_udp.mk", "net/tests_udp_shared.mk"})
 	root := t.TempDir()
 	stdDir := net2Std(t, root, nil)
 	t.Setenv("MK_CACHE", filepath.Join(root, "cache"))

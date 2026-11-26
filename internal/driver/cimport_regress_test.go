@@ -1,7 +1,7 @@
 // Why: the C import's driver side (object keys, shims, bitfields, function
 // pointers, assembly and vendored views) had defects that must stay fixed.
 // What: regression tests of header-edit rebuilds, signed bitfields, GNU
-// inline shims, function pointers outside unsafe, padded macros, C source
+// inline shims, a redeclared extern variable, function pointers outside unsafe, padded macros, C source
 // requirements, assembly targets, sysroots, vendored views and the warm
 // edit budget.
 // How: cBin and cMain write small packages over a C header; buildRun and
@@ -120,6 +120,19 @@ func TestCImport_GNUInlineShim(t *testing.T) {
 		cMain("", "        a := k.k_t(41)\n", "{a}", "a: a")))
 	if out := buildRun(t, dir, t.TempDir()); out != "42\n" {
 		t.Errorf("printed %q, want 42", out)
+	}
+}
+
+// TestCImport_RedeclaredVarRuns: a header that declares an extern
+// variable twice (as the Windows SDK does its IID_ names) gives a view that
+// checks, and a program writes and reads the variable C defines.
+func TestCImport_RedeclaredVarRuns(t *testing.T) {
+	needTools(t)
+	dir := writeTree(t, cBin("rv", "extern int k_count;\nextern int k_count;\nint k_get(void);\n",
+		"#include \"k.h\"\nint k_count = 7;\nint k_get(void) { return k_count; }\n",
+		cMain("", "        *(&k.k_count) = k.k_count + 1\n        a := k.k_get()\n", "{a}", "a: a")))
+	if out := buildRun(t, dir, t.TempDir()); out != "8\n" {
+		t.Errorf("printed %q, want 8", out)
 	}
 }
 

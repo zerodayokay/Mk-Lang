@@ -2,7 +2,8 @@
 // text; keeping those renderers apart from the lookup keeps query.go short.
 //
 // What: the answers sig, members, import, kind, shape, flows and errors, and
-// the spellers they share: sigLine, declHead, flowClauses, perFieldClause,
+// the spellers they share: sigHead (sig's lines before its doc, which mk
+// query sig --member reads too), sigLine, declHead, flowClauses, perFieldClause,
 // boundString and genericsString.
 //
 // How: every answer reads the checked tables (Signature, Facts, Layout) and
@@ -82,9 +83,28 @@ func (qx *queryIndex) genericsString(gs []types.GenericParam, all []types.Generi
 }
 
 // sigLine spells a signature as the reference writes one: prefix, own
-// generics, parameters with into, result, then the flow clauses.
+// generics, parameters with into, result, then the flow clauses. A type is
+// spelled as the declaration writes it where it names an alias
+// (Signature.Spelled), and by TypeString elsewhere.
 func (qx *queryIndex) sigLine(display string, s *types.Signature) string {
+	return qx.sigText(display, s, false)
+}
+
+// sigResolved is sigLine with every alias spelled as its type: what
+// apidiff compares, so that a change of an alias's target shows in each
+// signature naming it, and sig --member's resolved field.
+func (qx *queryIndex) sigResolved(display string, s *types.Signature) string {
+	return qx.sigText(display, s, true)
+}
+
+func (qx *queryIndex) sigText(display string, s *types.Signature, resolved bool) string {
 	tab := qx.w.tab
+	spell := func(i int, t types.TypeID) string {
+		if !resolved && i < len(s.Spelled) && s.Spelled[i] != "" {
+			return s.Spelled[i]
+		}
+		return tab.TypeString(t, s.Generics)
+	}
 	var b strings.Builder
 	if s.Exported {
 		b.WriteString("export ")
@@ -109,7 +129,7 @@ func (qx *queryIndex) sigLine(display string, s *types.Signature) string {
 			if p.Var {
 				b.WriteString("var ")
 			}
-			b.WriteString(qx.str(p.Name) + ": " + tab.TypeString(p.Type, s.Generics))
+			b.WriteString(qx.str(p.Name) + ": " + spell(i, p.Type))
 		}
 		if p.Into != types.NoParam {
 			b.WriteString(" into " + qx.paramName(s, p.Into))
@@ -120,7 +140,7 @@ func (qx *queryIndex) sigLine(display string, s *types.Signature) string {
 	}
 	b.WriteByte(')')
 	if r := tab.ReturnType(s.Result, s.Errors); r != types.Void {
-		b.WriteString(": " + tab.TypeString(r, s.Generics))
+		b.WriteString(": " + spell(len(s.Params), r))
 	}
 	if f := qx.flowClauses(s); f != "" {
 		b.WriteString(" " + f)
@@ -196,10 +216,15 @@ func (qx *queryIndex) flowClauses(s *types.Signature) string {
 
 // sig is the full signature, its contracts, and the item's /// doc lines.
 func (qx *queryIndex) sig(e qEntry) []string {
-	it := qx.w.items.Get(e.id)
+	return append(qx.sigHead(e), qx.doc(qx.w.items.Get(e.id))...)
+}
+
+// sigHead is sig's lines before the doc lines: a function's signature, its
+// contracts and its module, or another item's head (declLine).
+func (qx *queryIndex) sigHead(e qEntry) []string {
 	s := qx.funcSig(e.id)
 	if s == nil {
-		return append([]string{qx.declLine(e)}, qx.doc(it)...)
+		return []string{qx.declLine(e)}
 	}
 	out := []string{qx.sigLine(e.name, s)}
 	for _, c := range s.Contracts {
@@ -209,8 +234,7 @@ func (qx *queryIndex) sig(e qEntry) []string {
 		}
 		out = append(out, "    "+w+c.Text)
 	}
-	out = append(out, "module "+e.mod+classSuffix(e.mod))
-	return append(out, qx.doc(it)...)
+	return append(out, "module "+qx.modPath(e.mod)+classSuffix(e.mod))
 }
 
 // declLine spells a non-function item's head: kind, name, generics, and
@@ -259,9 +283,9 @@ func (qx *queryIndex) declHead(e qEntry, withOpen bool) string {
 		head = "export " + head
 	}
 	if c, _ := moduleClass(e.mod); c != ClassStable {
-		return head + "  (module " + e.mod + ", " + c + ")"
+		return head + "  (module " + qx.modPath(e.mod) + ", " + c + ")"
 	}
-	return head + "  (module " + e.mod + ")"
+	return head + "  (module " + qx.modPath(e.mod) + ")"
 }
 
 // doc is the item's /// lines from its source, all of them: the answer's
@@ -439,12 +463,13 @@ func (qx *queryIndex) importLine(e qEntry) []string {
 	if e.module != nil && e.module.binRoot && !e.std && e.mod == "main" {
 		return []string{e.name + " is in the root module: no import inside the package"}
 	}
-	out := []string{"import " + e.mod, "spelled " + lastSeg(e.mod) + "." + e.name}
+	mod := qx.modPath(e.mod)
+	out := []string{"import " + mod, "spelled " + lastSeg(mod) + "." + e.name}
 	switch c, why := moduleClass(e.mod); c {
 	case ClassExperimental:
-		out = append(out, e.mod+" is Experimental: it may change or be withdrawn in any minor release; "+why)
+		out = append(out, mod+" is Experimental: it may change or be withdrawn in any minor release; "+why)
 	case ClassProvisional:
-		out = append(out, e.mod+" is Provisional: it may change in a minor release, each change with a decision line")
+		out = append(out, mod+" is Provisional: it may change in a minor release, each change with a decision line")
 	}
 	return out
 }
@@ -632,7 +657,7 @@ func (qx *queryIndex) errors(e qEntry) []string {
 			continue
 		}
 		it := qx.w.items.Get(m.Item)
-		l := qx.str(it.Name) + "  " + qx.w.items.Module(it.Module).Path
+		l := qx.str(it.Name) + "  " + qx.modPath(qx.w.items.Module(it.Module).Path)
 		if d, ok := it.Decl.(*types.ErrorDecl); ok && len(d.Fields) > 0 {
 			var fs []string
 			for _, f := range d.Fields {
@@ -669,23 +694,36 @@ func (qx *queryIndex) providedFormatSig(subject string) ([]string, bool) {
 	if !ok || qx.w.items.Get(e.id).Kind != types.KindError {
 		return nil, false
 	}
-	tab := qx.w.tab
 	for i := 1; i < qx.w.items.NumItems(); i++ {
 		im, ok := qx.w.items.Get(types.ItemID(i)).Decl.(*types.ImplDecl)
-		if !ok || im.For == types.NoType || im.Bound.Item == types.NoItem {
-			continue
-		}
-		ty := tab.Get(im.For)
-		if ty.Kind != types.KErrorSet || singleError(tab, ty.Errors) != e.id || qx.w.items.Get(im.Bound.Item).Key != types.ItemKey("std.core", "Format") {
+		if !ok || qx.providedFormatOf(im) != e.id {
 			continue
 		}
 		for _, m := range im.Methods {
 			if s := qx.funcSig(m); s != nil && qx.str(qx.w.items.Get(m).Name) == name {
-				return []string{qx.sigLine(name, s), "impl Format for " + e.name + " (provided by the compiler)", "module " + e.mod}, true
+				return []string{qx.sigLine(name, s), "impl Format for " + e.name + " (provided by the compiler)", "module " + qx.modPath(e.mod)}, true
 			}
 		}
 	}
 	return nil, false
+}
+
+// providedFormatOf is the error whose built-in Format impl im is: an impl of
+// std.core.Format for an error's set of one, which only the compiler
+// declares (a written one is E0704). NoItem for any other impl.
+func (qx *queryIndex) providedFormatOf(im *types.ImplDecl) types.ItemID {
+	if im.For == types.NoType || im.Bound.Item == types.NoItem {
+		return types.NoItem
+	}
+	ty := qx.w.tab.Get(im.For)
+	if ty.Kind != types.KErrorSet {
+		return types.NoItem
+	}
+	e := singleError(qx.w.tab, ty.Errors)
+	if e == types.NoItem || qx.w.items.Get(im.Bound.Item).Key != types.ItemKey("std.core", "Format") {
+		return types.NoItem
+	}
+	return e
 }
 
 // primMembers are the methods of a primitive type (str, i64, f64), which is

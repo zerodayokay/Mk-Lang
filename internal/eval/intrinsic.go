@@ -50,6 +50,10 @@ var refusals = map[string]types.Refusal{
 	"std.rt.FuncTable":     types.RefuseExtern,
 	"std.rt.StackPointer":  types.RefusePointerBytes,
 	"std.rt.UsesTasks":     types.RefuseExtern, // mono folds it after evaluation
+	// A fact of the link (which externs bind lazily) and of the machine the
+	// program runs on, never of a constant.
+	"std.dl.Present":      types.RefuseExtern,
+	"std.sys.LazyPresent": types.RefuseExtern,
 }
 
 // quoteKey is the key a host implements BuiltinQuote under.

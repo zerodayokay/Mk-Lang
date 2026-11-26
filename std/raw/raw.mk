@@ -15,7 +15,7 @@
 export Of[T](r: &T): *T
 /// OfMut is r's address as a raw pointer to write through. Safe.
 export OfMut[T](r: mut T): *T
-/// Null is the null pointer. Safe.
+/// Null is the null pointer. Null[void]() is a null *void. Safe.
 export Null[T](): *T
 /// IsNull reports whether p is null. Safe.
 export IsNull[T](p: *T): bool
@@ -26,7 +26,8 @@ export Same[T](a: *T, b: *T): bool
 export Offset[T](p: *T, n: int): *T
 // The natural name is Cast, but Cast is a universe name (E0102), so
 // the item is PtrCast, and eval also answers to the key std.raw.Cast.
-/// PtrCast is p as a pointer to U, at the same address. Needs unsafe.
+/// PtrCast is p as a pointer to U, at the same address. T or U may be
+/// void: PtrCast[T, void](p) is p as C's untyped `void *`. Needs unsafe.
 export PtrCast[T, U](p: *T): *U
 
 /// Read loads a T from p, which must be aligned to AlignOf[T](). Needs
@@ -69,7 +70,8 @@ export Str(p: *u8, n: int): str
 
 /// Addr is p's address as an integer. Safe.
 export Addr[T](p: *T): uint
-/// FromAddr is the address a as a pointer to T. Needs unsafe.
+/// FromAddr is the address a as a pointer to T, which may be void. Needs
+/// unsafe.
 export FromAddr[T](a: uint): *T
 
 /// Forget ends x, a linear value too, without releasing what it owns.

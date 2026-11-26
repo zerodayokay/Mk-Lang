@@ -1,8 +1,8 @@
 // Why: string code (UTF-16 interop, ASCII fast paths, reverse search, WTF-8
 // paths on Windows) needs the same vector speed as the byte routines.
 //
-// What: IsAscii, Utf16Len, LastIndexByte and ValidWtf8, with their vector
-// bodies and scalar forms.
+// What: IsAscii, Utf16Len and Utf16LenBytes, LastIndexByte and ValidWtf8,
+// with their vector bodies and scalar forms.
 //
 // How: each has one body generic over the lane count N, dispatched as
 // bytes.mk's routines are (avx512bw from WideMin bytes, avx2 from
@@ -82,15 +82,21 @@ IsAsciiScalar(s: []u8): bool {
 }
 
 /// Returns the number of UTF-16 code units s takes: one per scalar, two
-/// for a scalar above U+FFFF. O(n); it allocates nothing.
+/// for a scalar above U+FFFF. O(n); it allocates nothing. It is
+/// Utf16LenBytes over s's bytes.
+export Utf16Len(s: str): int {
+    return Utf16LenBytes(StrBytes(s))
+}
+
+/// Returns the number of UTF-16 code units the UTF-8 or WTF-8 bytes b
+/// take: one per scalar, two for a scalar above U+FFFF, and one for a
+/// lone surrogate's three bytes. O(n); it allocates nothing.
 ///
 /// It counts the bytes that are not continuation bytes (10xxxxxx) and adds
-/// one for each four-byte lead (11110xxx), so it also counts WTF-8 right: a
-/// lone surrogate's three bytes are one unit. The answer is the same on
-/// every CPU for UTF-8 and WTF-8, which is all a str can hold; on other
-/// bytes, reached through unsafe code, CPUs may answer differently.
-export Utf16Len(s: str): int {
-    b := StrBytes(s)
+/// one for each byte from 0xF0 on, a four-byte lead. That count is the
+/// answer on any bytes, so it never depends on the CPU, though on bytes
+/// that are not UTF-8 or WTF-8 it is not a decoder's count.
+export Utf16LenBytes(b: []u8): int {
     if Target.os == Os.Freestanding {
         return Utf16LenScalar(b)
     }
@@ -169,26 +175,18 @@ Utf16LenN[const N: int](b: []u8): int
     return units
 }
 
-// Utf16LenScalar decodes scalar by scalar, the reference: a lead below 0x80
-// is one byte, below 0xE0 two, below 0xF0 three (a surrogate's WTF-8 too),
-// else four and two units. b is UTF-8 or WTF-8.
+// Utf16LenScalar is Utf16LenBytes one byte at a time, the reference: one
+// unit for each byte that is not a continuation byte, and one more for
+// each byte from 0xF0 on.
 Utf16LenScalar(b: []u8): int {
     var units := 0
-    var i := 0
-    n := b.Len()
-    for i < n {
-        x := b[i]
-        if x < 0x80 {
-            i += 1
-        } else if x < 0xE0 {
-            i += 2
-        } else if x < 0xF0 {
-            i += 3
-        } else {
-            i += 4
+    for x in b {
+        if x & 0xC0 != 0x80 {
             units += 1
         }
-        units += 1
+        if x >= 0xF0 {
+            units += 1
+        }
     }
     return units
 }

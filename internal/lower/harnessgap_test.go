@@ -1,7 +1,7 @@
 // Why: a weak harness can make the corpus test pass while skipping bodies;
 // these tests keep lower's harness honest.
 // What: TestHarnessCountsRejectedBodies, TestTargetFieldLowers,
-// TestFactsOfPoisonIsCheckGap.
+// TestFactsOfPoisonIsCheckGap, TestPoisonParamIsCheckGap.
 // How: a body check rejects is counted, never silently dropped; the fake
 // prelude's TargetInfo carries std's fields and std.core has the driver's
 // synthesized Target item, so `Target.<field>` lowers; and a Poison type
@@ -80,5 +80,33 @@ func TestFactsOfPoisonIsCheckGap(t *testing.T) {
 	// An ordinary type still has its facts.
 	if f := bl.facts(types.Int, source.Span{}); f.Kind != types.Plain {
 		t.Fatalf("int facts: %+v", f)
+	}
+}
+
+// TestPoisonParamIsCheckGap: a parameter of Poison type that reaches lower
+// with no diagnostic is the tagged check-gap ICE at the parameter, reported
+// as E0000 with a position, never a panic.
+func TestPoisonParamIsCheckGap(t *testing.T) {
+	w := newWorld(t, true)
+	b := w.add("m", opt{}, "F(x: int): int {\n\treturn x\n}\n")
+	b.wantClean(t)
+	cfg := w.lowerCfg()
+	cb := w.c.Check(b.m, b.item("F"))
+	if cb.Sig == nil || len(cb.Sig.Params) != 1 {
+		t.Fatalf("F's body carries no signature: %+v", cb.Sig)
+	}
+	s := *cb.Sig
+	s.Params = append([]types.Param(nil), s.Params...)
+	s.Params[0].Type = types.Poison
+	cb.Sig = &s
+	ie := source.Guard("F", source.Span{}, func() { newBuilder(cfg, FromCheck(cfg, w.c, cb)) })
+	if ie == nil {
+		t.Fatal("a Poison parameter raised no ICE")
+	}
+	if !corpusPending(ie.What) || !strings.Contains(ie.What, "a parameter of Poison type with no diagnostic") {
+		t.Fatalf("not a tagged check-gap ICE: %s", ie.What)
+	}
+	if ie.Span != s.Params[0].Span || ie.Span == (source.Span{}) {
+		t.Fatalf("ICE at %v, want the parameter's span %v", ie.Span, s.Params[0].Span)
 	}
 }

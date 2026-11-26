@@ -321,6 +321,16 @@ func (dt *destructTake) note(op mir.Operand, fp mir.Place, wildcard bool, at sou
 }
 
 func (bl *builder) destructureInto(rp *ast.RecordPat, t mir.Place, isVar bool, dt *destructTake) {
+	if rp.Elems {
+		// [a, b] := arr: element i is a field step i on the array (MIR's
+		// constant element step), not an index step, so borrow sees one
+		// take of the temporary per element rather than a move out of
+		// t[_]. check bound every element, so each is taken exactly once.
+		for i, f := range rp.Fields {
+			bl.bindSub(f, t, uint32(i), isVar, dt)
+		}
+		return
+	}
 	for i, f := range rp.Fields {
 		k := bl.fieldIndex(bl.b.PlaceType(t), f, uint32(i))
 		bl.bindSub(f, t, k, isVar, dt)

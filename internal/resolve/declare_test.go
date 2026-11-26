@@ -119,11 +119,28 @@ func TestTypeAndFunctionCollide(t *testing.T) {
 	b.want(t, "E0206@2:1")
 }
 
-func TestE0206_FieldAndMethod(t *testing.T) {
+func TestFieldAndMethodFoldApart(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, false)
-	b := w.add("main", opt{}, "struct P {\n    len: int\n}\nP.Len(&self): int { return 0 }\n")
-	b.want(t, "E0206@4:3")
+	b := w.add("main", opt{}, "struct P {\n    len: int\n    max_len: int\n}\nP.Len(&self): int { return 0 }\nP.MaxLen(&self): int { return 0 }\n")
+	b.want(t)
+	// The method may come first.
+	b = w.add("other", opt{}, "Q.Len(&self): int { return 0 }\nstruct Q {\n    len: int\n}\n")
+	b.want(t)
+}
+
+func TestE0206_FieldAndMethodExact(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, false)
+	b := w.add("main", opt{}, "struct P {\n    Len: int\n}\nP.Len(&self): int { return 0 }\n")
+	b.want(t, "E0206@4:3", "E0207@2:5")
+}
+
+func TestE0206_MethodsFolded(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, false)
+	b := w.add("main", opt{}, "struct P {\n    len: int\n}\nP.Len(&self): int { return 0 }\nP.LEN(&self): int { return 0 }\n")
+	b.want(t, "E0206@5:3")
 }
 
 func TestE0206_VariantAndMethod(t *testing.T) {

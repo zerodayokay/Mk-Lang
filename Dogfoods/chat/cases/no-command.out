@@ -27,5 +27,8 @@ Options:
   --record               Log every byte each TCP connection reads and writes (implies --log info)
   --log <str>            Log level on stderr: debug, info, warn or error (default warn)
   --web <str>            Also serve the web front end (WebSocket and event streams) on this address
+  --web-tls-chain <str>  PEM certificate chain for the HTTPS web front end
+  --web-tls-key <str>    PEM private key for the HTTPS web front end
+  --web-cacert <str>     PEM roots to trust when replay connects to the HTTPS web front end
 Arguments:
   <args>...              The command and its file

@@ -2,11 +2,15 @@
 // choice for hash tables fed untrusted keys.
 //
 // What: Sip13, SipHash-1-3 (Aumasson and Bernstein 2012, c = 1, d = 3,
-// Rust's DefaultHasher) of a byte string under a HashKey.
+// Rust's DefaultHasher) of a byte string under a HashKey, and Sip13State,
+// the same hash over bytes that arrive in pieces.
 //
 // How: words little-endian, the length's low byte on top of the last word.
 // std.core's table hash is the same compression over a key's Hash bytes (a
-// str adds 0xFF); this one adds nothing.
+// str adds 0xFF); this one adds nothing. Sip13State keeps the four words, a
+// partial word of up to 7 bytes and the length, and runs the one-shot
+// form's rounds and finish, so any split gives Sip13's value; the one-shot
+// form keeps its own loop-free short path.
 
 import std.core
 import std.raw
@@ -24,6 +28,81 @@ export Sip13(data: []u8, key: HashKey): u64 {
         return SipShort(data, w.k0, w.k1)
     }
     return SipKeyed(data, w.k0, w.k1)
+}
+
+/// Sip13State is a SipHash-1-3 hash in progress under a HashKey, for input
+/// that arrives in pieces. It is not zero-valid: a zero-filled state does
+/// not hold the key's starting words, and Arena.Slice[Sip13State] is E0701.
+/// Make one with New.
+export struct Sip13State {
+    v0: u64
+    v1: u64
+    v2: u64
+    v3: u64
+    tail: u64
+    tn: int
+    total: u64
+    invariant tn >= 0 && tn < 8
+}
+
+/// Returns the state of the empty message under key. O(1); allocates
+/// nothing.
+export Sip13State.New(key: HashKey): Sip13State {
+    w := core.HashKeyWords(&key)
+    return Sip13State(v0: 0x736f6d6570736575 ^ w.k0, v1: 0x646f72616e646f6d ^ w.k1, v2: 0x6c7967656e657261 ^ w.k0, v3: 0x7465646279746573 ^ w.k1, tail: 0, tn: 0, total: 0)
+}
+
+/// Absorbs data. Bytes in any split gives the same value as Sip13 of the
+/// concatenation. Whole 8-byte words are read from data in place; a
+/// partial word of up to 7 bytes waits in the state. O(data.Len());
+/// allocates nothing.
+export Sip13State.Bytes(mut self, data: []u8) {
+    n := data.Len()
+    self.total = self.total +% Trunc[u64](n)
+    var v0 := self.v0
+    var v1 := self.v1
+    var v2 := self.v2
+    var v3 := self.v3
+    var i := 0
+    if self.tn > 0 {
+        var m := self.tail
+        var tn := self.tn
+        for tn < 8 && i < n {
+            m = m | (u64(data[i]) << (8 * (tn & 7)))
+            tn += 1
+            i += 1
+        }
+        if tn < 8 {
+            self.tail = m
+            self.tn = tn
+            return
+        }
+        v3 = v3 ^ m
+        SipRound(mut v0, mut v1, mut v2, mut v3)
+        v0 = v0 ^ m
+    }
+    for n - i >= 8 {
+        m := Le64(data, i)
+        v3 = v3 ^ m
+        SipRound(mut v0, mut v1, mut v2, mut v3)
+        v0 = v0 ^ m
+        i += 8
+    }
+    // SipLast's top byte is the length byte of n; the 0 to 7 bytes below
+    // it are the partial word.
+    self.tail = SipLast(data, i, n) & 0x00FFFFFFFFFFFFFF
+    self.tn = n - i
+    self.v0 = v0
+    self.v1 = v1
+    self.v2 = v2
+    self.v3 = v3
+}
+
+/// Returns SipHash-1-3 of everything absorbed under the state's key; the
+/// state can keep absorbing. O(1): one round for the last word, then the
+/// three final rounds. It allocates nothing.
+export Sip13State.Sum(self): u64 {
+    return SipFinish(self.v0, self.v1, self.v2, self.v3, ((self.total & 0xFF) << 56) | self.tail)
 }
 
 // SipRound is one SipRound on the state (v0, v1, v2, v3).

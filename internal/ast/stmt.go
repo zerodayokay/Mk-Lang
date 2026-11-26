@@ -28,7 +28,8 @@ type BindStmt struct {
 }
 
 // DestructureStmt is [ "var" ] RecordPat ":=" Expr. The parser reads the
-// left side as a call or record literal and reinterprets it when ":=" follows
+// left side as a call, record literal or array literal and reinterprets it
+// when ":=" follows
 // (the grammar's cover grammar); Reinterpreted records that it did so.
 type DestructureStmt struct {
 	Base
@@ -54,8 +55,8 @@ type AssignStmt struct {
 }
 
 // IfStmt is "if" Cond Block [ "else" ( If | Block ) ]. It is also an Expr,
-// standing in an Expr field only in a value position; check
-// decides whether a last-line IfStmt of a value arm is a value.
+// a primary that may stand in any Expr field; check decides whether a
+// last-line IfStmt of a value arm is a value.
 type IfStmt struct {
 	Base
 	// Cond is an Expr, a *BindCond or an *IsCond.
@@ -138,7 +139,7 @@ type FieldsSource struct {
 }
 
 // MatchStmt is "match" Expr "{" { Arm Term } "}". Like IfStmt, it is also
-// an Expr in a value position.
+// an Expr, in any Expr field.
 type MatchStmt struct {
 	Base
 	X    Expr
@@ -207,12 +208,15 @@ type ExprStmt struct {
 	X Expr
 }
 
-// RecordPat is [ Path ] "(" PatField { "," PatField } [ "," ".." ] ")".
+// RecordPat is [ Path ] "(" PatField { "," PatField } [ "," ".." ] ")", or,
+// with Elems, the array pattern "[" Name { "," Name } "]": field i then binds
+// element i of a fixed array, by position, and has no Pat.
 type RecordPat struct {
 	Base
-	Path   *Path // nil for (a, b) := e
+	Path   *Path // nil for (a, b) := e and [a, b] := e
 	Fields []*PatField
 	Rest   bool // true when ", .." ends the fields
+	Elems  bool // true for [a, b] := e
 }
 
 // PatField is Name [ ":" Pattern ].

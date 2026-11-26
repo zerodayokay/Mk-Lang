@@ -203,12 +203,13 @@ func TestDestructureVarSubpattern(t *testing.T) {
 	}
 }
 
-// TestE0206_FieldAndMethodLaterWins: the collision is reported at whichever
-// declaration is later in (file order, offset), first the other.
+// TestE0206_FieldAndMethodLaterWins: the collision (a field spelled exactly
+// as a method) is reported at whichever declaration is later in (file
+// order, offset), first the other.
 func TestE0206_FieldAndMethodLaterWins(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, false)
-	b := w.add("main", opt{}, "P.Len(&self): int { return 0 }\n", "struct P { len: int }\n")
+	b := w.add("main", opt{}, "P.Len(&self): int { return 0 }\n", "struct P { Len: int }\n")
 	ds := b.only(diag.E0206)
 	if len(ds) != 1 || ds[0].At.File != b.srcs[1].ID || fact(ds[0], "first") == "" {
 		t.Fatalf("%s", b.dump())

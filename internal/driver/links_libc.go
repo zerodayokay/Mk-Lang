@@ -162,24 +162,11 @@ func (p *linkPlan) addShared(w *world, l pkgLink) *diag.Diagnostic {
 	if !libcModeBuilt {
 		return linkFail(l, ".kind", "link %s: a dynamic link on %s needs system-libc mode, which this build of mk does not have", l.Name, l.Target)
 	}
-	if len(p.sos) == 0 {
-		sp, ok := libcFor(w.cfg.Target)
-		if !ok {
-			return linkFail(l, ".target", "link %s: %s has no system-libc mode", l.Name, w.cfg.Target.Name)
-		}
-		raw, err := w.stdTree().readFile(sp.list)
-		if err != nil {
-			return diag.Toolchain("fs", "read std/"+sp.list, err.Error(), "cannot read std's libc.so.6 list")
-		}
-		names, err := parseLinkDef(string(raw), w.cfg.Target.Name)
-		if err != nil {
-			return diag.Toolchain("ld.lld", "", err.Error(), "std/"+sp.list+" is not a name list")
-		}
-		p.libc = sp
-		p.arch = w.cfg.Target.Arch
-		p.sos = []*soLib{{name: libcSoname, seen: map[string]bool{}, from: map[string]*pkgLink{}, labels: []string{"std's " + libcSoname}}}
-		p.sos[0].add(names, nil)
-		p.searched = append(p.searched, "std's "+libcSoname)
+	if _, ok := libcFor(w.cfg.Target); !ok {
+		return linkFail(l, ".target", "link %s: %s has no system-libc mode", l.Name, w.cfg.Target.Name)
+	}
+	if d := p.ensureLibc(w); d != nil {
+		return d
 	}
 	var names []string
 	if l.Path != "" {
@@ -204,6 +191,29 @@ func (p *linkPlan) addShared(w *world, l pkgLink) *diag.Diagnostic {
 	so.add(names, &l)
 	so.labels = append(so.labels, l.label())
 	p.searched = append(p.searched, l.label())
+	return nil
+}
+
+// ensureLibc installs the stub and boot entry together, even when a folded
+// branch removes the call which selected system-libc mode.
+func (p *linkPlan) ensureLibc(w *world) *diag.Diagnostic {
+	if len(p.sos) != 0 {
+		return nil
+	}
+	sp, _ := libcFor(w.cfg.Target)
+	raw, err := w.stdTree().readFile(sp.list)
+	if err != nil {
+		return diag.Toolchain("fs", "read std/"+sp.list, err.Error(), "cannot read std's libc.so.6 list")
+	}
+	names, err := parseLinkDef(string(raw), w.cfg.Target.Name)
+	if err != nil {
+		return diag.Toolchain("ld.lld", "", err.Error(), "std/"+sp.list+" is not a name list")
+	}
+	p.libc = sp
+	p.arch = w.cfg.Target.Arch
+	p.sos = []*soLib{{name: libcSoname, seen: map[string]bool{}, from: map[string]*pkgLink{}, labels: []string{"std's " + libcSoname}}}
+	p.sos[0].add(names, nil)
+	p.searched = append(p.searched, "std's "+libcSoname)
 	return nil
 }
 

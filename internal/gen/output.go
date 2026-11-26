@@ -189,8 +189,8 @@ func (o *Output) originAt(off uint32) *ItemOrigin {
 
 // Wrap returns the E0905 for a diagnostic whose At lies in out.File, and d
 // itself otherwise; an E0704 on a generated impl is re-anchored at its gen
-// line instead. The driver calls it on every diagnostic
-// before ordering.
+// line instead. Either keeps d's Cause. The driver calls it on every
+// diagnostic before ordering.
 func Wrap(d *diag.Diagnostic, out *Output) *diag.Diagnostic {
 	if d == nil || out == nil || out.File == nil || d.At.File != out.File.ID || d.Code == diag.E0905 {
 		return d
@@ -210,6 +210,7 @@ func Wrap(d *diag.Diagnostic, out *Output) *diag.Diagnostic {
 			diag.Field{Key: "name", Value: diag.TextFact(d.Code.Name())},
 			diag.Field{Key: "message", Value: diag.TextFact(d.Message)}))
 	w.Alternatives = append(w.Alternatives, "fix the generator, or the gen line's arguments")
+	w.Cause = d.Cause
 	return w
 }
 

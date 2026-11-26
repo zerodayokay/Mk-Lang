@@ -37,14 +37,17 @@ type world struct {
 	cimports *cImports
 	// depCImports are the dependencies' C fields, in build order.
 	depCImports []*cImports
-	sm          *source.SourceMap
-	in          *source.Interner
-	items       *types.Items
-	tab         *types.Table // the session's type table (stage 5 on)
-	rs          *resolve.Session
-	sem5        *semantics // check, lower and eval; nil until stage 5 starts
-	data        dataCache  // build.File and Gen.Input reads (datafile.go)
-	sem         chan struct{}
+	// sysviews are the system views the program names (sysviews.go); nil
+	// outside a package, file or directory check.
+	sysviews *sysViews
+	sm       *source.SourceMap
+	in       *source.Interner
+	items    *types.Items
+	tab      *types.Table // the session's type table (stage 5 on)
+	rs       *resolve.Session
+	sem5     *semantics // check, lower and eval; nil until stage 5 starts
+	data     dataCache  // build.File and Gen.Input reads (datafile.go)
+	sem      chan struct{}
 	// links are the pkg.Link values of the package graph, the root's
 	// first, then each dependency's in build order (links.go).
 	links []pkgLink
@@ -113,6 +116,9 @@ type world struct {
 	// bitcode, for the bin being built: a static library's host links it
 	// with its own linker (libout.go). Bins build one after another.
 	nativeObjects bool
+	// lazy is the target's lazy predicate (lazylink.go), computed once.
+	lazyOnce sync.Once
+	lazy     *lazyBinds
 }
 
 // noteSitePath records a build file's package-relative path.
@@ -188,6 +194,9 @@ type modNode struct {
 	// cimport: a C import's binding, c.<name> (cimport.go): unsafe, and it
 	// may import std.raw for its accessors.
 	cimport bool
+	// sysview: a system view's module, c.sys.<view> (sysviews.go): in the
+	// std build, cimport and unsafe, never std.
+	sysview bool
 	binRoot bool // ModuleInput.BinRoot
 	// libBoundary marks a module of a package with a library bin
 	// (ModuleInput.Library: its export extern functions cross a library
@@ -223,6 +232,19 @@ type modNode struct {
 	// genPoison: the spans of the gen lines whose run ended in poison and
 	// emitted nothing; an unknown name in the module points at them.
 	genPoison []source.Span
+	// genRoot: for the first poisoned line that reads a module with an
+	// error of its own (poisonRoot), that error, the module's path and the
+	// line; nil when no line does (a type of this module it cannot see
+	// before checking). An unknown name a gen line may cause is its
+	// consequence, and stageDiags reports it.
+	genRoot   *diag.Diagnostic
+	genRootIn string
+	genRootAt source.Span
+	// genFail: the first gen line whose own error made it emit nothing,
+	// and that error (gen.LineResult.Fail); an unknown name in the module,
+	// or an importer's `m has no item`, is its consequence (noteGen).
+	genFailAt source.Span
+	genFail   *diag.Diagnostic
 	// parsed: files of the module parsed at stage 3 (ensureParsed), for
 	// Trace.FilesParsed
 	parsed []string

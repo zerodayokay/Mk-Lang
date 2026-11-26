@@ -27,7 +27,7 @@ import std.simd
 | Task | Use |
 |---|---|
 | Find, count or compare bytes | `IndexByte`, `LastIndexByte`, `IndexAny`, `Count`, `Equal`, `Compare` |
-| Check text | `ValidUtf8`, `ValidWtf8`, `IsAscii`, `Utf16Len` |
+| Check text | `ValidUtf8`, `ValidWtf8`, `IsAscii`, `Utf16Len`, `Utf16LenBytes` |
 | Add floats in a fixed order | `Dot`, `Sum` |
 | Make a vector | `Vec.Splat`, `Zero`, `Iota`, `FromArray`, `FromSlice`, `FromSliceOr`, `Gather` |
 | Store a vector | `Vec.CopyTo`, `CopyToMasked`, `ToArray` |
@@ -140,11 +140,12 @@ The compiler checks these clauses where the generic is called. Two rules it cann
 
 ## Slice routines
 
-The slice routines take the widest vectors the CPU has. The byte and text routines take avx2 from 64 bytes, and all but `Count` and `Compare` take avx512bw from 256 bytes. `Dot` and `Sum` take avx2 from 64 elements. Their results never depend on the CPU, except `Utf16Len` on bytes that are not UTF-8 or WTF-8, which only `unsafe` code can put in a `str`. None allocates. Each is O(n), and `IndexAny` is O(n + set.Len()).
+The slice routines take the widest vectors the CPU has. The byte and text routines take avx2 from 64 bytes, and all but `Count` and `Compare` take avx512bw from 256 bytes. `Dot` and `Sum` take avx2 from 64 elements. Their results never depend on the CPU. None allocates. Each is O(n), and `IndexAny` is O(n + set.Len()).
 
 - `Dot` and `Sum` keep 16 partial sums, the `j`th taking elements `j`, `j + 16` and so on. Each starts at +0.0, so a sum of -0.0 elements alone is +0.0. They add the partial sums as `ReduceSum` does, then add the tail in order, on every CPU, so a dispatched run and a baseline run give the same bits. `Dot` panics when the lengths differ.
 - `Compare` gives -1, 0 or 1 by the first byte that differs, a proper prefix first. `IndexAny` finds the first byte of `s` that is in `set`.
-- `IsAscii`, `Utf16Len`, `LastIndexByte`, `ValidUtf8` and `ValidWtf8` agree with their one-byte-at-a-time forms on UTF-8 and WTF-8.
+- `IsAscii`, `Utf16Len`, `Utf16LenBytes`, `LastIndexByte`, `ValidUtf8` and `ValidWtf8` agree with their one-byte-at-a-time forms on any bytes.
+- `Utf16LenBytes` is `Utf16Len` for bytes that may not be a `str`, such as WTF-8 holding a lone surrogate, which it counts as one unit. On any bytes it counts one unit per byte that is not a continuation byte (`10xxxxxx`) and one more per byte from `0xF0` on, which on UTF-8 and WTF-8 is the UTF-16 length.
 - `ValidWtf8` is strict: a lead surrogate's bytes directly before a trail surrogate's fail.
 - On `x86_64-freestanding` the byte routines and `ValidUtf8` use general registers only, and `Dot` and `Sum` never take their avx2 form.
 
@@ -280,7 +281,7 @@ equal true, compare -1
 ascii false, utf-8 true, utf-16 units 8
 ```
 
-- `Utf16Len` counts two units for a scalar above U+FFFF, such as the emoji.
+- `Utf16Len` counts two units for a scalar above U+FFFF, such as the emoji. `Utf16LenBytes` counts the same for a `[]u8`.
 
 ### Dot products and sums
 
@@ -647,13 +648,23 @@ export Utf16Len(s: str): int
 ```
 
 Returns the number of UTF-16 code units s takes: one per scalar, two
-for a scalar above U+FFFF. O(n); it allocates nothing.
+for a scalar above U+FFFF. O(n); it allocates nothing. It is
+Utf16LenBytes over s's bytes.
+
+### `Utf16LenBytes`
+
+```
+export Utf16LenBytes(b: []u8): int
+```
+
+Returns the number of UTF-16 code units the UTF-8 or WTF-8 bytes b
+take: one per scalar, two for a scalar above U+FFFF, and one for a
+lone surrogate's three bytes. O(n); it allocates nothing.
 
 It counts the bytes that are not continuation bytes (10xxxxxx) and adds
-one for each four-byte lead (11110xxx), so it also counts WTF-8 right: a
-lone surrogate's three bytes are one unit. The answer is the same on
-every CPU for UTF-8 and WTF-8, which is all a str can hold; on other
-bytes, reached through unsafe code, CPUs may answer differently.
+one for each byte from 0xF0 on, a four-byte lead. That count is the
+answer on any bytes, so it never depends on the CPU, though on bytes
+that are not UTF-8 or WTF-8 it is not a decoder's count.
 
 ### `ValidUtf8`
 

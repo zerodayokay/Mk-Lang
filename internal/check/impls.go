@@ -381,6 +381,7 @@ func (m *Module) expectedSig(d *types.ImplDecl, idecl *types.InterfaceDecl, im *
 		}
 		s.Generics[i] = g
 	}
+	s.Spelled = nil // the interface's spelling, not of the substituted types
 	s.Params = append([]types.Param(nil), im.Params...)
 	for i := range s.Params {
 		s.Params[i].Type = c.subst(s.Params[i].Type, args, d.For)
@@ -623,9 +624,11 @@ func (c *Checker) flowsString(s *types.Signature) string {
 }
 
 // implCollisions is the declaration-time collision rule: an impl
-// method whose folded name equals a field, variant or Type.Name function of
-// C, or a method of another impl for C visible from this module, is E0206
-// at the impl method of this module; two such impls here: at the later.
+// method whose folded name equals a variant or Type.Name function of C, or
+// a method of another impl for C visible from this module, is E0206 at the
+// impl method of this module; two such impls here: at the later. A field
+// is not in that class (resolve.MemberKey): field `cpu` and method `Cpu`
+// are two members.
 func (m *Module) implCollisions() {
 	c := m.c
 	for _, id := range m.implList {
@@ -644,7 +647,7 @@ func (m *Module) implCollisions() {
 			}
 			for _, mid := range d.Methods {
 				mi := c.cfg.Items.Get(mid)
-				f := resolve.Fold(c.cfg.Interner.Str(mi.Name))
+				f := resolve.MemberKey(c.cfg.Interner.Str(mi.Name), false)
 				first := source.Span{}
 				if sp, ok := m.ownMemberSpan(ck, f); ok {
 					first = sp

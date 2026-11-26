@@ -260,7 +260,7 @@ func (c *collector) build(i int) []request {
 		c.formatProblem(i, p)
 	}
 	if in.Body == nil {
-		return nil
+		return c.lazyReqs(in)
 	}
 	c.asmRegisters(i) // E1104
 	c.generalRegs(i)  // E1108
@@ -274,6 +274,23 @@ func (c *collector) build(i int) []request {
 	c.cur = i
 	c.ioReads(in.Body)
 	return c.scan(in.Body)
+}
+
+// lazyReqs are the requests of a bodiless instance: for an extern the build
+// binds lazily (Options.LazySyms), every LazyRuntime item, address taken,
+// since the lazy stubs call them by symbol (merge keeps one node of each).
+func (c *collector) lazyReqs(in *Instance) []request {
+	if !c.opt.LazySyms[in.Symbol] {
+		return nil
+	}
+	if fd, ok := c.env.Items().Get(in.Item).Decl.(*types.FuncDecl); !ok || !fd.Sig.Extern {
+		return nil
+	}
+	out := make([]request, 0, len(c.opt.LazyRuntime))
+	for _, it := range c.opt.LazyRuntime {
+		out = append(out, request{item: it, addrTaken: true})
+	}
+	return out
 }
 
 // finish keeps the built nodes, sorted by key text.

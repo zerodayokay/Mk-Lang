@@ -363,20 +363,39 @@ func (m *Module) namespace(t types.ItemID) map[string]nsEntry {
 }
 
 // member inserts a field, variant or method name into a type namespace:
-// folded duplicates are E0206, the case rule E0207 (b).
+// folded duplicates within one class (fields; variants and methods) are
+// E0206, a field spelled exactly as a member of the other class too, and
+// the case rule is E0207 (b).
 func (m *Module) member(fs *fileState, ns map[string]nsEntry, id *ast.Ident, what string, pascal bool) bool {
 	if id == nil || !id.Name.IsValid() {
 		return false
 	}
 	name := m.str(id.Name)
-	f := Fold(name)
-	if first, ok := ns[f]; ok {
+	field := what == "field"
+	key := MemberKey(name, field)
+	first, ok := ns[key]
+	if !ok {
+		first, ok = ns[MemberKey(name, !field)]
+		ok = ok && first.name == name
+	}
+	if ok {
 		m.emit(dup(id.Span(), first.at, name, what))
 		return false
 	}
-	ns[f] = nsEntry{name: name, at: id.Span(), file: fs.idx}
+	ns[key] = nsEntry{name: name, at: id.Span(), file: fs.idx}
 	m.checkCase(id, name, pascal)
 	return true
+}
+
+// MemberKey is a member's key in a type namespace: its folded name, with
+// fields kept apart from variants and methods. A field is snake_case and a
+// method PascalCase, so a field `cpu` and a method `Cpu` are two members;
+// a lookup is exact, so each spelling finds its own.
+func MemberKey(name string, field bool) string {
+	if field {
+		return "_" + Fold(name) // a folded name never starts with '_'
+	}
+	return Fold(name)
 }
 
 // checkCase reports E0207 (b) for a declaration (alternatives only: the
@@ -634,13 +653,19 @@ func (m *Module) declareMethod(fs *fileState, n ast.Node, sig *ast.Signature, ex
 }
 
 // methodMember inserts a Type.Name method's name into its same-module
-// owner's namespace. A folded collision with a field, a variant
-// or another method of a different exact name is E0206 at whichever of the
-// two comes later in (file order, offset), first the other.
+// owner's namespace. A folded collision with a variant or another method
+// of a different exact name, or a field of the same exact name, is E0206 at
+// whichever of the two comes later in (file order, offset), first the
+// other.
 func (m *Module) methodMember(owner types.ItemID, fs *fileState, id *ast.Ident, name string) {
 	ns := m.namespace(owner)
-	f := Fold(name)
+	f := MemberKey(name, false)
 	first, ok := ns[f]
+	if !ok {
+		if fd, has := ns[MemberKey(name, true)]; has && fd.name == name {
+			first, ok = fd, true
+		}
+	}
 	switch {
 	case !ok:
 		ns[f] = nsEntry{name: name, at: id.Span(), method: true, file: fs.idx}

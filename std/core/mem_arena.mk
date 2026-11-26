@@ -16,7 +16,10 @@
 // reaches a steady state with no heap traffic when each request is at most
 // MaxChunk/2 bytes and one turn's requests fit in the current chunk.
 // Requests aligned beyond ChunkAlign bump in an aligned chunk of their own,
-// kept at the head of the list (BumpAligned).
+// kept at the head of the list (BumpAligned). Alloc()'s free gives back the
+// last block bumped, and a chunk of its own while it is the newest
+// (FreeOwnChunk), so an arena on another's Alloc() (a frame) rewinds it
+// last in first out.
 
 import std.raw
 
@@ -109,14 +112,16 @@ const LargeSlice = 4096
 // A larger one is a failed allocation.
 const MaxAlign = 65536
 
-// An aligned chunk keeps its heap alignment's log2 in bits 56 to 61 of its
+// An aligned chunk keeps its heap alignment's log2 in bits 56 to 60 of its
 // size (ChunkShift), so Reset and Free return it with the alignment it was
 // allocated with (the AllocTable contract) and Chunk keeps its 16 bytes; bit
+// 61 (OwnBit) marks an aligned chunk of its own, one request's alone; bit
 // 62 (CurBit) marks the current aligned chunk, whose record is an
 // AlignedChunk. An ordinary chunk's top byte is 0: no heap serves 2^56
 // bytes, and BumpAligned refuses a request past AlignedMax.
 const ShiftAt = 56
 const AlignedMax = 281474976710656
+const OwnBit = 2305843009213693952
 const CurBit = 4611686018427387904
 
 // AlignedBase is the least alignment of a current aligned chunk: one chunk
@@ -143,7 +148,8 @@ struct AlignedChunk {
 const MaxBytes = 9223372036854775807
 
 // The table behind Arena.Alloc(): alloc bumps, resize grows or shrinks the
-// last block in place only, free gives back only the last block.
+// last block in place only, free gives back the last block, or the newest
+// chunk when the block has it to itself (FreeOwnChunk).
 const ArenaTable = AllocTable(alloc: ArenaAllocEntry, resize: ArenaResizeEntry, free: ArenaFreeEntry)
 
 // A request through Alloc() comes from any std container: a negative size,
@@ -190,9 +196,11 @@ ArenaResizeEntry(ctx: *u8, p: *u8, old: int, new: int, align: int): bool {
 }
 
 // Freeing the last block bumped gives its bytes back (bumpalo's dealloc of
-// the last allocation): a LIFO temporary costs nothing. Any other block, or
-// a size that does not match, stays until Reset or Free. The alignment
-// padding before the block is not reclaimed.
+// the last allocation): a LIFO temporary costs nothing. A block with a
+// chunk of its own goes back to the source with its chunk while that chunk
+// is the newest (FreeOwnChunk). Any other block, or a size that does not
+// match, stays until Reset or Free. The alignment padding before the block
+// is not reclaimed.
 ArenaFreeEntry(ctx: *u8, p: *u8, size: int, align: int) {
     unsafe "ctx is the address of a live arena header; p a block of it" {
         h := raw.PtrCast[u8, ArenaHdr](ctx)
@@ -206,6 +214,73 @@ ArenaFreeEntry(ctx: *u8, p: *u8, size: int, align: int) {
         ac := AlignedLast(h, p, size)
         if !raw.IsNull(ac) {
             (*ac).used = (*ac).used - size
+            return
+        }
+        FreeOwnChunk(h, p, size, align)
+    }
+}
+
+// FreeOwnChunk returns the newest chunk to the source when p's size bytes
+// have it to themselves: a chunk of its own (BumpSlow, BumpAlignedSlow)
+// freed before a later chunk was linked. That is how an arena on another
+// arena's Alloc() gives a large request back: its chunk is the newest chunk
+// of the arena under it, freed first. The newest chunk is the head, or
+// right below the current aligned chunk (LinkChunk); finding it is two
+// loads, and no list is walked. The block starts room bytes in, 16 or its
+// alignment, and the chunk's size is room + size. An ordinary newest chunk
+// is the first, the current one or one of its own (a chunk of the next
+// size stops being current only when a newer one is linked above it, and
+// the current one is never unlinked), and a block from its record to its
+// end is alone in it; the first and the current are never returned. An aligned one must carry OwnBit: a former
+// current aligned chunk has an own chunk's shift from AlignedBase up, and a
+// block at its alignment can reach its end over smaller-aligned blocks.
+FreeOwnChunk(h: *ArenaHdr, p: *u8, size: int, align: int) {
+    var room := SizeOf[Chunk]()
+    var shift := 0
+    if align > ChunkAlign {
+        if align > MaxAlign || (align & (align - 1)) != 0 {
+            return
+        }
+        room = align
+        shift = Log2(align)
+    }
+    if size > MaxBytes - room {
+        return
+    }
+    unsafe "h is a live arena header; p a block of it" {
+        head := (*h).chunks
+        if raw.IsNull(head) {
+            return
+        }
+        var above := raw.Null[Chunk]()
+        var c := head
+        if IsAlignedCur(head) {
+            above = head
+            c = (*head).prev
+        }
+        if raw.IsNull(c) || ChunkShift(c) != shift {
+            return
+        }
+        if ((*c).size & SizeMask()) != room + size || !raw.Same(p, raw.Offset(raw.PtrCast[Chunk, u8](c), room)) {
+            return
+        }
+        if shift != 0 {
+            if ((*c).size & OwnBit) == 0 {
+                return
+            }
+        } else if raw.IsNull((*c).prev) || IsCurrent(h, c) {
+            return
+        }
+        if raw.IsNull(above) {
+            (*h).chunks = (*c).prev
+        } else {
+            (*above).prev = (*c).prev
+        }
+        a := &*(*h).src
+        if shift != 0 {
+            FreeAligned(a, c)
+        } else {
+            FreeBytes(a, raw.PtrCast[Chunk, u8](c), (*c).size, ChunkSrc(h))
         }
     }
 }
@@ -404,7 +479,7 @@ BumpAligned(h: *ArenaHdr, size: int, align: int): *u8 {
 // rounds (tests_arena.mk's "aligned requests bump in a chunk that Reset
 // keeps"). A new current chunk is aligned to
 // max(align, AlignedBase); the old current loses its CurBit and goes back
-// to the heap at Reset or Free, with every own chunk.
+// to the heap at Reset or Free, with every own chunk (OwnBit marks one).
 BumpAlignedSlow(h: *ArenaHdr, size: int, align: int): *u8 {
     unsafe "h is a live arena header" {
         // An aligned chunk hangs below the first chunk, so Reset and Free
@@ -435,7 +510,7 @@ BumpAlignedSlow(h: *ArenaHdr, size: int, align: int): *u8 {
                 return raw.Null[u8]()
             }
             c := raw.PtrCast[u8, Chunk](p)
-            raw.Write(c, Chunk(prev: raw.Null[Chunk](), size: total | (Log2(align) << ShiftAt)))
+            raw.Write(c, Chunk(prev: raw.Null[Chunk](), size: total | (Log2(align) << ShiftAt) | OwnBit))
             LinkChunk(h, c)
             return raw.Offset(p, align)
         }
@@ -462,7 +537,7 @@ Log2(n: int): int {
     return raw.Ctz64(Trunc[u64](n))
 }
 
-// SizeMask keeps a chunk size's bytes, without its shift and CurBit.
+// SizeMask keeps a chunk size's bytes, without its shift, OwnBit and CurBit.
 SizeMask(): int {
     return (1 << ShiftAt) - 1
 }
@@ -470,7 +545,7 @@ SizeMask(): int {
 // ChunkShift is an aligned chunk's alignment log2, 0 for an ordinary chunk.
 ChunkShift(c: *Chunk): int {
     unsafe "c is a chunk of a live arena" {
-        return ((*c).size >> ShiftAt) & 63
+        return ((*c).size >> ShiftAt) & 31
     }
 }
 
@@ -572,6 +647,20 @@ export Arena.New(h: &Heap): OutOfMemory!Arena {
 /// chunks freed in last-in first-out order: an arena that served a value
 /// aligned over 8, or a Sub freed before its parent's later chunks, leaves
 /// part of the Fixed used until Fixed.Reset.
+///
+/// Arena.NewIn(p.Alloc()) is a frame of the arena p: scratch memory for
+/// one call, freed before p's later allocations. Its chunks are blocks of
+/// p, at least FirstChunk (4 KiB) each, and Free gives them back newest
+/// first, so p is back where it was. Nested frames whose chunks fit in p's
+/// current chunk (p's chunks grow to 1 MiB) take nothing more from p's
+/// source once warm; a request too large for p's chunks takes a chunk of
+/// its own from the source and gives it back. p keeps a frame's bytes until
+/// its Reset or Free when p started a new chunk while the frame lived, or
+/// when the frame ends while a later block of p in the same chunk lives: a
+/// value p gave there while the frame lived, or a newer frame's chunk. So a
+/// call that takes a small value from p while its frame lives keeps 4 KiB
+/// or more of p on every call, and frames nested deeper than one chunk of
+/// p holds keep one more chunk on every round: Sub suits those.
 export Arena.NewIn(a: &Alloc): OutOfMemory!Arena from a {
     return try NewArena(a, false)
 }
@@ -710,7 +799,10 @@ export Arena.Fmt[A: Fields[Format] + Plain](&self, const f: str, args: A): OutOf
 /// Arena.NewIn would make; it holds a loan on self, so it ends before self
 /// does. Use it for scratch memory that is freed before the parent's.
 /// OutOfMemory when the source refuses the first chunk. O(1): one
-/// allocation from the source, the first chunk.
+/// allocation from the source, the first chunk. Scratch for each of many
+/// calls is cheaper as a frame, Arena.NewIn(self.Alloc()), whose chunks
+/// come from self, while the frames live at once fit in one chunk of self
+/// (see NewIn).
 export Arena.Sub(&self): OutOfMemory!Arena {
     unsafe "hdr is this arena's live header, and its source outlives the result: the result holds self's loan, and self holds the source's" {
         return try NewArena(&*(*self.hdr).src, IsLine(self.hdr))
@@ -718,7 +810,10 @@ export Arena.Sub(&self): OutOfMemory!Arena {
 }
 
 /// The arena as an Alloc, the same one on every call, for containers that
-/// take a &Alloc and should live in the arena. O(1).
+/// take a &Alloc and should live in the arena. O(1). Its free gives back
+/// the last block bumped, or a block that has a chunk of its own while
+/// that chunk is the arena's newest; any other block stays until Reset or
+/// Free.
 export Arena.Alloc(&self): &Alloc {
     unsafe "hdr is this arena's live header, alive while self is" {
         return &(*self.hdr).own

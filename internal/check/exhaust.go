@@ -339,6 +339,37 @@ func (u *unit) futureArm(s *ast.MatchStmt, name string) (diag.Edit, bool) {
 	return diag.Edit{Span: at, Text: "\n" + arm + pad}, true
 }
 
+// constSpat is a const pattern's matrix pattern: the literal of its value
+// (constPat), a bool as its constructor; wild when check refused it.
+func (x *exhaust) constSpat(p ast.Pattern, t types.TypeID) *spat {
+	u := x.u
+	id := u.constPatKey(p)
+	if id == types.NoConst {
+		return wildPat // refused or poisoned: reported there
+	}
+	cv := u.c.cfg.Consts.Get(id)
+	switch {
+	case cv.Type == types.Bool:
+		if len(cv.Bytes) == 1 && cv.Bytes[0] == 1 {
+			return &spat{ctor: 1}
+		}
+		return &spat{ctor: 0}
+	case u.tab.Kind(cv.Type) == types.KChar && len(cv.Bytes) <= 8:
+		k := types.LoadUint(cv.Bytes, len(cv.Bytes))
+		return &spat{ctor: -1, iv: true, lo: k, hi: k}
+	case u.isInt(cv.Type) && len(cv.Bytes) <= 8:
+		if _, ok := u.ivDomain(t); ok {
+			k := types.LoadUint(cv.Bytes, len(cv.Bytes))
+			if u.ivSigned(t) {
+				v, _ := u.c.constInt(id)
+				k = uint64(v) ^ 1<<63
+			}
+			return &spat{ctor: -1, iv: true, lo: k, hi: k}
+		}
+	}
+	return &spat{ctor: -1, lit: true}
+}
+
 // irrefutable reports whether p matches every value of t: `_`, a binding,
 // a struct pattern of irrefutable fields.
 func (x *exhaust) irrefutable(p ast.Pattern, t types.TypeID) bool {
@@ -372,6 +403,9 @@ func (x *exhaust) lower(p ast.Pattern, t types.TypeID) *spat {
 		r := u.ref(p)
 		switch r.Kind {
 		case resolve.RefItem:
+			if u.useOf(p.ID()).Kind == UseConst {
+				return x.constSpat(p, t)
+			}
 			return x.byItem(t, types.ItemID(r.A), nil, nil)
 		case resolve.RefUniverse:
 			if source.Symbol(r.A) == source.SymTrue {
@@ -429,6 +463,9 @@ func (x *exhaust) lower(p ast.Pattern, t types.TypeID) *spat {
 			name = "." + name
 		}
 		if r.Kind == resolve.RefItem {
+			if u.useOf(p.ID()).Kind == UseConst {
+				return x.constSpat(p, t)
+			}
 			return x.byItem(t, types.ItemID(r.A), p.Fields, p)
 		}
 		return x.byName(t, name, p.Fields, p)

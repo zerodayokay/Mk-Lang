@@ -39,7 +39,7 @@ import std.math
 | Exact integer arithmetic | `Gcd`, `CheckedPow`, `CheckedPowU64`, `AddOverflow`, `SubOverflow`, `MulOverflow` |
 | Arithmetic on 128 bits and on many words | `MulWide`, `DivWide`, `AddCarry`, `SubBorrow` |
 | Float to integer | `CastSat`, `CastSatF32` (saturating), `WrapI32`, `WrapU32` (wrapping) |
-| A float's decimal digits | `ShortestDigits`, `ExactDigits`, which return a `Digits` |
+| A float's decimal digits | `ShortestDigits`, `ExactDigits`, which return a `Digits`; `ShortestDigitsInto`, into a buffer of 17 bytes |
 | Random numbers | `Rng.New` (from a seed), `Rng.FromIo` (from the OS), then `U64`, `Below`, `Float`, `Fill` |
 
 The float functions come in `f64`, and with an `F32` suffix in `f32`: `Sin` and `SinF32`, `Floor` and `FloorF32`. The constants, `Abs`, `WrapI32`, `WrapU32` and the digit functions are `f64` only.
@@ -125,6 +125,8 @@ Each function's doc text in the [API](#api) says "correctly rounded" or states i
 
 Any other `n` panics with code 8.
 
+`ShortestDigitsInto(out, x)` writes `ShortestDigits`'s digits into `out[0..len]` and returns `(len, exp)`, for a printer that formats many numbers: a `Digits` is 792 bytes, and `ShortestDigits` zeroes its 768-byte array on every call. An `f64` has at most 17 shortest digits, so `out` needs 17 bytes, and a shorter `out` panics with code 8 whatever `x` is. It writes nothing past `out[0..17]` and zeroes nothing; past `len` the buffer may hold `'0'`s. The sign is `x`'s.
+
 ## Random numbers
 
 `Rng` is a pseudo-random generator (xoshiro256\*\*, seeded through SplitMix64) for tests, simulations, sampling and shuffles. It is a plain 32-byte value with no `Io`:
@@ -137,7 +139,7 @@ Any other `n` panics with code 8.
 
 ## Memory and cost
 
-Nothing in `std.math` allocates. Every function is O(1) except `Gcd` (O(log a + log b)), `CheckedPow` and `CheckedPowU64` (O(log n)), `Mod` and `ModF32` (O(the exponent difference)), `ExactDigits` with more than 18 digits (O(767)) and `Rng.Fill` (O(n)). No function panics except `DivWide`, `ExactDigits` and `Rng.Below` on the arguments their docs name. The module needs no `Io` except `Rng.FromIo`, so it runs at compile time. In a freestanding program its integer functions work; its float functions need the bin's `cpu` set to `"baseline"`, else they are E1108.
+Nothing in `std.math` allocates. Every function is O(1) except `Gcd` (O(log a + log b)), `CheckedPow` and `CheckedPowU64` (O(log n)), `Mod` and `ModF32` (O(the exponent difference)), `ExactDigits` with more than 18 digits (O(767)) and `Rng.Fill` (O(n)). No function panics except `DivWide`, `ExactDigits`, `ShortestDigitsInto` and `Rng.Below` on the arguments their docs name. The module needs no `Io` except `Rng.FromIo`, so it runs at compile time. In a freestanding program its integer functions work; its float functions need the bin's `cpu` set to `"baseline"`, else they are E1108.
 
 ## Examples
 
@@ -1562,7 +1564,22 @@ export ShortestDigits(x: f64): Digits
 
 The shortest digits that read back to x's exact bits (round to nearest
 even); when two digit strings of that length do, the correctly rounded one.
-These are the digits `{x}` prints. O(1); allocates nothing.
+These are the digits `{x}` prints. ShortestDigitsInto with a Digits around
+it. O(1); allocates nothing.
+
+### `ShortestDigitsInto`
+
+```
+export ShortestDigitsInto(out: mut []u8, x: f64): (len: int, exp: int)
+```
+
+ShortestDigits's digits written into out[0..len] as ASCII, the first and
+the last not '0', with the decimal exponent exp of d.ddd... * 10^exp, as
+Digits holds them. An f64 has at most 17 shortest digits, so out must hold
+at least 17 bytes: a shorter out panics with code 8, whatever x is. Only
+out[0..17] is written, and nothing is zeroed: past len it may hold
+trimmed '0's. A zero, NaN and the infinities have len 0 and exp 0; the
+sign is x's. O(1); allocates nothing.
 
 ### `Sin`
 

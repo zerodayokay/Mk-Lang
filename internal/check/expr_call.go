@@ -448,6 +448,12 @@ func (u *unit) applyCall(e *ast.CallExpr, cs *callee, want types.TypeID) types.T
 		count--
 	}
 	u.argShape(e, count, sig.Variadic, "", sig, names[:count])
+	present := u.presentItem(cs.item) // present.go
+	if present {
+		prev := u.presentArg
+		u.presentArg = u.presentFnArg(e)
+		defer func() { u.presentArg = prev }()
+	}
 	for i, a := range e.Args {
 		if a == nil || a.Value == nil {
 			continue
@@ -500,6 +506,9 @@ func (u *unit) applyCall(e *ast.CallExpr, cs *callee, want types.TypeID) types.T
 	}
 	in.lateArgs()
 	u.judgePending(in)
+	if present {
+		u.presentArgRule(e)
+	}
 	nameAt := e.Fun.Span()
 	if cs.name != nil {
 		nameAt = cs.name.Span()
@@ -635,7 +644,10 @@ func (u *unit) explicitTypes(in *infer, idx *ast.IndexExpr, ps []types.GenericPa
 		if ps[i].Const {
 			continue
 		}
-		if t := u.x.typeOf(a, posPlain); t != types.Poison {
+		// posArg: a written argument may be void wherever an inferred one may,
+		// so `raw.Null[void]()` and `raw.PtrCast[T, void](p)` build the *void
+		// that `raw.Addr(p)` already takes by inference.
+		if t := u.x.typeOf(a, posArg); t != types.Poison {
 			in.set(from+i, types.TypeArg(t))
 		} else {
 			if ax, ok := a.(ast.Expr); ok && ax != nil && !typeShaped(a) && u.x.reading(a) != resolve.ReadType {

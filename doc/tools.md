@@ -39,7 +39,7 @@ With no path, a command works on the current directory. `mk help` lists the comm
 | Flag | Does |
 |---|---|
 | `--json` | Print diagnostics as the JSON document of [section 3](#3-diagnostics) |
-| `--max-diagnostics n` | Print at most `n` diagnostics. 0 means no cap. The default is no cap for JSON, 50 for text |
+| `--max-diagnostics n` | Print at most `n` diagnostics of the failing phase, plus every internal error and every error one of them follows from ([section 3](#3-diagnostics)). 0 means no cap. The default is no cap for JSON, 50 for text |
 | `--target name` | Build for this target, such as `x86_64-linux` or `x86_64-windows`. The default is the host |
 | `--offline` | Never fetch. Dependencies come from the cache or `vendor/`. `MK_OFFLINE=1` does the same |
 | `--locked` | Refuse a dependency version that `pkg.sum` has no line for, and never write `pkg.sum` |
@@ -96,7 +96,7 @@ mk check --all-targets
 
 ### `mk test`
 
-`mk test` builds the package's `test` blocks and runs each one in its own process. It prints one line per test and a total.
+`mk test` builds the package's `test` blocks and runs each one in its own process. It prints one line per test and a total. A test passes when it returns, or, after a call of [`testing.ExpectPanic(want)`](std/testing.md#expected-panics), when it panics with a report that contains `want`.
 
 ```sh
 mk test
@@ -278,7 +278,7 @@ Arena is in the prelude: no import
 
 ### `mk bench`
 
-`mk bench` runs the benchmarks: `test` blocks that call `testing.Bench` ([section 10](#10-debugging-coverage-fuzzing-and-profiling)). A name selects the benchmarks whose names contain it.
+`mk bench` runs the benchmarks: `test` blocks that call `testing.Bench` or `testing.BenchSys` ([section 10](#10-debugging-coverage-fuzzing-and-profiling)). A name selects the benchmarks whose names contain it.
 
 ```sh
 mk bench
@@ -305,10 +305,23 @@ mk apidiff ../mylib-1.0 .
 
 ### `mk cimport`
 
-`mk cimport` translates the package's C imports and prints one block per import: the generated Mk declarations, the share of the headers' declarations it bound, and the declarations it skipped, with the reason for each.
+`mk cimport` translates the package's C imports and prints one block per import: the generated Mk declarations, the share of the headers' declarations it bound, and the declarations it skipped, with the reason for each. `--skipped` lists each skipped declaration with its kind and reason; `--why <name>` explains what happened to a single C name.
 
 ```sh
 mk cimport
+mk cimport --skipped
+mk cimport --why INVALID_HANDLE_VALUE
+```
+
+### `mk sdk`
+
+`mk sdk views` lists the [system views](reference.md#system-views) this mk carries (`c.windows`, `c.dxgi`, `c.d3d12`, `c.d3dcompiler`, and `c.vulkan` for `x86_64-windows`, plus `c.posix` for both glibc Linux targets): for each view and target, its item count, headers, the views it requires, the inputs it was generated from (the Windows SDK or header repository version, the importer's format, mk's toolset headers when used, Clang's version) and its identity, or that it is not carried and how to generate it.
+
+`mk sdk` prints that, then for each target the system headers a `pkg.CImport` reads: without `sdk: true`, those `MK_SYSROOT_<target>` lists (else `$MK_EVIDENCE/c-import/sysroots/<target>`, else none); with `sdk: true`, the first of `MK_SYSROOT_<target>`, the host's SDK and the evidence directory ([packages](packages.md)). Each line says where the directories come from and the flavour and Clang triple they are read for.
+
+```sh
+mk sdk views
+mk sdk
 ```
 
 ### `mk cache`
@@ -341,7 +354,7 @@ mk tree
 
 ### `mk version`, `mk upgrade` and `mk toolchain`
 
-`mk version` prints mk's version and build, the Go version it was built with, and the LLVM tools it uses, with the rule that chose them ([section 11](#11-llvm-and-toolchains)).
+`mk version` prints mk's version and build, the Go version it was built with, how many system views it carries and what they were generated from (`mk sdk` lists them), and the LLVM tools it uses, with the rule that chose them ([section 11](#11-llvm-and-toolchains)).
 
 `mk upgrade` installs a signed release and makes it current. A release build of mk, the one the [install scripts](../README.md#install) put in place, knows where releases are; an mk built from source needs `MK_RELEASES`. `mk toolchain` lists, selects and removes installed releases. [Section 11](#11-llvm-and-toolchains) describes both.
 
@@ -417,10 +430,10 @@ The phases, in order, are `parse`, `imports`, `names`, `types` and `flow`. After
 
 How errors are reported:
 
-- Every error of the earliest failing phase is reported at once, and nothing from later phases.
+- Every error of the earliest failing phase is reported at once, and nothing from later phases except an error one of them follows from, which is reported as its `root` with its own phase. A failed `gen` line's error is reported this way beside the unknown names its missing output leaves.
 - Errors are grouped by cause. `root` links each consequence to its cause, so fixing the cause clears the group.
 - A borrow conflict names the loan, its holder and the use that keeps it live.
-- E0203 gives the type and its members, and E0201 the module path and import line, so you need no second lookup.
+- E0203 gives the type and the members the module can name there, and E0201 the module path and import line, so you need no second lookup.
 - A habit from another language, such as `v.push(x);`, gives the line rewritten with every rewrite its phase can make. `mk fix` applies the rewrites of later phases in later rounds.
 - An error in generated code cites the generated line, the generator and the `gen` line that ran it.
 
@@ -468,11 +481,12 @@ When the package checks clean, a last round drops the empty `()` argument of eac
 | `errors F` | The error set, with reasons |
 | `callers F` | Direct callers |
 | `allocs F` | A path to an allocator, or none |
-| `stack F` | The stack bound, or the recursion that prevents one |
+| `stack F` | The stack bound in calls, or the recursion that prevents one. A recursion whose depth parameter falls around every cycle counts at its bound ([section 5.2](#52-depth-bounded-recursion)) |
 | `panics F` | Every panic site reachable from `F` through direct calls, with its code and the call path to it |
 | `uses` | Every standard library item the package references, with its sites. Never capped |
 | `perimeter` | Per package of the build: its local names, source and version, and its unsafe code, C and assembly ([the packages guide](packages.md#11-grants-for-unsafe-code)). Never capped |
 | `panics --member name` | Every panic site of a workspace member's modules ([section 5.1](#51-member-wide-panic-sites)). Never capped |
+| `sig --member name` | Every function, method and other item of a workspace member's modules with what `sig Name` answers for it, generated ones included ([section 5.3](#53-member-wide-signatures)). Never capped |
 
 ### 5.1 Member-wide panic sites
 
@@ -533,7 +547,84 @@ Without `--json`, the listing is a header line, then one line per site: `kind  f
 |---|---|
 | 0 | The listing was printed |
 | 1 | The member has errors, printed on stderr. The listing is still printed when the member checks as far as types |
-| 2 | An unknown member, which the message names among the members; or `--member` given with any other query |
+| 2 | An unknown member, which the message names among the members; or `--member` given with a query other than `panics` and `sig`, or with a name |
+
+### 5.2 Depth-bounded recursion
+
+`stack F` gives a bound in calls: the deepest chain of direct calls from `F`. A recursion has no such bound by itself, so `stack` names it and stops, unless a depth parameter bounds it. Divide and conquer (a Karatsuba product, a recursive division, a parser's nesting) then states its bound like this:
+
+```mk
+// verdict: ok
+// Sum adds xs by halves. depth falls by one per level, and at 0 the loop
+// finishes, so the recursion is never deeper than depth.
+Sum(xs: []i64, depth: u8): i64 {
+    if xs.Len() <= 8 || depth == 0 {
+        var s: i64 = 0
+        for x in xs {
+            s += x
+        }
+        return s
+    }
+    h := xs.Len() / 2
+    return Sum(xs[..h], depth - 1) + Sum(xs[h..], depth - 1)
+}
+
+export Total(xs: []i64): i64 {
+    return Sum(xs, 64)
+}
+```
+
+`mk query stack Total` answers `bounded` with a deepest chain of 257 frames: `Total`, then `Sum` at most 256 deep. The rule, for each recursion (a set of functions that call each other directly):
+
+- Each function in it has a parameter of type `u8` or `u16`, its depth, the same type in all of them, that the body never assigns or lends as `mut`. Its position and name may differ from function to function.
+- Every call inside the recursion passes the caller's depth, either as it is or less a positive constant: `depth`, `depth - 1`, or a local bound once to one of these. `-` traps below zero, so the depth never wraps; `-%` does not count.
+- The calls that pass the depth unchanged form no cycle, so every cycle lowers it.
+
+Such a recursion of n functions counts as at most (max + 1) n frames, max being 255 for `u8` and 65,535 for `u16`, whatever depth its callers pass, and `stack` lists each one as `depth-bounded recursion`. A recursion that breaks the rule is reported as before, with the cycle that prevents a bound. A walk that stops at 20,000 functions gives no bound either. Frames are counted, not bytes: a frame's size is known only after code generation.
+
+### 5.3 Member-wide signatures
+
+`mk query sig --member <name> [--json] [--root path]` lists every function and method of one workspace member's modules, each with its signature as `sig Name` spells it, then the member's other items, each with its head. Every entry carries its doc lines as `sig Name` answers them, so one process answers what a `sig Name` per item would. The member is named, found and checked as for [section 5.1](#51-member-wide-panic-sites), and the exit status is the same. `sig Name` still takes one name.
+
+The listing is complete: never capped and never paged. Its `functions` hold functions, methods, impl methods and `extern` functions, and the functions a `gen` line writes, which no declaration in the source shows. They also hold an error's built-in `Format` ([the reference](reference.md#how-errors-print)), located at the error's name. Its `items` hold structs, enums, errors, interfaces, `type` aliases, consts and globals, the types a `gen` line writes included. Contract predicates, invariants, `fn` literals and test blocks are not listed. Items of the standard library and of dependencies are not listed.
+
+The `--json` document, version 1, is one object and a newline (shown wrapped, with one function and one item):
+
+```text
+{"version":1,"query":"sig","member":"eng","complete":true,"missing":[],
+ "functions":[{"name":"Collect","module":"src","file":"src/heap.mk","line":11,"col":8,
+               "sig":"export Collect(h: mut Heap)","resolved":"export Collect(h: mut Heap)",
+               "contracts":[],"exported":true,
+               "impl":"","generated":false,"gen":"","kind":"func","subject":"Collect",
+               "doc":["/// Takes the heap mutably."],"truncated":0}, ...],
+ "items":[{"name":"Heap","module":"src","file":"src/heap.mk","line":5,"col":15,
+           "sig":"export struct Heap  (module src)","resolved":"export struct Heap  (module src)",
+           "contracts":[],"exported":true,
+           "impl":"","generated":false,"gen":"","kind":"struct","subject":"Heap",
+           "doc":["/// A heap."],"truncated":0}, ...]}
+```
+
+- `version` is 1. A field added keeps the version, and a field removed or changed in meaning raises it.
+- `query` is `"sig"`, and `member` is the member's package name.
+- `complete` is false when a function has no signature, because it failed to check. `missing` names those functions.
+- `functions` are sorted by file, line, column and name. Every field of an entry is always present:
+  - `name` is the name `sig` takes: `Collect`, or `Heap.Grow` for a method. An impl method, which `sig` does not answer, is named after its type too, `Square.Area`, also for an impl for a generic type (`Box.Area` for `impl[T] Shape for Box[T]`), and `impl` names its interface, `Shape`; `impl` is `""` for any other function.
+  - `module` is the module path.
+  - `file`, `line` and `col` locate the function's name, as diagnostics print it. A generated function's `file` is its module's gen view, `src/gen/<target>/gen.mk`, which a query does not write.
+  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart. An alias is spelled as the declaration writes it, by its name and arguments: `Load(i: u64): Value` for `type Value = u64`, also under `&`, `mut`, `[]`, `?`, an array, `E!T` and a generic type's arguments.
+  - `resolved` is `sig` with every alias spelled as its type, `Load(i: u64): u64`, and equals `sig` when the signature names no alias.
+  - `exported` is true for an exported function. An impl method is never `exported`: its type and its interface decide who can call it.
+  - `generated` is true for a function a `gen` line wrote, and for the built-in `Format` of an error one wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
+  - `kind` is `func` for every function, and for an item its kind as `find` names it: `struct`, `enum`, `error`, `interface`, `alias`, `const` or `global`.
+  - `subject` is a spelling that `sig`, asked in the member, resolves to this entry. `sig` takes a spelling for the first item that has it, in the build's order of the modules, which is not the listing's, so a `name` two modules declare answers for one of them only, and `subject` says which. It is `name` when no item before this one in that order takes it, else the module's last segment and `name` (`more.Point`), else the module's path and `name` (`src.x.more.Point`), and `""` when items before it take all three. It is also `""` for an impl method and an error's built-in `Format`, which `sig` does not answer as listed.
+  - `doc` is the entry's `///` lines, and `truncated` the number of lines cut, exactly as `sig <subject>`'s answer holds them: the answer is cut at its 200-token cap, and `doc` holds the doc lines that survive the cut. `doc` is `[]` for an entry with no doc lines. An impl method, or an entry whose spellings are all taken, gets its own `///` lines by the same rule. An error's built-in `Format`, which no source declares, has `doc` `[]`, as `sig NotFound.Format` has no doc line: the lines above the error's name are the error's.
+- `items` are sorted as `functions` are, and an item's entry has the same fields. Its `sig` is the first line of `sig <subject>`, the item's head with its module, `export struct Heap  (module src)`; its `resolved` equals its `sig`, its `contracts` are `[]` and its `impl` `""`. `generated` is true for an item a `gen` line wrote, and `gen` is that line, as for a function.
+
+For an entry whose `subject` is not `""`, `sig <subject>` asked in the member (from its directory, or with `--root` at it) answers, line for line: `sig`; for a function, each contract indented by four spaces, then `module` and the module's path; then `doc`, with `truncated` as its count of lines cut. When a function's contracts alone pass the cap, the answer stops among them: it holds only the lines before the cut, `doc` is `[]`, and `truncated` counts the contract and module lines cut too. The listing is built from the same lines as the answer, and names the member's modules by their own paths wherever it is asked. From a package that depends on the member, `sig` looks a spelling up in that package first, and spells the member's module paths with the name that package gives the member: where `eng` names the member `hp` as `heap`, `sig Heap` from `eng` answers `(module heap.src)` for the entry's `(module src)`.
+
+Without `--json`, the listing is a header line, then one line per function, `sig  file:line:col`, followed by `(gen file:line:col)` for a generated one, and each contract on a line of its own. When the member has other items, a line `N other item(s)` follows, then one line per item, `sig  file:line:col`, with `(gen file:line:col)` as for a function. Doc lines are in the JSON only.
+
+The listing covers the modules of one target, the host's or `--target`'s.
 
 ## 6. API diff
 
@@ -587,7 +678,7 @@ Contracts are checked in the callee, so editing a contract does not rebuild the 
 
 **Fuzzing.** `testing.Fuzz(f)` in a `test` block registers a fuzz target. Plain `mk test` runs it over its saved inputs; `mk test --fuzz <test name> [--fuzztime d]` searches for new failing inputs.
 
-**Benchmarks.** `testing.Bench(f)` in a `test` block registers a benchmark, and `mk bench [name]` runs it. `--limit` bounds the time each benchmark takes, and `--baseline` compares with an earlier run.
+**Benchmarks.** `testing.Bench(f)` in a `test` block registers a benchmark (`testing.BenchSys(sys, f)` one that allocates from the heap), and `mk bench [name]` runs it. `--limit` bounds the time each benchmark takes, and `--baseline` compares with an earlier run.
 
 See [std.testing](std/testing.md) for fuzz targets and benchmarks.
 

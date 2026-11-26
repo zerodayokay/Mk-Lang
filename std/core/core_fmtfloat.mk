@@ -219,17 +219,21 @@ FmtDigitsF(w: mut Writer, neg: bool, s: []u8, dp: int, prec: int): WriteError!vo
     }
 }
 
-// FloatDigits writes the decimal digits of x into out (ASCII, at least 768
-// bytes) and returns how many (nd) and where the point is (dp): the
-// magnitude of x is 0.out[0..nd] * 10^dp, out[0] is not '0' and the last
-// digit is not '0' (trailing zeros trimmed), and nd is 0 for a zero, a
-// rounded-away value, NaN and the infinities (dp 0). For std.math's
-// ShortestDigits and ExactDigits. mode: 0 the shortest
-// round-trip digits (FpShortest, as FmtF64); 1 n significant digits; 2 n
-// digits after the point; 1 and 2 round the exact value half to even
-// (strconv 'e' with n-1 and 'f' with n), 3 and 4 as 1 and 2 with ties away
-// from zero (ECMA-262's toPrecision, toExponential and toFixed). n is at
-// least 1 for modes 1 and 3 and at least 0 for 2 and 4 (std.math checks).
+// FloatDigits writes the decimal digits of x into out (ASCII) and returns
+// how many (nd) and where the point is (dp): the magnitude of x is
+// 0.out[0..nd] * 10^dp, out[0] is not '0' and the last digit is not '0'
+// (trailing zeros trimmed), and nd is 0 for a zero, a rounded-away value,
+// NaN and the infinities (dp 0). For std.math's ShortestDigits,
+// ShortestDigitsInto and ExactDigits. mode: 0 the shortest round-trip
+// digits (FpShortest, as FmtF64); 1 n significant digits; 2 n digits after
+// the point; 1 and 2 round the exact value half to even (strconv 'e' with
+// n-1 and 'f' with n), 3 and 4 as 1 and 2 with ties away from zero
+// (ECMA-262's toPrecision, toExponential and toFixed). n is at least 1 for
+// modes 1 and 3 and at least 0 for 2 and 4 (std.math checks). Mode 0 needs
+// an out of 17 bytes: FpShortest scales x's ulp into [1, 10) (into
+// [4/3, 40/3) just above a power of two, whose mantissa is 2^52), so its d
+// is below 10 * 2^53 < 10^17 and has at most 17 digits. The other modes
+// need 768, an f64's longest exact expansion.
 // O(1) through one 128-bit scaling (Go 1.27's fixedWidthFloat) when the
 // result has at most 18 digits, else the exact Decimal: O(767) digits,
 // as Go's slow path. Allocates nothing.

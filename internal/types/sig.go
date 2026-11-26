@@ -199,6 +199,14 @@ type Signature struct {
 	// fact: callers need it for the unsafe-call rule (E1101), so iface encodes
 	// it.
 	CPU []string
+	// Spelled is how the declaration writes the types where it names an
+	// alias, which a TypeID cannot hold: Spelled[i] for Params[i] and
+	// Spelled[len(Params)] for the result (ReturnType of Result and
+	// Errors), each "" where TypeString's spelling is the declaration's.
+	// It is nil when no alias is written, as in most signatures. Display
+	// only (mk query sig, mk doc): no rule reads it, and mk.sig's hash
+	// leaves it out.
+	Spelled []string
 }
 
 // Param returns the parameter at index p (1-based); NoParam or out of range

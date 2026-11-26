@@ -80,6 +80,8 @@ Each function's doc states its cost in words and what it allocates in `a`. In sh
 - `Parse` and `Text` are O(n) in a base that is a power of two. In other bases they are quadratic for short values and divide and conquer over `Mul` and `DivMod` for long ones.
 - Some functions take part of their scratch from a sub-arena of `a` and free it before they return. They are `DivMod` and `Mod` from 60 divisor words, `ModPow` when the odd part of its modulus has 60 words or more, `Sqrt` from 5 words, and `Parse` above 20,000 digits and `Text` above 30 words in a base that is not a power of two. The reduction of a long `x` in `ModPow`, `Gcd` and `ModInverse` does the same. `Mul` keeps all its scratch in `a`. Each function's doc gives the number of words.
 
+Every operation's stack is bounded. Each divide-and-conquer recursion (the products and squares, recursive division, `Text`, `Parse` and `Sqrt`) takes a `u8` depth that falls by one per level, so [`mk query stack`](../tools.md#52-depth-bounded-recursion) gives every function a deepest call chain; the arena's own calls through `fn` values aside, it reports no other unbounded call.
+
 Nothing in `std.big` is constant time: running time and memory follow the operands' sizes and, for division and `ModPow`, their values.
 
 ## Examples

@@ -11,9 +11,22 @@
 // immutable: every operation writes a new magnitude into the arena it is
 // given, or, for FromWords, views the caller's. Nothing in std.big is
 // constant time: running time and memory follow the operands' sizes and, for
-// division and ModPow, their values. No other std module imports it.
+// division and ModPow, their values. No other std module imports it. Each
+// divide-and-conquer recursion (the products, the squares, the recursive
+// division, Text, Parse and Sqrt) takes a u8 depth that falls by one per
+// level and stops the recursion at zero, so `mk query stack` bounds every
+// operation's stack.
 
 import std.raw
+
+// DepthLimit is the depth each recursion starts with. Every recursion here
+// at least halves its operand's length per level (Toom-3 divides it by
+// three, Text and Parse halve the digits), so none goes past 64 levels for
+// a length below 2^63, and the limit is never reached; if it were, the
+// recursion would finish with its leaf method (the schoolbook product or
+// square, Knuth's division, Horner's rule, the chunk loop, Newton's root),
+// which is correct at any length.
+const DepthLimit: u8 = 255
 
 /// Parse's text has more digits than its max_digits allows.
 export error TooLarge

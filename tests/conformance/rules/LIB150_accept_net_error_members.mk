@@ -1,7 +1,7 @@
 // verdict: ok
 // rule: LIB150
 // rule: D-239
-// note: `net.Error` is `Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | OutOfMemory`, payload-free except `Os(code: i64)` and `SecureFailed(why)`; a match with one arm per member covers this release, and since `net.Error` is open, outside std it also has the `_` arm `mk fix` adds
+// note: `net.Error` is `Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory`, payload-free except `Os(code: i64)`, `SecureFailed(why)`, `StreamReset(code)` and `MuxClosed(code, app, peer)`; a match with one arm per member covers this release, and since `net.Error` is open, outside std it also has the `_` arm `mk fix` adds
 import std.net
 import std.time
 
@@ -42,6 +42,12 @@ Kind(e: net.Error): int {
         }
         OutOfMemory {
             return 11
+        }
+        net.StreamReset(code: _) {
+            return 12
+        }
+        net.MuxClosed(code: _, app: _, peer: _) {
+            return 13
         }
         _ {
             Panic("net.Error gained a member this match does not handle")

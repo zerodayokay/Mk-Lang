@@ -160,9 +160,9 @@ var cr2EcCtAllow = map[string]int{
 	// byte. The release build has no crypto.Wipe body: KeyEc's two wipes
 	// call kernel.Wipe, the same code, which this test reads at the same 14
 	// (12 in release and 14 under PGO). These two are this
-	// probe's. cr2CtAllow holds kernel.Wipe at 0: in the AES
-	// probe, where kernel.Wipe is inlined into crypto.Wipe (read at 12, 8
-	// under PGO), it has no body.
+	// probe's. cr2CtAllow holds kernel.Wipe at the AES probe's 8: there
+	// it is inlined into crypto.Wipe (read at 12) without PGO, and out of
+	// line under PGO.
 	"mk.std.crypto.Wipe":      14,
 	"mk.std.simd.kernel.Wipe": 14,
 	// The identity test of Z (IsZero, its answer public); PGO adds an

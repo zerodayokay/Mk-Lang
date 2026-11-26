@@ -25,6 +25,18 @@ export SocketOpenUdp(family: u16): OsResult {
     return Unsupported()
 }
 
+/// SocketConnectUdp has std/sys/linux's contract; this placeholder fails with Unsupported.
+/// O(1); allocates nothing.
+export SocketConnectUdp(h: uint, a: &SockAddr): OsResult {
+    return Unsupported()
+}
+
+/// SocketRecvFromNow has std/sys/linux's contract; this placeholder fails with Unsupported.
+/// O(1); allocates nothing.
+export SocketRecvFromNow(h: uint, buf: *u8, len: int, from: mut SockAddr): OsResult {
+    return Unsupported()
+}
+
 /// SocketBind has std/sys/linux's contract; this placeholder fails with Other.
 /// O(1); allocates nothing.
 export SocketBind(h: uint, a: &SockAddr): OsResult {

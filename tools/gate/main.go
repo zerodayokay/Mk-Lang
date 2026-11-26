@@ -244,6 +244,22 @@ var fuzzOneAtATime = map[string]bool{
 	"./std FuzzStdTls_Records12":    true,
 }
 
+// fuzzMinimizeTime caps go test's minimisation of each new interesting
+// input (60s by default) for the fuzz targets ("<pkg> <target>") whose every
+// execution is a round trip to a driver process: on a cold fuzz cache,
+// minimising one input of a few KiB took the rest of a 60-second run at 0
+// execs/s, and a 2s cap still spent most of it minimising; 100 runs an input
+// keeps the run fuzzing.
+var fuzzMinimizeTime = map[string]string{
+	"./std FuzzStdHttpFields_Hpack":   "100x",
+	"./std FuzzStdHttpFields_Huffman": "100x",
+	"./std FuzzStdHttpFields_Qpack":   "100x",
+	"./std FuzzStdHttpFields_Check":   "100x",
+	"./std FuzzStdHttpH2_Frames":      "100x",
+	"./std FuzzStdHttpH3_Frames":      "100x",
+	"./std FuzzStdQuic_Endpoint":      "100x",
+}
+
 // skipNames are the values -skip accepts.
 var skipNames = []string{"build", "test", "linux", "corpus", "dogfood", "timing", "fuzz", "apidiff"}
 

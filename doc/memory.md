@@ -121,7 +121,7 @@ Fix it in one of four ways:
 | E0601, E0602, E0607, E0608 | A result's sources: missing, wrong, or not allowed | R9, R10 |
 | E0603 | A result that borrows a local | R9 |
 | E0604 | A store into a parameter with no `into` clause | R11 |
-| E0605 | A short-lived loan stored in a global | R16 |
+| E0605 | A short-lived loan stored in a global or in an error's payload | R16 |
 | E0609 | A `fn` literal that captures more than it may | R13 |
 | E1001 to E1003 | A value that may not cross into a task, or a misused `Scope` | R17 |
 
@@ -383,6 +383,24 @@ Leak(p: Both): Res {
 
 Fix: destructure the whole value, as `Release` does. A type with private fields can be destructured only in the module that declares it.
 
+An array of linear values is taken apart whole in the same way, by position: an array pattern names every element, so each is moved into its own binding exactly once ([destructuring](reference.md#destructuring)).
+
+```mk
+// verdict: ok
+ReleaseAll(rs: [2]Res) {
+    [a, b] := rs // take the whole array apart
+    a.Close()
+    b.Close()
+}
+```
+
+```mk
+// verdict: reject E0409
+First(rs: [2]Res): Res {
+    return rs[0] // <- E0409
+}
+```
+
 ### R5. The conflict table
 
 An access to a place conflicts with a live loan when the two places overlap and the table below says so. Two places overlap when one is a prefix of the other: `p` and `p.x` overlap, `p.x` and `p.y` do not. Why: this is the rule that makes data races and use-after-free impossible in safe code; a shared loan allows readers only, an exclusive loan allows no one else.
@@ -524,7 +542,7 @@ Split() {
 }
 ```
 
-This applies to a local, a by-value parameter or a temporary whose type is a struct or record, also under `?T` and `E!T`. It keeps one set per loan-holding field (R9), one level deep: a nested struct counts as one field. While it does, the value is **split**. When it holds one set for all its fields, it is **whole**. A value behind a reference is always whole. A by-value parameter starts split, every field holding the parameter's own loan.
+This applies to a local, a by-value parameter or a temporary whose type is a struct or record, also under `?T` and `E!T`. It keeps one set per loan-holding field (R9), one level deep: a nested struct counts as one field. While it does, the value is **split**. When it holds one set for all its fields, it is **whole**. A value behind a reference is always whole, and so is an array: each binding of an array pattern holds the loans of every element, so after `[p, q] := [&x, &y]`, `x` stays borrowed while `q` lives. A by-value parameter starts split, every field holding the parameter's own loan.
 
 These uses keep `p` split, because each touches only the field it names:
 
@@ -1171,6 +1189,38 @@ Fix: copy the word into memory that outlives `index` and add the copy: `try inde
 - An exclusive step keeps writing possible, and a shared step ends it.
 - A step through a `Cell`, `Mutex` or `Chan` of a carrier, or through a `mut view`, restores it, because those write loans past a shared reference. So `Mutex[mut &i32]` stays writable through its guard. The restoring step may come after shared ones: `c: &Ctx`, whose field `h: &Hub` holds a `Chan[&i32]`, takes `*c into c`, since the channel writes loans past both references.
 - A root that cannot be written cannot receive a store, so one `into` does not affect unrelated roots. The test is about what can be written, not about type names: a store that changes type, such as `&p.x` from `p: &Point`, is still caught.
+- A local or temporary passes a store on through what it holds only when its type can write a loan below its own bytes: an exclusive reference to a carrier, a shared reference to memory that takes loan stores through `&` (a `Cell`, `Mutex` or `Chan` of a carrier, a `mut view`, an `Arena`), a type parameter, `Self`, `fn` or interface value, an allocator held by value, a raw pointer, even behind a reference to a type that holds no loan, or a view type argument that holds loans or a raw pointer. The walk cannot see behind a raw pointer, so only two kinds are exempt: a view's own pointer to one of its type parameters, whose storage the type argument stands for (R18), and, behind `&`, a read-only view's own pointers (R19) and an `Alloc` or `Heap`. A value of any other type receives the store itself and nothing it borrows does, even what it holds only by the path it was borrowed through (R12). So a view over one field of a `mut` parameter, whose field leads to memory with no carrier, takes `*self into self` without making the parameter take its own loan. Neither the walk of a stored value's own loans (below) nor a spawn's store of its arguments through a `&Scope` takes this cut.
+
+```mk
+// verdict: ok
+struct Count {
+    n: int
+}
+
+view struct Counters {
+    a: mut Count
+}
+
+view struct OneCounter {
+    a: mut Count
+}
+
+OneCounter.Bump(mut self) *self into self {
+    self.a.n = self.a.n + 1
+}
+
+BumpFirst(c: mut Counters) {
+    var one := OneCounter(a: mut *c.a)
+    one.Bump()
+}
+
+TwoBumps() {
+    var n := Count(n: 0)
+    var c := Counters(a: mut n)
+    BumpFirst(mut c)
+    BumpFirst(mut c)
+}
+```
 
 A store through a `mut` field of a local wrapper reaches what the field points at:
 
@@ -1222,6 +1272,7 @@ Shelf.PutShared(&self, x: &i32 into self) {
 - `x: S into x` declares such a store when `x` is stored nowhere else.
 - A parameter takes one `into`. Beside `x into h`, nothing can declare a store of `x` into `x`, so no body may store `x` into `h` and then write through it.
 - This binds `unsafe` and `extern` bodies too (R19).
+- That walk does not trust a holder's type: it follows every loan its roots hold, shallow ones too, and passes a store on through a local whatever its type, so it still rejects the caller of an `unsafe` or `extern` body that writes past its signature. A view that holds an arena's `List[u64]` beside another borrowed piece, passed with `*h into h`, makes the arena take that piece's loan.
 
 **Inside one parameter.** A store from one part of a parameter into a deeper part says so too: `*self into self`. A store into the first level needs no clause, because that level already holds everything below it. That is why a callee may move loans between the fields of a `mut` argument with no clause, and why a split local passed whole as `mut` is whole after the call (R7).
 
@@ -1258,7 +1309,7 @@ CopyAll(a: &Arena, xs: &List[str]): OutOfMemory!List[str] from a, xs *xs into a 
 
 The rules for allocators (`Arena`, `Alloc`, `Heap`):
 
-- An allocator the argument holds, directly or on a later step, receives the store. The walk does not go on past it, except into what was stored in its memory.
+- An allocator the argument holds, directly or on a later step, receives the store. A later step passes through a value only when its type can write a loan below itself (above), so a `List[u64]` leads no store to its arena, except in the walk of a stored value's own loans. The walk does not go on past an allocator, except into what was stored in its memory.
 - An allocator reached through the loan another allocator holds by its making (a sub-arena's parent, an arena's heap) is skipped, since nothing in the first one lives in it.
 - A store into an allocator drops the loans it holds by being itself, such as a loan of the arena stored into its own memory. So does a store into the memory of an arena that a parameter `a: &Arena` refers to, so `a` need not be declared `into a`. With `a` a reference to an allocator, `*a into a` stores the handle's loans, which the allocator holds by its making, into the allocator itself: they are dropped too, so its heap or parent stays skipped.
 - The allocators a parameter reaches are tracked apart from what a `mut` reference or a view beside them reaches, never merged with it.
@@ -1591,6 +1642,7 @@ Fix: store a value, not a reference to a local: `Mutex[?i32]` and `g.Store(some(
 | `const` | A compile-time value. Its type must be plain. `&Limit` is valid |
 | `var` | One instance. Its type must be `Share` (E1002). It is never assigned, moved or borrowed `mut`. It is reached only through `&` |
 | Static pseudo-loan | A reference to a global holds it. It never conflicts. Storing a value into anything reachable from it needs the value to hold no loan but the static one (E0605) |
+| Error payload | An error travels up the stack and across tasks, so a `str` in its payload is held to the same rule: the value given when the error is built or assigned to the field holds no loan but the static one, and a `mut` borrow of the field is E0605. A literal, a `const` and a result that comes from no parameter hold none, and so a read of the field holds none, even through a reference |
 
 ```mk
 // verdict: reject E1002
@@ -1598,6 +1650,19 @@ var Counter: Cell[i32] = Cell.New(0) // <- E1002
 ```
 
 Fix: a `Cell` is not `Share`; use an `atomic.Atomic[i32]` from `std.atomic`, or a `Mutex[i32]`.
+
+**Error payloads.** A `str` in an error's payload follows the static rule:
+
+```mk
+// verdict: reject E0605
+error NoSuchKey(key: str)
+
+Find(key: str): NoSuchKey!int {
+    fail NoSuchKey(key: key) // <- E0605
+}
+```
+
+Fix: carry what the caller cannot recompute, such as an index, and let the caller format the key it passed in; a literal such as `NoSuchKey(key: "config")` is accepted.
 
 **Global memory reached through a call.** A function may return a reference to global memory that takes stores, such as a global `Mutex`. Its caller must not store a loan on a local through it, so the result holds the static pseudo-loan:
 

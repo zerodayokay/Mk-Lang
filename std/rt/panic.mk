@@ -1,8 +1,8 @@
 // Why: every panic, from any thread, must end the process with one readable
 // report and exit status 101, even when the report itself panics.
 //
-// What: the panic hooks PanicAt, PanicMsg and PanicErr, PanicText, Reporting
-// and the report writer, with the Digits and Put formatting helpers.
+// What: the panic hooks PanicAt, PanicMsg and PanicErr, PanicText, Report,
+// Reporting and the report writer, with the Digits and Put formatting helpers.
 //
 // How: the first panicking thread wins a compare-and-swap on Panics and
 // reports; other threads park for good, and a nested panic on the winner's
@@ -52,6 +52,7 @@ export PanicText(code: u32): str {
         14 { "contract" }
         15 { "unreachable" }
         16 { "suspend in callback" }
+        17 { "unresolved function" }
         _ { "panic" }
     }
 }
@@ -115,8 +116,11 @@ Kept(i: int): str {
     }
 }
 
-// Report runs Reporting for the message text + ": " + msg (msg empty: text alone).
-Report(code: u32, site: *Site, text: str, msg: str): never {
+/// Report records the panic code and starts Reporting with text + ": " + msg
+/// (or text alone when msg is empty).
+/// Its cost is the flush of the standard streams and the report's writes;
+/// allocates nothing. Never returns: the process exits with 101 (Reporting).
+export Report(code: u32, site: *Site, text: str, msg: str): never {
     // Edge: a racing panic of another thread may overwrite it; only the
     // winner's hook reads it, and a lost race costs only the code it shows.
     Panics.code.Store(code)

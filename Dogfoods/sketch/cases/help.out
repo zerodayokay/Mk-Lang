@@ -1,0 +1,19 @@
+usage: sketch <command> [arguments] [options]
+
+commands:
+  check-script SCRIPT         run SCRIPT against the document alone (any target)
+  script SCRIPT [options]     run SCRIPT through a real window (Windows)
+  draw [FILE] [options]       paint with the mouse; FILE is loaded and saved on close
+  export FILE OUT.png         paint a saved FILE and write it as a PNG
+  check-shaders               check the embedded shaders against their recorded hashes
+  help                        print this help text
+
+window options:
+  --backend auto|d3d12|vulkan select GPU backend (default auto)
+  --warp                      use the software adapter (WARP)
+  --validate                  enable the debug layer when present
+  --mode fifo|mailbox|immediate  swapchain present mode (default fifo)
+  --visible                   show the window during a script
+
+keys: drag to draw, 1-8 colours, B and V brush larger and smaller,
+U undo, R redo, C clear, Enter types a caption (Enter or Esc ends it).

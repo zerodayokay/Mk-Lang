@@ -1,0 +1,5 @@
+# A const generic inferred from an array argument: the length of [N]T binds N as the element
+# binds T. The call was an internal compiler error in check (types.Table.Intern(array)).
+# Both profiles, both targets.
+case ok
+stdout constlen.out

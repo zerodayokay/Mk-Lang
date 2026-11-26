@@ -754,3 +754,294 @@ test "the block after a large Slice does not overlap it, on every line path" (sy
     big := try plain.Slice[u8](16384)
     Assert(TaOff(raw.Data(big[..]), 64) == 16)
 }
+
+// A frame: an arena on another arena's Alloc(), taken and freed per call,
+// nested as calls nest. Its chunks come from the arena under it and go back
+// last-in first-out, so a call gives back what it took and nothing else.
+// TaFrame takes a frame, fills small, large and align(4096) slices, nests
+// depth more frames, and checks its own bytes after the inner ones are gone.
+// Its aligned slice is two pages, or big's bytes when big is over half of
+// MaxChunk: four frames' aligned chunks then fit in one current aligned
+// chunk of the arena under them, or take chunks of their own there.
+TaFrame(under: &Arena, depth: int, big: int): OutOfMemory!void {
+    var f := try Arena.NewIn(under.Alloc())
+    defer f.Free()
+    small := try f.Slice[u8](100)
+    large := try f.Slice[u8](big)
+    var np := 2
+    if big > MaxChunk / 2 {
+        np = big / 4096 + 1
+    }
+    pages := try f.Slice[TaPage](np)
+    for i in 0..small.Len() {
+        small[i] = 0x11
+    }
+    for i in 0..large.Len() {
+        large[i] = 0x22
+    }
+    pages[pages.Len() - 1].a = 0x33
+    Assert(TaOff(raw.Of(&pages[0]), 4096) == 0)
+    if depth > 0 {
+        try TaFrame(under, depth - 1, big)
+    }
+    _ = try f.Dup("after the inner frames")
+    Assert(TaFillCheck(small[..], 0x11, large, 0x22) && pages[pages.Len() - 1].a == 0x33)
+}
+
+// Frames whose large requests take chunks of their own in the arena under
+// them (600,000 bytes, over half of MaxChunk, and as many align(4096)
+// bytes), nested three deep: once warm, the heap blocks live and the
+// arena under the frames stay the same from round to round (a request that
+// size takes its chunk from the heap and returns it on every round).
+test "frames on an arena's Alloc give their chunks back, large ones included" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    keep := try root.Put(TaPair(a: 1, b: 2))
+    for big in [3_000, 100_000, 600_000] {
+        var live := 0
+        var held := 0
+        for round in 0..12 {
+            try TaFrame(&root, 3, big)
+            if round == 3 {
+                live = TaAllocs(cp)
+                held = ArenaHeld(&root)
+            }
+        }
+        Assert(TaAllocs(cp) == live && ArenaHeld(&root) == held)
+    }
+    Assert(keep.a == 1 && keep.b == 2)
+}
+
+// Frames freed out of order, each with a request over MaxChunk, which takes
+// a chunk of its own in the arena under them: the older one's is not the newest,
+// so it stays in the arena under them, and the newer frame's bytes are
+// untouched; freeing the newer one then returns its two large chunks (one
+// ordinary, one align(4096)), the newest. Free of the root returns the
+// rest (the counting heap's leak check).
+test "a frame freed before a newer one leaves the newer one's bytes alone" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    var older := try Arena.NewIn(root.Alloc())
+    a := older.Slice[u8](1_100_000) else {
+        raw.Fail(8, "out of memory")
+    }
+    var newer := Arena.NewIn(root.Alloc()) else {
+        raw.Fail(8, "out of memory")
+    }
+    b := newer.Slice[u8](1_100_000) else {
+        raw.Fail(8, "out of memory")
+    }
+    p := newer.Slice[TaPage](150) else {
+        raw.Fail(8, "out of memory")
+    }
+    for i in 0..b.Len() {
+        b[i] = 0x44
+    }
+    p[149].a = 7
+    a[0] = 1
+    live := TaAllocs(cp)
+    older.Free()
+    Assert(TaAllocs(cp) == live)
+    var ok := true
+    for i in 0..b.Len() {
+        ok = ok && b[i] == 0x44
+    }
+    Assert(ok && p[149].a == 7)
+    newer.Free()
+    Assert(TaAllocs(cp) == live - 2)
+}
+
+// A frame's aligned chunk is a 4096-aligned block of the current aligned
+// chunk under it. Here that block fills the root's 8 KiB aligned chunk to
+// its end, above a slice of the root's at 32, and the root starts a new
+// aligned chunk while the frame lives: the old one is right below the
+// current aligned chunk, with an own chunk's shift, size and offset for
+// the frame's block. Freeing the frame gives back its block only; the
+// chunk stays with the slice in it.
+test "a frame's aligned block that fills an aligned chunk under it leaves that chunk" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    first := try root.Put(TaLine(a: 1))
+    s := try root.SliceAligned[u8](4050, 16)
+    for i in 0..s.Len() {
+        s[i] = 0x5a
+    }
+    var f := try Arena.NewIn(root.Alloc())
+    inner := f.Put(TaLine(a: 2)) else {
+        raw.Fail(8, "out of memory")
+    }
+    next := root.Put(TaLine(a: 3)) else {
+        raw.Fail(8, "out of memory")
+    }
+    Assert(inner.a == 2)
+    live := TaAllocs(cp)
+    f.Free()
+    Assert(TaAllocs(cp) == live)
+    var ok := true
+    for x in s {
+        ok = ok && x == 0x5a
+    }
+    Assert(ok && first.a == 1 && next.a == 3)
+}
+
+// R1 at align(4096): a frame's value of 254 pages (1,040,384 bytes) takes
+// an own chunk in the frame, a 4096-aligned block of 1,044,480 bytes in the
+// root. The root's current aligned chunk is a fresh 1 MiB one (its 512 KiB
+// one filled to 256 bytes short, then a 300-byte align(16) slice at 32), so
+// the block fills it from 4096 to its end: an own chunk's shift, size and
+// offset. The root starts a new aligned chunk while the frame lives;
+// freeing the frame gives back its block only, and the chunk stays with
+// the slice in it.
+test "a frame's align(4096) chunk that fills a 1 MiB aligned chunk under it leaves that chunk" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    _ = try root.SliceAligned[u8](200_000, 16)
+    _ = try root.SliceAligned[u8](324_000, 16)
+    s := try root.SliceAligned[u8](300, 16)
+    for i in 0..s.Len() {
+        s[i] = 0x5a
+    }
+    var f := try Arena.NewIn(root.Alloc())
+    pages := f.Slice[TaPage](254) else {
+        raw.Fail(8, "out of memory")
+    }
+    pages[253].a = 9
+    next := root.Put(TaLine(a: 3)) else {
+        raw.Fail(8, "out of memory")
+    }
+    Assert(pages[253].a == 9)
+    live := TaAllocs(cp)
+    f.Free()
+    Assert(TaAllocs(cp) == live)
+    var ok := true
+    for x in s {
+        ok = ok && x == 0x5a
+    }
+    Assert(ok && next.a == 3)
+}
+
+// Frames of align(65536) values: a small one bumps in the frame's aligned
+// chunk, a 64 KiB-aligned block of the root's current aligned chunk, and a
+// 983,040-byte one takes an own chunk in the frame and an own chunk
+// (OwnBit) in the root, the newest; freeing the frame returns that chunk
+// to the heap and rewinds the root's aligned chunk. Once warm, rounds make
+// one heap allocation and one free each (the large chunk), and the root's
+// own align(65536) and align(16) values keep their bytes; a root value
+// taken while the last frame lives stays too.
+test "frames of align(65536) values give their own chunks back to the root" (sys: &System) {
+    var cnt := TaCount(allocs: 0, frees: 0, inner: raw.Of(sys.heap.Alloc()))
+    cp := raw.OfMut(mut cnt)
+    var hp := TaCountHeap(cp)
+    var root := try Arena.New(&hp)
+    defer root.Free()
+    h0 := try root.Slice[TaHuge](1)
+    h0[0].a = 1
+    t := try root.SliceAligned[u8](100, 16)
+    for i in 0..t.Len() {
+        t[i] = 0x77
+    }
+    var live := 0
+    var calls := 0
+    for round in 0..8 {
+        var f := try Arena.NewIn(root.Alloc())
+        small := f.Slice[TaHuge](1) else {
+            raw.Fail(8, "out of memory")
+        }
+        big := f.Slice[TaHuge](15) else {
+            raw.Fail(8, "out of memory")
+        }
+        small[0].a = 6
+        big[14].a = 5
+        Assert(small[0].a == 6 && big[14].a == 5)
+        before := TaAllocs(cp)
+        f.Free()
+        if round >= 2 {
+            Assert(TaAllocs(cp) == before - 1)
+        }
+        if round == 2 {
+            live = TaAllocs(cp)
+            calls = TaCalls(cp)
+        }
+    }
+    Assert(TaAllocs(cp) == live && TaCalls(cp) == calls + 5)
+    var f := try Arena.NewIn(root.Alloc())
+    big := f.Slice[TaHuge](15) else {
+        raw.Fail(8, "out of memory")
+    }
+    big[0].a = 2
+    q := root.SliceAligned[u8](64, 16) else {
+        raw.Fail(8, "out of memory")
+    }
+    for i in 0..q.Len() {
+        q[i] = 0x33
+    }
+    Assert(big[0].a == 2)
+    f.Free()
+    var ok := h0[0].a == 1
+    for x in t {
+        ok = ok && x == 0x77
+    }
+    for x in q {
+        ok = ok && x == 0x33
+    }
+    Assert(ok)
+}
+
+// A frame at compile time: an arena on the evaluation's arena, whose
+// 600,000-byte slice and 150 align(4096) pages take chunks of their own
+// there (over half of MaxChunk), returned by the frame's Free
+// (FreeOwnChunk's ordinary and aligned paths, in the evaluator). The
+// result is the bytes the arena under the frame held while the frame
+// lived, over what it held before, or -1 when Free left it holding more.
+// One warm-up frame first, so the frame's first chunk has its place.
+TaFrameHeld(ar: &Arena): int {
+    var w := Arena.NewIn(ar.Alloc()) else {
+        return -2
+    }
+    w.Free()
+    before := ArenaHeld(ar)
+    var f := Arena.NewIn(ar.Alloc()) else {
+        return -3
+    }
+    s := f.Slice[u8](600_000) else {
+        f.Free()
+        return -4
+    }
+    p := f.Slice[TaPage](150) else {
+        f.Free()
+        return -5
+    }
+    s[599_999] = 7
+    p[149].a = 9
+    during := ArenaHeld(ar)
+    ok := s[599_999] == 7 && p[149].a == 9
+    f.Free()
+    if !ok || ArenaHeld(ar) != before {
+        return -1
+    }
+    return during - before
+}
+
+const TaFrameHeldAtCompileTime = TaFrameHeld(EvalArena()) fuel 400_000_000
+
+test "a frame on the evaluation's arena gives its own chunks back at compile time" (sys: &System) {
+    // 600,016 + 16 bytes of record, and 150 pages + 4096 in the frame,
+    // one page more in the arena under it.
+    want := 600_032 + 150 * 4096 + 2 * 4096
+    Assert(TaFrameHeldAtCompileTime == want)
+    var ar := try Arena.New(sys.heap)
+    defer ar.Free()
+    Assert(TaFrameHeld(&ar) == want)
+}

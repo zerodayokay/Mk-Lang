@@ -1,0 +1,9 @@
+# A close request ends the run; the steps after it never run.
+canvas 64 64
+move 8 8
+down
+move 56 56
+up
+print
+close
+print

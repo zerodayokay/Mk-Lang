@@ -60,7 +60,8 @@ ServerFlights12(a: &Arena, io: Io, conn: &net.Conn, p: &SimPki, rd: mut ReadHalf
     var hs := try Hs.New(a, true)
     rd.server = true
     kind := crypto.HashKind.Sha256
-    n0 := try hs.Expect(rd, conn, io, HsClientHello)
+    var rw := RecordWire(conn: conn, rd: mut *rd, wr: mut *wr)
+    n0 := try hs.Expect(mut rw, io, HsClientHello)
     hs.hello_due = false
     ch := try ParseClientHello(hs.buf[4..n0])
     hs.transcript.Choose(kind)

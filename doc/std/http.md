@@ -1,6 +1,6 @@
 # std.http
 
-`std.http` is an HTTP/1.1 client and server. The client keeps a pool of connections that every task of a program shares. The server runs one task per connection and calls your handler with each request, either directly or through a table of routes. Use it for web services, web clients and anything that speaks HTTP/1.1. For a plain byte stream use [`std.net`](net.md); for WebSockets, [`std.websocket`](websocket.md), whose server side takes its connections from this module's server.
+`std.http` is an HTTP/1.1 client and server, with HTTP/2 when you turn it on ([HTTP/2](#the-client) below). The client keeps a pool of connections that every task of a program shares. The server runs one task per connection and calls your handler with each request, either directly or through a table of routes. Use it for web services, web clients and anything that speaks HTTP/1.1. For a plain byte stream use [`std.net`](net.md); for WebSockets, [`std.websocket`](websocket.md), whose server side takes its connections from this module's server.
 
 `std.http` does not import `std.tls`. A client speaks `https`, and a server TLS, when its settings name a connector from [`std.tls`](tls.md), so `import std.tls` is the opt-in. `std.http` is Stable, but `https` and a TLS server are [Experimental](README.md#a-stable-module-over-an-experimental-one) as long as `std.tls` is. Read the [library guide](README.md) first.
 
@@ -31,6 +31,8 @@ import std.http
 | Read a large reply as it arrives | `Client.Do`, then `Exchange.Body`, then `Exchange.Close` |
 | Upload a body from a `Reader` | `Client.DoStreaming` |
 | Use `https` | `ClientLimits.secure` set to `some(tls.Connector(&cfg))` |
+| Make requests over HTTP/2 | `ClientLimits.h2` (with `secure`) or `h2c`, and `Client.Drive` in a task |
+| Make requests over HTTP/3 | `ClientLimits.h3` and a running `Client.Drive` |
 | Serve with the defaults | `Serve` |
 | Serve with limits, keep-alive and TLS | `ServeWith` with `ServerOptions` |
 | Serve a listener you made, from a task | `ServeOn`, or `ServeChan` to send values to other tasks |
@@ -69,6 +71,9 @@ Start from `DefaultClientLimits`:
 | `idle_connections` | 16 | the connection is closed instead of kept |
 | `decoders` | empty | no `Accept-Encoding` |
 | `allow`, `secure`, `proxy` | `none` | every address allowed, no `https`, no proxy |
+| `h2`, `h2c` | `false` | HTTP/1.1 only |
+| `h2_streams` | 100 | another HTTP/2 connection is opened |
+| `h2_window` | 1 MiB | the server waits for the client to read |
 
 A client keeps its limits, and with them what they borrow, such as the `tls.Config` behind `secure`. So it cannot outlive that `Config`:
 
@@ -97,6 +102,91 @@ An `https` URL with `secure` set to `none` fails with `NoSecureTransport`. A sec
 - The client writes no proxy credentials of its own. A request's own `Proxy-Authorization` field reaches the proxy on an `http` request only, and not after a redirect to another origin. None goes with the `CONNECT`.
 - std reads no proxy variable, such as `HTTP_PROXY`, from the environment.
 
+**HTTP/2.** The client speaks HTTP/2 only when you turn it on:
+
+- With `h2` and `secure` set, an `https` connection offers `h2` and then `http/1.1` by ALPN, and the request goes over HTTP/2 when the server picks `h2`. A connection on which the server picked `http/1.1` joins the HTTP/1.1 pool, and the next request to that origin reuses it before it dials again.
+- With `h2c`, every `http` request goes over HTTP/2 by prior knowledge (RFC 9113 3.3): there is no fallback, so a server that does not speak HTTP/2 fails the request. Through a proxy, `http` requests stay on HTTP/1.1. Use it for tests, proxies and internal services.
+- Requests to one origin share one connection, at most `h2_streams` of them at once and never more than the server allows. Past that the client opens another connection. It keeps at most 16 HTTP/2 connections, apart from the HTTP/1.1 pool; a request that finds all of them busy gets a connection of its own, which its `Exchange` closes. The first requests to an origin wait for one connection instead of dialling one each.
+- `h2_window` sets each stream's receive window (1 MiB by default). The client returns credit to the 16 MiB connection window as it buffers DATA, and returns stream credit as the application reads the body. Each slow reader is bounded by its own stream window.
+- `Exchange.Version` says `Http2`. `Close` on a body not read to its end resets the stream (`RST_STREAM(CANCEL)`) and keeps the connection, where HTTP/1.1 would close it.
+- A request the server did not process is retried on another stream, whatever its method, at most 8 times: a refused stream (`REFUSED_STREAM`) or a stream above a `GOAWAY`'s last stream id. An idempotent request whose connection failed is retried once, as on HTTP/1.1. A request whose streamed body was read from is never retried.
+- A server that answers before it reads the whole upload and then resets the stream delivers its complete reply.
+- Field names go out lower-cased. `Host` becomes `:authority`, and the fields HTTP/2 forbids (`Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding`, `Upgrade`) are dropped. HPACK never indexes `Authorization`, `Cookie` or `Proxy-Authorization`.
+
+HTTP/2 asks an endpoint to read frames as soon as they arrive (RFC 9113 5.2.2). Without help, a client connection is read only while some request waits on it, and nobody reads an idle pooled connection. That is harmless to correctness: a request reads the backlog in order before it acts, and a request that finds the connection dead (after a server gave up on an unanswered PING, say) is retried on a new one. But the server sees no answer to its PINGs and SETTINGS until then. `Client.Drive` reads every pooled HTTP/2 connection in the background: it answers PING and SETTINGS while idle, sees a `GOAWAY` at once, and closes a connection idle past `idle`. Run it as a task of a scope that outlives the requests, then `Stop`, the scope's end, and `Close`; `Close` consumes the client, so it cannot come first:
+
+```mk
+// verdict: ok
+import std.http
+import std.url
+
+const NoHeaders: []http.Header = []
+
+DriveTask(c: &http.Client, io: Io) {
+    c.Drive(io) else {}
+}
+
+Get(c: &http.Client, a: &Arena, io: Io, target: str into a): http.Error|url.Error!int {
+    u := try url.Parse(a, target, none)
+    req := http.ClientRequest(method: "GET", url: &u, headers: NoHeaders, body: "".AsBytes())
+    reply := try c.Fetch(a, io, &req)
+    return reply.status
+}
+
+Run(h: &Heap, a: &Arena, io: Io): http.Error|url.Error!int {
+    var l := http.DefaultClientLimits
+    l.h2c = true
+    c := http.Client.New(h, l)
+    defer c.Close()
+    var status := 0
+    scope s := io.Scope() {
+        s.go DriveTask(&c, io)
+        status = Get(&c, a, io, "http://127.0.0.1:8080/") else e {
+            c.Stop()
+            fail e
+        }
+        c.Stop()
+    }
+    return status
+}
+```
+
+### HTTP/3 clients
+
+Set `ClientLimits.h3 = some(quic.Connector(&q))` to opt into HTTP/3
+over QUIC. Set `q.tls` to the configuration that verifies your HTTPS
+origins. For TCP fallback, set `ClientLimits.secure` to a TLS connector
+with the same trust roots and verification policy. Leaving `secure` unset
+with `h3_direct` set makes an HTTPS request fail with `NoSecureTransport`
+if HTTP/3 is unavailable.
+
+Start `Client.Drive` in a task and await `Client.WaitDriving(io)` before
+making requests. It returns true once Drive is running and false after
+`Stop`. With no Drive running, requests use the configured TCP transport.
+At shutdown, call `Stop`, let its scope finish, and call `Close`.
+
+With `h3_direct`, an HTTPS origin can use QUIC on its origin port before
+sending an advertisement. Otherwise, the client learns HTTP/3 from
+authenticated HTTPS responses' `Alt-Svc` fields. It keeps up to eight
+same-host alternatives per origin and remembers up to 64 origins. The
+route expires after `ma` seconds (24 hours by default), reduced by the
+response's `Age`. A fresh advertisement replaces earlier routes.
+`clear` and HTTP/3 status 421 remove those routes. Pooled connections
+can outlive an advertisement's freshness.
+
+The client checks the alternative's UDP address with `allow` and verifies
+the certificate for the requested origin. The authority, TLS server
+name and application URL use that origin even when the UDP port differs.
+A proxy configuration disables HTTP/3. A failed QUIC connect falls back
+to TCP and suppresses new HTTP/3 attempts for that origin for five minutes.
+`h3_connect` bounds QUIC setup and defaults to three seconds.
+
+Concurrent requests share the origin's HTTP/3 connection and use separate
+streams. `Exchange.Version()` returns `Http3`. Closing an unfinished
+response resets its stream. A request sent over QUIC is retried only when
+the peer explicitly rejects it or a GOAWAY identifies it as unprocessed,
+and when its body is still replayable.
+
 `Fetch`, the plain function, is the smallest client: one request over a new connection with `Connection: close`, the whole reply in memory, no pool, no redirects and no `https`.
 
 ## The server
@@ -109,6 +199,36 @@ A handler fills in the `Response` it is given; the server sends it when the hand
 - `Response.Writer` appends UTF-8 text to the body. `Response.Body` sets bytes of any kind.
 - A handler that fails with `Status(code)` sends that status, the fields it set and an empty body. Any other error, or a code outside 200 to 999, sends 500 and ends the connection.
 - The server writes the framing itself: a `Content-Length` that matches the body, or chunks when the handler set `Transfer-Encoding: chunked`. A handler's `Connection: close` ends the connection after the reply.
+
+### HTTP/2 servers
+
+Set `ServerOptions.h2 = true` with a TLS acceptor in `secure` to negotiate
+HTTP/2 through ALPN. For cleartext prior knowledge, set `h2c = true` on a
+plain TCP listener. That listener also accepts HTTP/1.x requests.
+
+`h2_streams` limits concurrent streams on a connection. Each request body
+is buffered up to `body_bytes` before its handler runs. Use `Response.Flush`
+to stream a response in parts. When the server sends an error `GOAWAY`, it
+closes the write side and drains a bounded amount of pending input so the
+peer can receive the error before the connection closes.
+
+### HTTP/3 servers
+
+Set `ServerOptions.h3 = some(quic.Acceptor(&q))` with `q.tls` holding a
+server identity. `ServeWith`, `ServeOn` and `ServeChan` bind a UDP listener
+on the TCP listener's address and port and negotiate the `h3` ALPN.
+TCP and QUIC share `connections`. Set `ServerOptions.secure` for TLS on
+the TCP listener, and enable `h2` if desired. HTTP/1 and HTTP/2 replies
+advertise the bound UDP port unless a handler supplies its own `Alt-Svc`
+or `ServerOptions.alt_svc` is false.
+
+Handlers receive the same `Request` and `Response` types. `Response.Version()`
+and `Link.Version()` return `Http3`, `Response.Secure()` returns true,
+and `Link.Takeover` returns none. `Response.Flush` can write a response in
+parts. The server buffers each request body up to `body_bytes` before
+calling the handler. Set `quic.Config.streams` to control advertised QUIC
+stream credit and `ServerOptions.h2_streams` to bound active HTTP handlers
+per connection.
 
 `Serve` keeps connections alive between requests, reads pipelined requests in order, reads chunked request bodies whole under its `limit`, and answers `Expect: 100-continue`. It has no time limits, no cap on connections and no TLS. `limit` bounds each request's head and body together: past it the reply is 413, and a head over 32 KiB is 431. `ServeWith` adds the time limits, the cap and TLS with a `ServerOptions`, and reads chunked bodies whole under `body_bytes`. Start from `DefaultServerOptions`:
 
@@ -488,9 +608,11 @@ Reader, which cannot be read twice.
 export linear mut view struct Client
 ```
 
-An HTTP/1.1 client with a pool of kept-alive connections. One client
-serves every task of a program: it is linear, Send and Share, and its
-pool is behind a lock of its own. End it with Close.
+An HTTP/1.1 client with a pool of kept-alive connections, and HTTP/2
+when its limits turn h2 or h2c on, with a second pool of multiplexed
+connections. One client serves every task of a program: it is linear,
+Send and Share, and its pools are behind locks of their own. End it with
+Close.
 
 It keeps h and its limits, with what they borrow, such as the
 tls.Config behind secure, so it cannot outlive them. Its connections,
@@ -515,7 +637,7 @@ export Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): Error!Exchange 
 ```
 
 - Flows: The result borrows from a and self.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends req and reads the reply's head, following redirects, and returns
 an Exchange that holds the connection and reads the body. End the
@@ -564,7 +686,7 @@ export Client.DoStreaming(&self, a: &Arena, io: Io, req: &ClientRequest, body: m
 ```
 
 - Flows: The result borrows from a and self.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends req as Do does, with the request's body read from body instead of
 req.body, which is not sent: for an upload that need not fit in memory.
@@ -582,6 +704,25 @@ server sends before the whole body is sent is read only after it. A
 pooled connection the server closed is retried on a new one only when
 no byte was read from body. Otherwise it fails as Do does.
 
+### `Client.Drive`
+
+```
+export Client.Drive(&self, io: Io): Canceled!void
+```
+
+- Errors: Canceled
+
+Drives pooled HTTP/2 and HTTP/3 connections until Stop or a cancel of io.
+Each handles control traffic while idle. HTTP/2 also sends queued resets
+independently of reads. An HTTP/2 connection idle past
+ClientLimits.idle with no stream is closed with GOAWAY(NO_ERROR). Run it
+as a task of a scope that outlives the requests; then Stop, the scope's
+end, and Close. After Stop it returns at once, so a later Drive of the
+same client returns too. Errors: Canceled when io is cancelled; it
+returns normally after Stop. O(16) per wake. Allocates two tasks per
+HTTP/2 connection and one per HTTP/3 connection. WaitDriving
+synchronizes startup with requests.
+
 ### `Client.Fetch`
 
 ```
@@ -589,7 +730,7 @@ export Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): Error!Reply 
 ```
 
 - Flows: The result borrows from a.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends req as Do does, reads the whole body into a, and closes the
 exchange: for a reply that fits in memory. O(bytes sent and read);
@@ -612,6 +753,29 @@ export Client.New(h: &Heap, l: ClientLimits): Client from h, l
 
 A client with the limits l and an empty pool. O(16): the pool has 16 slots;
 allocates nothing: the pool's table is inside the client.
+
+### `Client.Stop`
+
+```
+export Client.Stop(&self)
+```
+
+Makes Drive return and retires the HTTP/3 connections it drove. HTTP/2
+requests can read their pooled connections after Drive ends. Call Stop
+before the Drive scope ends. Safe with no Drive running or repeated.
+Never blocks or fails. O(waiters); allocates nothing.
+
+### `Client.WaitDriving`
+
+```
+export Client.WaitDriving(&self, io: Io): Canceled!bool
+```
+
+- Errors: Canceled
+
+Waits for Drive to start. Returns false if Stop has already ended
+the client's drive lifecycle. Errors: Canceled. O(1) besides the
+wait. Allocates nothing.
 
 ### `ClientLimits`
 
@@ -659,6 +823,15 @@ Fields:
   proxy's addresses only: the proxy, not the client, resolves the
   origin's name. none connects directly. std reads no proxy variable
   from the environment.
+- `h2: bool`: Offer h2 and http/1.1 by ALPN on https; use h2 when the server picks it.
+- `h2c: bool`: Send every http:// request as HTTP/2 with prior knowledge (RFC 9113 3.3).
+- `h2_streams: int`: Streams this client opens at once on one h2 or h3 connection (also
+  obeying the peer's limit).
+- `h2_window: int`: The receive window of each stream (h2 SETTINGS_INITIAL_WINDOW_SIZE).
+- `h3: ?net.MuxDialer`: Made by quic.Connector; https origins may then use HTTP/3.
+- `h3_direct: bool`: Use h3 for every https origin without waiting for Alt-Svc.
+- `h3_connect: time.Duration`: Time limit for a QUIC handshake before falling back to TCP.
+- `alt_svc: bool`: Read Alt-Svc: h3=":port" from https replies when h3 is enabled.
 
 ### `ClientRequest`
 
@@ -705,7 +878,7 @@ export Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, 
 ```
 
 - Flows: Stores the loans routes holds in a.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Calls the handler of the most specific route whose method and pattern
 match req, and passes its errors through. One scan of the table,
@@ -733,7 +906,7 @@ is Status(404).
 ### `Error`
 
 ```
-export open type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused
+export open type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused | Protocol
 ```
 
 Every way std.http fails. ReadError is a failed read of the Reader a
@@ -794,7 +967,7 @@ pool.
 export Exchange.Close(self, io: Io): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Ends the exchange. When the body was read to its end and the reply let
 the connection stay open, the connection goes back to the client's pool
@@ -808,6 +981,14 @@ Close fails with ReadError and the connection is closed. On any error
 the connection is released anyway and the Exchange stays the caller's:
 write `onerr x.Abandon()` with `try x.Close(io)`.
 
+### `Exchange.Version`
+
+```
+export Exchange.Version(&self): HttpVersion
+```
+
+The HTTP protocol version of this exchange's reply. O(1); allocates nothing.
+
 ### `Fetch`
 
 ```
@@ -815,7 +996,7 @@ export Fetch(a: &Arena, io: Io, method: str, url: str, headers: []Header, body: 
 ```
 
 - Flows: The result borrows from a.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends one request over a new plain connection and reads the whole
 reply into a. url is an http URL; Fetch has no https, no pool, no
@@ -853,6 +1034,22 @@ Fields:
 - `name: str`: The field name, such as "Content-Type".
 - `value: str`: The field value.
 
+### `HttpVersion`
+
+```
+export open enum HttpVersion
+```
+
+The HTTP version a request came over or a reply was read over. Open:
+later versions are added.
+
+Variants:
+
+- `Http10`
+- `Http11`
+- `Http2`
+- `Http3`
+
 ### `Link`
 
 ```
@@ -875,13 +1072,22 @@ export Link.Takeover(&self): ?Taken
 
 Takes the connection the handler's response would be sent on, with the
 bytes the server read after the request, for websocket.Accept or a
-protocol of your own; none when it was already taken. O(1); allocates
-nothing.
+protocol of your own; none when it was already taken or the request came
+over HTTP/2 or HTTP/3. O(1); allocates nothing.
 
 After it, the server writes nothing on the connection, not even the
 handler's response, and stops serving the connection when the handler
 returns. The Taken holds the link's loans, so it lives inside the
 handler.
+
+### `Link.Version`
+
+```
+export Link.Version(&self): HttpVersion
+```
+
+The HTTP version of the connection this link's request came on. O(1);
+allocates nothing.
 
 ### `NoSecureTransport`
 
@@ -891,6 +1097,15 @@ export error NoSecureTransport
 
 An https URL, and the client's limits name no secure connector. Put a
 tls.Connector in ClientLimits.secure to send https requests.
+
+### `Protocol`
+
+```
+export error Protocol(code: u64)
+```
+
+The peer broke HTTP/2 or HTTP/3 framing or field rules, as this side
+found; code is the RFC's error code (RFC 9113 7, RFC 9114 8.1).
 
 ### `ProxyRefused`
 
@@ -908,7 +1123,7 @@ export ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): Error!Request 
 ```
 
 - Flows: The result borrows from a.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Reads one request from r into a: the head, then a Content-Length or
 chunked body. Use it to read requests from a stream of your own; Serve
@@ -956,8 +1171,8 @@ export struct Request
 A request as the server read it: the method, the target split into path
 and query, the header fields in the order received, the path parameters
 Dispatch matched, and the body. path and query are the bytes received,
-never decoded or cleaned. Every string and slice is a view of the
-request's arena.
+never decoded or cleaned. Its strings and slices are valid for the
+duration of the handler.
 
 Fields:
 
@@ -1034,13 +1249,14 @@ allocates data's length in the arena.
 export Response.Flush(mut self, io: Io, link: &Link): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends what the response holds so far, before the handler returns: for
 a reply produced over time, such as a long listing or server events.
 O(bytes sent); allocates nothing.
 
-The first Flush sends the head, with Transfer-Encoding: chunked in place
+On HTTP/2 and HTTP/3 this sends HEADERS followed by DATA on the request's
+stream. On HTTP/1.1 the first Flush sends the head, with Transfer-Encoding: chunked in place
 of the handler's framing fields, and the body so far as a chunk. Each
 later Flush sends what was added since as another chunk: the bytes of a
 Body set after the last Flush, whole, and what the Writer appended
@@ -1085,13 +1301,22 @@ export Response.New(a: &Arena): Response
 A 200 response with no fields and an empty body, in a. O(1); allocates
 nothing until a field or body bytes are added.
 
+### `Response.Secure`
+
+```
+export Response.Secure(&self): bool
+```
+
+Whether the connection the request came on is TLS or QUIC; false for a
+Response made with Response.New. O(1); allocates nothing.
+
 ### `Response.Send`
 
 ```
 export Response.Send(&self, io: Io, w: mut Writer): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Writes the response to w, then flushes w. The server calls it; call it
 yourself to answer a request read with ReadRequest. Fails with w's
@@ -1119,6 +1344,16 @@ Sets the status code. O(1); allocates nothing.
 The server answers a code outside 200 to 999 with 500 and ends the
 connection, since an interim 1xx is never a final reply. Send called
 directly panics on a code outside 100 to 999.
+
+### `Response.Version`
+
+```
+export Response.Version(&self): HttpVersion
+```
+
+The version of the request this response answers, as the server set it
+before the handler ran; Http11 for a Response made with Response.New.
+O(1); allocates nothing.
 
 ### `Response.Writer`
 
@@ -1158,7 +1393,7 @@ Fields:
 export Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Listens on addr and serves every connection in a task of its own, with
 keep-alive and pipelining, until the caller's scope is cancelled; then
@@ -1192,7 +1427,7 @@ its connection.
 export ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Serves every connection l accepts as ServeOn does, with o's settings,
 until the caller's scope is cancelled, and hands each call of handle
@@ -1224,7 +1459,7 @@ InvalidAddress; other Accept errors wait and try again as Serve's do.
 export ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Serves every connection l accepts, as ServeWith does with o's settings,
 until the caller's scope is cancelled. The caller makes the listener, so
@@ -1250,7 +1485,7 @@ InvalidAddress; other Accept errors wait and try again as Serve's do.
 export ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, Protocol(code: u64), ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Listens on addr and serves every connection in a task of its own until
 the caller's scope is cancelled, as Serve does, with o's settings and a
@@ -1300,6 +1535,11 @@ Fields:
 - `keep_alive: time.Duration`: The time from a reply sent to the next request's first byte.
 - `secure: ?net.Secure`: The acceptor each connection goes through, made by tls.Acceptor.
   With none, the server speaks plain TCP.
+- `h2: bool`: With secure, accept h2 by ALPN.
+- `h2c: bool`: Without secure, serve a connection starting with the HTTP/2 preface as HTTP/2.
+- `h2_streams: int`: SETTINGS_MAX_CONCURRENT_STREAMS for h2 and active handlers per h3 connection.
+- `h3: ?net.MuxServer`: Made by quic.Acceptor; ServeWith and ServeOn also bind UDP when set.
+- `alt_svc: bool`: With h3, add Alt-Svc header to h1 and h2 replies that set none.
 
 ### `Status`
 

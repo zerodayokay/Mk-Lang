@@ -371,7 +371,7 @@ func BenchmarkReadSetSmall(b *testing.B) {
 func TestPanicCodesAreFrozen(t *testing.T) {
 	want := []PanicCode{PanicOverflow, PanicBounds, PanicDivideByZero, PanicShiftAmount, PanicCast, PanicMust,
 		PanicAssert, PanicExplicit, PanicStackLimit, PanicStrBoundary, PanicFreeNonEmpty, PanicWrongAllocator,
-		PanicEnumTag, PanicContract, PanicUnreachable, PanicSuspendInCallback}
+		PanicEnumTag, PanicContract, PanicUnreachable, PanicSuspendInCallback, PanicUnresolved}
 	for i, c := range want {
 		if int(c) != i+1 {
 			t.Errorf("%v is %d, want %d", c, c, i+1)

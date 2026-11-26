@@ -1,0 +1,7 @@
+render
+$CASES/scenes/cube.scene
+$WORK/cube.png
+--warp
+--validate
+--compare
+$CASES/golden/cube.png

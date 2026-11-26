@@ -385,7 +385,7 @@ func (p *parser) parseDestructure(x ast.Expr, start uint32, isVar bool) ast.Stmt
 	return n
 }
 
-// recordPatOf converts a call or record literal to a RecordPat.
+// recordPatOf converts a call, record literal or array literal to a RecordPat.
 func (p *parser) recordPatOf(x ast.Expr) *ast.RecordPat {
 	rp := &ast.RecordPat{}
 	sp := x.Span()
@@ -426,6 +426,21 @@ func (p *parser) recordPatOf(x ast.Expr) *ast.RecordPat {
 			if pf != nil {
 				rp.Fields = append(rp.Fields, pf)
 			}
+		}
+	case *ast.ArrayLit:
+		// [a, b] := e binds element i of a fixed array to the i-th name.
+		id = y.NID
+		rp.Elems = true
+		for _, x := range y.Elems {
+			v, ok := x.(*ast.Ident)
+			if !ok {
+				p.syntaxErr(x.Span(), "an array destructure binds one name per element")
+				continue
+			}
+			pf := &ast.PatField{Name: v}
+			p.checkDeclared(v, declLocal)
+			p.adopt(pf, &pf.Base, v.Sp)
+			rp.Fields = append(rp.Fields, pf)
 		}
 	default:
 		p.syntaxErr(sp, "expected a name or a destructure before `:=`")

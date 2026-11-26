@@ -3,9 +3,10 @@
 // without std's own layout.
 //
 // What: Digits (the digits, their count, the decimal exponent and the
-// sign), DigitMode, ShortestDigits and ExactDigits.
+// sign), DigitMode, ShortestDigits, ShortestDigitsInto (the shortest digits
+// into a caller's buffer of 17 bytes) and ExactDigits.
 //
-// How: both run std.core's float formatting (core_fmtfloat.mk's
+// How: all three run std.core's float formatting (core_fmtfloat.mk's
 // FloatDigits): Go's unrounded scaling (R. Cox, "Floating-Point Printing
 // and Parsing Can Be Simple And Fast") for the shortest digits and for at
 // most 18 digits, else the exact multiprecision Decimal. Nothing allocates.
@@ -48,14 +49,30 @@ export enum DigitMode {
 
 /// The shortest digits that read back to x's exact bits (round to nearest
 /// even); when two digit strings of that length do, the correctly rounded one.
-/// These are the digits `{x}` prints. O(1); allocates nothing.
+/// These are the digits `{x}` prints. ShortestDigitsInto with a Digits around
+/// it. O(1); allocates nothing.
 export ShortestDigits(x: f64): Digits {
     var d := Digits(digits: [0; 768], len: 0, exp: 0, neg: false)
-    r := core.FloatDigits(mut d.digits[..], x, 0, 0)
-    d.len = r.nd
-    d.exp = DigitsExp(r.nd, r.dp)
+    r := ShortestDigitsInto(mut d.digits[..], x)
+    d.len = r.len
+    d.exp = r.exp
     d.neg = (raw.F64Bits(x) >> 63) != 0
     return d
+}
+
+/// ShortestDigits's digits written into out[0..len] as ASCII, the first and
+/// the last not '0', with the decimal exponent exp of d.ddd... * 10^exp, as
+/// Digits holds them. An f64 has at most 17 shortest digits, so out must hold
+/// at least 17 bytes: a shorter out panics with code 8, whatever x is. Only
+/// out[0..17] is written, and nothing is zeroed: past len it may hold
+/// trimmed '0's. A zero, NaN and the infinities have len 0 and exp 0; the
+/// sign is x's. O(1); allocates nothing.
+export ShortestDigitsInto(out: mut []u8, x: f64): (len: int, exp: int) {
+    if out.Len() < 17 {
+        raw.Fail(8, "math.ShortestDigitsInto: out holds fewer than 17 bytes")
+    }
+    r := core.FloatDigits(out, x, 0, 0)
+    return (len: r.nd, exp: DigitsExp(r.nd, r.dp))
 }
 
 /// x's exact value rounded by mode to n digits: n significant digits (n at

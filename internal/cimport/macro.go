@@ -39,9 +39,9 @@ type macro struct {
 
 // readDefines parses `clang -E -dD` output: the #define lines after
 // import i's marker belong to import i; #undef removes. It returns the
-// object-like macros worth probing and the names of function-like ones.
-func readDefines(text string) (objs []*macro, funcs map[string]bool) {
-	funcs = map[string]bool{}
+// object-like macros worth probing and the import index of function-like ones.
+func readDefines(text string) (objs []*macro, funcs map[string]int) {
+	funcs = map[string]int{}
 	byName := map[string]*macro{}
 	imp := -1
 	sc := bufio.NewScanner(strings.NewReader(text))
@@ -72,7 +72,7 @@ func readDefines(text string) (objs []*macro, funcs map[string]bool) {
 				continue
 			}
 			if n < len(rest) && rest[n] == '(' {
-				funcs[name] = true
+				funcs[name] = imp
 				delete(byName, name)
 				if j := strings.IndexByte(rest, ')'); j > 0 {
 					bodies[name] = rest[j+1:]
@@ -241,29 +241,34 @@ func irValues(ir string) map[int]string {
 	return out
 }
 
-// mkValue turns an IR initializer of a macro of Mk type mk into a Mk
+// mkValue turns an IR initializer of a macro of Mk type mk (with underlying
+// scalar primitive type primMk, or "" for non-scalar/pointer types) into a Mk
 // literal, or "" when it is none (a pointer, an aggregate, a non-finite
 // float, a string that is not UTF-8).
-func mkValue(ir, mk string) string {
+func mkValue(ir, mk, primMk string) string {
 	sp := strings.IndexByte(ir, ' ')
 	if sp < 0 {
 		return ""
 	}
 	ty, v := ir[:sp], strings.TrimSpace(ir[sp+1:])
+	prim := primMk
+	if prim == "" {
+		prim = mk
+	}
 	switch {
-	case strings.HasPrefix(ty, "i") && mk != "" && mk != "str" && mk != "f32" && mk != "f64":
+	case strings.HasPrefix(ty, "i") && mk != "" && mk != "str" && mk != "f32" && mk != "f64" && !strings.HasPrefix(mk, "[]"):
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
 			return ""
 		}
 		bits, _ := strconv.Atoi(ty[1:])
-		if mk == "bool" {
+		if prim == "bool" {
 			if n == 0 {
 				return "false"
 			}
 			return "true"
 		}
-		if mk[0] == 'u' {
+		if prim[0] == 'u' {
 			u := uint64(n)
 			if bits < 64 {
 				u &= 1<<uint(bits) - 1
@@ -300,6 +305,84 @@ func mkValue(ir, mk string) string {
 			s += ".0"
 		}
 		return s
+	case ty == "ptr" && mk == "uint":
+		if v == "null" {
+			return "0"
+		}
+		if strings.HasPrefix(v, "inttoptr (") && strings.HasSuffix(v, " to ptr)") {
+			inner := strings.TrimSuffix(strings.TrimPrefix(v, "inttoptr ("), " to ptr)")
+			if isp := strings.IndexByte(inner, ' '); isp > 0 && strings.HasPrefix(inner, "i") {
+				bits, _ := strconv.Atoi(inner[1:isp])
+				num := strings.TrimSpace(inner[isp+1:])
+				if n, err := strconv.ParseInt(num, 10, 64); err == nil {
+					u := uint64(n)
+					if bits > 0 && bits < 64 {
+						u &= 1<<uint(bits) - 1
+					}
+					return strconv.FormatUint(u, 10)
+				}
+				if u, err := strconv.ParseUint(num, 10, 64); err == nil {
+					return strconv.FormatUint(u, 10)
+				}
+			}
+		}
+	case strings.HasPrefix(ty, "[") && strings.HasPrefix(mk, "[]"):
+		k := strings.Index(ir, "] ")
+		if k < 0 {
+			return ""
+		}
+		header := strings.TrimSpace(ir[1:k])
+		xPos := strings.Index(header, " x ")
+		if xPos < 0 {
+			return ""
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(header[:xPos]))
+		if err != nil || n < 0 || n > 4096 {
+			return ""
+		}
+		elemIR := strings.TrimSpace(header[xPos+3:])
+		if !strings.HasPrefix(elemIR, "i") {
+			return ""
+		}
+		bits, _ := strconv.Atoi(elemIR[1:])
+		elemMk := mk[2:]
+		v = strings.TrimSpace(ir[k+2:])
+		if v == "zeroinitializer" {
+			if n == 0 {
+				return "[]"
+			}
+			return "[" + strings.Repeat("0, ", n-1) + "0]"
+		}
+		if !strings.HasPrefix(v, "[") || !strings.HasSuffix(v, "]") {
+			return ""
+		}
+		parts := strings.Split(v[1:len(v)-1], ",")
+		if len(parts) != n {
+			return ""
+		}
+		out := make([]string, n)
+		for idx, part := range parts {
+			part = strings.TrimSpace(part)
+			psp := strings.IndexByte(part, ' ')
+			if psp < 0 || part[:psp] != elemIR {
+				return ""
+			}
+			valStr := strings.TrimSpace(part[psp+1:])
+			val, err := strconv.ParseInt(valStr, 10, 64)
+			if err != nil {
+				return ""
+			}
+			if elemMk[0] == 'u' {
+				u := uint64(val)
+				if bits > 0 && bits < 64 {
+					u &= 1<<uint(bits) - 1
+				}
+				out[idx] = strconv.FormatUint(u, 10)
+			} else {
+				out[idx] = strconv.FormatInt(val, 10)
+			}
+		}
+		return "[" + strings.Join(out, ", ") + "]"
 	case strings.HasPrefix(ty, "[") && mk == "str":
 		// "[4 x i8] c\"hi\\0A\\00\"" or "[1 x i8] zeroinitializer"
 		k := strings.Index(ir, "] ")
@@ -376,11 +459,11 @@ func (e *emitter) emitMacros() {
 				st.Direct++
 				continue
 			}
-			e.skipped(m.imp, "macro is no constant")
+			e.skippedDecl(m.imp, "macro", m.name, "macro is no constant")
 			continue
 		}
 		if m.value == "" {
-			e.skipped(m.imp, "macro value")
+			e.skippedDecl(m.imp, "macro", m.name, "macro value")
 			continue
 		}
 		n := e.scopes[m.imp].fresh(pascal(m.name), "Const")

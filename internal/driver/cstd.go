@@ -51,7 +51,8 @@ func (b *build) splitLate() {
 	for _, m := range b.mods {
 		for _, f := range m.files {
 			for _, il := range b.w.importLines(f) {
-				if isCPath(il.Path) {
+				// A system view is in the std build itself (sysviews.go).
+				if isCPath(il.Path) && !isSysViewPath(il.Path) {
 					late[m] = true
 				}
 			}
@@ -124,7 +125,7 @@ func (b *build) missingC(m *modNode) string {
 	for _, x := range b.lateClosure(m) {
 		for _, f := range x.files {
 			for _, il := range b.w.importLines(f) {
-				if !isCPath(il.Path) {
+				if !isCPath(il.Path) || isSysViewPath(il.Path) {
 					continue
 				}
 				if c := b.cBuild; c == nil || !c.cSources || c.byName[il.Path] == nil {

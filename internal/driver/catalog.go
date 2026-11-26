@@ -37,7 +37,7 @@ func (c *catalog) add(b *build) {
 		c.exports = map[string][]string{}
 	}
 	for _, m := range b.mods {
-		if m.std && isStdInternal(m.name) {
+		if m.std && isStdInternal(m.name) || m.sysview {
 			continue
 		}
 		if !m.std {

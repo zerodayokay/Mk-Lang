@@ -65,3 +65,17 @@ export PollTestHook(cb: fn(*u8), arg: *u8, on: bool): u64 {
 export PollTestPark(cb: fn(*u8), arg: *u8, on: bool): u64 {
     return 0
 }
+
+/// Waits as PollWait does. Directed main-thread wakes are macOS-only.
+/// O(1) besides the wait; allocates nothing.
+export PollWaitMain(timeout_ns: i64, out: mut []*Op): int {
+    return PollWait(timeout_ns, out)
+}
+
+/// Directed main-thread wakes are macOS-only. Returns false. O(1).
+export PollTakeMainWake(): bool {
+    return false
+}
+
+/// Directed main-thread wakes are macOS-only. O(1); does nothing.
+export PollWakeMain() {}

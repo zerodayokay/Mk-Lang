@@ -58,6 +58,12 @@ struct Options {
     export log: ?str
     /// Also serve the web front end (WebSocket and event streams) on this address
     export web: ?str
+    /// PEM certificate chain for the HTTPS web front end
+    export web_tls_chain: ?str
+    /// PEM private key for the HTTPS web front end
+    export web_tls_key: ?str
+    /// PEM roots to trust when replay connects to the HTTPS web front end
+    export web_cacert: ?str
     /// The command and its file
     export args: []str
 }

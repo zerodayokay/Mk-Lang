@@ -1,7 +1,7 @@
 // Why: some same-module consts are needed as values before bodies are
 // lowered (an array length, a repeat count, a generic argument, a fuel or
-// format argument); their initializers must be checked and made runnable
-// in stage 5, unless their type needs a same-module layout.
+// format argument, a match pattern); their initializers must be checked and
+// made runnable in stage 5, unless their type needs a same-module layout.
 //
 // What: earlySet and initEarly, checkEarly and checkEarlyOne (checking
 // and handing to Config.Prepare), Deferred, constValue and localConstArg
@@ -155,8 +155,8 @@ func (m *Module) localLayoutItem(it *types.Item) types.ItemID {
 
 // earlySet is the early set: the same-module consts named where check needs
 // a value (an array length, a repeat count, a generic argument bracket, a
-// fuel operand), closed over the consts their initializers name, in item
-// order. It reads names only.
+// fuel operand, a pattern), closed over the consts their initializers name,
+// in item order. It reads names only.
 func (m *Module) earlySet() []types.ItemID {
 	in := map[types.ItemID]bool{}
 	var work []types.ItemID
@@ -204,6 +204,13 @@ func (m *Module) earlySet() []types.ItemID {
 					if v := n.Args[0].Value; m.constShaped(fx, v) {
 						add(fx, v)
 					}
+				}
+			case *ast.NamePattern:
+				// A const pattern is matched by its value (constPat).
+				add(fx, n)
+			case *ast.PathPattern:
+				if len(n.Fields) == 0 {
+					add(fx, n)
 				}
 			case *ast.Contract:
 				// A requires clause may be compile-time: the consts it

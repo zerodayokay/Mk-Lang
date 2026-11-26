@@ -424,7 +424,7 @@ export Main(sys: &System): WriteError!void {
 - A name in the wrong case is E0207. The message gives the right spelling: `` `do_thing` should be PascalCase: `DoThing` ``.
 - A name cannot start with `_`: `_x` is E0207. `_` alone is the blank, as in `_ = F()`.
 - Lookup is exact. When nothing matches, the compiler ignores case and underscores to find what you meant: `.len()` and `userCount` are E0207, and the message names `Len` and `user_count`. `mk fix` applies the correction.
-- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A local cannot shadow another local or a parameter ([bindings](#bindings)).
+- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A type's fields are one scope and its variants and methods another, so a field `cpu` and a method `Cpu` may stand side by side ([structs](#structs)). A local cannot shadow another local, a parameter or a const generic ([bindings](#bindings)).
 - An `extern` function's or var's name is its C symbol. It is used as written and is outside the case rule: `extern strlen(s: *u8): uint`.
 
 A local spelled differently from its declaration:
@@ -1091,6 +1091,7 @@ backtrace:
 
 - `int` and `uint` count as 64 bits, so `int(x)` takes an `i64` or a `u32`, and `int(u)` of a `uint` is E0303.
 - A constant whose value fits passes `T(x)`: `u8(200)`, `i32(Max)` for a `const Max: int = 100`.
+- A float literal or named float constant whose value is exactly an `f32` passes `f32(x)`: `f32(0.5)`, `f32(-1.5e3)`, `f32(Half)` for a `const Half: f64 = 0.5`. `f32(0.1)` and `f32(1e39)` would round or overflow, so they are E0303, and so is an operator over float literals or constants, `f32(0.25 + 0.25)` or `f32(Half + Half)`, which is not judged by its value: write `x: f32 = 0.1`, where the literal takes `f32` and is rounded once, or `Cast[f32](0.1)`.
 - `Cast` to an integer truncates a float toward zero, and panics on NaN, an infinity or a value out of range.
 - `Cast` from an integer to a float rounds to the nearest value, ties to even, and never panics: `Cast[f64](n)`.
 - `Cast` from `f64` to `f32` rounds to nearest-even. It panics only when a finite value rounds to an infinity; NaN and the infinities pass through.
@@ -1165,7 +1166,7 @@ backtrace:
   Main (main.mk)
 ```
 
-- `void` appears only as a result type, as the `T` of `E!void`, and as the pointee of `*void`. A local or field of type `void` is E0301.
+- `void` appears only as a result type, as the `T` of `E!void`, as the pointee of `*void`, and as a type argument of a generic call, written or inferred (`raw.Null[void]()` is a null `*void`). A local or field of type `void` is E0301, and so is `void` as the argument of a generic type, `Box[void]`.
 - A `never` function must not return. `return` in one is E0301; every path ends in a call of another `never` function, such as `Panic`, or loops forever. A body that can reach its end is E0805 ([functions](#functions-and-methods)).
 - A call of a `never` function ends its path, so it may close an `else` block or a `match` arm where a value is expected.
 
@@ -1263,6 +1264,7 @@ backtrace:
 - Array literals, `[e; N]` and indexing: see [array literals](#array-record-and-struct-literals) and [indexing](#indexing-and-slices).
 - An array is not a slice. Pass `a[..]` where a `[]T` is expected, and `mut a[..]` where a `mut []T` is.
 - An array has the kind of its element, and its size is `N` times the element's.
+- `[a, b] := xs` takes an array apart, each element into its own binding; it is how an array of linear values is consumed ([destructuring](#destructuring)).
 - In a `const` initializer an array literal may also be a `[]T` over static data ([section 11](#compile-time-arenas-and-static-slices)).
 
 ```mk
@@ -1531,7 +1533,7 @@ Pair(): (a: int, b: int) {
 An error set `A | B` is the one union type that you write with `|`: a value of it is one of the errors listed. `E!T` is either an error from the set `E` or a value `T`. Both are described in [section 9](#9-errors).
 
 - Their rules are in [error sets](#error-sets) and [results](#results-et).
-- `E!T` has the kind of `T`. An error payload holds plain data and no references: a `str`, slice or `&T` field is E0408.
+- `E!T` has the kind of `T`. An error payload holds plain data and static strings: a `str` field holds only a string that lives as long as the program (E0605), and a slice, `&T`, or any other type holding a reference is E0408 ([declaring errors](#declaring-errors)).
 
 ### Optionals: `?T`
 
@@ -1674,7 +1676,7 @@ Push(a: &Arena, head: ?&Node into a, v: int): OutOfMemory!&Node from a, head {
 
 ### Raw pointer types: `*T`
 
-`*T` is an address with no checks: it may be null, dangle or alias. You need one only to talk to C, to hardware, or to build a container the borrow rules cannot express. A raw pointer is plain and 8 bytes; `*void` is an untyped address.
+`*T` is an address with no checks: it may be null, dangle or alias. You need one only to talk to C, to hardware, or to build a container the borrow rules cannot express. A raw pointer is plain and 8 bytes; `*void` is an untyped address, C's `void *`, made from a typed pointer with `raw.PtrCast[T, void](p)`.
 
 ```mk
 // verdict: ok
@@ -1939,7 +1941,7 @@ The iterators `Split`, `Lines`, `Words`, `Scalars`, `MapIter`, `TextMapIter`, `C
 
 ### Zero-valid types
 
-A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, so it needs one.
+A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, and [`mem.Zeroed[T]()`](std/mem.md#layout) returns one zeroed value, so both need one.
 
 A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, or an `E!T` whose `T` is zero-valid. A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not.
 
@@ -1948,6 +1950,40 @@ A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, 
 Names(a: &Arena): OutOfMemory!int {
     xs := try a.Slice[str](4) // <- E0701
     return xs.Len()
+}
+```
+
+`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is its result, so it is not an error union either: `mem.Zeroed[E!T]()` is E0701, and `mem.Zeroed[T]()` makes the value. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
+
+```mk
+// verdict: ok
+import std.mem
+
+struct Stats {
+    count: int
+    total: f64
+    last: ?u32
+    buckets: [8]u32
+}
+
+export Main(sys: &System): WriteError!void {
+    var s := mem.Zeroed[Stats]()
+    s.count += 1
+    try sys.Print("{c} {b}\n", (c: s.count, b: s.buckets[7]))
+}
+```
+
+```mk
+// verdict: reject E0701
+import std.mem
+
+struct Named {
+    id: int
+    name: str
+}
+
+Blank(): Named {
+    return mem.Zeroed[Named]() // <- E0701
 }
 ```
 
@@ -2024,12 +2060,12 @@ export Main(sys: &System): WriteError!void {
 | E0308 | no-operator | `==` on a type without it; arithmetic on `char`; indexing a `str` |
 | E0401 | use-after-move | A unique or linear value used after it moved ([kinds](#kinds)) |
 | E0402 | not-consumed | A linear value not consumed on some path ([linear values](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)) |
-| E0408 | not-plain | An error payload with a reference ([error sets and results](#error-sets-and-results)) |
+| E0408 | not-plain | An error payload with a reference other than a `str` ([error sets and results](#error-sets-and-results)) |
 | E0410 | must-declare-kind | An exported struct whose private fields make it `view`, `mut view` or `linear`, without the keywords ([exported kinds](#exported-kinds)) |
 | E0507 | mut-through-shared | Writing an element through a `[]T` ([slices](#slices-t-and-mut-t)) |
 | E0508 | mut-of-immutable | `mut x` of a local that is not `var` ([references](#references-t-and-mut-t)) |
 | E0608 | flow-mismatch | A function given as a `fn` type whose clauses do not cover the function's ([function types](#function-types)) |
-| E0701 | bound-unmet | A unique or linear type where `Plain` is needed; `Arena.Slice` of a type that is not zero-valid |
+| E0701 | bound-unmet | A unique or linear type where `Plain` is needed; `Arena.Slice` or `mem.Zeroed` of a type that is not zero-valid, or `mem.Zeroed` of an error union |
 | E0704 | impl-conflict | A method through an alias of another module's type ([aliases](#type-aliases)) |
 | E0705 | not-const | An array length that is not a compile-time constant ([arrays](#arrays-nt)) |
 | E0706 | requires-failed | An enum, or a struct with no `Format`, in a format string ([enums](#enum-types)) |
@@ -2140,7 +2176,22 @@ export Main(sys: &System): WriteError!void {
 - `s.f` reads a field. You change a field through a `var` binding or a `mut` reference ([section 5](#5-statements)).
 - A struct has no `==` and no `Format` of its own (E0308, E0706). After `import std.derive`, `gen derive.Eq(Vec2)` and `gen derive.Format(Vec2)` write both for you ([section 11](#11-compile-time)): then `a.Eq(&b)` compares two values and `{a}` prints `Vec2(x: 1, y: 2)`.
 - A struct cannot hold itself by value, directly or through other structs (E0907). Hold it through a reference, `next: ?&Chain`, or a `Box`.
-- Field names are `snake_case` (E0207). A field and a method of one type cannot have names that differ only in case and underscores (E0206), so a field `name` and a method `Name` conflict.
+- Field names are `snake_case` (E0207). A field and a method of one type may have names that differ only in case and underscores: a field `cpu` and a method `Cpu` are two members, and `m.cpu` reads one while `m.Cpu()` calls the other. Two fields, or two methods, or a method and a variant, that differ only in case and underscores are E0206, as is a field spelled exactly as a method.
+
+```mk
+// verdict: ok
+struct Machine {
+    cpu: int
+}
+
+Machine.Cpu(&self): int { // a method beside the field `cpu`
+    return self.cpu * 2
+}
+
+Load(m: &Machine): int {
+    return m.cpu + m.Cpu()
+}
+```
 - `invariant c` among the fields states a condition every value must meet ([section 15](#15-contracts-and-tests)).
 
 A struct may take type parameters. Construction infers them from the fields, or you write them:
@@ -2429,7 +2480,7 @@ export Main(sys: &System): WriteError!void {
 - The type must be plain (E0408). `&Limit` is a valid reference that lives as long as the program ([globals](memory.md#r16-globals)).
 - A constant cannot be assigned (E0301).
 - A literal that does not fit the type is E0303. An evaluation that panics, and constants in a cycle, are compile errors ([evaluating constants](#evaluating-constants), [the stage rule](#the-stage-rule)).
-- A constant is not a pattern: compare with `if` ([literal patterns](#literal-patterns)).
+- A constant of an integer, `bool`, `char` or `str` type is a pattern, matched by its value ([literal patterns](#literal-patterns)).
 
 ### Global variables
 
@@ -2457,7 +2508,7 @@ export Main(sys: &System): WriteError!void {
 2
 ```
 
-- A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. The rules are in [globals](memory.md#r16-globals).
+- A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. E0507 applies to a qualified name such as `settings.Count` too. The rules are in [globals](memory.md#r16-globals).
 - Its initial value is computed at compile time, as a constant's is.
 
 ```mk
@@ -2627,8 +2678,9 @@ export Main(sys: &System): WriteError!void {
 - The prefix supplies the receiver's type, and `self`, `&self` or `mut self` its mode. This is the only way to write a receiver.
 - `c.M(a)` is `Type.M(&c, a)`, `Type.M(mut c, a)` or `Type.M(c, a)`, as the receiver's mode says, and borrows or moves `c` to match. A `mut T` `c` is reborrowed: `mut *c` or `&*c`.
 - A function without `self`, such as `Counter.New`, is called through the type's name. It is how a type offers constructors.
+- A struct, an enum and an [error](#declaring-errors) take methods. An error's `self` is its value, the set of that one error: a payload is plain, so `self` copies it, and `mut self` changes a `var` error in place.
 - A function in a type's namespace must be declared in that type's module. A method on `int` or on another module's type is E0704: write a free function that takes the value.
-- On a generic type, the prefix names the type parameters, `Stack2[T].Push`, and their bounds come from the type.
+- On a generic type, the prefix names the type parameters, `Stack2[T].Push`, and their bounds come from the type. A prefix with another number of parameters than its type or alias takes is E0304.
 - Mark a method `export`, `export Counter.Get(&self): int`, to make it part of the module's public API.
 - A method of an interface is declared inside its `impl` block ([section 10](#10-generics-and-interfaces)).
 
@@ -2736,7 +2788,7 @@ packed align(8) struct Both { // <- E0706
 |---|---|---|
 | E0101 | syntax | `.Quit` as an expression; a tag type on an enum with fields; two variants on one line; `packed(n)` with another `n` |
 | E0203 | unknown-member | A variant's field read with a dot ([enums](#enums)) |
-| E0206 | duplicate-name | Two items, two variants' tags, or a field and a method whose names differ only in case ([functions](#functions-and-methods), [tags](#enum-tags)) |
+| E0206 | duplicate-name | Two items, two variants' tags, two fields or two methods whose names differ only in case, or a field spelled exactly as a method ([functions](#functions-and-methods), [structs](#structs), [tags](#enum-tags)) |
 | E0207 | naming | A field not in `snake_case`, a function not in `PascalCase` |
 | E0301 | type-mismatch | A tag type that is not an integer; an assignment to a constant |
 | E0302 | no-conversion | A number from an enum without a tag type ([tags](#enum-tags)) |
@@ -2808,7 +2860,7 @@ Sum(m: &Map[str, int]): int {
 | Statement | Meaning |
 |---|---|
 | `x := e`, `var x := e`, `x: T = e`, `x: T` | Bind a local ([bindings](#bindings)) |
-| `(a, b) := r`, `Point(x, y) := p` | Take a record or struct apart ([destructuring](#destructuring)) |
+| `(a, b) := r`, `Point(x, y) := p`, `[a, b] := xs` | Take a record, struct or array apart ([destructuring](#destructuring)) |
 | `p = e`, `p += e` | Assign ([assignment](#assignment)) |
 | `F(x)`, `_ = e` | Call for the effect, or drop a value ([expression statements](#expression-statements)) |
 | `if c { } else { }`, `if x := e { }` | Choose ([`if`](#if)) |
@@ -2855,7 +2907,7 @@ ada 1 -3 97 some
 - A literal binds as `int` or `f64` unless you give a type: `one: i32 = 1`. Every other value keeps the type it has. See [how a literal gets its type](#how-a-literal-gets-its-type).
 - `x: T` declares `x` with no value. You assign it before each use, on every path (E0403). Without `var`, it is assigned once.
 - Every local must be used (E0208). Drop a value with `_ = e`; `_ := e` is E0101. In a pattern or a loop header, `_` stands for a part you do not need: `for _ in 0..2`.
-- A local cannot shadow another local of the same function, even in an inner block (E0206). It may hide a name from outside the function, such as an imported module's. A module-level name may hide a prelude name: a `struct Arena` of your own replaces the prelude's `Arena` in its module.
+- A local cannot shadow another local of the same function, even in an inner block, nor a const generic of its declaration: `n := 0` under `[const n: int]` is E0206. The test for a const generic is exact, so a local `n` under `[const N: int]` is not one. A local may hide a name from outside the function, such as an imported module's. A module-level name may hide a prelude name: a `struct Arena` of your own replaces the prelude's `Arena` in its module.
 - Loop variables and `if x := e` bindings follow the same rules: they cannot be assigned.
 
 A binding without `var` is fixed once it has its value:
@@ -2896,7 +2948,7 @@ Twice(n: int): int {
 }
 ```
 
-**Destructuring.** A binding can take a record or a struct apart: `(lo, hi) := r`, `Point(x, y) := p`, `var Point(x, y) := p`. The pattern names every field or ends with `..`. Taking a struct apart consumes it. See [destructuring](#destructuring) in section 6 for the rules.
+**Destructuring.** A binding can take a record, a struct or a fixed array apart: `(lo, hi) := r`, `Point(x, y) := p`, `var Point(x, y) := p`, `[a, b] := xs`. A record or struct pattern names every field or ends with `..`; an array pattern names every element. Taking a struct or array apart consumes it. See [destructuring](#destructuring) in section 6 for the rules.
 
 See also: [kinds](#kinds) for what a binding copies or moves, [the memory model](memory.md#r3-assignment-before-use) for assignment before use.
 
@@ -3039,7 +3091,7 @@ export Main(sys: &System): WriteError!void {
 - `if x := &e` binds a `&T` to the payload, and `if x := mut e` a `mut T` through which you change it.
 - `e` must be an optional (E0307). For an `E!T`, use [`else`](#else) or [`match`](#match-on-a-result).
 - `if T is u8 { }` tests a type parameter at compile time. See [specialization](#specialization-if-t-is).
-- In value position, an `if` with an `else` gives a value. See [below](#if-match-and-else-as-values).
+- Used as an expression, an `if` with an `else` gives a value, as an operand too. See [below](#if-match-and-else-as-values).
 
 ```mk
 // verdict: reject E0307
@@ -3540,7 +3592,7 @@ When a rule fails, `return f(a)` is the same call without the frame reuse.
 
 ### `if`, `match` and `else` as values
 
-In value position, an `if` with an `else` and a `match` give a value: the last line of the arm that runs. An `e else { }` block gives one too ([section 9](#else)), and in parentheses it can also be an operand: `1 + (F() else { 0 })`.
+Used as an expression, an `if` with an `else` and a `match` give a value: the last line of the arm that runs. They stand wherever an expression does, as an operand too: `1 + if c { 2 } else { 3 }`. An `e else { }` block gives one too ([section 9](#else)), and in parentheses it can also be an operand: `1 + (F() else { 0 })`.
 
 ```mk
 // verdict: ok
@@ -3574,12 +3626,30 @@ twenty
 5 20 yes 1
 ```
 
-Value position is:
+An `if` or `match` is a value anywhere an expression stands: the right side of a binding or an assignment, the operand of `return`, an argument, a field or element of a literal, an operand of an operator, an index, a condition, and the last line of an arm that is itself a value. Suffixes and operators may follow its closing brace, and bind to the whole construct: `if c { 1 } else { 2 } * 3` multiplies the chosen value.
 
-- the right side of a binding or an assignment;
-- the operand of `return`;
-- an argument, or a field or element of a literal;
-- the last line of an arm that is itself in value position.
+```mk
+// verdict: ok
+export Main(sys: &System): WriteError!void {
+    c := sys.args.Len() > 0
+    xs := [10, 20, 30]
+    a := 1 + if c { 2 } else { 3 } // an operand
+    b := xs[if c { 0 } else { 2 }] // an index
+    n := match b {
+        10 { "ten" }
+        _ { "other" }
+    }.Len() // a suffix on the whole match
+    var k := 0
+    if a == if c { 3 } else { 4 } { // a condition's operand
+        k = 1
+    }
+    try sys.Print("{a} {b} {n} {k}\n", (a, b, n, k))
+}
+```
+
+```text
+3 10 3 1
+```
 
 The rules:
 
@@ -3587,7 +3657,8 @@ The rules:
 - An arm that does not fall through, because it returns, breaks, continues or fails, needs no value.
 - An arm whose last line is not a value is E0310. An `if` without an `else` is E0311. If an arm cannot end in a value, use the statement form and assign a local in each arm.
 - Under `_ =`, an `else` block may fall through without a value; the error is ignored.
-- Anywhere else, `if` and `match` are statements. As an operand, even in parentheses as in `1 + (if c { 2 } else { 3 })`, they are E0101: bind the value to a local first.
+- Operands are evaluated left to right: in `x + if c { .. } else { .. }` whose arm assigns `x`, the left `x` is read before the arm runs, as it is before a call that changes `x`.
+- At the start of a statement, `if` and `match` are statements, so nothing may follow the closing brace on that line (E0101). Wrap one in parentheses to use its value there: `(if c { a } else { b }).Close()`.
 
 ```mk
 // verdict: reject E0311 E0310
@@ -3635,7 +3706,7 @@ Pick(c: bool, n: i32): i32 {
 
 ## 6. Patterns
 
-A pattern describes the shape of a value and names its parts. Patterns appear in three places: the arms of a `match`, a destructuring binding `p := e`, and, with a record pattern, the head of a `for` loop.
+A pattern describes the shape of a value and names its parts. Patterns appear in three places: the arms of a `match`, a destructuring binding `p := e`, and, with a record pattern, the head of a `for` loop. An array pattern `[a, b]` appears only in a destructuring binding.
 
 ```mk
 // verdict: ok
@@ -3665,6 +3736,7 @@ Class(c: char): int {
 | `NotFound(id)`, `NotFound` | An error, in a `match` on an error set |
 | `some(x)`, `none`, `ok(v)`, `err(e)` | An optional or a result |
 | `1`, `-1`, `true`, `"text"`, `'a'` | A literal |
+| `Limit`, `codes.OpAdd` | A named const, by its value ([literals](#literal-patterns)) |
 | `0..10`, `'a'..'{'`, `200..`, `..0` | A half-open range of integers or characters |
 | `A \| B` | Either pattern |
 | `_` | Anything, binding nothing |
@@ -3740,10 +3812,10 @@ quit
 - Fields are named, never positional. `dx` alone binds the field `dx`, `dx: step` binds it to `step`, and `dx: 0` matches it against a pattern. A name that is not a field is E0309.
 - Fields may be left out, in any number. A left-out field matches anything. `..` is not written in a `match` (E0101).
 - `.Move` leaves out the enum, which the scrutinee's type gives. `Cmd.Move` names it.
-- A bare name with no dot is a [binding](#bindings-and-wildcards), not a variant. `Quit { ... }` matches every value and binds it to `Quit`. The compiler reports the unused binding (E0208), which catches the missing dot.
+- A bare name with no dot is a [binding](#bindings-and-wildcards), not a variant, and a binding is `snake_case`. So `Quit { ... }`, which would match every value, is E0207: the message offers `.Quit` for the variant.
 
 ```mk
-// verdict: reject E0208
+// verdict: reject E0207
 enum Cmd {
     Move(dx: int, dy: int)
     Quit
@@ -3751,7 +3823,7 @@ enum Cmd {
 
 Steps(c: Cmd): int {
     match c {
-        Quit { // <- E0208
+        Quit { // <- E0207
             return 0
         }
         .Move(dx) {
@@ -3825,7 +3897,7 @@ elsewhere
 
 ### Literal patterns
 
-An integer, `bool`, `char` or `str` literal matches a value equal to it.
+An integer, `bool`, `char` or `str` literal, or a named const of one of those types, matches a value equal to it.
 
 ```mk
 // verdict: ok
@@ -3869,7 +3941,39 @@ export Main(sys: &System): WriteError!void {
 - A negative integer is written with its `-`: `-1`.
 - A float is not a pattern (E0308). Compare floats with `if`.
 - A literal of a type other than the value's is E0301.
-- A constant is not a pattern (E0101). `match n { Limit { } }` is rejected rather than read as a binding. Compare with `if n == Limit`.
+- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does. Its value is needed before the module's own functions are ready, so a const that calls one of them is E0908 there ([the stage rule](#the-stage-rule)). Outside an alternative, a name that is no const in scope is a [binding](#bindings-and-wildcards), which must be `snake_case`: a misspelled const, or another module's const written without its module, would match every value, and is E0207. In an alternative, where a name never binds, an unknown one is E0201.
+
+```mk
+// verdict: ok
+const OpAdd: u8 = 1
+const OpSub: u8 = 2
+const Yes = true
+
+Op(code: u8): str {
+    return match code {
+        OpAdd { "add" } // the value 1
+        OpSub | 3 { "sub" } // a const among literals
+        _ { "?" }
+    }
+}
+
+Halts(b: bool): bool {
+    return match b { // Yes and false cover bool
+        Yes { true }
+        false { false }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    a := Op(2)
+    h := Halts(true)
+    try sys.Print("{a} {h}\n", (a, h))
+}
+```
+
+```text
+sub true
+```
 
 ```mk
 // verdict: reject E0308
@@ -3991,11 +4095,31 @@ Dx(c: Cmd): int {
 
 ### Bindings and wildcards
 
-A name in a pattern matches anything and binds the value there. `_` matches anything and binds nothing.
+A name in a pattern matches anything and binds the value there, unless it names a const, an error or `true` or `false` ([literals](#literal-patterns)). `_` matches anything and binds nothing.
 
 - A binding has the type of the value it stands for. At the top of an arm, `other` has the scrutinee's whole type.
 - A binding must be used (E0208). Write `_` for a part you do not need, as in `.Move(dx: _)`.
-- A binding cannot shadow a local or a parameter (E0206).
+- A binding is `snake_case`. A name in a `match` that is not, and names no const or error in scope, is E0207, with no fix applied for you: it is a variant without its dot, a misspelled const or error, or another module's written bare, and as a binding its arm would match every value. In a destructure or a loop head, which cannot fail, it is the plain case rule of a local, as for an `if x := e` binding, and `mk fix` recases it.
+- A binding cannot shadow a local, a parameter or a const generic (E0206). `N { ... }` in a function generic over `const N` would bind, not compare: compare with `if x == N`.
+
+```mk
+// verdict: reject E0208
+enum Cmd {
+    Move(dx: int, dy: int)
+    Quit
+}
+
+Steps(c: Cmd): int {
+    match c {
+        .Move(dx, dy) { // <- E0208
+            return dx
+        }
+        .Quit {
+            return 0
+        }
+    }
+}
+```
 
 ```mk
 // verdict: reject E0206
@@ -4205,7 +4329,7 @@ The error names the gap, `200..`.
 
 ### Destructuring
 
-A binding `p := e` takes a record or a struct apart. Its pattern must match every value of the type: it cannot fail.
+A binding `p := e` takes a record, a struct or a fixed array apart. Its pattern must match every value of the type: it cannot fail.
 
 ```mk
 // verdict: ok
@@ -4247,9 +4371,62 @@ export Main(sys: &System): WriteError!void {
 - Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct.
 - `var` before the pattern makes every binding `var`.
 - A pattern that can fail, such as a literal, is E0306. Use `match`.
-- Only a record or a struct pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
+- Only a record, a struct or an array pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
 - Outside the struct's module, a struct with private fields cannot be destructured (E0204).
 - A `for` loop may destructure each element with a record pattern: `for (key, value) in m.Iter()`. A struct pattern there is E0101. See [`for`](#for-loops).
+
+An array pattern `[a, b] := xs` takes a fixed array `[N]T` apart by position: the i-th name binds element i. It is how a function consumes an array of [linear](#linear-and-view-structs) values, whose elements cannot be moved out one at a time (`xs[0]` is E0409, see [R4](memory.md#r4-places-and-moves-out-of-them)).
+
+```mk
+// verdict: ok
+linear struct Conn {
+    id: int
+}
+
+Conn.Close(self): int {
+    Conn(id) := self
+    return id
+}
+
+Ends(): [2]Conn {
+    return [Conn(id: 1), Conn(id: 2)]
+}
+
+export Main(sys: &System): WriteError!void {
+    ends := Ends()
+    [near, far] := ends // moves ends; each element into its own binding
+    n := far.Close() * 10 + near.Close()
+    [x, y, z] := [4, 5, 6] // plain elements are copied
+    try sys.Print("{n} {x} {y} {z}\n", (n, x, y, z))
+}
+```
+
+```text
+21 4 5 6
+```
+
+- An array pattern names every element, one plain name each, so every element is bound exactly once: fewer or more names than `N` is E0305. It takes no `..`, `_` or nested pattern (E0101); to keep only some elements of a plain array, index it.
+- `N` must be known where the destructure is checked: an array whose length is a const generic of the function, `[N]T`, is E0301. Its element type may be generic, as in `Split[T](xs: [2]T)`.
+- Destructuring moves the whole array, or copies it if its elements are plain. `var [a, b] := xs` makes both bindings `var`.
+- `(a, b) := xs` on an array is E0301: a record pattern names fields, and an array has none.
+
+An array pattern that leaves out an element:
+
+```mk
+// verdict: reject E0305
+linear struct Conn {
+    id: int
+}
+
+Conn.Close(self) {
+    Conn(id: _) := self
+}
+
+First(ends: [2]Conn) {
+    [near] := ends // <- E0305
+    near.Close()
+}
+```
 
 A destructure that can fail:
 
@@ -4300,14 +4477,15 @@ Name(b: Bag): str {
 
 | Code | Name | Reported for |
 |---|---|---|
-| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a constant or a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head |
+| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
-| E0206 | duplicate-name | A binding that shadows a local ([bindings](#bindings-and-wildcards)) |
-| E0208 | unused | A binding that is never used, often a variant written without its dot ([variants](#variant-patterns)) |
-| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")` ([literals](#literal-patterns)) |
-| E0305 | field-names | A destructure that neither names every field nor ends with `..` ([destructuring](#destructuring)) |
+| E0206 | duplicate-name | A binding that shadows a local, a parameter or a const generic ([bindings](#bindings-and-wildcards)) |
+| E0207 | naming | A binding that is not `snake_case`, often a variant written without its dot or a const that is not in scope ([variants](#variant-patterns), [bindings](#bindings-and-wildcards)) |
+| E0208 | unused | A binding that is never used ([bindings](#bindings-and-wildcards)) |
+| E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")`; a const of a type a literal cannot have ([literals](#literal-patterns)); an array pattern on a value that is not an array of known length, or a record pattern on an array ([destructuring](#destructuring)) |
+| E0305 | field-names | A destructure that neither names every field nor ends with `..`; an array pattern that does not name every element ([destructuring](#destructuring)) |
 | E0306 | non-exhaustive | A `match` that misses values; a destructure that can fail ([exhaustiveness](#exhaustiveness)) |
-| E0308 | no-operator | A float literal as a pattern ([literals](#literal-patterns)) |
+| E0308 | no-operator | A float literal or a float const as a pattern ([literals](#literal-patterns)) |
 | E0309 | record-names | A field name the type does not have ([variants](#variant-patterns)) |
 | E0315 | empty-range | A range whose low end is not below its high end ([ranges](#range-patterns)) |
 | E0408 | not-plain | A field skipped by `..` that is not plain ([destructuring](#destructuring)) |
@@ -4920,7 +5098,7 @@ These forms are expressions too, each with its own section:
 |---|---|
 | `T(x)`, `Cast[T](x)`, `Trunc[T](x)` | Conversions ([conversions](#conversions)) |
 | `try e`, `e else { }`, `e.Must()` | Handle a failure ([section 9](#9-errors)) |
-| `if c { a } else { b }`, `match e { }` | A value in value position ([values](#if-match-and-else-as-values)) |
+| `if c { a } else { b }`, `match e { }` | A value wherever an expression stands, an operand too ([values](#if-match-and-else-as-values)) |
 | `SizeOf[T]()`, `AlignOf[T]()` | Layout facts at compile time ([section 11](#11-compile-time)) |
 | `quote { ... }` | Code as data, in a generator ([generators](#generators)) |
 
@@ -5203,15 +5381,89 @@ BadByte(offset: 2, value: 200) at offset 2
 line 4
 ```
 
-- A payload is plain data: integers, floats, `bool`, `char`, and arrays, records, structs and enums of plain data.
-- A payload holds no references, so no `str`, slice or `&T` (E0408). An error never borrows from the function that failed, so it can always travel up the stack. To carry a short name, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`. Usually a position or an id is better: the caller formats the message.
+- A payload is plain data: integers, floats, `bool`, `char`, and arrays, records, structs and enums of plain data. A field may also be a `str`.
+- A payload holds no other reference, so no slice, `&T`, `?str`, `[N]str` or struct holding a `str` (E0408).
+- A `str` field holds only a static string: a literal, a `const`, a global, or a `str` a function returns that comes from none of its parameters. Building the error with any other `str`, such as a parameter or a view of a local buffer, is E0605, and so are assigning such a `str` to the field and a `mut` borrow of the field. An error never borrows from the function that failed, so it can always travel up the stack and into another task. To carry text made at run time, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`, or a position or an id from which the caller formats the message.
+- Since an error's `str` is static, reading it gives a `str` that borrows nothing, even through a reference: for `e: &Bad`, `e.msg` outlives `e`. A `match` on a `mut` of the error would bind the field as a `mut str`, which is E0605: bind the error, as `err(e)`, and read `e.msg`.
 - Construction names every field, `BadByte(offset: 3, value: 200)`, as for a struct (E0305).
-- An error has no type parameters.
+- An error has no type parameters: a type `Bad[int]` and a method's prefix `Bad[T].M` are E0304.
+- An error takes methods and `Type.Name` functions, declared in its module as for a struct ([methods](#methods)). Its `Format` is the compiler's impl method, so a method named `Format` is E0206. An error set of more than one error has no methods but `Format`.
+
+```mk
+// verdict: ok
+error BadByte(offset: int, value: u8)
+
+BadByte.Line(&self, width: int): int { // a method of an error
+    return self.offset / width + 1
+}
+
+BadByte.Skip(mut self) { // changes a var error in place
+    self.offset += 1
+}
+
+Check(data: []u8): BadByte!void {
+    for i in 0..data.Len() {
+        if data[i] > 127 {
+            fail BadByte(offset: i, value: data[i])
+        }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    var data: [20]u8 = [0; 20]
+    data[17] = 200
+    Check(data[..]) else e {
+        var at := e
+        at.Skip()
+        line := e.Line(16)
+        try sys.Print("line {line}, then {at}\n", (line, at))
+    }
+}
+```
+
+```text
+line 2, then BadByte(offset: 18, value: 200)
+```
 
 ```mk
 // verdict: reject E0408
-error NoSuchKey(key: str) // <- E0408
+error NoSuchKey(key: []u8) // <- E0408
 ```
+
+A `str` field holds text that lives as long as the program:
+
+```mk
+// verdict: ok
+error Unsupported(feature: str, line: int)
+
+const Generators: str = "generators"
+
+Feature(code: u8): str {
+    return match code {
+        1 { "classes" }
+        _ { "modules" }
+    }
+}
+
+Compile(code: u8, line: int): Unsupported!void {
+    if code == 0 {
+        fail Unsupported(feature: Generators, line: line)
+    }
+    fail Unsupported(feature: Feature(code), line: line) // Feature's result borrows nothing
+}
+
+export Main(sys: &System): WriteError!void {
+    Compile(1, 7) else e {
+        try sys.Print("{e}\n", (e))
+    }
+}
+```
+
+```text
+Unsupported(feature: classes, line: 7)
+```
+
+A `str` that borrows from the failing function, or from its caller, could outlive its bytes, so `fail NoSuchKey(key: key)` with a parameter `key` is E0605 ([the memory model](memory.md#r16-globals) has the example). Carry what the caller cannot recompute, such as an index, and let the caller format the key it passed in.
 
 A payload is built by naming its fields:
 
@@ -5895,7 +6147,7 @@ Syntax(line: 3, ratio: 0.5, ok: true, c: x)
 - An error set's value prints the member it holds.
 - An error whose payload has a field with no `Format` has no `Format` either. Using one in a format string is E0706. When such an error leaves `Main`, only its name is printed.
 - Inside a program, an error prints without its module: `NotFound`. When it leaves `Main`, it prints with the module that declares it: `main.NotFound(id: 3)`, `fs.NotFound`.
-- You cannot write `impl Format` for an error (E0704). To print an error your own way, `match` on it.
+- You cannot write `impl Format` for an error (E0704), nor a method named `Format` (E0206). To print an error your own way, `match` on it or give it a method of another name.
 
 ```mk
 // verdict: reject E0704
@@ -6119,6 +6371,7 @@ The first line names the cause and the position. A backtrace of the calls follow
 | `free non-empty` | `FreeEmpty` on a container that is not empty |
 | `wrong allocator` | A heap container given a different allocator from the one it was made with |
 | `suspend in callback` | A wait in code that runs off a task, such as a callback from C on a system stack |
+| `unresolved function` | A call of a function of a lazily bound DLL that cannot be loaded or does not export it ([lazy libraries](#linking-libraries)); the message names the function and the DLL |
 
 Library functions also panic on misuse their documentation names: a `Chunks` length below 1, a negative `Chan` capacity, or an erased `dyn` reference recovered as a type it was not made from.
 
@@ -6144,9 +6397,10 @@ See also: [`mk query panics`](tools.md#51-member-wide-panic-sites), which lists 
 | E0306 | non-exhaustive | A `match` that misses an error, or lacks `_` on an open set ([sets](#error-sets)) |
 | E0307 | not-optional | `else x` on a `?T`, which has no error to bind ([`else`](#else)) |
 | E0402 | not-consumed | A linear temporary still live when `try` or `else` leaves the statement (example in [the memory model](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)) |
-| E0408 | not-plain | A payload field that holds a reference or a `str` ([declaring](#declaring-errors)) |
+| E0408 | not-plain | A payload field that holds a reference other than a `str` ([declaring](#declaring-errors)) |
 | E0411 | moved-before-failure | A by-value argument changed before a later failure (example in [section 8](#fallible-calls-consume-only-on-success)) |
 | E0412 | private-in-signature | A private error in an exported signature ([modules](#errors-across-modules)) |
+| E0605 | loan-into-global | A payload `str` that is not static, stored when the error is built or assigned, or a `mut` borrow of such a field ([declaring](#declaring-errors), example in [the memory model](memory.md#r16-globals)) |
 | E0704 | impl-conflict | `impl Format` for an error ([printing](#how-errors-print)) |
 | E0706 | requires-failed | An error with no `Format` in a format string ([printing](#how-errors-print)) |
 | E0801 | error-not-in-set | A `fail` or `try` whose error is not in the function's set ([`fail`](#fail), [`try`](#try)) |
@@ -6937,6 +7191,36 @@ Run(var k: int): int {
 - Inside a `fn` literal, a captured `const` parameter is an ordinary value, not a const argument (E0705).
 - A `const f: str` passed on as the format of `Print` or `Arena.Fmt` is checked at each call against that call's text ([formatting](std/core.md#formatting-and-printing)).
 
+**Inferring a const generic.** A call may leave out a function's const generic when an argument's type names it, as it may leave out a type parameter: the length of an array argument gives the `N` of a `[N]T` parameter. A const generic that no argument's type names is written in brackets (E0711 otherwise), and two arguments that give different values are E0301.
+
+```mk
+// verdict: ok
+Total[const N: int](xs: &[N]int): int {
+    var sum := 0
+    for i in 0..N {
+        sum += xs[i]
+    }
+    return sum
+}
+
+First[T: Plain, const N: int](xs: [N]T): T {
+    return xs[0]
+}
+
+export Main(sys: &System): WriteError!void {
+    xs := [1, 2, 3]
+    ys: [2]u8 = [9, 8]
+    a := Total(&xs)    // N is 3, from the argument's type
+    b := First(ys)     // T is u8 and N is 2
+    c := Total[3](&xs) // or written
+    try sys.Print("{a} {b} {c}\n", (a, b, c))
+}
+```
+
+```text
+6 9 6
+```
+
 ### Const arguments in a generic
 
 Inside a generic body, a const argument, such as an array length, must be simple:
@@ -7343,7 +7627,7 @@ main.mk:10:7: E0902 fuel-exhausted: compile-time evaluation ran out of fuel afte
 
 ### The stage rule
 
-Some evaluations run before the module's own functions and types are ready: the length in an array type, a const argument, a compile-time `requires`, and a `gen` argument. Such an evaluation may not call a function of the same module, or need the layout of a type of the same module (E0908). The report names the consts and functions the evaluation entered, with the trace.
+Some evaluations run before the module's own functions and types are ready: the length in an array type, a const argument, a compile-time `requires`, a `gen` argument, and a const named in a match pattern. Such an evaluation may not call a function of the same module, or need the layout of a type of the same module (E0908). The report names the consts and functions the evaluation entered, with the trace.
 
 ```mk
 // verdict: reject E0908
@@ -7601,7 +7885,7 @@ Tile(row: 1, col: 2) false
 
 #### Writing a generator
 
-A generator lives in its own module, and the module with the `gen` line imports it. This one, in `src/show/show.mk`, writes a `Describe` method that prints each field as `name=value`:
+A generator lives in its own module, and the module with the `gen` line imports it: a `gen` line that names a function of its own module is E0908, by [the stage rule](#the-stage-rule). This one, in `src/show/show.mk`, writes a `Describe` method that prints each field as `name=value`:
 
 ```mk
 // verdict: ok
@@ -7840,7 +8124,7 @@ See also: [`std.derive`](std/derive.md), [`std.build`](std/build.md) for embedde
 | E0905 | generated-invalid | Generated code that does not compile ([errors in generated code](#errors-in-generated-code)) |
 | E0906 | forbidden-input | A generator that reads the structure of a generated type ([what a generator sees](#what-a-generator-sees)) |
 | E0907 | layout-cycle | A type that contains itself ([the stage rule](#the-stage-rule)) |
-| E0908 | stage-violation | A type, const argument, `requires` or `gen` argument that needs its own module's functions or layouts ([the stage rule](#the-stage-rule)) |
+| E0908 | stage-violation | A type, const argument, `requires`, `gen` argument or const pattern that needs its own module's functions or layouts ([the stage rule](#the-stage-rule)) |
 | E0909 | const-cycle | A const that reads itself ([the stage rule](#the-stage-rule)) |
 | E0910 | file-input | A bad path for `build.File` or `g.Input` ([data files](std/build.md#data-files)) |
 | E1002 | not-share | A const that holds a `Cell` or a raw pointer, such as a `List` ([evaluating constants](#evaluating-constants)) |
@@ -9295,7 +9579,7 @@ A module may write `unsafe` only if its package's manifest lists it in `unsafe_m
 | Operation | Outside `unsafe` |
 |---|---|
 | Reading or writing through a raw pointer, `*p` | E1103 |
-| Calling a bodiless `extern` function | E1101 |
+| Calling or naming a bodiless `extern` function | E1101 |
 | Calling or naming a `cpu` function whose features the caller lacks ([CPU features](#cpu-features)) | E1101 |
 | Calling or naming a `naked` function | E1101 |
 | `asm` | E1101 |
@@ -9557,7 +9841,10 @@ extern take_vec(v: simd.Vec[f32, 4]): f32 // <- E1107
 **Linking.** An `extern` function is defined by a C source of the package, or by a library. A name that std does not define itself resolves to the first library that exports it:
 
 1. the links of the bin's packages, in manifest order, the root package's first ([linking libraries](#linking-libraries));
-2. when building for `x86_64-windows` on a Windows host, the system DLLs `kernel32`, `user32`, `gdi32`, `winspool`, `comdlg32`, `advapi32`, `shell32`, `ole32`, `oleaut32` and `ws2_32`.
+2. for `x86_64-windows`, the DLLs std binds lazily (`crypt32.dll`), loaded from System32 on the first call;
+3. when building for `x86_64-windows` on a Windows host, the system DLLs `kernel32`, `user32`, `gdi32`, `winspool`, `comdlg32`, `advapi32`, `shell32`, `ole32`, `oleaut32` and `ws2_32`;
+4. for a [system view](#system-views) function, the DLL recorded in its view (classic desktop DLLs eagerly, every other DLL lazily);
+5. for a `pkg.CImport` with `sdk: true` on `x86_64-windows`, the Windows SDK's import libraries (ambiguities across multiple SDK libraries fail with E0001 naming the `pkg.Link` to add).
 
 A name nothing defines is E0001 at link, "undefined symbol". Built on another host, a system DLL's function needs a `pkg.Link` with a `.def` file. On a Windows host, it needs no manifest entry:
 
@@ -9605,7 +9892,7 @@ export Main(sys: &System): WriteError!void {
 
 **Unwinding.** Nothing in Mk unwinds, so nothing unwinds across C. A panic in a function C called aborts the process.
 
-**The C stack.** A C call runs on the operating system thread's own stack, not the task's. While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks.
+**The C stack.** A call of a bodiless `extern` function runs on the operating system thread's own stack, 8 MiB, not the task's. A call through a `fn` value does not: a C function's address and a Mk function's look the same there, so C code reached that way (a symbol from [`std.dl`](std/dl.md), a function pointer in a C import's struct, a COM method) runs on the calling task's stack. An `extern` passed to a `const` parameter of `fn` type is no such value: the body is compiled for that argument, and its call is a direct `extern` call. Give that task the stack the C code needs, `StackSize.Large` through `io.ScopeWith` for a library such as Direct3D ([limits and stacks](#limits-and-stacks)), or reach the C function through an `extern`. The same rule makes a `fn` value the way to call an assembly stub that uses no stack without the switch ([stubs that use no stack](#c-sources-and-assembly-files)). While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks. A Mk callback that C may invoke on a foreign thread should only record state and wake a task through [`runtime.Waker`](std/runtime.md#wakers). Inside std itself, deep OS calls (such as lazy DLL loading) switch to the carrier's system stack through `std.task.MkSystemRun`.
 
 ### C imports
 
@@ -9682,22 +9969,69 @@ How C declarations appear in Mk:
 | C | Mk |
 |---|---|
 | A function | `export extern`, with its C name: `geom.geom_dist2` |
+| `extern int geom_count;` | `export extern var geom_count: i32`, with its C name. Declared again, it binds once, with the type the declarations give together: `extern int z[];` then `extern int z[3];` is `[3]i32` |
 | `struct geom_point` | `struct GeomPoint`, its fields in snake_case: `maxCount` is `max_count` |
 | `enum geom_kind` and its constants | `type GeomKind = i32` and `const GeomKindLine: GeomKind = 1` |
 | `union num` | A struct of bytes with a getter and a setter per member: `Num.I`, `Num.SetI` |
 | An incomplete `struct opaque` | An empty `struct Opaque`, used through `*Opaque` |
+| `DECLARE_HANDLE(HWND)` | `struct HwndStruct` and `type Hwnd = *HwndStruct` |
+| A COM interface (`lpVtbl`) | `struct IDemo { lp_vtbl: *IDemoVtbl }` plus methods (`d.Query(...)`); calling or naming a method needs `unsafe` (E1101) |
 | A typedef | A type alias: `typedef int32_t` is `Int32T = i32` |
-| `#define NAME 3` | `const Name: i32 = 3` |
-| A `static inline` function | An `extern` that a generated shim defines in the same build |
+| `#define NAME 3` | `const Name: i32 = 3`; integer-cast pointer macros (`(HANDLE)-1`) as `uint`; wide strings (`L"hi"`) as `[]u16` |
+| `static const` and `INITGUID` `DEFINE_GUID` | `export const` (`VkPipelineStage2CopyBit`, `IidIdxgiFactory6: windows.Guid`) when initialized by a constant expression, needing no `dxguid.lib` |
+| A `static inline` function | An `extern` that a generated shim defines in the same build, if the program uses it |
 | A function-like macro | Bound only when `macros` declares its prototype, also through a shim |
 | A function-pointer field | `?fn(...)`. Reading it needs `unsafe` (E1101): calling it runs C code |
 
 - Types and constants become PascalCase, and fields snake_case. Functions keep their C names. Each declaration's C form is in a comment above it.
-- `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
+- A COM-style struct (whose first field is `lp_vtbl: *Vtbl`, where `Vtbl` holds function pointers whose first parameter is `*Self`) emits one `&self` method per vtable slot (`(*device).GetNodeCount()`). Because safe code could forge `lp_vtbl`, calling or naming the method outside `unsafe` is E1101.
+- A struct is made by naming every field, or zeroed whole as C's `= {0}` does with [`mem.Zeroed`](#zero-valid-types): `mem.Zeroed[geom.GeomPoint]()`. A C struct's fields (integers, floats, raw pointers, `?fn`, arrays, nested structs, a union's bytes, bitfield units) are all zero-valid, so it needs no `unsafe`.
+- `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. `--skipped` lists every skipped declaration with its kind and reason; `--why <name>` explains how a single C name was bound or why it was skipped. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
 - `headers` are paths from the package root. `defines` are macros the headers are read with, `NAME` or `NAME=value`.
-- All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them.
+- `include_dirs` are directories of the package searched for headers after the package root, for a library whose headers include each other by a name under their own include directory: `pkg.CImport(name: "z", headers: ["third_party/z/include/z.h"], defines: [], macros: [], vendor: false, include_dirs: ["third_party/z/include"])`, where `z.h` has `#include "zconf.h"`. Each is a relative path with `/` separators inside the package, other than the root itself (E0202 otherwise). The field may be left out.
+- All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them. So their `include_dirs` form one search path, in the order the imports list them, and the shim and the package's C sources are compiled with the same path.
 - `mk check` runs Clang to translate the C imports, with a minimal environment. It compiles no C source.
+- A target's system headers come only from `MK_SYSROOT_<target>`, where `_` may stand for `-` (`MK_SYSROOT_x86_64-windows` is read first, then `MK_SYSROOT_x86_64_windows`): a list of directories separated as `PATH` is (`;` on Windows, `:` elsewhere), searched in order after Clang's own headers. A directory that has an `include` subdirectory stands for that subdirectory. Without the variable, only Clang's headers and the package's are seen. The C imports, the shim and the package's C sources all use this list.
+- For `x86_64-windows` the headers are read as mingw-w64's (Clang's triple `x86_64-w64-windows-gnu`), unless the list is a Windows SDK: the first directory holding `windows.h` also holds `winnt.h`, and no directory holds `_mingw.h`. A Windows SDK is read for `x86_64-pc-windows-msvc`, the only triple its headers parse under, and for Visual C++ 19.33 (`_MSC_VER` 1933, the version Clang assumes with no Visual Studio) even where a Visual Studio is installed, whose version Clang would otherwise take: the SDK's headers depend on it. The shim and the package's C sources are compiled for the same version. List its `um`, `shared` and `ucrt` directories: `C:\Program Files (x86)\Windows Kits\10\Include\10.0.28000.0\um;...\shared;...\ucrt`.
+- The SDK includes four headers of the MSVC toolset that it does not ship: `vcruntime.h`, `vadefs.h`, `vcruntime_string.h` and `excpt.h`. mk supplies its own, generated, before the SDK's directories, and uses them even when the list names a toolset directory, so a binding's names never depend on the machine. With them `size_t` is `SizeT`, as on every target, and the SDK's `SIZE_T` is `SizeTType`. No other toolset header is supplied, so a header that includes one fails with E0001 naming it: `<wchar.h>` and `<intrin.h>` need `setjmp.h`, `<process.h>` and `<corecrt_startup.h>` need `vcruntime_startup.h`, and `<crtdbg.h>` needs `vcruntime_new_debug.h` (`'setjmp.h' file not found`). A function of the SDK links as any extern does ([linking](#linking-libraries)): through `pkg.Link`, or the system DLLs mk links on a Windows host.
+- `sdk: true` reads the headers with the host's SDK, for a library whose header includes `<windows.h>`: the first of `MK_SYSROOT_<target>`; for `x86_64-windows` on a Windows host, the newest Windows SDK under the registry's `KitsRoot10` (`HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots`), then under `%ProgramFiles(x86)%\Windows Kits\10`, with mk's toolset headers first; for a Linux target on a Linux host, the target's multiarch directory and `/usr/include`; then `$MK_EVIDENCE/c-import/sysroots/<target>`. None is E0213 `reason: no-sysroot`, unless every import says `vendor: true`. On any C import of a package it applies to the package's one translation unit. On `x86_64-windows`, `sdk: true` also reads the SDK's import libraries (`Lib/<version>/um/x64`) to link used functions automatically, failing with E0001 if a symbol is exported by multiple libraries not resolved by precedence (`pkg.Link` settles it). When the program also imports [system views](#system-views) generated for the build's target, a declaration a view binds (a struct or union and its tag, an enum, a typedef, a function, an extern var) is not bound again: the binding names the view's item (`windows.Hwnd`), and a record whose size or alignment differs from the view's is an error. A view read from another target's declarations, as `c.windows` and `c.vulkan` are in a build for Linux, shares nothing, since a C `long` or `wchar_t` there is not the target's. Without `sdk: true` nothing changes.
 - The bindings are made per target. `mk check --all-targets` translates them for both `x86_64-windows` and `x86_64-linux` and reports an item the package uses whose API differs (E0213). A constant's value is not part of the API. It needs each target's system headers, from `MK_SYSROOT_<target>`, or `vendor: true` to read the committed `gen/<target>/c/` files instead. Without either, it is E0213, `reason: no-sysroot`.
+
+#### System views
+
+A system view is a C import that ships inside mk: `import c.windows` needs no `pkg.CImport`, no header, no SDK and no Clang, on any machine, and binds the same declarations everywhere.
+
+```mk
+// verdict: parse
+import c.windows
+
+export Main(sys: &System): WriteError!void {
+    var pid: windows.Dword = 0
+    unsafe "GetCurrentProcessId takes nothing and cannot fail" {
+        pid = windows.GetCurrentProcessId()
+    }
+    try sys.Print("{pid}\n", (pid))
+}
+```
+
+| View | Headers | Generated from | Targets |
+|---|---|---|---|
+| `c.windows` | `windows.h`, `windowsx.h` | Windows SDK 10.0.28000.0 | `x86_64-windows` |
+| `c.dxgi` | `dxgi1_6.h`, `dxgidebug.h` | the same | `x86_64-windows` |
+| `c.d3d12` | `d3d12.h`, `d3d12sdklayers.h` | the same | `x86_64-windows` |
+| `c.d3dcompiler` | `d3dcompiler.h` | the same | `x86_64-windows` |
+| `c.vulkan` | `vulkan/vulkan.h` | Vulkan-Headers 1.4.363.0 | `x86_64-windows` |
+| `c.posix` | POSIX and standard C library headers | glibc | `x86_64-linux`, `aarch64-linux` |
+
+- The views of one target are generated together, as one translation unit, by `go run ./tools/sysview`, from the inputs `mk sdk views` prints: the SDK's version, mk's toolset headers, the importer's format and Clang's version. A declaration several views reach belongs to the first in the table, so `HWND` is `windows.Hwnd` in every view, and `c.dxgi`'s items name `c.windows`'s types. The whole of every view type-checks; what does not is left out and listed, and so is every `static inline` function, which only a shim compiled from the headers could define. This mk carries `c.windows`, `c.dxgi`, `c.d3d12`, `c.d3dcompiler` and `c.vulkan` for `x86_64-windows` only. On Linux and macOS, `c.vulkan` falls back to the Windows declarations. `std.gpu` uses the common Vulkan types to call the host loader. Calls to Windows-specific entry points need a Windows target check.
+- A view's names are a C import's: functions keep their C names, types and constants are PascalCase, fields snake_case. The view is a C import's binding for every rule: calling its functions or COM methods needs `unsafe`, reading a C function pointer is E1101, and its `extern var`s are C's, never defined by the build. Because the Windows views are generated with `INITGUID`, interface GUIDs (`dxgi.IidIdxgiFactory6`, `d3d12.IidID3D12Device`) are Mk `const` values needing no `dxguid.lib`.
+- A build takes only the items its files name and what those items need, from every view a view needs. The rest of `windows.h` costs nothing. The items a program uses are one module for the whole program, so a `windows.Hwnd` from a dependency or from the standard library is the package's.
+- `import c.<name>` is, first, the package's `pkg.CImport` of that name, which wins over a view of the same name. Else it is the system view of that name. Else it is E0202 `no-cimport`, whose message names the views. In a standard-library module it is always the system view.
+- A view may be imported in a build for any target: its declarations are plain Mk. A build for a target the view is not generated for reads the view of the table's first target, so `c.windows` checks in a build for `x86_64-linux`. A function that is never reached emits nothing, so a call behind `if Target.os == Os.Windows` builds for Linux. A call that is reached on such a target is E0001 at the link, naming the function and its view.
+- `mk check --all-targets` compares nothing for a view every target reads from the same declarations: one generated for one target, and `c.vulkan` while this mk carries it for `x86_64-windows` only. A view this mk carries per target is compared as a `pkg.CImport` is: an item the package uses whose API differs between `x86_64-windows` and `x86_64-linux` is E0213.
+- A Windows SDK view's functions carry their DLL link from the SDK's import libraries: classic desktop DLLs (`kernel32.dll`, `user32.dll`, `gdi32.dll`, `advapi32.dll`, `shell32.dll`, `ole32.dll`, `oleaut32.dll`, `ws2_32.dll`, `winspool.drv`, `comdlg32.dll`) link eagerly, and every other DLL (`dxgi.dll`, `d3d12.dll`, `d3dcompiler_47.dll`, `bcrypt.dll`, ...) binds lazily (`kind: "lazy"`), so `import c.dxgi` and `import c.d3d12` need no `pkg.Link`. An explicit `pkg.Link` in the manifest overrides a view's link, and a library outside the Windows SDK (`vulkan-1.dll`) still links through `pkg.Link`.
+
+- A reachable `c.posix` call on Linux selects [system-libc mode](std/libc.md#system-libc-mode-on-linux) and links the function to its recorded glibc version. An import or use of types and constants alone leaves a static executable static. An explicit link can supply a function instead. The ordinary C-import limits apply to macros, shims, and calling conventions.
 
 ### C sources and assembly files
 
@@ -9706,12 +10040,30 @@ The manifest builds C and assembly files with the package:
 | Field | Entry | Meaning |
 |---|---|---|
 | `c_sources` | `pkg.CSource(path: "c/sum.c", flags: ["-O2"])` | A C file compiled by Clang for the target, with these flags |
-| `asm_sources` | `pkg.AsmSource(path: "src/boot.s", target: "x86_64-freestanding")` | An assembly file, `.s`, or `.S` through the preprocessor, for one target or `""` for every target. Its symbols are `extern` |
+| `asm_sources` | `pkg.AsmSource(path: "src/boot.s", target: "x86_64-freestanding")` | An assembly file, `.s`, or `.S` through the preprocessor, for one target or `""` for every target. Its symbols are `extern`; one that uses no stack may be called through a `fn` value ([below](#c-sources-and-assembly-files)) |
 | `links` | `pkg.Link(...)` | A library ([below](#linking-libraries)) |
 
 - C sources link against `std.libc`, the C library written in Mk, and the bin's links. They get no other C runtime. Without a sysroot, only `std.libc`'s functions are declared in the headers they see: a call to anything else fails to compile, or to link, with E0001. [std.libc](std/libc.md) lists the functions, the include path and the system-libc mode of Linux.
-- A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works.
-- A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root instead.
+- A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works, and then the C imports' `include_dirs`.
+- A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root, or list their directory in a C import's `include_dirs`, instead.
+
+**Stubs that use no stack.** A direct call of an assembly symbol's `extern` from a task switches to the system stack, as any `extern` call does ([the C stack](#functions-c-can-call-export-extern)): three runtime calls and a stack switch around a stub of one instruction. A stub that uses no stack beyond its return address and calls nothing, such as a load, a store or a `lock`-prefixed instruction followed by `ret`, can be called through a `fn` value instead. The call is then an ordinary call on the task's stack. Pass the value to an ordinary parameter, never a `const` one, whose call of an `extern` is direct and switches. When the value is named in the calling function, as below, `--release` compiles it to a direct `call` or jump to the stub. A value loaded from a table, a field or a global may stay an indirect call, still on the task's stack. Naming the `extern` as a value needs `unsafe`, and its reason is your claim that the stub uses no stack, never calls back into Mk or C, faults only where a Mk load or store of the same address would, and has the C ABI of the `fn` type. For one instruction, inline [`asm`](#inline-assembly) needs no call at all.
+
+```mk
+// verdict: ok
+// load_u32 is an asm_sources stub: one 32-bit load through its argument, then ret.
+extern load_u32(p: *u32): u32
+
+// SharedLoad calls load_u32 on the task's stack.
+SharedLoad(p: *u32): u32 {
+    unsafe "load_u32 reads one u32 at p, uses no stack and calls nothing; p is live and aligned" {
+        f := load_u32
+        return f(p)
+    }
+}
+```
+
+There is no way to declare an `extern` itself stack-free: a stub has no Mk signature that says so, and the `fn` value already gives the call.
 
 ### Linking libraries
 
@@ -9729,19 +10081,39 @@ const Package = pkg.Package(
 
 | Field | Values |
 |---|---|
-| `name` | A dynamic library's exact file name, as the loader looks it up, with no separator. A static library's name labels it in diagnostics |
-| `kind` | `"dynamic"`: the OS loader opens it when the program starts. `"static"`: an archive linked into the executable |
-| `path` | Package-relative. A Windows DLL: `""` for the host's System32 copy (on a Windows host only), a `.def` file listing one exported name per line (on any host), or the `.dll` itself, which mk copies beside the executable. A Linux library: `""`, or a `.def` whose names may carry `@VERSION`. An archive: the `.lib` or `.a` file |
+| `name` | A dynamic or lazy library's exact file name, as the loader looks it up, with no separator. A static library's name labels it in diagnostics |
+| `kind` | `"dynamic"`: the OS loader opens it when the program starts. `"lazy"`: a DLL loaded on the first call of one of its functions, never in the import table (`x86_64-windows` only). `"static"`: an archive linked into the executable |
+| `path` | Package-relative. A Windows DLL, dynamic or lazy: `""` for the host's System32 copy (on a Windows host only), a `.def` file listing one exported name per line (on any host), or the `.dll` itself, which mk copies beside the executable. A Linux library: `""`, or a `.def` whose names may carry `@VERSION`. An archive: the `.lib` or `.a` file |
 | `target` | `"x86_64-windows"`, `"x86_64-linux"` or `"aarch64-linux"` |
 
-- A fault in a `Link` is E0202 at the `Link`, `reason: link`. An import library (`.lib` for a DLL) is not an archive (E0202).
+- A fault in a `Link` is E0202 at the `Link`, `reason: link`. An import library (`.lib` for a DLL) is not an archive (E0202). `kind: "lazy"` for any target but `x86_64-windows` is E0202: lazy binding is built for Windows only. One DLL linked `"lazy"` by one link and `"dynamic"` by another is E0202.
 - A name an archive defines wins over any DLL. A library enters the executable only when a name it supplies is used.
 - Only functions resolve through links. An `extern var` in a DLL or a shared object is E0001.
-- Windows looks for a linked DLL only in KnownDLLs, the executable's directory and System32, never in the current directory or `PATH`. Ship a third-party DLL beside the executable. There is no delay-load.
+- Windows looks for a linked DLL only in KnownDLLs, the executable's directory and System32, never in the current directory or `PATH`. Ship a third-party DLL beside the executable. A lazy DLL is searched the same way (`LoadLibraryExW` with `LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`).
 - An archive must be built with no C runtime: `-ffreestanding -fno-stack-protector` for Clang or GCC, `/GS- /Zl` for MSVC. A symbol it needs that nothing supplies is E0001, naming the member and the symbol.
 - An archive member that holds static constructors or thread-local storage is E0001: a Mk program never sets them up.
 - A Linux bin with a dynamic link loads the system C library ([system-libc mode](std/libc.md#system-libc-mode-on-linux)).
 - To open a library while the program runs, use [std.dl](std/dl.md).
+
+**Lazy libraries.** A program can name a function of a DLL that some machines lack, such as an optional system component, and still start on every machine. A hard import of a missing DLL ends the process before `Main`. A lazy DLL is not in the import table:
+
+- Each function of it the program uses is called through a slot. The first call loads the DLL, once per DLL, and finds the function. The library's initializer runs on the carrier's system stack when the caller is a task, so a task's small stack is enough. The call then continues with its arguments intact.
+- The first call may come from any thread, one Mk did not start included, and from C code. Two first calls at once both succeed. A load that fails is not remembered: a later call or `dl.Present` tries again.
+- Later calls jump through the slot: one indirect call, what an import-table call costs.
+- [`dl.Present(io, f)`](std/dl.md#present) tells whether `f` can be called, loading the DLL if needed, without calling it. For a function that is not lazily bound it is `true` at compile time.
+- Calling a lazy function whose DLL cannot be loaded, or which the DLL does not export, panics with `unresolved function`. The report names the function and the DLL.
+- Taking such a function as a `fn` value gives an address that works before and after the first call.
+- A program that never calls a function of a lazy DLL carries nothing of it.
+
+```mk
+// verdict: parse
+const Package = pkg.Package(
+    name: "viewer",
+    bins: [pkg.Bin(name: "viewer", root: "src", subsystem: "console")],
+    unsafe_modules: ["src"],
+    links: [pkg.Link(name: "d3d12.dll", kind: "lazy", path: "d3d12.def", target: "x86_64-windows")],
+)
+```
 
 ### CPU features
 
@@ -10406,7 +10778,7 @@ PASS main "prints"
 ```
 
 - Each line names the module and the test. A failing test shows its output, its panic or error, and its exit status.
-- A test passes when it returns. It fails on a panic (`Assert`, a broken contract, an index out of bounds), on an error that leaves it (exit 1), on a leak, or on a timeout.
+- A test passes when it returns. It fails on a panic (`Assert`, a broken contract, an index out of bounds), on an error that leaves it (exit 1), on a leak, or on a timeout. A test that calls `testing.ExpectPanic(want)` is the other way round: it passes only when it panics after the call, with a report that contains `want` ([expected panics](std/testing.md#expected-panics)).
 - A test may use `try`. An error that leaves the test fails it, and `mk test` prints the error with its trace ([errors in tests](#errors-in-tests-and-tasks)).
 - A test may declare one parameter of type `&System`, usually `(sys: &System)`, for memory, output, files and tasks. A parameter of another type is E0301, and a second parameter E0101.
 - In a test, the heap counts its allocations. Memory still allocated when the test ends fails it with `leak (exit 102)`.
@@ -10481,7 +10853,8 @@ PASS main "prop Span.Len"
 These are library features that run inside `test` blocks:
 
 - `testing.Fuzz(f)` registers a fuzz target. `mk test` runs it over saved inputs, and `mk test --fuzz name` searches for new failing ones. See [fuzz targets](std/testing.md#fuzz-targets).
-- `testing.Bench(f)` registers a benchmark that `mk bench` runs. See [benchmarks](std/testing.md#benchmarks).
+- `testing.Bench(f)` registers a benchmark that `mk bench` runs, and `testing.BenchSys(sys, f)` one that takes the test's `System`, to allocate. See [benchmarks](std/testing.md#benchmarks).
+- `testing.ExpectPanic(want)` makes a test pass only when it panics after the call, so a test can check that an `Assert` or a contract refuses a bad input. See [expected panics](std/testing.md#expected-panics).
 - `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` runs every test that way. See [`std.sim`](std/sim.md).
 
 See also: [write a test and a property](cookbook.md#write-a-test-and-a-property), [tests beside code](codebase.md#6-tests-beside-code), [`mk test`](tools.md#mk-test).
@@ -11163,32 +11536,32 @@ This table lists the importable modules and the names each one exports. The [lib
 | Import | Names |
 |---|---|
 | `std.fs` | `File Dir Entry Info ReadText ReadBytes WriteAll Create Open Rename Remove MakeDir Stat Error OpenWith OpenPath Options DefaultOptions ReadOnly ReadWrite CreateNew Append Whence LockMode Kind Permissions Map Mapping Walk Walker WalkEntry MakeDirAll RemoveAll Copy CreateTemp TempDir Symlink ReadLink StatLink StatPath SetModified SetPermissions Cwd Absolute` |
-| `std.net` | `Listen Dial Listener Stream Bind Datagram Addr ParseAddr Resolve Error ListenWith ListenOptions DefaultListenOptions ListenUnix DialUnix Shutdown Conn NewConn Transport ReserveConn ConnSlot Secure SecureFailure Pass Passed` |
+| `std.net` | `Listen Dial Listener Stream Bind Datagram SharedDatagram Addr ParseAddr Resolve Error ListenWith ListenOptions DefaultListenOptions ListenUnix DialUnix Shutdown Conn NewConn Transport ReserveConn ConnSlot Secure SecureFailure Pass Passed Mux MuxStream MuxReady MuxLimits MuxListener MuxDialer MuxServer MuxEngine MuxListening` |
 | `std.time` | `Instant Duration Now Seconds Millis Minutes Hours Micros Nanos ParseDuration Time Wall FromUnix Date FromDate Zone Database LocalName ParseRfc3339 ParseHttpDate FormatHttpDate TimedOut Error` |
 | `std.time.tzdata` | `Database`, the embedded zones, linked only into a binary that names it |
 | `std.proc` | `Run Output Supervise WaitSignal Signal Exit Error Pipe PipeReader PipeWriter Spawn Command DefaultCommand Env Stdio Child Status Pty Pass Inherited` |
 | `std.sync` | `RwLock ReadGuard Select Selectable Shared Semaphore Notify Barrier Once` |
 | `std.atomic` | `AtomicInt AtomicBool Atomic Spin SpinGuard Order Relaxed Acquire Release AcqRel SeqCst Fence Unordered Pause` |
 | `std.mmio` | `Load Store Fence Reg`, every call inside an unsafe block |
-| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch` |
+| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch Zeroed AsBytes SliceAsBytes` |
 | `std.coll` | `Deque HeapDeque PriorityQueue BTree HeapBTree BTreeIter Bitset` |
 | `std.text` | `Graphemes Clusters Normalize Form FoldCase Width ToUtf16 FromUtf16 WordBounds SentenceBounds Bounds ParagraphBounds BidiLevels Levels Run Direction Mirror LineBreaks Breaks Capped Sink CategoryOf Category ScriptOf Script ScriptExtensions Has Property UnicodeVersion` |
-| `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ExactDigits Digits DigitMode` |
-| `std.simd` | `Vec Mask Lane CpuFeatures Choice Cpu Lanes Lookup16 Dispatch IndexByte IndexAny Count Equal Compare ValidUtf8 ValidWtf8 IsAscii Utf16Len LastIndexByte Dot Sum` |
+| `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ShortestDigitsInto ExactDigits Digits DigitMode` |
+| `std.simd` | `Vec Mask Lane CpuFeatures Choice Cpu Lanes Lookup16 Dispatch IndexByte IndexAny Count Equal Compare ValidUtf8 ValidWtf8 IsAscii Utf16Len Utf16LenBytes LastIndexByte Dot Sum` |
 | `std.free` | `PanicInfo`, `Heap`, on the freestanding target only |
 | `std.libc` | No Mk names: C-callable functions that a package's C sources link against, written in Mk and exported with `export extern`: the memory and string functions, `malloc`, `calloc`, `realloc` and `free` over the `Heap`, and what sqlite needs as `SQLITE_OS_OTHER`; on `x86_64-windows` also `__C_specific_handler`, the language handler a C source's `__try`, `__except` and `__finally` need, forwarded to ntdll's |
-| `std.hash` | `Xx Xx64 Crc32 Sip13 Sha256 Sha512 Blake3 Crc32State Xx64State Sha256State Sha512State Blake3State Sha1 Sha1State Sha384 Sha384State` |
+| `std.hash` | `Xx Xx64 Crc32 Sip13 Sha256 Sha512 Blake3 Crc32State Xx64State Sip13State Sha256State Sha512State Blake3State Sha1 Sha1State Sha384 Sha384State` |
 | `std.json` | `Parse Value Member Json Codec Error` |
-| `std.http` | `Serve Fetch ReadRequest Dispatch Request Response Reply Header Route Error Client ClientRequest ClientLimits DefaultClientLimits Exchange ServeWith ServeOn ServeChan ServerOptions DefaultServerOptions Link Taken` |
+| `std.http` | `Serve Fetch ReadRequest Dispatch Request Response Reply Header Route Error Client ClientRequest ClientLimits DefaultClientLimits Exchange ServeWith ServeOn ServeChan ServerOptions DefaultServerOptions HttpVersion Link Taken` |
 | `std.regex` | `Compile Regex Match Matcher Error` |
-| `std.crypto` | `Hmac256 ChaCha20Poly1305 X25519 Ed25519 Random Equal Error Hmac384 Hmac512 HkdfExtract HkdfExpand Prk HashKind AesGcm EcSecret Curve EcdhShared EcdsaSign EcdsaVerify SigFormat RsaPublic RsaVerifyPkcs1 RsaVerifyPss PublicKey PrivateKey ParsePublicKey ParsePrivateKey Wipe Argon2id Argon2idVerify Argon2Cost` |
+| `std.crypto` | `Hmac256 ChaCha20Poly1305 X25519 Ed25519 Random Equal Error Hmac384 Hmac512 HkdfExtract HkdfExpand HkdfExpandLabel Prk HashKind AesGcm Aes ChaCha20Block EcSecret Curve EcdhShared EcdsaSign EcdsaVerify SigFormat RsaPublic RsaVerifyPkcs1 RsaVerifyPss PublicKey PrivateKey ParsePublicKey ParsePrivateKey Wipe Argon2id Argon2idVerify Argon2Cost` |
 | `std.compress` | `Inflate Gunzip Deflate Gzip Inflater Error Zlib Unzlib Adler32 Adler32State Encoder Framing ZstdDecoder Content GzipContent DeflateContent ZstdContent` |
 | `std.cli` | `Args Error` |
 | `std.log` | `Logger Level Sink Stderr Stdout ToFile` |
 | `std.dyn`, `std.derive` | Generators: `dyn.Of`, `derive.Eq`, `derive.Hash`, `derive.Format` |
 | `std.dyn` | `Ref` |
 | `std.dyn.erased` | `Key` |
-| `std.sim` | `Sim Op Fault Recorder Replayer` |
+| `std.sim` | `Sim Op Fault NetFaults Recorder Replayer` |
 | `std.db.sqlite` | `Open Db Stmt Error` |
 | `std.big` | `Int FromI64 FromBytes FromWords Parse Error` |
 | `std.encoding` | `Base64Encode Base64Decode Base64EncodeTo Base64DecodeTo Base64Len Alphabet Base64 Base64Url Base64Raw Base64UrlRaw Base64Forgiving HexEncode HexDecode PercentEncode PercentDecode PercentSet Lookup Encoding Decoder Utf8 Utf16Le Utf16Be Replacement XUserDefined Ibm866 Iso88592 Iso88593 Iso88594 Iso88595 Iso88596 Iso88597 Iso88598 Iso88598I Iso885910 Iso885913 Iso885914 Iso885915 Iso885916 Koi8R Koi8U Macintosh Windows874 Windows1250 Windows1251 Windows1252 Windows1253 Windows1254 Windows1255 Windows1256 Windows1257 Windows1258 XMacCyrillic Codec ParsePem FormatPem PemBlock DerRead DerValue DerIter DerWriter Error` |
@@ -11198,17 +11571,21 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.term` | `Open IsTerminal UseColor Term Std Event Key Mods Style Color Sanitize MoveTo Clear AltScreen ShowCursor BracketedPaste MouseCapture KittyKeys Error` |
 | `std.x509` | `Parse ParsePem Certificate Pool SystemRoots SystemPool Verify Error`, Experimental |
 | `std.tls` | `Client Server Connector Acceptor Conn Config DefaultConfig Identity Version Error`, Experimental |
+| `std.quic` | `Version1 Config DefaultConfig Connector Acceptor`, Experimental |
 | `std.csv` | `Records Record Options DefaultOptions WriteRecord Codec Error` |
-| `std.dl` | `Open Library Search Error`, Provisional |
+| `std.dl` | `Open Present Library Search Error`, Provisional |
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
-| `std.testing` | `Fuzz Bench` |
+| `std.testing` | `Fuzz Bench BenchSys ExpectPanic` |
+| `std.image` | `Compare DecodeLimits DecodePng DefaultDecodeLimits Difference EncodePng Error Image Invalid Pixels TooLarge Unsupported Why`, Provisional |
+| `std.window` | `Button Cursor CursorMode DefaultWindowOptions Error Event EventKind Fullscreen InputState Key Mods Native Open Os Surface Unsupported Window WindowOptions`, Experimental |
+| `std.gpu` | `Acquired AdapterId AdapterInfo AdapterKind Adapters Address Aspect Backend BindEntry BindGroup BindGroupLayout BindingKind Blend BlendComponent BlendFactor BlendOp BlendOver Bound Buffer BufferUsage Call CheckShader ColorAttachment ColorOf ColorTarget ColorWrites Compare ComputePass ComputePipeline Cull DataLayout DebugMode DefaultDeviceOptions DefaultRenderPipeline DefaultSamplerDesc DefaultSwapchainOptions DefaultTextureDesc DefaultViewDesc DepthAttachment DepthBias DepthOf DepthStencil Device DeviceLimits DeviceLost DeviceOptions Driver Encoder Error Extent Feature Features Filter FormatCaps FrontFace IndexFormat Invalid LayoutEntry Leaks Load LoadDepth LoadStencil LossReason Mapped MappedMut Message Missing Misuse NoAdapter NoBufferUsage NoFeatures NoTextureUsage Open OutOfDeviceMemory PassDesc PipelineLayout Power Presented PresentMode RenderPass RenderPipeline RenderPipelineDesc Sampler SamplerDesc SampleType Severity Shader ShaderCode Stage Stencil StencilFace StencilOp StepMode Store SurfaceLost SurfaceTexture Swapchain SwapchainInfo SwapchainOptions Texture TextureDesc TextureFormat TextureRegion TextureUsage TextureView Topology Unsupported VertexAttribute VertexFormat VertexLayout ViewDesc ViewDimension Visibility WriteAll`, Experimental |
 | `std.build` | `File Profile ProfileKind`, read at compile time only |
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
 
-The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target` and `std.simd.kernel` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
+The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel`, `std.gpu.dx`, `std.gpu.vk`, `std.http.fields`, `std.http.h2`, `std.http.h3`, `std.sync.lead` and `std.net.pipe` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
 
 Every public item of std has a stability level, which says how it may change from one release to the next. The [library guide](std/README.md#9-stability) lists the modules and items that are not Stable and what each level allows before and after 1.0.
 
@@ -11282,6 +11659,9 @@ The [library guide](std/README.md) holds the conventions every module shares. Ea
 - [`std.sync`](std/sync.md)
 - [`std.term`](std/term.md)
 - [`std.testing`](std/testing.md)
+- [`std.image`](std/image.md)
+- [`std.window`](std/window.md)
+- [`std.gpu`](std/gpu.md)
 - [`std.text`](std/text.md)
 - [`std.time`](std/time.md), with `std.time.tzdata`
 - [`std.tls`](std/tls.md)
@@ -11368,6 +11748,8 @@ List[T].Pop(mut self): ?T
 List[T].Len(&self): int
 List[T].Clear(mut self)
 List[T].Truncate(mut self, n: int)
+List[T].Resize(mut self, n: int, x: T into self): OutOfMemory!void
+List[T].Extend(mut self, xs: []T): OutOfMemory!void *xs into self
 List[T].Insert(mut self, i: int, x: T into self): OutOfMemory!void
 List[T].Remove(mut self, i: int): T
 List[T].Done(self): mut []T
@@ -11691,11 +12073,15 @@ struct Info {
 error Os(code: i64)
 error Unsupported
 error SecureFailed(why: SecureFailure)
-type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | OutOfMemory
+// Provisional: StreamReset and MuxClosed, which multiplexed connections report
+error StreamReset(code: u64)
+error MuxClosed(code: u64, app: bool, peer: bool)
+type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory
 net.Listen(io: Io, addr: str): net.Error!Listener
 net.Dial(io: Io, addr: str): net.Error!Stream
 Listener.Accept(&self, io: Io): net.Error!Stream
 Listener.Port(&self): int
+Listener.Addr(&self): Addr
 Listener.Close(self)
 Stream.Read(&self, io: Io, buf: mut []u8): net.Error!int
 Stream.Write(&self, io: Io, data: []u8): net.Error!int
@@ -11709,10 +12095,24 @@ Addr.Format(&self, w: mut Writer): WriteError!void
 net.Bind(io: Io, addr: str): net.Error!Datagram
 Datagram.Send(&self, io: Io, data: []u8, to: Addr): net.Error!void
 Datagram.Recv(&self, io: Io, buf: mut []u8): net.Error!(n: int, peer: Addr)
+Datagram.Connect(&self, io: Io, to: Addr): net.Error!void
+Datagram.LocalAddr(&self): Addr
+Datagram.SetBuffers(&self, recv: int, send: int): net.Error!void
+Datagram.SetDontFragment(&self): net.Error!void
+Datagram.DontFragment(&self): net.Error!bool
+Datagram.Share(self): SharedDatagram
 Datagram.Port(&self): int
 Datagram.Close(self)
+SharedDatagram.Send(&self, io: Io, data: []u8, to: ?Addr): net.Error!void
+SharedDatagram.SendBatch(&self, io: Io, buf: []u8, seg: int, to: ?Addr): net.Error!void
+SharedDatagram.Recv(&self, io: Io, buf: mut []u8): net.Error!(n: int, peer: Addr)
+SharedDatagram.TryRecv(&self, io: Io, buf: mut []u8): net.Error!?(n: int, peer: Addr)
+SharedDatagram.Port(&self): int
+SharedDatagram.LocalAddr(&self): Addr
+SharedDatagram.Close(self)
 Stream.SetNoDelay(&self, on: bool): net.Error!void
 Stream.SetKeepAlive(&self, idle: ?time.Duration): net.Error!void
+Stream.SetBuffers(&self, recv: int, send: int): net.Error!void
 Stream.Shutdown(&self, io: Io, how: Shutdown): net.Error!void
 Stream.LocalAddr(&self): Addr
 Stream.PeerAddr(&self): Addr
@@ -11748,9 +12148,68 @@ interface Transport {
     Abandon(self)
 }
 
-// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall, so only std calls it, and std.http and std.websocket call Connect
+// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall and OfAlpn (provisional) two core.TypedCalls, so only std calls them, and std.http and std.websocket call Connect and Negotiate (provisional)
 Secure.Of[T: Share](c: core.ErasedCall): Secure from c
+Secure.OfAlpn[T: Share](c: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn], n: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn]): Secure from c, n
 Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn
+Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn
+
+// Provisional multiplexed transport interface shared by std.http and std.quic.
+MuxStream.Id(&self): i64
+Mux.Open(&self, io: Io, uni: bool, wait: bool): net.Error!?MuxStream
+Mux.Accept(&self, io: Io, uni: bool, wait: bool): net.Error!?MuxStream
+Mux.Read(&self, io: Io, s: &MuxStream, buf: mut []u8, wait: bool): net.Error!?int
+Mux.Write(&self, io: Io, s: &MuxStream, data: []u8, fin: bool): net.Error!void
+Mux.Credit(&self, s: &MuxStream, total: i64)
+Mux.Wait(&self, io: Io, ids: []i64, incoming: bool): net.Error!MuxReady
+Mux.Reset(&self, s: &MuxStream, code: u64)
+Mux.Stop(&self, s: &MuxStream, code: u64)
+Mux.Release(&self, s: MuxStream)
+Mux.Limits(&self): MuxLimits
+Mux.Usable(&self, io: Io): bool
+Mux.PeerAddr(&self): ?Addr
+Mux.Close(self, io: Io, code: u64): net.Error!void
+Mux.Abandon(self)
+MuxListener.Run(&self, io: Io): net.Error!void
+MuxListener.Accept(&self, io: Io): net.Error!Mux
+MuxListener.Port(&self): int
+MuxListener.Close(self)
+MuxDialer.Dial(&self, h: &Heap, io: Io, to: Addr, host: str, alpn: str): net.Error!Mux from h
+MuxServer.Listen(&self, h: &Heap, io: Io, addr: str, alpn: str): net.Error!MuxListener from h, self
+// Only std constructs the implementations and sealed callable values that Of takes.
+Mux.Of[T: MuxEngine + Send + Share](h: &Heap, b: core.SealedBox): Mux from h, b
+MuxListener.Of[T: MuxListening + Send + Share](h: &Heap, b: core.SealedBox): MuxListener from h, b
+MuxDialer.Of[T: Share](c: core.ErasedCall): MuxDialer from c
+MuxServer.Of[T: Share](c: core.ErasedCall): MuxServer from c
+
+enum MuxReady {
+    Readable(index: int)
+    Incoming(uni: bool)
+}
+
+struct MuxLimits {
+    export bidi: i64
+    export uni: i64
+    export idle: time.Duration
+}
+
+linear struct MuxStream {
+}
+
+linear view struct Mux {
+}
+
+linear view struct MuxListener {
+}
+
+plain view struct MuxDialer {
+}
+
+plain view struct MuxServer {
+}
+
+linear struct SharedDatagram {
+}
 
 struct ListenOptions {
     export backlog: int
@@ -12169,6 +12628,7 @@ math.Gcd(a: u64, b: u64): u64
 math.CheckedPow(x: i64, n: u32): ?i64
 math.CheckedPowU64(x: u64, n: u32): ?u64
 math.ShortestDigits(x: f64): Digits
+math.ShortestDigitsInto(out: mut []u8, x: f64): (len: int, exp: int)
 math.ExactDigits(x: f64, n: int, mode: DigitMode): Digits
 
 struct Digits {
@@ -12267,6 +12727,7 @@ simd.ValidUtf8(s: []u8): bool
 simd.ValidWtf8(s: []u8): bool
 simd.IsAscii(s: []u8): bool
 simd.Utf16Len(s: str): int
+simd.Utf16LenBytes(b: []u8): int
 simd.LastIndexByte(s: []u8, b: u8): ?int
 simd.Dot[T: Lane](a: []T, b: []T): T
 simd.Sum[T: Lane](xs: []T): T
@@ -12294,6 +12755,9 @@ struct PanicInfo {
 type AllocTable = core.AllocTable
 mem.OffsetOf[T](field: str): int
 mem.Prefetch[T](p: &T, write: bool)
+mem.Zeroed[T](): T
+mem.AsBytes[T](p: &T): []u8 from p
+mem.SliceAsBytes[T](xs: []T): []u8 from xs
 Fixed.New(buf: mut []u8): Fixed
 Fixed.Alloc(&self): &Alloc from self
 Fixed.Reset(mut self) ends self
@@ -12451,6 +12915,9 @@ Crc32State.Sum(self): u32
 Xx64State.New(seed: u64): Xx64State
 Xx64State.Bytes(mut self, data: []u8)
 Xx64State.Sum(self): u64
+Sip13State.New(key: HashKey): Sip13State
+Sip13State.Bytes(mut self, data: []u8)
+Sip13State.Sum(self): u64
 Sha256State.New(): Sha256State
 Sha256State.Bytes(mut self, data: []u8)
 Sha256State.Sum(self): [32]u8
@@ -12509,15 +12976,18 @@ error BodyNotReplayable
 error TooManyRedirects
 error BadUrl
 error ProxyRefused(code: int)
-type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused
+error Protocol(code: u64)
+type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused | Protocol
 http.ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): http.Error!Request from a
-http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void)): http.Error!void
+http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void): http.Error!void
 http.Fetch(a: &Arena, io: Io, method: str, url: str, headers: []Header, body: []u8, limit: int): http.Error!Reply from a
 Request.Header(&self, name: str): ?str from self
 Request.Param(&self, name: str): ?str from self
 Request.ParamInt(&self, name: str): ?i64
 Response.New(a: &Arena): Response
 Response.Status(mut self, code: int)
+Response.Version(&self): HttpVersion
+Response.Secure(&self): bool
 Response.Header(mut self, name: str, value: str): OutOfMemory!void
 Response.Body(mut self, data: []u8): OutOfMemory!void
 Response.Writer(mut self): Writer from self
@@ -12527,14 +12997,19 @@ Client.New(h: &Heap, l: ClientLimits): Client from h, l
 Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
 Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
 Client.DoStreaming(&self, a: &Arena, io: Io, req: &ClientRequest, body: mut Reader, len: ?i64): http.Error!Exchange from a, self
+Client.Drive(&self, io: Io): Canceled!void
+Client.WaitDriving(&self, io: Io): Canceled!bool
+Client.Stop(&self)
 Client.Close(self)
 Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
 Exchange.Close(self, io: Io): http.Error!void
 Exchange.Abandon(self)
-http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
-http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
-http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+Exchange.Version(&self): HttpVersion
+http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
+http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
+http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
 Response.Flush(mut self, io: Io, link: &Link): http.Error!void
+Link.Version(&self): HttpVersion
 Link.Takeover(&self): ?Taken
 Taken.Abandon(self)
 
@@ -12563,6 +13038,14 @@ struct ClientLimits {
     export allow: ?fn(&net.Addr): bool
     export secure: ?net.Secure
     export proxy: ?&url.Url
+    export h2: bool
+    export h2c: bool
+    export h2_streams: int
+    export h2_window: int
+    export h3: ?net.MuxDialer
+    export h3_direct: bool
+    export h3_connect: time.Duration
+    export alt_svc: bool
 }
 
 struct ServerOptions {
@@ -12572,6 +13055,19 @@ struct ServerOptions {
     export request_header: time.Duration
     export keep_alive: time.Duration
     export secure: ?net.Secure
+    export h2: bool
+    export h2c: bool
+    export h2_streams: int
+    export h3: ?net.MuxServer
+    export alt_svc: bool
+}
+
+// HttpVersion may gain members.
+enum HttpVersion {
+    Http10
+    Http11
+    Http2
+    Http3
 }
 
 struct Header {
@@ -12602,7 +13098,7 @@ linear struct Taken {
 struct Route[C] {
     export method: str
     export pattern: str
-    export handler: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void)
+    export handler: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void
 }
 
 // std.regex. Regex and Error below are regex.Regex and regex.Error
@@ -12636,6 +13132,7 @@ crypto.Random(io: Io, buf: mut []u8): Canceled!void
 crypto.Equal(a: []u8, b: []u8): bool
 ChaCha20Poly1305.Seal(key: &[32]u8, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!void
 ChaCha20Poly1305.Open(key: &[32]u8, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!void
+crypto.ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8
 Ed25519.Keypair(io: Io): Canceled![64]u8
 Ed25519.FromSeed(seed: &[32]u8): [64]u8
 Ed25519.Sign(secret: &[64]u8, msg: []u8): [64]u8
@@ -12644,12 +13141,16 @@ crypto.Hmac384(key: []u8, data: []u8): [48]u8
 crypto.Hmac512(key: []u8, data: []u8): [64]u8
 crypto.HkdfExtract(salt: []u8, ikm: []u8, h: HashKind): Prk
 crypto.HkdfExpand(prk: &Prk, info: []u8, out: mut []u8): crypto.Error!void
+crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.BadKey|crypto.BadLength!void
 Prk.FromBytes(h: HashKind, key: []u8): crypto.Error!Prk
 Prk.Wipe(mut self)
 AesGcm.New(key: []u8): crypto.Error!AesGcm
 AesGcm.Seal(&self, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Open(&self, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Wipe(mut self)
+Aes.New(key: []u8): crypto.BadLength!Aes
+Aes.Encrypt(&self, block: &[16]u8): crypto.BadKey![16]u8
+Aes.Wipe(mut self)
 EcSecret.Generate(io: Io, curve: Curve): Canceled|crypto.Error!EcSecret
 EcSecret.FromBytes(curve: Curve, b: []u8): crypto.Error!EcSecret
 EcSecret.Public(&self, out: mut []u8): crypto.Error!int
@@ -12784,6 +13285,7 @@ Ref.Is[T](&self): bool
 Key[T](): u64
 
 // std.sim
+const DefaultNetFaults: NetFaults = NetFaults(drop: 0, duplicate: 0, latency_lo: core.DurationOf(LatLo), latency_hi: core.DurationOf(LatHi), rate: 0, stream_buffer: 0, sealed: 0)
 Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim from a
 Sim.Io(&self): Io
 Sim.Arena(&self): &Arena from self
@@ -12792,6 +13294,9 @@ Sim.Run(mut self)
 Sim.CrashAfterRandomOps(mut self)
 Sim.Restart(mut self): Io
 Sim.FailNext(mut self, op: Op, f: Fault)
+Sim.SetNetFaults(mut self, f: NetFaults)
+Sim.Blackhole(mut self, port: int, on: bool)
+Sim.Rebind(mut self, port: int)
 Sim.TermInput(mut self, data: []u8, after: time.Duration): OutOfMemory!void
 Sim.Free(self)
 Recorder.New(inner: Io): OutOfMemory!Recorder
@@ -12818,6 +13323,15 @@ enum Fault {
     Denied
     Reset
     Refused
+}
+
+struct NetFaults {
+    export drop: u32
+    export duplicate: u32
+    export latency_lo: time.Duration
+    export latency_hi: time.Duration
+    export rate: i64
+    export stream_buffer: int
 }
 
 // std.db.sqlite. Db, Stmt and Error below are sqlite.Db, sqlite.Stmt and sqlite.Error
@@ -13166,6 +13680,19 @@ enum Version {
     Tls13
 }
 
+// std.quic, Experimental. Config below is quic.Config.
+const Version1: u32 = 0x00000001
+quic.Connector(c: &Config): net.MuxDialer from c
+quic.Acceptor(c: &Config): net.MuxServer from c
+
+struct Config {
+    export tls: ?&tls.Config
+    export idle: time.Duration
+    export streams: int
+    export half_open: int
+    export retry_above: int
+}
+
 // std.csv. Records, Record, Options and Error below are csv.Records, csv.Record, csv.Options and csv.Error
 error Quote(line: i64, column: int)
 error TooLarge(line: i64)
@@ -13195,6 +13722,7 @@ error Os(code: i64)
 type Error = NotFound | Invalid | InitFailed | BadName | Unsupported | Os
 dl.Open(io: Io, name: str, search: Search): dl.Error!Library
 Library.Symbol(&self, name: str): ?*u8
+dl.Present[F](io: Io, f: F): bool
 Library.Close(self, io: Io)
 Library.Detach(self)
 
@@ -13296,6 +13824,98 @@ linux.Syscall(nr: uint, a0: uint, a1: uint, a2: uint, a3: uint, a4: uint, a5: ui
 // std.testing
 testing.Fuzz(f: fn([]u8))
 testing.Bench(f: fn(n: int))
+testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))
+testing.ExpectPanic(want: str)
+
+// std.gpu
+gpu.Adapters(a: &Arena, io: Io, backend: Backend): Error!List[AdapterInfo] from a
+gpu.Open(heap: &Heap, io: Io, o: DeviceOptions): Error!Device from heap
+gpu.CheckShader(code: ShaderCode, stage: Stage, entry: str): Error!void
+gpu.ColorOf(format: TextureFormat): ColorTarget
+gpu.DepthOf(format: TextureFormat, compare: Compare): DepthStencil
+Device.Abandon(self, io: Io)
+Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from sc
+Device.Backend(&self): Backend
+Device.Close(self, io: Io): Leaks
+Device.Encoder(mut self, label: str): Error!Encoder from self
+Device.NewBindGroup(mut self, layout: &BindGroupLayout, entries: []BindEntry, label: str): Error!BindGroup
+Device.NewBindGroupLayout(mut self, entries: []LayoutEntry, label: str): Error!BindGroupLayout
+Device.NewBuffer(mut self, size: int, usage: BufferUsage, label: str): Error!Buffer
+Device.NewComputePipeline(mut self, io: Io, layout: &PipelineLayout, cs: &Shader, label: str): Error!ComputePipeline
+Device.NewPipelineLayout(mut self, groups: []&BindGroupLayout, immediates: int, label: str): Error!PipelineLayout
+Device.NewRenderPipeline(mut self, io: Io, layout: &PipelineLayout, vs: &Shader, fs: ?&Shader, d: RenderPipelineDesc): Error!RenderPipeline
+Device.NewSampler(mut self, d: SamplerDesc): Error!Sampler
+Device.NewShader(mut self, code: ShaderCode, stage: Stage, entry: str, label: str): Error!Shader
+Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOptions): Error!Swapchain
+Device.NewTexture(mut self, d: TextureDesc): Error!Texture
+Device.NewView(mut self, t: &Texture, d: ViewDesc): Error!TextureView
+Device.Present(mut self, io: Io, t: SurfaceTexture): Error!Presented
+Device.ReadTexture(mut self, a: &Arena, io: Io, src: TextureRegion, size: Extent): Error![]u8 from a
+Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: int): Error!void
+Device.SwapchainInfo(&self, sc: &Swapchain): SwapchainInfo
+Device.TakeMessages(mut self, a: &Arena): OutOfMemory!List[Message] from a
+Device.WriteBuffer(mut self, b: &Buffer, at: int, data: []u8): Error!void
+Device.WriteTexture(mut self, dst: TextureRegion, data: []u8, size: Extent): Error!void
+Encoder.Abandon(self)
+Encoder.ComputePass(mut self, label: str): ComputePass from self
+Encoder.CopyBufferToTexture(mut self, src: &Buffer, layout: DataLayout, dst: TextureRegion, size: Extent)
+Encoder.CopyTextureToBuffer(mut self, src: TextureRegion, dst: &Buffer, layout: DataLayout, size: Extent)
+Encoder.PopDebugGroup(mut self)
+Encoder.PushDebugGroup(mut self, label: str)
+Encoder.RenderPass(mut self, d: &PassDesc): RenderPass from self
+Encoder.Submit(self): Error!void
+RenderPass.Draw(mut self, vertices: int, instances: int, first_vertex: int, first_instance: int)
+RenderPass.DrawIndexed(mut self, indices: int, instances: int, first_index: int, base_vertex: int, first_instance: int)
+RenderPass.End(self)
+RenderPass.PopDebugGroup(mut self)
+RenderPass.PushDebugGroup(mut self, label: str)
+RenderPass.SetBindGroup(mut self, index: int, g: &BindGroup, dynamic: []u32)
+RenderPass.SetImmediates(mut self, offset: int, data: []u8)
+RenderPass.SetIndexBuffer(mut self, b: &Buffer, format: IndexFormat, offset: int)
+RenderPass.SetPipeline(mut self, p: &RenderPipeline)
+RenderPass.SetVertexBuffer(mut self, slot: int, b: &Buffer, offset: int)
+ComputePass.Dispatch(mut self, x: int, y: int, z: int)
+ComputePass.End(self)
+ComputePass.PopDebugGroup(mut self)
+ComputePass.PushDebugGroup(mut self, label: str)
+ComputePass.SetBindGroup(mut self, index: int, g: &BindGroup, dynamic: []u32)
+ComputePass.SetImmediates(mut self, offset: int, data: []u8)
+ComputePass.SetPipeline(mut self, p: &ComputePipeline)
+SurfaceTexture.Abandon(self)
+SurfaceTexture.View(&self): &TextureView from self
+Swapchain.Close(self, io: Io, dev: mut Device)
+BindGroup.Close(self, dev: mut Device)
+BindGroupLayout.Close(self, dev: mut Device)
+Buffer.Close(self, dev: mut Device)
+ComputePipeline.Close(self, dev: mut Device)
+PipelineLayout.Close(self, dev: mut Device)
+RenderPipeline.Close(self, dev: mut Device)
+Sampler.Close(self, dev: mut Device)
+Shader.Close(self, dev: mut Device)
+Texture.Close(self, dev: mut Device)
+TextureView.Close(self, dev: mut Device)
+
+// std.window
+window.Open(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap
+Window.Close(self)
+Window.Poll(&self): ?Event
+Window.SetFullscreen(&self, f: Fullscreen): Error!void
+Window.Size(&self): (width: int, height: int)
+Window.Wait(&self, io: Io): Error!void
+Window.Next(&self, io: Io): Error!Event
+Window.Held(&self): InputState
+Window.SetTitle(&self, title: str): Error!void
+Window.SetCursor(&self, c: Cursor): Error!void
+Window.SetCursorMode(&self, m: CursorMode): Error!void
+Window.Surface(&self): Error!Surface
+Surface.Native(&self): Native
+Surface.Close(self)
+InputState.IsButtonDown(&self, b: Button): bool
+
+// std.image
+image.Compare(a: &Image, b: &Image, tolerance: int): Error!Difference
+image.DecodePng(a: &Arena, bytes: []u8, limits: DecodeLimits): Error!Image from a
+image.EncodePng(a: &Arena, img: Image): Error![]u8 from a
 
 // std.build. ProfileKind below is build.ProfileKind; build.Profile is its constant, set by the driver
 build.File(path: str): []u8

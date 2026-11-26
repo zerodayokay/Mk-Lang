@@ -44,7 +44,7 @@ So a signature shows whether a function can allocate. A function can allocate on
 
 ### Why no null, and no zero values?
 
-A reference is never null. A value that may be absent is `?T`, and the compiler makes you handle `none`. A local must be assigned before it is read, so there is no zero value to forget about. Uninitialized memory exists only in `unsafe` code.
+A reference is never null. A value that may be absent is `?T`, and the compiler makes you handle `none`. A local must be assigned before it is read, so there is no zero value to forget about. Uninitialized memory exists only in `unsafe` code. Zeroing is a call you write, `mem.Zeroed[T]()`, and only for a type whose all-zero bytes are a value: a C struct of many fields, never a reference or a `str`.
 
 ## Errors
 
@@ -58,7 +58,7 @@ If error sets were inferred from bodies, as in Zig, or open, as Go's `error` is,
 
 ### Why can't errors carry references?
 
-Error payloads are plain data. An error then allocates nothing, holds no loans, and can always travel up the stack past the data it describes. It carries an offset or a line number, not the text.
+Error payloads are plain data. An error then allocates nothing, holds no loans, and can always travel up the stack past the data it describes. It carries an offset or a line number, not the text it was reading. The one exception is a `str` that lives as long as the program, such as a literal or a `const`: it borrows from no frame, so an error that holds it still travels anywhere, and a message such as `Unsupported(feature: "generators")` needs no table of codes. The loan checker accepts only such strings there (E0605).
 
 ### Why does a panic end the process?
 
@@ -119,7 +119,7 @@ An interface takes type parameters instead of associated types. One `impl` per t
 
 ### Why no tuples?
 
-Mk has named records: `(quot: i64, rem: i64)`. Destructuring matches by name, so swapping two fields is a compile error rather than a silent bug. The same form carries `Print`'s arguments.
+Mk has named records: `(quot: i64, rem: i64)`. Destructuring matches by name, so swapping two fields is a compile error rather than a silent bug. The same form carries `Print`'s arguments. Only an array, whose elements are all of one type and have no names, is taken apart by position, with its own brackets: `[a, b] := xs`.
 
 ### Why no shadowing?
 
@@ -188,6 +188,10 @@ Cancellation is level-triggered, as in Trio: once a scope is cancelled, every ca
 ### Why don't task stacks grow?
 
 Moving a stack needs a precise map of every pointer on it, and segmented stacks are slow when a call sits on a segment boundary. Mk gives each task a fixed slot of address space, touched on demand, with a guard page below it. A scope can ask for a larger stack size.
+
+### Why can't an `extern` be declared stack-free?
+
+A direct `extern` call switches to the system stack, because C code may need more stack than a task has. A stub that uses no stack does not need the switch. But a marker saying so, on the declaration or in the manifest, would be a second way to do what a call through a `fn` value already does: that is an ordinary call on the task's stack, and when the value is named in the calling function, `--release` makes it a direct call. Inline `asm` needs no call at all. The claim that the stub uses no stack is the `unsafe` reason on the line that names it as a value ([stubs that use no stack](reference.md#c-sources-and-assembly-files)).
 
 ### Why no `select` statement?
 

@@ -8,6 +8,10 @@
 //   - mem.OffsetOf[T](field): the field's offset in T's layout; a field T
 //     lacks panics, so a compile-time evaluation reports E0901.
 //   - mem.Prefetch and atomic.Pause: nothing (hints).
+//   - mem.Zeroed[T](): the destination's bytes cleared (check has refused
+//     a T that is not zero-valid).
+//   - mem.AsBytes[T](p) and mem.SliceAsBytes[T](xs): read-only []u8 view
+//     over p or xs (check has refused padded and reference-holding types).
 //   - raw.AtomicCopy: raw.Move (whole elements, overlap as memmove).
 //   - raw.AtomicFill: x written n times.
 //   - runtime.Cycles: refused (extern), a fact of the run, never of a
@@ -78,6 +82,34 @@ func init() {
 		for i := uint64(0); i < n; i++ {
 			m.writeOp(f, m.argOp(f, t, 1), loc{a: ptrAlloc(d), off: ptrOff(d) + uint32(i*ti.size), tag: dt, ti: ti})
 		}
+	}
+	intrinsics["std.mem.Zeroed"] = func(m *Machine, f *frame, t *mir.Terminator, _ types.FnRef) {
+		d := m.dest(f, t)
+		n := d.ti.size
+		m.charge(c(n))
+		if n == 0 {
+			return
+		}
+		if m.tg != nil {
+			m.tacc(d.a, d.off, n, d.tag, accWrite)
+		}
+		m.mem.access(d.a, d.off, n, true).fill(d.off, uint32(n), 0)
+	}
+	intrinsics["std.mem.AsBytes"] = func(m *Machine, f *frame, t *mir.Terminator, fn types.FnRef) {
+		ti := m.targ(f, fn, 0)
+		dst := m.dest(f, t)
+		p := m.argU(f, t, 0)
+		storeSlice(m, dst, p, ti.size, m.ti(types.U8), false)
+	}
+	intrinsics["std.mem.SliceAsBytes"] = func(m *Machine, f *frame, t *mir.Terminator, fn types.FnRef) {
+		ti := m.targ(f, fn, 0)
+		dst := m.dest(f, t)
+		p, n := m.sliceWords(m.operandLoc(f, m.argOp(f, t, 0)))
+		b, ok := mulBytes(n, ti.size)
+		if !ok {
+			refuse(types.RefuseRawAccess, "")
+		}
+		storeSlice(m, dst, p, b, m.ti(types.U8), false)
 	}
 	intrinsics["std.mem.OffsetOf"] = func(m *Machine, f *frame, t *mir.Terminator, fn types.FnRef) {
 		ti := m.targ(f, fn, 0)

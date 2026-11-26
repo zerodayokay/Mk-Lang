@@ -5,7 +5,8 @@
 // declContract, declInvariant and declLiteral (functions, methods, externs,
 // interface methods, fn literals, contract predicates and invariants),
 // runFlows (every signature's flows, flows.go), entry and mainRules (Main),
-// and the printers sigString, sigWithClauses, writtenFlows and flowText.
+// and the printers sigString, sigWithClauses, writtenFlows and flowText,
+// and spelled (Signature.Spelled: the types as an alias writes them).
 //
 // How: generics are the prefix, the owning type's, then the function's own;
 // a contract predicate's signature is its function's, plus the captures its
@@ -29,11 +30,23 @@ import (
 // Flows are step 5's (flows); contracts are attached by the caller.
 func (x *tctx) signature(item types.ItemID, name source.Symbol, s *ast.Signature, prefix []types.GenericParam, extern, exported bool) types.Signature {
 	tab := x.tab()
+	spelling, aliases := x.spelling, x.aliases
+	x.spelling, x.aliases = true, nil
 	gens := x.generics(s.TypeParams, prefix)
 	sig := types.Signature{Item: item, Name: name, Generics: gens, OwnGenerics: uint32(len(gens) - len(prefix)),
 		Exported: exported, Extern: extern, Span: s.Span()}
 	if s.Name != nil && s.Name.Name != nil {
 		sig.Span = s.Name.Name.Span()
+	}
+	var spelled []string // Spelled, set by spell
+	spell := func(i int, n ast.Node, t types.TypeID) {
+		if len(x.aliases) == 0 || t == types.Poison {
+			return
+		}
+		if w := x.spelled(n, t, gens); w != tab.TypeString(t, gens) {
+			spelled = append(spelled, make([]string, i+1-len(spelled))...)
+			spelled[i] = w
+		}
 	}
 	if s.Self != nil {
 		self := x.self
@@ -71,6 +84,7 @@ func (x *tctx) signature(item types.ItemID, name source.Symbol, s *ast.Signature
 				pr.Into = types.ParamIndex(r.A)
 			}
 		}
+		spell(len(sig.Params), p.Type, pr.Type)
 		sig.Params = append(sig.Params, pr)
 	}
 	var resOK bool
@@ -81,8 +95,165 @@ func (x *tctx) signature(item types.ItemID, name source.Symbol, s *ast.Signature
 		// return in its body is judged against a partial set.
 		sig.Result, sig.Errors = types.Poison, types.EmptyErrors
 	}
+	if s.Result != nil {
+		spell(len(sig.Params), s.Result, tab.ReturnType(sig.Result, sig.Errors))
+	}
+	if spelled != nil {
+		sig.Spelled = append(spelled, make([]string, len(sig.Params)+1-len(spelled))...)
+	}
+	x.spelling, x.aliases = spelling, aliases
 	sig.Variadic = s.Ellipsis != (source.Span{})
 	return sig
+}
+
+// spelled spells type expression n, whose type is t, as TypeString spells
+// t, but each alias n names (x.aliases) by its name and arguments, as the
+// declaration writes it. The walk follows TypeString's prefix
+// operators, a named type's arguments and E!T; any other shape, a fn type
+// or a record, is spelled resolved, aliases and all.
+func (x *tctx) spelled(n ast.Node, t types.TypeID, gs []types.GenericParam) string {
+	var b strings.Builder
+	x.spell(&b, n, t, gs)
+	return b.String()
+}
+
+func (x *tctx) spell(b *strings.Builder, n ast.Node, t types.TypeID, gs []types.GenericParam) {
+	tab := x.tab()
+	if u, ok := x.aliases[n]; ok {
+		b.WriteString(x.m.c.cfg.Interner.Str(u.item.Name))
+		x.spellArgs(b, typeArgsOf(n), u.args, gs)
+		return
+	}
+	ty := tab.Get(t)
+	prefix := func(op string, k types.TypeKind, elem ast.Node) bool {
+		if ty.Kind != k {
+			return false
+		}
+		b.WriteString(op)
+		x.spellOperand(b, elem, ty.Elem, gs, k == types.KMut)
+		return true
+	}
+	done := false
+	switch n := n.(type) {
+	case *ast.ParenType:
+		x.spell(b, n.Type, t, gs)
+		return
+	case *ast.ParenExpr:
+		x.spell(b, n.X, t, gs)
+		return
+	case *ast.RecordLit:
+		if len(n.Fields) == 1 && n.Fields[0] != nil && n.Fields[0].Value == nil && n.Fields[0].Name != nil {
+			x.spell(b, n.Fields[0].Name, t, gs) // (T) is T in a bracket, as typeOf reads it
+			return
+		}
+	case *ast.RefType:
+		done = prefix("&", types.KRef, n.Elem)
+	case *ast.MutType:
+		done = prefix("mut ", types.KMut, n.Elem)
+	case *ast.MutSliceType:
+		done = prefix("mut []", types.KMutSlice, n.Elem)
+	case *ast.SliceType:
+		done = prefix("[]", types.KSlice, n.Elem)
+	case *ast.OptionalType:
+		done = prefix("?", types.KOptional, n.Elem)
+	case *ast.RawPtrType:
+		done = prefix("*", types.KRawPtr, n.Elem)
+	case *ast.UnaryExpr:
+		switch n.Op {
+		case ast.TokAmp:
+			done = prefix("&", types.KRef, n.X)
+		case ast.TokMut:
+			done = prefix("mut ", types.KMut, n.X)
+		case ast.TokStar:
+			done = prefix("*", types.KRawPtr, n.X)
+		}
+	case *ast.ArrayType:
+		done = prefix("["+tab.ConstArgString(ty.Len, gs)+"]", types.KArray, n.Elem)
+	case *ast.ErrorType:
+		done = x.spellUnion(b, n.Errors, n.Ok, ty, gs)
+	case *ast.BinaryExpr:
+		if n.Op == ast.TokBang {
+			done = x.spellUnion(b, n.X, n.Y, ty, gs)
+		}
+	case *ast.PathType, *ast.IndexExpr:
+		if args := typeArgsOf(n); ty.Kind == types.KNamed && len(args) > 0 {
+			b.WriteString(x.m.c.cfg.Interner.Str(x.m.c.cfg.Items.Get(ty.Item).Name))
+			x.spellArgs(b, args, ty.Args, gs)
+			done = true
+		}
+	}
+	if !done {
+		b.WriteString(tab.TypeString(t, gs))
+	}
+}
+
+// spellOperand is writeOperand's: the operand of a prefix operator, in
+// parentheses where TypeString writes them, but not around an alias.
+func (x *tctx) spellOperand(b *strings.Builder, n ast.Node, t types.TypeID, gs []types.GenericParam, afterMut bool) {
+	tab := x.tab()
+	k := tab.Kind(t)
+	union := k == types.KErrorSet && len(tab.Members(tab.Get(t).Errors)) > 1
+	if _, alias := x.aliases[n]; !alias && (k == types.KErrorUnion || union || afterMut && k == types.KSlice) {
+		b.WriteByte('(')
+		x.spell(b, n, t, gs)
+		b.WriteByte(')')
+		return
+	}
+	x.spell(b, n, t, gs)
+}
+
+// spellUnion spells E!T of type ty: an alias of an error set by its name.
+func (x *tctx) spellUnion(b *strings.Builder, es, ok ast.Node, ty *types.Type, gs []types.GenericParam) bool {
+	if ty.Kind != types.KErrorUnion {
+		return false
+	}
+	for p, isParen := es.(*ast.ParenType); isParen; p, isParen = es.(*ast.ParenType) {
+		es = p.Type
+	}
+	if u, alias := x.aliases[es]; alias && len(u.args) == 0 {
+		b.WriteString(x.m.c.cfg.Interner.Str(u.item.Name))
+	} else {
+		b.WriteString(x.tab().TypeString(x.tab().ErrorSetType(ty.Errors), gs))
+	}
+	b.WriteByte('!')
+	x.spell(b, ok, ty.Elem, gs)
+	return true
+}
+
+// spellArgs spells [A, B] for written arguments ns of values args.
+func (x *tctx) spellArgs(b *strings.Builder, ns []ast.TypeOrExpr, args []types.GenericArg, gs []types.GenericParam) {
+	if len(args) == 0 {
+		return
+	}
+	tab := x.tab()
+	b.WriteByte('[')
+	for i, a := range args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		switch {
+		case a.IsConst:
+			b.WriteString(tab.ConstArgString(a.Const, gs))
+		case len(ns) == len(args):
+			x.spell(b, ns[i], a.Type, gs)
+		default:
+			b.WriteString(tab.TypeString(a.Type, gs))
+		}
+	}
+	b.WriteByte(']')
+}
+
+// typeArgsOf is the written type arguments of a named type node.
+func typeArgsOf(n ast.Node) []ast.TypeOrExpr {
+	switch n := n.(type) {
+	case *ast.PathType:
+		if n.Args != nil {
+			return n.Args.Args
+		}
+	case *ast.IndexExpr:
+		return n.Args
+	}
+	return nil
 }
 
 // declFunc declares a function-like item: a function, method, extern, fn
@@ -136,14 +307,8 @@ func (m *Module) ownerContext(it *types.Item, x *tctx, s *ast.Signature) []types
 		return d.Generics
 	case types.KindStruct, types.KindEnum, types.KindInterface:
 		gens := append([]types.GenericParam(nil), c.genericsOf(o)...)
-		if s.Name != nil && s.Name.OwnerArgs != nil && len(s.Name.OwnerArgs.Args) != len(gens) {
-			// `A[T].M` for an A with another number of parameters: resolve
-			// numbered the written names, so the unit gets exactly those, as
-			// opaque parameters, and Self is Poison.
-			x.errorf(diag.E0304, s.Name.OwnerArgs.Span(), "`"+c.cfg.Interner.Str(o.Name)+"` takes a different number of type arguments").
-				Text("reason", "type-arguments").Int("expected", int64(len(gens))).Int("found", int64(len(s.Name.OwnerArgs.Args)))
-			x.self = types.Poison
-			return writtenOwnerGens(s.Name.OwnerArgs.Args)
+		if g, bad := m.ownerArity(o, x, s, len(gens)); bad {
+			return g
 		}
 		if s.Name != nil && s.Name.OwnerArgs != nil {
 			for i, a := range s.Name.OwnerArgs.Args {
@@ -160,11 +325,35 @@ func (m *Module) ownerContext(it *types.Item, x *tctx, s *ast.Signature) []types
 			x.self = types.Poison
 			return nil
 		}
+		if g, bad := m.ownerArity(o, x, s, len(d.Generics)); bad {
+			return g
+		}
 		x.self = d.Type
 		return d.Generics
+	case types.KindError:
+		// An error takes no type parameters; Self is its type, the set of
+		// that one error, as an expression `E(...)` is typed.
+		if g, bad := m.ownerArity(o, x, s, 0); bad {
+			return g
+		}
+		x.self = errorType(tab, o.ID)
+		return nil
 	}
 	x.self = types.Poison
 	return nil
+}
+
+// ownerArity is E0304 for `A[T].M` whose prefix names another number of
+// type parameters than owner o's n: resolve numbered the written names, so
+// the unit gets exactly those, as opaque parameters, and Self is Poison.
+func (m *Module) ownerArity(o *types.Item, x *tctx, s *ast.Signature, n int) ([]types.GenericParam, bool) {
+	if s.Name == nil || s.Name.OwnerArgs == nil || len(s.Name.OwnerArgs.Args) == n {
+		return nil, false
+	}
+	x.errorf(diag.E0304, s.Name.OwnerArgs.Span(), "`"+m.c.cfg.Interner.Str(o.Name)+"` takes a different number of type arguments").
+		Text("reason", "type-arguments").Int("expected", int64(n)).Int("found", int64(len(s.Name.OwnerArgs.Args)))
+	x.self = types.Poison
+	return writtenOwnerGens(s.Name.OwnerArgs.Args), true
 }
 
 // writtenOwnerGens are opaque parameters named as written in `A[T, U].M`.

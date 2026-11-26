@@ -52,6 +52,8 @@ type Member struct {
 // and Type.Name functions (impl methods are found through the impl tables,
 // since an impl may live in the interface's module). list is sorted by name
 // bytes; exact and folded are lookups only, never iterated into output.
+// folded is keyed by resolve.MemberKey, so a field and a method whose names
+// fold alike are two entries.
 type memberSet struct {
 	list   []Member
 	spans  []source.Span // parallel to list
@@ -63,11 +65,14 @@ func newMemberSet() *memberSet {
 	return &memberSet{exact: map[source.Symbol]int32{}, folded: map[string]int32{}}
 }
 
-// add appends a member unless its folded name is taken: that collision was
-// resolve's E0206 and the later entry is absent.
+// add appends a member unless its key or its exact name is taken: that
+// collision was resolve's E0206 and the later entry is absent.
 func (s *memberSet) add(in *source.Interner, mb Member, at source.Span) {
-	f := resolve.Fold(in.Str(mb.Name))
+	f := resolve.MemberKey(in.Str(mb.Name), mb.Kind == MemberField)
 	if _, dup := s.folded[f]; dup {
+		return
+	}
+	if _, dup := s.exact[mb.Name]; dup {
 		return
 	}
 	s.list = append(s.list, mb)
@@ -87,7 +92,7 @@ func (s *memberSet) sortList(in *source.Interner) {
 	for i, j := range idx {
 		list[i], spans[i] = s.list[j], s.spans[j]
 		s.exact[list[i].Name] = int32(i)
-		s.folded[resolve.Fold(in.Str(list[i].Name))] = int32(i)
+		s.folded[resolve.MemberKey(in.Str(list[i].Name), list[i].Kind == MemberField)] = int32(i)
 	}
 	s.list, s.spans = list, spans
 }
@@ -125,7 +130,9 @@ func (m *Module) memberPass() {
 	}
 	for _, iid := range ids {
 		it := c.cfg.Items.Get(iid)
-		if it.Kind != types.KindFunc || (it.Owner == types.NoItem && it.OwnerPrim == types.NoType) {
+		// A struct's invariant is an unnamed function item of the struct
+		// (InvariantKey), not a member.
+		if it.Kind != types.KindFunc || (it.Owner == types.NoItem && it.OwnerPrim == types.NoType) || it.Name == source.NoSymbol {
 			continue
 		}
 		m.guard(it, func() { m.placeMethod(it) })
@@ -163,6 +170,9 @@ func (m *Module) placeMethod(it *types.Item) {
 			orphan(c.cfg.Interner.Str(o.Name))
 			return
 		}
+		if m.errorFormatMethod(it, o) {
+			return
+		}
 		if s := m.members[o.ID]; s != nil {
 			s.add(c.cfg.Interner, mb, it.Span)
 		}
@@ -176,6 +186,9 @@ func (m *Module) placeMethod(it *types.Item) {
 		ck, ok := c.ctorOf(ad.Type)
 		switch {
 		case ok && ck.item != types.NoItem && c.ctorModule(ck) == m.ID:
+			if m.errorFormatMethod(it, c.cfg.Items.Get(ck.item)) {
+				return
+			}
 			if s := m.members[ck.item]; s != nil {
 				s.add(c.cfg.Interner, mb, it.Span)
 			}
@@ -185,6 +198,20 @@ func (m *Module) placeMethod(it *types.Item) {
 			orphan(c.cfg.Types.TypeString(ad.Type, nil))
 		}
 	}
+}
+
+// errorFormatMethod reports a Type.Name Format of error o, directly or
+// through an alias, as E0206: an error's Format is the compiler's impl
+// method, decided after implCollisions, so it is judged here as a written
+// impl's would be there, and `e.Format(w)` stays the impl's.
+func (m *Module) errorFormatMethod(it, o *types.Item) bool {
+	in := m.c.cfg.Interner
+	if o.Kind != types.KindError || resolve.MemberKey(in.Str(it.Name), false) != resolve.MemberKey("Format", false) {
+		return false
+	}
+	m.Diags = append(m.Diags, diag.New(diag.E0206, it.Span, "`"+in.Str(it.Name)+"` is already a member of `"+
+		in.Str(o.Name)+"`: an error's `Format` is the compiler's").In(diag.PhaseTypes).Loc("first", o.Span))
+	return true
 }
 
 // primSet is the std member set of a builtin owner type in this module.
@@ -209,8 +236,8 @@ func (c *Checker) ctorSet(k ctorKey) *memberSet {
 }
 
 // ownMemberSpan finds a declared member (field, variant, Type.Name) of ck by
-// folded name: for a named constructor in its module's set, for a builtin
-// in the std sets this module sees.
+// resolve.MemberKey: for a named constructor in its module's set, for a
+// builtin in the std sets this module sees.
 func (m *Module) ownMemberSpan(ck ctorKey, folded string) (source.Span, bool) {
 	if s := m.c.ctorSet(ck); s != nil {
 		if i, ok := s.folded[folded]; ok {

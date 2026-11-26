@@ -1,5 +1,5 @@
-// Why: a Stable std module must not depend on the Experimental std.x509 or
-// std.tls.
+// Why: a Stable std module must not depend on the Experimental std.x509,
+// std.tls or std.quic.
 // What: TestX509_LayerNoStableImportsExperimental and
 // TestX509_LayerCheckCatches.
 // How: reads the import lines of every std/**/*.mk file and the class table of
@@ -20,7 +20,7 @@ import (
 )
 
 // x509Guarded are the modules no Stable module may import.
-var x509Guarded = []string{"std.x509", "std.tls"}
+var x509Guarded = []string{"std.x509", "std.tls", "std.quic"}
 
 // x509ClassRow matches one Experimental row of internal/driver's
 // moduleClasses table.

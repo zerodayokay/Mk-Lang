@@ -1,0 +1,5 @@
+# *void built with `void` as a written type argument of std.raw: raw.PtrCast[T, void],
+# raw.PtrCast[void, T], raw.Null[void] and raw.FromAddr[void]. The checker refused the argument
+# (E0301) while it inferred the same one for raw.Addr. Both profiles, both targets.
+case ok
+stdout voidptr.out

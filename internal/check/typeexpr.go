@@ -60,6 +60,18 @@ type tctx struct {
 	// in its Generics), so a const value argument over them folds
 	// (requiresArg: `F(k, t)` in `G[const k: int]`); nil elsewhere.
 	argGens map[uint32]fval
+	// spelling is set while signature reads a signature's types: alias
+	// then records each alias a type expression names in aliases, by the
+	// node, for Signature.Spelled (spelled, sig.go). aliases stays nil
+	// until one is met.
+	spelling bool
+	aliases  map[ast.Node]aliasUse
+}
+
+// aliasUse is one alias a type expression names, with its arguments.
+type aliasUse struct {
+	item *types.Item
+	args []types.GenericArg
 }
 
 // emit records diagnostics where this context reports.
@@ -79,6 +91,7 @@ const (
 	posResult      // a function or fn type result: void and never
 	posOk          // the T of E!T: void
 	posPtr         // the pointee of *T: void
+	posArg         // a type argument written at a generic call: void, as inference may choose it
 )
 
 func (x *tctx) tab() *types.Table { return x.m.c.cfg.Types }
@@ -499,6 +512,12 @@ func (x *tctx) alias(n ast.Node, it *types.Item, args []ast.TypeOrExpr, p tpos) 
 	if t == types.Void && p == posPlain || t == types.Never && p != posResult {
 		x.errorf(diag.E0301, n.Span(), "`"+x.str(t)+"` is only a result type").Text("expected", "type").Text("found", x.str(t))
 		return types.Poison
+	}
+	if x.spelling {
+		if x.aliases == nil {
+			x.aliases = map[ast.Node]aliasUse{}
+		}
+		x.aliases[n] = aliasUse{it, ga}
 	}
 	return t
 }

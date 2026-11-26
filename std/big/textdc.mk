@@ -37,7 +37,7 @@ TextLarge(a: &Arena, buf: mut []u8, x: []u64, ub: u64): OutOfMemory!int {
         try table.Push(try MulMag(&s, last, last))
     }
     all := table.Done()
-    try TextBlock(&s, mut buf[1..], x, ub, k, bb, all[..])
+    try TextBlock(&s, mut buf[1..], x, ub, k, bb, all[..], DepthLimit)
     var pos := 1
     for pos < buf.Len() - 1 && buf[pos] == 0x30 {
         pos += 1
@@ -46,12 +46,13 @@ TextLarge(a: &Arena, buf: mut []u8, x: []u64, ub: u64): OutOfMemory!int {
 }
 
 // TextBlock writes x's digits right-aligned over all of buf, left-padded
-// with '0'; x < base^buf.Len(). table holds the powers it may divide by.
-TextBlock(s: &Arena, buf: mut []u8, x: []u64, ub: u64, k: int, bb: u64, table: [][]u64): OutOfMemory!void {
+// with '0'; x < base^buf.Len(). table holds the powers it may divide by. At
+// depth 0 it converts x by the leaf's chunk loop alone.
+TextBlock(s: &Arena, buf: mut []u8, x: []u64, ub: u64, k: int, bb: u64, table: [][]u64, depth: u8): OutOfMemory!void {
     var q := x
     var hi := buf.Len()
     var t := table.Len() - 1
-    for q.Len() > TextLeafWords && t >= 0 {
+    for q.Len() > TextLeafWords && t >= 0 && depth > 0 {
         // The largest table power below q, near its square root.
         half := q.Len() / 2
         for t > 0 && table[t - 1].Len() > half {
@@ -65,7 +66,7 @@ TextBlock(s: &Arena, buf: mut []u8, x: []u64, ub: u64, k: int, bb: u64, table: [
         }
         (q: qq, r) := try DivMag(s, q, table[t])
         nd := k << t
-        try TextBlock(s, mut buf[hi - nd..hi], r, ub, k, bb, table[..t])
+        try TextBlock(s, mut buf[hi - nd..hi], r, ub, k, bb, table[..t], depth - 1)
         hi -= nd
         q = qq
     }

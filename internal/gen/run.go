@@ -162,12 +162,19 @@ type LineResult struct {
 	Steps uint64
 	Reads types.ReadSet
 	// Poisoned is set when an evaluation of the line (its fuel const, or
-	// its EvalGen run) returned poison, or the run read a method signature
-	// type that failed to check: the cause has its own diagnostic
+	// its EvalGen run) returned poison, the run read a method signature
+	// type that failed to check, or the generator or a function argument of
+	// another module has no declaration because an error before types kept
+	// its module from being checked: the cause has its own diagnostic
 	// elsewhere and the line emitted nothing. gen calls the Evaluator
 	// itself, so the driver reads this, not its own Eval shim, to keep
 	// the module out of the cache.
 	Poisoned bool
+	// Fail is the line's first diagnostic when the line emitted nothing
+	// because of an error of its own (binding, fuel, the run, g.Fail), nil
+	// otherwise. A name its output would have declared is then unknown,
+	// and the driver makes that E0201 a consequence of Fail.
+	Fail *diag.Diagnostic
 }
 
 // slot is one line's work: bound arguments, then the run's outcome.
@@ -222,6 +229,9 @@ func (c *Context) Run(module types.ModuleID, lines []Line) *Output {
 	}
 	wg.Wait()
 	for i := range slots {
+		if len(slots[i].diags) > 0 {
+			slots[i].res.Fail = slots[i].diags[0]
+		}
 		out.Lines = append(out.Lines, slots[i].res)
 		out.Diags = append(out.Diags, slots[i].diags...)
 		out.pending = append(out.pending, slots[i].wait...)
@@ -246,16 +256,24 @@ func (c *Context) bind(l *Line, s *slot) bool {
 	if l.Node != nil && l.Node.Generator != nil {
 		pathAt = l.Node.Generator.Span()
 	}
-	fd, ok := g.Decl.(*types.FuncDecl)
-	if g.Kind != types.KindFunc || !ok {
+	if g.Kind != types.KindFunc {
 		s.diags = append(s.diags, diag.New(diag.E0301, pathAt, "`"+l.Path+"` is not a function, so it cannot be a generator").
 			Text("expected", "a generator function").Text("found", g.Kind.String()))
 		return false
 	}
 	if g.Module == module {
+		// Before the declaration test: a function of this module has no
+		// declaration yet in stage 4.
 		req := c.request(l, module, nil, 0)
 		err := &types.EvalError{Kind: types.EvalStage, Items: []types.ItemID{l.Generator}, Trace: []source.Span{l.Span}, At: l.Span}
 		s.diags = append(s.diags, eval.Render(err, req, c.Items, c.Interner))
+		return false
+	}
+	fd, ok := g.Decl.(*types.FuncDecl)
+	if !ok {
+		// Never checked: its module, or one it imports, has an error
+		// before types, reported there (Poisoned).
+		s.res.Poisoned = true
 		return false
 	}
 	sig := &fd.Sig
@@ -326,9 +344,12 @@ func (c *Context) bind(l *Line, s *slot) bool {
 			s.res.Decl.Args = append(s.res.Decl.Args, types.GenArg{Kind: types.GenLiteral, Value: v})
 			s.args = append(s.args, v)
 		case ArgFunction:
-			h, d := c.bindFunction(r, a, p.Type)
-			if d != nil {
-				s.diags = append(s.diags, d)
+			h, d, poison := c.bindFunction(r, a, p.Type)
+			if d != nil || poison {
+				if d != nil {
+					s.diags = append(s.diags, d)
+				}
+				s.res.Poisoned = s.res.Poisoned || poison
 				runs = false
 				continue
 			}

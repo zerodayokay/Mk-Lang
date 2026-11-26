@@ -67,6 +67,9 @@ struct Port {
     num: int
     udp: bool
     backlog: Vec[int]
+    busy_until: i64
+    connected: bool
+    peer: core.IoAddr
 }
 
 struct Dgram {
@@ -219,7 +222,15 @@ Bind(w: mut World, num: int, udp: bool, e: mut core.SysErr): int {
         *e = core.SysErr.AddrInUse
         return -1
     }
-    port := Port(used: true, num: n, udp: udp, backlog: Vec[int].Empty())
+    port := Port(
+        used: true,
+        num: n,
+        udp: udp,
+        backlog: Vec[int].Empty(),
+        busy_until: 0,
+        connected: false,
+        peer: core.IoAddr(ip: [0; 16], port: 0, v6: false, zone: 0),
+    )
     for i in 0..w.ports.Len() {
         if !w.ports.Get(i).used {
             w.ports.Set(i, port)
@@ -374,6 +385,79 @@ NetAccept(w: mut World, h: uint): core.IoResult {
     return r
 }
 
+// NetLatency draws a delivery delay from w.net_faults.latency_lo..latency_hi.
+NetLatency(w: mut World): i64 {
+    lo0 := w.net_faults.latency_lo.Nanos()
+    hi0 := w.net_faults.latency_hi.Nanos()
+    if lo0 == LatLo && hi0 == LatHi {
+        return w.Latency(LatLo, LatHi)
+    }
+    lo := if lo0 < 0 { 0 } else { lo0 }
+    hi := if hi0 < lo { lo } else { hi0 }
+    if hi == lo {
+        return lo
+    }
+    return w.Latency(lo, hi)
+}
+
+SetBlackhole(w: mut World, port: int, on: bool) {
+    if on {
+        for i in 0..w.blackholes.Len() {
+            if w.blackholes.Get(i) == port {
+                return
+            }
+        }
+        _ = w.blackholes.Push(port)
+        return
+    }
+    for i in 0..w.blackholes.Len() {
+        if w.blackholes.Get(i) == port {
+            _ = w.blackholes.RemoveAt(i)
+            return
+        }
+    }
+}
+
+IsBlackholed(w: &World, port: int): bool {
+    for i in 0..w.blackholes.Len() {
+        if w.blackholes.Get(i) == port {
+            return true
+        }
+    }
+    return false
+}
+
+NetRebind(w: mut World, port: int) {
+    pi := FindPort(&*w, port, true)
+    if pi < 0 {
+        return
+    }
+    var n := 0
+    for k in 0..16384 {
+        cand := 49152 + (w.next_port - 49152 + k) % 16384
+        if cand != port && FindPort(&*w, cand, true) < 0 {
+            n = cand
+            w.next_port = 49152 + (cand - 49152 + 1) % 16384
+            break
+        }
+    }
+    if n > 0 {
+        w.ports.Mut(pi).num = n
+    }
+}
+
+DgramMatchesPeer(from: core.IoAddr, peer: core.IoAddr): bool {
+    if from.port != peer.port || from.v6 != peer.v6 {
+        return false
+    }
+    for i in 0..16 {
+        if from.ip[i] != peer.ip[i] {
+            return false
+        }
+    }
+    return true
+}
+
 // rtt is set to the dial's round trip, which the caller charges.
 NetDial(w: mut World, addr: str, rtt: mut i64): core.IoResult {
     num := ParsePort(addr)
@@ -385,7 +469,7 @@ NetDial(w: mut World, addr: str, rtt: mut i64): core.IoResult {
         return Fail(core.SysErr.NotFound)
     }
     pi := FindPort(&*w, num, false)
-    *rtt = w.Latency(LatLo, LatHi) * 2
+    *rtt = NetLatency(w) * 2
     if pi < 0 {
         return Fail(core.SysErr.Refused)
     }
@@ -495,10 +579,11 @@ DgramInFlight(w: &World, h: uint): i64 {
         return 0
     }
     pi := w.handles.Get(hi).obj
+    p := w.ports.Get(pi)
     var first: i64 = 0
     for k in 0..w.dgrams.Len() {
         d := w.dgrams.Get(k)
-        if d.used && d.to == pi {
+        if d.used && d.to == pi && (!p.connected || DgramMatchesPeer(d.from, p.peer)) {
             if d.at <= w.clock {
                 return 0
             }
@@ -551,6 +636,14 @@ NetRecv(w: mut World, h: uint, buf: mut []u8, hold: bool): core.IoResult {
 NetSend(w: mut World, h: uint, data: []u8): core.IoResult {
     hi := FindHand(&*w, h, HConn)
     if hi < 0 {
+        uh := FindHand(&*w, h, HUdp)
+        if uh >= 0 {
+            pi := w.handles.Get(uh).obj
+            if w.ports.Get(pi).connected {
+                return NetSendTo(w, h, data, w.ports.Get(pi).peer)
+            }
+            return Fail(core.SysErr.InvalidAddress)
+        }
         return Fail(core.SysErr.Closed)
     }
     i := w.handles.Get(hi).obj
@@ -571,6 +664,15 @@ NetSend(w: mut World, h: uint, data: []u8): core.IoResult {
     if data.Len() == 0 {
         return Ok(0)
     }
+    cap := w.net_faults.stream_buffer
+    if cap > 0 {
+        room := cap - (w.ends.Get(p).data.Len() - w.ends.Get(p).head)
+        if room <= 0 {
+            return core.IoResult(value: 0, err: core.SysErr.Canceled, os: Full)
+        }
+        n := if data.Len() > room { room } else { data.Len() }
+        return Deliver(w, p, data[0..n])
+    }
     return Deliver(w, p, data)
 }
 
@@ -579,8 +681,8 @@ NetSend(w: mut World, h: uint, data: []u8): core.IoResult {
 // previous one (the model above). NoSpace when memory runs out.
 Deliver(w: mut World, p: int, data: []u8): core.IoResult {
     cut := if data.Len() > 1 && (w.Next() & 1) == 1 { 1 + Cast[int](w.Below(Cast[u64](data.Len() - 1))) } else { data.Len() }
-    lat1 := w.Latency(LatLo, LatHi)
-    lat2 := w.Latency(LatLo, LatHi)
+    lat1 := NetLatency(w)
+    lat2 := NetLatency(w)
     clock := w.clock
     e := w.ends.Mut(p)
     base := e.data.Len()
@@ -651,16 +753,69 @@ NetUdp(w: mut World, addr: core.IoAddr): core.IoResult {
     return core.IoResult(value: r.value, err: core.SysErr.None, os: i64(w.ports.Get(pi).num))
 }
 
+NetUdpConnect(w: mut World, h: uint, to: core.IoAddr): core.IoResult {
+    hi := FindHand(&*w, h, HUdp)
+    if hi < 0 {
+        return Fail(core.SysErr.Closed)
+    }
+    pi := w.handles.Get(hi).obj
+    w.ports.Mut(pi).connected = true
+    w.ports.Mut(pi).peer = to
+    for k in 0..w.dgrams.Len() {
+        d := w.dgrams.Mut(k)
+        if d.used && d.to == pi && !DgramMatchesPeer(d.from, to) {
+            d.data.Free()
+            d.used = false
+        }
+    }
+    return Ok(0)
+}
+
+PushDgram(w: mut World, dst: int, from_addr: core.IoAddr, data: []u8, at: i64, seq: u64): bool {
+    var body := Vec[u8].Empty()
+    if !AppendBytes(mut body, data) {
+        return false
+    }
+    d := Dgram(used: true, to: dst, from: from_addr, data: body, at: at, seq: seq)
+    for k in 0..w.dgrams.Len() {
+        if !w.dgrams.Get(k).used {
+            w.dgrams.Set(k, d)
+            return true
+        }
+    }
+    if !w.dgrams.Push(d) {
+        body.Free()
+        return false
+    }
+    return true
+}
+
+DgramArrival(w: mut World, dst: int, lat: i64, nbytes: int): i64 {
+    var at := w.clock + lat
+    rate := w.net_faults.rate
+    if rate > 0 {
+        tx := if i64(nbytes) > 0x7FFF_FFFF_FFFF_FFFF / 1_000_000_000 { 0x7FFF_FFFF_FFFF_FFFF / rate } else { i64(nbytes) * 1_000_000_000 / rate }
+        busy := w.ports.Get(dst).busy_until
+        start := if at > busy { at } else { busy }
+        at = start + tx
+        w.ports.Mut(dst).busy_until = at
+    }
+    return at
+}
+
 NetSendTo(w: mut World, h: uint, data: []u8, to: core.IoAddr): core.IoResult {
     hi := FindHand(&*w, h, HUdp)
     if hi < 0 {
         return Fail(core.SysErr.Closed)
     }
     from := w.ports.Get(w.handles.Get(hi).obj).num
-    lat := w.Latency(LatLo, LatHi)
+    lat := NetLatency(w)
     seq := w.NextSeq()
     dst := FindPort(&*w, int(to.port), true)
-    if dst < 0 {
+    if dst < 0 || IsBlackholed(&*w, int(to.port)) {
+        return Ok(i64(data.Len()))
+    }
+    if w.net_faults.drop > 0 && w.Below(1_000_000) < u64(w.net_faults.drop) {
         return Ok(i64(data.Len()))
     }
     var ip: [16]u8 = [0; 16]
@@ -670,21 +825,21 @@ NetSendTo(w: mut World, h: uint, data: []u8, to: core.IoAddr): core.IoResult {
         ip[0] = 127
         ip[3] = 1
     }
-    var body := Vec[u8].Empty()
-    if !AppendBytes(mut body, data) {
+    from_addr := core.IoAddr(ip: ip, port: Trunc[u16](from), v6: to.v6, zone: 0)
+    if w.ports.Get(dst).connected && !DgramMatchesPeer(from_addr, w.ports.Get(dst).peer) {
+        return Ok(i64(data.Len()))
+    }
+    at := DgramArrival(w, dst, lat, data.Len())
+    if !PushDgram(w, dst, from_addr, data, at, seq) {
         return Fail(core.SysErr.NoSpace)
     }
-    d := Dgram(used: true, to: dst, from: core.IoAddr(ip: ip, port: Trunc[u16](from), v6: to.v6, zone: 0),
-        data: body, at: w.clock + lat, seq: seq)
-    for k in 0..w.dgrams.Len() {
-        if !w.dgrams.Get(k).used {
-            w.dgrams.Set(k, d)
-            return Ok(i64(data.Len()))
+    if w.net_faults.duplicate > 0 && w.Below(1_000_000) < u64(w.net_faults.duplicate) {
+        lat2 := NetLatency(w)
+        seq2 := w.NextSeq()
+        at2 := DgramArrival(w, dst, lat2, data.Len())
+        if !PushDgram(w, dst, from_addr, data, at2, seq2) {
+            return Fail(core.SysErr.NoSpace)
         }
-    }
-    if !w.dgrams.Push(d) {
-        body.Free()
-        return Fail(core.SysErr.NoSpace)
     }
     return Ok(i64(data.Len()))
 }
@@ -695,10 +850,11 @@ NetRecvFrom(w: mut World, h: uint, buf: mut []u8, from: mut core.IoAddr, hold: b
         return Fail(core.SysErr.Closed)
     }
     pi := w.handles.Get(hi).obj
+    p := w.ports.Get(pi)
     var best := -1
     for k in 0..w.dgrams.Len() {
         d := w.dgrams.Get(k)
-        if d.used && d.to == pi {
+        if d.used && d.to == pi && (!p.connected || DgramMatchesPeer(d.from, p.peer)) {
             if best < 0 {
                 best = k
             } else {
@@ -719,6 +875,46 @@ NetRecvFrom(w: mut World, h: uint, buf: mut []u8, from: mut core.IoAddr, hold: b
     if d.at > w.clock {
         w.clock = d.at
     }
+    var n := d.data.Len()
+    var cut: i64 = 0
+    if n > buf.Len() {
+        n = buf.Len()
+        cut = 1
+    }
+    for k in 0..n {
+        buf[k] = d.data.Get(k)
+    }
+    *from = d.from
+    d.data.Free()
+    d.used = false
+    return core.IoResult(value: i64(n), err: core.SysErr.None, os: cut)
+}
+
+NetTryRecvFrom(w: mut World, h: uint, buf: mut []u8, from: mut core.IoAddr): core.IoResult {
+    hi := FindHand(&*w, h, HUdp)
+    if hi < 0 {
+        return Fail(core.SysErr.Closed)
+    }
+    pi := w.handles.Get(hi).obj
+    p := w.ports.Get(pi)
+    var best := -1
+    for k in 0..w.dgrams.Len() {
+        d := w.dgrams.Get(k)
+        if d.used && d.to == pi && d.at <= w.clock && (!p.connected || DgramMatchesPeer(d.from, p.peer)) {
+            if best < 0 {
+                best = k
+            } else {
+                b := w.dgrams.Get(best)
+                if d.at < b.at || d.at == b.at && d.seq < b.seq {
+                    best = k
+                }
+            }
+        }
+    }
+    if best < 0 {
+        return Ok(-1)
+    }
+    d := w.dgrams.Mut(best)
     var n := d.data.Len()
     var cut: i64 = 0
     if n > buf.Len() {
@@ -793,6 +989,7 @@ DropRun(w: mut World) {
     w.handles.Truncate(0)
     w.kids.Truncate(0)
     w.ptys.Truncate(0)
+    w.blackholes.Truncate(0)
     // The keys typed for the ended run are lost with it; the terminal's
     // mode is as opened again.
     FreeEnd(mut w.term)
@@ -838,5 +1035,6 @@ FreeWorld(w: mut World) {
     w.mains.Free()
     w.joins.Free()
     w.dls.Free()
+    w.blackholes.Free()
     FreeDisk(w)
 }

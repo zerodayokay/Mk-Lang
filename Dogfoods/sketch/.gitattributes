@@ -1,0 +1,2 @@
+# Case inputs and expected outputs are compared byte for byte: never convert them.
+cases/** -text

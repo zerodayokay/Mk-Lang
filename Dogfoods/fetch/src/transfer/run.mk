@@ -7,6 +7,7 @@
 import std.fs
 import std.hash
 import std.http
+import std.math
 import std.net
 import std.time
 import std.url
@@ -18,9 +19,10 @@ const BodyBuffer = 32768
 error Truncated(got: i64)
 error LocalFile(why: fs.Error)
 error Refused(status: int)
+error Http3Required
 
 /// Why one attempt failed.
-type Failure = http.Error | url.Error | fs.Error | Truncated | Refused | LocalFile
+type Failure = http.Error | url.Error | fs.Error | Truncated | Refused | LocalFile | Http3Required
 
 /// Runs job against c: one attempt, then up to job.retry more after a
 /// retryable failure, all under job.max_time when it is set. Writes the
@@ -90,6 +92,9 @@ Retryable(code: int): bool {
 // Attempt makes one request for job and writes its result into res.
 Attempt(a: &Arena, c: &http.Client, io: Io, job: &Job, al: &Alloc, res: mut Outcome): Failure!void *job into a {
     var u := try url.Parse(a, job.link, none)
+    if job.h3_only && u.Scheme() != "https" {
+        fail Http3Required
+    }
     if job.query.Len() > 0 {
         q := u.Query()
         joined := if q.Len() > 1 { try a.Fmt("{q}&{job.query}", (q, job)) } else { job.query }
@@ -127,17 +132,34 @@ Attempt(a: &Arena, c: &http.Client, io: Io, job: &Job, al: &Alloc, res: mut Outc
         try Upload(a, c, io, job, &req, path, al, res)
         return
     }
-    reply := try c.Fetch(a, io, &req)
-    try Received(a, al, res, job, reply.status, reply.headers)
-    if job.head {
-        return
+    if job.versioned && (job.include || job.head || job.verbose || job.h3_only) {
+        var x := try Do(a, c, io, job, &req)
+        onerr x.Abandon()
+        version := x.Version()
+        status := x.status
+        hs := x.headers
+        data := try Collect(a, mut x, some(job.fetch_limit))
+        try x.Close(io)
+        try Received(a, al, res, job, version, status, hs)
+        if !job.head {
+            try PrintBody(a, al, res, job, data)
+        }
+    } else {
+        reply := try c.Fetch(a, io, &req)
+        try Received(a, al, res, job, http.HttpVersion.Http11, reply.status, reply.headers)
+        if !job.head {
+            try PrintBody(a, al, res, job, reply.body)
+        }
     }
-    text := str.From(reply.body) else {
-        n := reply.body.Len()
-        Note(al, res, job, a.Fmt("binary body of {n} bytes not shown; save it with -o FILE", (n)) else { "binary body not shown" })
-        return
+}
+
+Do(a: &Arena, c: &http.Client, io: Io, job: &Job, req: &http.ClientRequest): Failure!http.Exchange from a, c {
+    x := try c.Do(a, io, req)
+    if job.h3_only && x.Version() != http.HttpVersion.Http3 {
+        x.Abandon()
+        fail Http3Required
     }
-    try res.out.Push(al, text)
+    return x
 }
 
 // Upload sends the file at path as the request's body through a Reader,
@@ -156,10 +178,17 @@ Upload(a: &Arena into a, c: &http.Client, io: Io, job: &Job, req: &http.ClientRe
     var body := f.Reader(io, mut buf[..])
     var x := try c.DoStreaming(a, io, req, mut body, len)
     onerr x.Abandon()
+    if job.h3_only && x.Version() != http.HttpVersion.Http3 {
+        fail Http3Required
+    }
     try f.Close(io)
-    try Received(a, al, res, job, x.status, x.headers)
-    data := try Collect(a, mut x)
+    try Received(a, al, res, job, x.Version(), x.status, x.headers)
+    data := try Collect(a, mut x, none)
     try x.Close(io)
+    try PrintBody(a, al, res, job, data)
+}
+
+PrintBody(a: &Arena, al: &Alloc, res: mut Outcome, job: &Job, data: []u8): OutOfMemory!void {
     text := str.From(data) else {
         n := data.Len()
         Note(al, res, job, a.Fmt("binary body of {n} bytes not shown; save it with -o FILE", (n)) else { "binary body not shown" })
@@ -170,18 +199,30 @@ Upload(a: &Arena into a, c: &http.Client, io: Io, job: &Job, req: &http.ClientRe
 
 // Collect reads the rest of x's body into a, growing its buffer by
 // doubling.
-Collect(a: &Arena, x: mut http.Exchange): Failure![]u8 from a {
+Collect(a: &Arena, x: mut http.Exchange, limit: ?int): Failure![]u8 from a {
     var buf: [BodyBuffer]u8 = [0; BodyBuffer]
     var body := x.Body(mut buf[..])
-    var data := try a.Slice[u8](BodyBuffer)
+    max := limit else { 9223372036854775807 }
+    var data := try a.Slice[u8](math.Min(BodyBuffer, max))
     var n := 0
     for {
         if n == data.Len() {
-            bigger := try a.Slice[u8](data.Len() * 2)
+            if n == max {
+                var extra: [1]u8 = [0]
+                got := try body.Read(mut extra[..])
+                if got > 0 {
+                    fail http.TooLarge
+                }
+                break
+            }
+            bigger := try a.Slice[u8](n + math.Min(n, max - n))
             (mut bigger[..n]).CopyFrom(data[..n])
             data = bigger
         }
         got := body.Read(mut data[n..]) else {
+            if limit.IsSome() {
+                fail ReadError
+            }
             fail Truncated(got: i64(n))
         }
         if got == 0 {
@@ -206,9 +247,9 @@ Existing(io: Io, path: str): fs.Error!i64 {
 // Save streams the body of req's response into path through Client.Do,
 // appending when the server answers a ranged request with 206.
 Save(a: &Arena into a, c: &http.Client, io: Io, job: &Job, req: &http.ClientRequest, path: str, from: i64, al: &Alloc, res: mut Outcome): Failure!void {
-    var x := try c.Do(a, io, req)
+    var x := try Do(a, c, io, job, req)
     onerr x.Abandon()
-    try Received(a, al, res, job, x.status, x.headers)
+    try Received(a, al, res, job, x.Version(), x.status, x.headers)
     if x.status == 416 && from > 0 {
         try x.Close(io)
         try Summary(a, io, al, res, job, path, "already complete")
@@ -274,21 +315,32 @@ Summary(a: &Arena, io: Io, al: &Alloc, res: mut Outcome, job: &Job, path: str, h
 // Received checks a response's status and keeps what the caller prints of
 // its head: the head itself under --include, and every Set-Cookie for the
 // jar.
-Received(a: &Arena, al: &Alloc, res: mut Outcome, job: &Job, status: int, headers: []http.Header): Failure!void {
+Received(a: &Arena, al: &Alloc, res: mut Outcome, job: &Job, version: http.HttpVersion, status: int, headers: []http.Header): Failure!void {
     for h in headers {
         if Lower(a, h.name) == "set-cookie" {
             try res.cookies.Push(al, try a.Fmt("{h.value}\n", (h)))
         }
     }
+    protocol := match version {
+        .Http2 { "HTTP/2" }
+        .Http3 { "HTTP/3" }
+        _ { "HTTP/1.1" }
+    }
     if job.include || job.head {
-        try res.out.Push(al, try a.Fmt("HTTP/1.1 {status}\n", (status)))
+        try res.out.Push(al, try a.Fmt("{protocol} {status}\n", (protocol, status)))
         for h in headers {
-            try res.out.Push(al, try a.Fmt("{h.name}: {h.value}\n", (h)))
+            if !h.name.StartsWith(":") {
+                try res.out.Push(al, try a.Fmt("{h.name}: {h.value}\n", (h)))
+            }
         }
         try res.out.Push(al, "\n")
     }
     if job.verbose {
-        try res.err.Push(al, try a.Fmt("< {status}\n", (status)))
+        if job.versioned {
+            try res.err.Push(al, try a.Fmt("< {protocol} {status}\n", (protocol, status)))
+        } else {
+            try res.err.Push(al, try a.Fmt("< {status}\n", (status)))
+        }
     }
     if job.fail_status && status >= 400 {
         fail Refused(status: status)
@@ -364,6 +416,7 @@ Describe(a: &Arena, e: Failure): (code: int, text: str) from a {
         http.BadRequest { (code: 8, text: "the reply is not HTTP/1.1") }
         http.TooLarge { (code: 63, text: "the body is larger than --fetch-limit") }
         http.NoSecureTransport { (code: 1, text: "https is not available") }
+        Http3Required { (code: 7, text: "an HTTP/3 connection is required") }
         OutOfMemory { (code: 27, text: "out of memory: the response does not fit in --max-memory") }
         fs.NotFound | fs.Denied | fs.IsDirectory | fs.NotDirectory | fs.NoSpace | fs.InvalidPath | fs.Exists { (code: 23, text: a.Fmt("cannot write the output file: {e}", (e)) else { text }) }
         _ { (code: 1, text: text) }

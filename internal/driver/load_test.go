@@ -29,8 +29,7 @@ func TestSingleFileModeReadsOneFile(t *testing.T) {
 	})
 	r := check(t, Config{Root: filepath.Join(dir, "one.mk")})
 	clean(t, r)
-	// The trace lists std's files and modules too (std/..., std.*): only
-	// the package's part is asserted.
+	// The trace also lists the standard library and generated system views.
 	if got := pkgPaths(r.Trace.FilesParsed); len(got) != 1 || !strings.HasSuffix(got[0], "one.mk") {
 		t.Errorf("FilesParsed = %q, want only one.mk", got)
 	}
@@ -39,23 +38,27 @@ func TestSingleFileModeReadsOneFile(t *testing.T) {
 	}
 }
 
-// pkgPaths drops std's files (std/...) from a list of source paths, the
-// order kept.
+// pkgPaths keeps the package's source paths in order, excluding std and
+// generated system view sources.
 func pkgPaths(paths []string) []string {
 	var out []string
 	for _, p := range paths {
-		if !strings.HasPrefix(p, "std/") {
+		if !isStdOrViewSource(p) {
 			out = append(out, p)
 		}
 	}
 	return out
 }
 
-// pkgModules drops std's modules (std, std.*) from a list of module paths.
+func isStdOrViewSource(p string) bool {
+	return strings.HasPrefix(p, "std/") || strings.HasPrefix(p, sysViewSourcePrefix)
+}
+
+// pkgModules drops std and generated system view modules from a list of paths.
 func pkgModules(mods []string) []string {
 	var out []string
 	for _, m := range mods {
-		if m != "std" && !strings.HasPrefix(m, "std.") {
+		if m != "std" && !strings.HasPrefix(m, "std.") && !strings.HasPrefix(m, sysViewPrefix) {
 			out = append(out, m)
 		}
 	}
@@ -104,8 +107,7 @@ func TestFileOrderIsByteOrder(t *testing.T) {
 	for id := 1; id <= r.Sources.Len(); id++ {
 		paths = append(paths, r.Sources.File(source.FileID(id)).Path)
 	}
-	// std's files (std/...) are in the map too, added before the
-	// package's: the package's own order is asserted.
+	// The source map also contains std and generated system view files.
 	paths = pkgPaths(paths)
 	want := []string{"pkg.mk", "Z/z.mk", "a/a.mk", "m/A.mk", "m/_c.mk", "m/b.mk"}
 	if !slices.Equal(paths, want) {

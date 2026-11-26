@@ -201,6 +201,7 @@ func PackFacts(u *Unit, p int, env Env, cfg Config, h *source.Hasher) bool {
 	// the pack names: its declaration's readonly marks (immutarg.go).
 	h.String("tail-forward refs")
 	fg := newPackGen(u, p, env, &cfg, nil)
+	presentFacts(fg, u, p, env, cfg, h) // dl.Present's lazy bits (present.go)
 	// The import hint's entries (importhint.go), read from the bodies of
 	// other packs' functions and of the consts they name.
 	hints := fg.importHints()

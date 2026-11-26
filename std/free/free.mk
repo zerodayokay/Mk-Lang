@@ -40,7 +40,9 @@ struct Site {
 // The program's panic hook, or the support pack's weak trap.
 extern MkPanicHook(info: &PanicInfo): never
 
-// The code's text: types.PanicCode.String(), as std.rt.PanicText.
+// The code's text: types.PanicCode.String(), as std.rt.PanicText, for
+// every code a freestanding program can raise; 17 (unresolved function)
+// comes only from Windows' lazy binding.
 Text(code: u32): str {
     return match code {
         1 { "overflow" }

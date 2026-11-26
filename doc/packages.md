@@ -62,6 +62,14 @@ export Main(sys: &System): WriteError!void {
 | `kind` | `""` for an executable, `"dynamic"` or `"static"` for a library ([section 15](#15-libraries)) |
 | `abi` | A library's ABI number, `""` meaning `"1"` |
 
+| `pkg.CImport` field | Meaning |
+|---|---|
+| `name` | The import path's segment: `import c.<name>` |
+| `headers`, `defines`, `macros` | The headers, the macros they are read with, the prototypes of function-like macros to bind |
+| `vendor` | Read the committed `gen/<target>/c/` views when the headers cannot be read |
+| `include_dirs` | Package directories searched for headers after the root |
+| `sdk` | `true`: read the headers with the host's SDK (the Windows SDK, or `/usr/include` on Linux), for a library whose headers include the system's ([C imports](reference.md#c-imports)), and link its Windows SDK functions from the SDK's import libraries; `mk sdk` shows which. Left out, a C import sees only `MK_SYSROOT_<target>`, as before |
+
 A field left out and a field written empty are the same. A positional call or a misspelled field name is E0305. `mk fmt` keeps omitted fields omitted, and `mk fix --canonical` removes fields that hold their empty value.
 
 ## 3. Modules

@@ -34,9 +34,12 @@ export error BadUrl
 /// The client's proxy answered its CONNECT with code, a status other than
 /// 2xx, so no tunnel was made.
 export error ProxyRefused(code: int)
+/// The peer broke HTTP/2 or HTTP/3 framing or field rules, as this side
+/// found; code is the RFC's error code (RFC 9113 7, RFC 9114 8.1).
+export error Protocol(code: u64)
 
 /// Every way std.http fails. ReadError is a failed read of the Reader a
 /// request or reply comes from, and WriteError a failed write. net.Error
 /// brings Canceled, Closed and time.TimedOut. The set is open, so a match
 /// on it outside std keeps a `_` arm.
-export open type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused
+export open type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused | Protocol

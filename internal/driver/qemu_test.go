@@ -159,11 +159,19 @@ var sseFns = map[string]bool{"mk.src.Scaled": true}
 // output.
 var fpRegs = regexp.MustCompile(`%(?:[xyz]mm[0-9]+\b|mm[0-7]\b|st\([0-7]\)|st\b)`)
 
+// code32Fns are the kernel's 32-bit functions: MkEntry, the PVH entry's
+// .code32 template (src/boot.mk). They are read in 32-bit mode: read as
+// 64-bit code their bytes decode as other instructions, and the far jump's
+// target, Entry64's address, reads as movups wherever the layout gives it a
+// 0x0f byte.
+var code32Fns = map[string]bool{"MkEntry": true}
+
 // checkGeneralRegsOnly disassembles the general-regs-only kernel and fails
 // on every instruction outside sseFns that names an x87, MMX, SSE or AVX
 // register: the support pack's memcpy, memmove and memset and every helper
 // codegen emits are compiled without them (a release memcpy once came
-// out vectorized with movups).
+// out vectorized with movups). code32Fns are read in a second, 32-bit
+// listing of their own.
 func checkGeneralRegsOnly(t *testing.T, path string) {
 	t.Helper()
 	tools := needTools(t)
@@ -176,22 +184,32 @@ func checkGeneralRegsOnly(t *testing.T, path string) {
 		t.Logf("no %s next to clang: the general-regs-only disassembly check is not run", objdump)
 		return
 	}
-	out, err := exec.Command(objdump, "-d", "--no-show-raw-insn", path).CombinedOutput()
-	if err != nil {
-		t.Fatalf("llvm-objdump: %v\n%s", err, out)
-	}
-	fn, fns := "", 0
-	for _, line := range strings.Split(string(out), "\n") {
-		if i := strings.Index(line, " <"); i >= 0 && strings.HasSuffix(line, ">:") {
-			fn, fns = line[i+2:len(line)-2], fns+1
-			continue
+	// scan checks one listing, skipping the functions skip names, and
+	// returns how many functions it lists.
+	scan := func(skip map[string]bool, args ...string) int {
+		out, err := exec.Command(objdump, append(append([]string{"-d", "--no-show-raw-insn"}, args...), path)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("llvm-objdump: %v\n%s", err, out)
 		}
-		if fpRegs.MatchString(line) && !sseFns[fn] {
-			t.Errorf("general-regs-only kernel: %s uses an x87, MMX, SSE or AVX register: %s", fn, strings.TrimSpace(line))
+		fn, fns := "", 0
+		for _, line := range strings.Split(string(out), "\n") {
+			if i := strings.Index(line, " <"); i >= 0 && strings.HasSuffix(line, ">:") {
+				fn, fns = line[i+2:len(line)-2], fns+1
+				continue
+			}
+			if fpRegs.MatchString(line) && !sseFns[fn] && !skip[fn] {
+				t.Errorf("general-regs-only kernel: %s uses an x87, MMX, SSE or AVX register: %s", fn, strings.TrimSpace(line))
+			}
 		}
+		return fns
 	}
-	if fns == 0 {
+	if scan(code32Fns) == 0 {
 		t.Errorf("llvm-objdump listed no function of %s", path)
+	}
+	for fn := range code32Fns {
+		if scan(nil, "--triple=i386-unknown-none-elf", "--disassemble-symbols="+fn) != 1 {
+			t.Errorf("llvm-objdump did not list the 32-bit function %s of %s", fn, path)
+		}
 	}
 }
 

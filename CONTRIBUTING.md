@@ -213,6 +213,30 @@ $env:MK_SLOW = "1"
 go test -p 2 ./internal/driver -run '^TestDeterminismGOMAXPROCS$'
 ```
 
+### GPU tests and goldens
+
+The portable device blocks of `std.gpu` (names starting `device`) run on one adapter per run, chosen by `MK_GPU_ADAPTER`: `warp` (D3D12's software rasterizer, the default on Windows), `d3d12` (a hardware D3D12 adapter) or `vulkan`. The backend blocks (`dx`, `vk`, `gpu vulkan`) run on their own backend when it is present, unless `MK_GPU_ADAPTER` names the other one. A block whose adapter is absent prints `skip: <reason>` and passes. `TestGpu_Blocks` runs everything with the default and `TestGpu_DeviceAdapters` runs the device blocks on the two hardware backends:
+
+```powershell
+$env:MK_GPU_ADAPTER = "d3d12"
+mk test --std std.gpu --run device
+```
+
+What the comparisons check:
+
+- On WARP each of the nine golden scenes must equal its committed PNG byte for byte when the host's `d3d10warp.dll` has the version the goldens were made with (`GoldenWarpVersion` in `std/gpu/tests_goldens.mk`). On another version they are held to the hardware tolerance below and the block prints both versions; regenerate the goldens once that version is accepted.
+- On hardware each scene is compared with WARP rendering it in the same run, and D3D12 with Vulkan on the same GPU: no channel more than 2 apart except on at most 0.1 % of the pixels (0.5 % for the MSAA scene), each of them next to a pixel within 2.
+- Device blocks open D3D12 in `DebugMode.Strict`, which needs the D3D12 debug layer (Windows' optional Graphics Tools feature), and fail on any debug-layer error or warning. Vulkan blocks use `DebugMode.Validate`: without `VK_LAYER_KHRONOS_validation` installed, that is the portable layer's own checks and the layout tracker, not the driver's synchronization validation.
+
+When a scene or the WARP version changes, regenerate the goldens on Windows, look at the PNGs, and commit them with `std/gpu/tests_goldens.mk`:
+
+```powershell
+go run ./tools/gpugolden -mode generate -mk <mk.exe>
+go run ./tools/gpugolden -mode verify -live -mk <mk.exe>
+```
+
+`tools/gpugolden` renders the scenes through the block `gpu dump warp goldens`, writes `tools/gpugolden/goldens/*.png` and the Mk file, and keys them by the version it reads from `C:\Windows\System32\d3d10warp.dll`. `go test ./tools/gpugolden` checks that the Mk file matches the PNGs. The test shaders come from `tools/gpushaders`: change the HLSL under `tools/gpushaders/hlsl`, then run `go run ./tools/gpushaders -dxc <dxc.exe>` with the DXC version the tool pins.
+
 ### Documentation
 
 - Every fenced `mk` block in `doc/` is a test. Its first line is its verdict: `// verdict: ok`, `// verdict: parse`, or `// verdict: reject E0505` with the exact codes the compiler must report, and `// <- E0505` at the end of the line where the error must be reported. A block that holds on one architecture only, such as an `asm` example in x86 assembly, says so on its second line, `// arch: x86_64`, and `mk corpus --target` for another architecture skips it. Use a `text` or `sh` fence for anything that is not Mk.

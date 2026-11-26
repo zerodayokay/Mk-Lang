@@ -3,8 +3,11 @@
 // file to the module, and map later diagnostics back to the gen line.
 //
 // What: stage 4 of the module pipeline (stage4, settleGen, genWrap): the
-// gen.Line translation of resolve's first pass (genLine, genArg), the World
-// over check's stage-4 view (genWorld with Decl, Func and Funcs),
+// note on a name a line that emitted nothing may have declared (noteGen,
+// notePatternGen and markGen),
+// the error that made a poisoned line emit nothing (poisonRoot, firstDiag),
+// the gen.Line translation of resolve's first pass (genLine, genArg), the
+// World over check's stage-4 view (genWorld with Decl, Func and Funcs),
 // AddGenerated, Finish, and Wrap over every later diagnostic of the module.
 //
 // How: stage 4 runs between resolve's Finish and Settle, after every module
@@ -87,9 +90,17 @@ func (b *build) stage4(m *modNode, rm *resolve.Module) {
 	// reach the module cache only here.
 	for i := range st.out.Lines {
 		lr := &st.out.Lines[i]
+		if lr.Fail != nil && m.genFail == nil && i < len(lines) {
+			m.genFailAt, m.genFail = lines[i].Span, lr.Fail
+		}
 		if lr.Poisoned {
 			m.evalPoison.Store(true)
 			if i < len(lines) {
+				if m.genRoot == nil {
+					if r, in := b.poisonRoot(m, &lines[i]); r != nil {
+						m.genRoot, m.genRootIn, m.genRootAt = r, in, lines[i].Span
+					}
+				}
 				m.genPoison = append(m.genPoison, lines[i].Span)
 			}
 		}
@@ -122,7 +133,7 @@ func (b *build) settleGen(m *modNode, rm *resolve.Module, gs []*diag.Diagnostic)
 	}
 	out := make([]*diag.Diagnostic, 0, len(gs))
 	for _, d := range gs {
-		m.notePoison(d)
+		m.noteGen(d)
 		out = append(out, gen.Wrap(d, m.gen.out))
 	}
 	return append(out, m.gen.ctx.Finish(m.gen.out, func(n source.Symbol) types.ItemID {
@@ -138,7 +149,7 @@ func (b *build) settleGen(m *modNode, rm *resolve.Module, gs []*diag.Diagnostic)
 // gen line.
 func (m *modNode) genWrap(ds []*diag.Diagnostic) []*diag.Diagnostic {
 	for _, d := range ds {
-		m.notePoison(d)
+		m.noteGen(d)
 	}
 	if m.gen == nil || m.gen.out.File == nil {
 		return ds
@@ -150,20 +161,180 @@ func (m *modNode) genWrap(ds []*diag.Diagnostic) []*diag.Diagnostic {
 	return out
 }
 
-// notePoison adds to an unknown-name E0201 of m the first gen line of m
-// whose run ended in poison and emitted nothing: the name may be one it
-// would have declared, and the cause (a type the generator read and the
-// stage-4 view could not see) may have no diagnostic of its own.
-func (m *modNode) notePoison(d *diag.Diagnostic) {
-	if d.Code != diag.E0201 || len(m.genPoison) == 0 {
+// noteGen marks an unknown-name E0201 of m that a gen line may cause: the
+// name may be one the line's output would have declared, and the output is
+// empty. The line is m's, or dep's for a member miss `dep.X`
+// (resolve.MissedIn). A line that failed with its own error makes the E0201
+// its consequence, so the report holds that error whatever its phase
+// (diag.Order). A line whose run ended in poison because a module it
+// depends on failed to check makes the E0201 a consequence of the error
+// poisonRoot names (genRoot, which stageDiags reports); with no such
+// module (a type of m the stage-4 view could not see, which may have no
+// diagnostic of its own) a line of m is only cited. A label, type
+// parameter or parameter is local to its function, so no gen line declares
+// one.
+func (m *modNode) noteGen(d *diag.Diagnostic) {
+	if d.Code != diag.E0201 {
 		return
 	}
-	for _, f := range d.Facts {
-		if f.Key == "gen_line" {
+	if _, ok := d.FactValue("gen_line"); ok {
+		return
+	}
+	if e, ok := d.FactValue("expected"); ok && (e.Str == "label" || e.Str == "type parameter" || e.Str == "parameter") {
+		return
+	}
+	owner, at := m, "this module"
+	if p := resolve.MissedIn(d); p != "" {
+		owner = nil
+		for _, dep := range m.deps {
+			if dep.path == p {
+				owner, at = dep, "`"+dep.path+"`"
+				break
+			}
+		}
+		if owner == nil || (owner.genFail == nil && owner.genRoot == nil) {
 			return
 		}
 	}
-	d.Loc("gen_line", m.genPoison[0]).Text("gen", "a gen line of this module emitted nothing: it read a type that failed to check, or one it cannot see before checking")
+	owner.markGen(d, at)
+}
+
+// notePatternGen marks, as noteGen marks an E0201, a pattern binding's
+// E0207 that Settle reported (resolve.PatternMiss): its name was found
+// nowhere while m's gen lines were unsettled, so it may be a const a line's
+// output would have declared. Finish's E0207s name a name found in the
+// module scope, which no gen line declares, and get no mark.
+func (m *modNode) notePatternGen(d *diag.Diagnostic) {
+	if !resolve.PatternMiss(d) {
+		return
+	}
+	if _, ok := d.FactValue("gen_line"); ok {
+		return
+	}
+	m.markGen(d, "this module")
+}
+
+// markGen makes d a consequence of the error that made a gen line of m
+// emit nothing, and cites the line; at names m in the note.
+func (m *modNode) markGen(d *diag.Diagnostic, at string) {
+	switch {
+	case m.genFail != nil:
+		d.ConsequenceOf(m.genFail.Code, m.genFail.At)
+		d.Loc("gen_line", m.genFailAt).Text("gen", "a gen line of "+at+" failed and emitted nothing: the name may be one it would have declared")
+	case m.genRoot != nil:
+		d.ConsequenceOf(m.genRoot.Code, m.genRoot.At)
+		d.Loc("gen_line", m.genRootAt).Text("gen", "a gen line of "+at+" emitted nothing: `"+m.genRootIn+"`, which it depends on, failed to check")
+	case len(m.genPoison) > 0:
+		d.Loc("gen_line", m.genPoison[0]).Text("gen", "a gen line of this module emitted nothing: it read a type that failed to check, or one it cannot see before checking")
+	}
+}
+
+// poisonRoot finds why a poisoned line emitted nothing. It walks from the
+// modules the line reads (the generator's, the fuel const's, each
+// argument's; m itself, not yet checked, is not walked) through their
+// imports in path order, three times. The first walk stops at a module with
+// an error before types: that module and every module above it are never
+// checked, so the generator or a function argument there has no
+// declaration, and the report is of that error's phase. Only when no module
+// has one does the second stop at a module that failed to check, with an
+// error before stage 7: it taints every module above it, so every body a
+// run enters there is poison. Only when no module has one either does the
+// third stop at a module with a borrow error (stage 7), which rejects only
+// its own body and leaves the module clean; the walk cannot tell which
+// rejected body the run entered. The root is that module's error of that
+// kind the report prints first (firstDiag). It runs only for a poisoned
+// line, after every module it reaches is done. nil when no module has one:
+// the line read a type of its own module it cannot see before checking.
+func (b *build) poisonRoot(m *modNode, l *gen.Line) (*diag.Diagnostic, string) {
+	w, s := b.w, b.w.sem5
+	var from []*modNode
+	read := func(id types.ItemID) {
+		if id != types.NoItem {
+			from = append(from, s.module(w.items.Get(id).Module))
+		}
+	}
+	read(l.Generator)
+	read(l.FuelItem)
+	for _, a := range l.Args {
+		id := a.Item // ArgInterface, ArgFunction
+		if a.Kind == gen.ArgType {
+			// The named type, or the one under []T, &T, ?T and the
+			// like, which a generator reaches through Type.Elem.
+			id = types.NoItem
+			for t := a.Type; t != types.NoType; {
+				tt := w.tab.Get(t)
+				if tt.Kind == types.KNamed {
+					id = tt.Item
+					break
+				}
+				t = tt.Elem
+			}
+		}
+		read(id)
+	}
+	for walkNo := range 3 {
+		seen := map[*modNode]bool{m: true}
+		var walk func(x *modNode) (*diag.Diagnostic, string)
+		walk = func(x *modNode) (*diag.Diagnostic, string) {
+			if x == nil || seen[x] {
+				return nil, ""
+			}
+			seen[x] = true
+			ds := [][]*diag.Diagnostic{x.diags, x.cdiags}
+			switch walkNo {
+			case 0:
+				ds = [][]*diag.Diagnostic{x.diags} // stage 3's
+			case 2:
+				ds = [][]*diag.Diagnostic{x.fdiags}
+			}
+			if d := b.firstDiag(x, ds, walkNo == 0); d != nil {
+				return d, x.path
+			}
+			for _, d := range x.deps {
+				if r, p := walk(d); r != nil {
+					return r, p
+				}
+			}
+			return nil, ""
+		}
+		for _, x := range from {
+			if r, p := walk(x); r != nil {
+				return r, p
+			}
+		}
+	}
+	return nil, ""
+}
+
+// firstDiag is the diagnostic of ds, x's own, that the report prints first:
+// by path, line and column, code, message, then end, as diag.Order sorts,
+// and wrapped as checkDiags reports it, so a Cause naming it resolves. The
+// lists' order differs between a cold check and a cache hit; this order
+// does not. With early, only an error before types counts, as namesClean
+// judges one. nil when ds holds none.
+func (b *build) firstDiag(x *modNode, ds [][]*diag.Diagnostic, early bool) *diag.Diagnostic {
+	var best *diag.Diagnostic
+	var bs, be source.Position
+	for _, l := range ds {
+		for _, d := range l {
+			if early && (d.Phase == diag.PhaseInternal || d.Phase >= diag.PhaseTypes) {
+				continue
+			}
+			if x.gen != nil {
+				d = gen.Wrap(d, x.gen.out)
+			}
+			var s, e source.Position
+			if d.At.File != source.NoFile {
+				s, e = b.w.sm.SpanPositions(d.At)
+			}
+			if best == nil || cmp.Or(strings.Compare(s.Path, bs.Path), cmp.Compare(s.Line, bs.Line), cmp.Compare(s.Col, bs.Col),
+				cmp.Compare(d.Code, best.Code), strings.Compare(d.Message, best.Message),
+				cmp.Compare(e.Line, be.Line), cmp.Compare(e.Col, be.Col)) < 0 {
+				best, bs, be = d, s, e
+			}
+		}
+	}
+	return best
 }
 
 // genLine translates one of resolve's gen lines (first pass, gen/ empty).

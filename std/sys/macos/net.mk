@@ -46,6 +46,55 @@ export SocketOpenUdp(family: u16): OsResult {
     return SocketMake(family, SockDgram, true)
 }
 
+/// SocketConnectUdp connects the UDP socket h to a (no wait).
+/// O(1) system calls; allocates nothing.
+export SocketConnectUdp(h: uint, a: &SockAddr): OsResult {
+    var sa: [4]u64 = [0; 4]
+    var n := 0
+    unsafe "sa holds 32 bytes" {
+        n = EncodeAddr(a, raw.PtrCast[u64, u8](raw.DataMut(mut sa[..])))
+    }
+    if n == 0 {
+        return FailWith(core.SysErr.InvalidAddress)
+    }
+    unsafe "sa is the encoded address" {
+        if connect(Trunc[i32](h), raw.PtrCast[u64, u8](raw.Data(sa[..])), Trunc[u32](n)) == -1 {
+            return ConnectFail(Errno())
+        }
+    }
+    return Ok(0)
+}
+
+/// SocketRecvFromNow performs a non-blocking recvfrom(MSG_DONTWAIT) on h:
+/// returns the count, or -1 with err None when nothing is queued.
+/// O(1) system calls; allocates nothing.
+export SocketRecvFromNow(h: uint, buf: *u8, len: int, from: mut SockAddr): OsResult {
+    var sa: [4]u64 = [0; 4]
+    var sa_len: [1]u32 = [32]
+    n := if len < 0 { 0 } else { len }
+    unsafe "buf holds n bytes; sa holds 32 bytes" {
+        for {
+            sa_len[0] = 32
+            r := recvfrom(Trunc[i32](h), buf, Trunc[uint](n), 0x80,
+                raw.PtrCast[u64, u8](raw.DataMut(mut sa[..])), raw.DataMut(mut sa_len[..]))
+            if r >= 0 {
+                if !DecodeAddr(raw.PtrCast[u64, u8](raw.Data(sa[..])), from) {
+                    *from = SockAddr(family: 0, port: 0, addr: [0; 16], scope_id: 0)
+                }
+                return Ok(i64(r))
+            }
+            e := Errno()
+            if e == 4 {
+                continue
+            }
+            if e == 35 {
+                return Ok(-1)
+            }
+            return SockFail(e)
+        }
+    }
+}
+
 /// SocketBind binds h to a, with no SO_REUSEADDR (a UDP socket with it
 /// could share a port another process holds).
 /// O(1) system calls; allocates nothing.

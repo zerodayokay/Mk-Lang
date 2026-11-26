@@ -3,12 +3,17 @@
 //
 // What: the walker's statement and pattern methods: block, stmt, ifStmt,
 // cond, forStmt, labelUse, recordPat, pattern, patFields, declarePattern,
-// constPattern and namePattern.
+// namePattern and patternCase (and PatternMiss, which tells its E0207 from
+// others).
 //
 // How: one switch per statement kind. A declaration resolves its initializer
 // before it declares its names, so x := x + 1 reads an outer x. A bare name
-// in a pattern is an error test, a value test, E0101 or a fresh binding,
-// decided by what it names; in an alternative it never binds.
+// in a pattern is an error test, a value test (a const, true, false), E0101
+// or a fresh binding, decided by what it names; in an alternative it never
+// binds. Every binding is snake_case: in a pattern that can fail, a name that
+// is not is E0207 with no recase, so a name in a const's place that is no
+// const never quietly matches every value; a destructure's, a loop head's
+// included, takes a local's recase.
 
 package resolve
 
@@ -203,7 +208,12 @@ func (w *walker) forStmt(s *ast.ForStmt) {
 				if f.Pat == nil {
 					w.declare(f.Name, LocalLoop, false, nil)
 				} else {
+					// A loop head cannot fail: its sub-patterns bind as
+					// a destructure's do.
+					outer := w.destr
+					w.destr = &destrCtx{kind: LocalLoop}
 					w.pattern(f.Pat, false)
+					w.destr = outer
 				}
 			}
 		}
@@ -256,26 +266,30 @@ func (w *walker) recordPat(p *ast.RecordPat, isVar bool, s ast.Stmt) {
 			// A labeled field's sub-pattern binds, and `var` sets Var on
 			// every binding of the statement, nested ones included.
 			outer := w.destr
-			w.destr = &destrCtx{isVar: isVar, stmt: s}
+			w.destr = &destrCtx{isVar: isVar, stmt: s, kind: LocalDestr}
 			w.pattern(f.Pat, false)
 			w.destr = outer
 		}
 	}
 }
 
-// destrCtx is the destructuring statement whose sub-patterns are being
-// walked: their bindings are LocalDestr and carry the statement's `var`.
+// destrCtx is the destructure whose sub-patterns are being walked: a
+// statement's, whose bindings are LocalDestr and carry its `var`, or a loop
+// head's, whose bindings are LocalLoop.
 type destrCtx struct {
 	isVar bool
 	stmt  ast.Stmt
+	kind  LocalKind
 }
 
 // declarePattern declares a binding of a pattern: LocalPattern in a match,
-// if or for, LocalDestr with the statement's `var` inside a destructure. A
-// name that is not snake_case is left to check (Local.Pascal).
+// the destructure's kind inside a destructure statement or a loop head. A
+// destructure cannot fail, so its bindings take a local's case rule; a
+// refutable pattern's name is namePattern's to judge (patternCase), and a
+// field written alone is check's (E0309).
 func (w *walker) declarePattern(id *ast.Ident) {
 	if w.destr != nil {
-		w.declareLocal(id, LocalDestr, w.destr.isVar, w.destr.stmt, true)
+		w.declareLocal(id, w.destr.kind, w.destr.isVar, w.destr.stmt, false)
 		return
 	}
 	w.declareLocal(id, LocalPattern, false, nil, true)
@@ -288,11 +302,7 @@ func (w *walker) pattern(p ast.Pattern, inAlt bool) {
 	case *ast.NamePattern:
 		w.namePattern(p, inAlt)
 	case *ast.PathPattern:
-		r := w.path(p.Path, posPattern, p.ID())
-		if p.Path != nil && len(p.Path.Names) == 1 && r.Kind == RefItem &&
-			w.m.s.cfg.Items.Get(types.ItemID(r.A)).Kind == types.KindConst {
-			w.constPattern(p.Path.Names[0], p.ID())
-		}
+		w.path(p.Path, posPattern, p.ID())
 		w.patFields(p.Fields)
 	case *ast.VariantPattern:
 		w.patFields(p.Fields)
@@ -323,16 +333,8 @@ func (w *walker) patFields(fs []*ast.PatField) {
 	}
 }
 
-// constPattern reports a const used as a pattern.
-func (w *walker) constPattern(id *ast.Ident, node ast.NodeID) {
-	d := diag.New(diag.E0101, id.Span(), "constants are not patterns; compare with `if`").In(diag.PhaseNames).Text("expected", "pattern")
-	w.t.diags = append(w.t.diags, d)
-	w.fs.setRef(id.ID(), poisonRef)
-	w.fs.setRef(node, poisonRef)
-}
-
 // namePattern decides a bare name in a pattern: an error
-// type is an error test, true and false are value tests, a const or a bare
+// type is an error test, a const, true and false are value tests, a bare
 // ok or err is E0101, anything else is a fresh binding.
 func (w *walker) namePattern(p *ast.NamePattern, inAlt bool) {
 	id := p.Name
@@ -358,12 +360,9 @@ func (w *walker) namePattern(p *ast.NamePattern, inAlt bool) {
 		case RefItem:
 			it := w.m.s.cfg.Items.Get(types.ItemID(h.ref.A))
 			switch it.Kind {
-			case types.KindError:
+			case types.KindError, types.KindConst:
 				w.fs.setRef(id.ID(), h.ref)
 				w.fs.setRef(p.ID(), h.ref)
-				return
-			case types.KindConst:
-				w.constPattern(id, p.ID())
 				return
 			}
 		case RefUniverse:
@@ -390,6 +389,54 @@ func (w *walker) namePattern(p *ast.NamePattern, inAlt bool) {
 		w.patchPending(r, []holder{{node: p.ID(), covers: 1}}, nil)
 		return
 	}
+	shadows := len(w.t.diags)
 	w.declarePattern(id)
 	w.fs.setRef(p.ID(), w.fs.fi.Refs[id.ID()])
+	if w.destr == nil && len(w.t.diags) == shadows {
+		w.patternCase(id, ok && h.step < 4)
+	}
+}
+
+// patternCase is the E0207 of a refutable pattern's binding that is not
+// snake_case: a name in a const's place that names no const or error in
+// scope (a misspelled one, another module's written bare, a variant without
+// its dot) would bind and match every value. No recase is proven, since a
+// recased binding still matches everything. found reports a name found
+// within the module scope, which no generated name can hide. In a module
+// whose gen lines are still unsettled, any other name may yet be a
+// generated const: Settle reports it then (casePend), or re-resolves the
+// item when the name has appeared.
+func (w *walker) patternCase(id *ast.Ident, found bool) {
+	name := w.m.str(id.Name)
+	if IsSnake(name) {
+		return
+	}
+	// One diagnostic for the one mistake: no E0208 besides.
+	w.markUsed(w.fs.fi.Refs[id.ID()])
+	want := ToSnake(name)
+	d := naming(id.Span(), name, want, "snake_case")
+	d.Message = patternMissMessage(name, want)
+	d.Alt("write `." + name + "` for a variant")
+	d.Alt("name a const or error in scope, or qualify another module's as `m." + name + "`")
+	if w.free(want) {
+		d.Alt("rename the binding `" + want + "`")
+	}
+	if !found && w.m.missesPend() {
+		w.t.casePend = append(w.t.casePend, casePend{sym: id.Name, d: d})
+		return
+	}
+	w.t.diags = append(w.t.diags, d)
+}
+
+func patternMissMessage(name, want string) string {
+	return "`" + name + "` names no const or error in scope, so it binds and matches every value: a binding should be snake_case: `" + want + "`"
+}
+
+// PatternMiss reports whether d is patternCase's E0207. One that Settle
+// reports names a binding found nowhere while the module's gen lines were
+// unsettled, so a line that emitted nothing may be why, as for an unknown
+// name's E0201 (the driver's noteGen).
+func PatternMiss(d *diag.Diagnostic) bool {
+	name, ok := d.FactValue("declared")
+	return d.Code == diag.E0207 && ok && d.Message == patternMissMessage(name.Str, ToSnake(name.Str))
 }

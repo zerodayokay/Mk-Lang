@@ -25,8 +25,8 @@ func TestDomainsUnique(t *testing.T) {
 		if d == DomPGO || d == DomData || d == DomDataFail {
 			continue // pgo's own domain and the data file domains: not iface encodings
 		}
-		if !strings.HasPrefix(d, "mk.") || !strings.HasSuffix(d, ".v2") {
-			t.Errorf("domain %q is not mk.<name>.v2 (FormatVersion 2)", d)
+		if !strings.HasPrefix(d, "mk.") || !strings.HasSuffix(d, ".v3") {
+			t.Errorf("domain %q is not mk.<name>.v3 (FormatVersion 3)", d)
 		}
 	}
 	if !seen[DomPGO] || DomPGO != "mk.pgo.v1" {

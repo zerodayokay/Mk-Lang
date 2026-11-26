@@ -97,11 +97,14 @@ type TargetSel struct {
 type ModuleSel struct{ Name, Dir string }
 
 // CImport is one pkg.CImport (its import path and macros); Field is its
-// field path, c_imports[<index>].
+// field path, c_imports[<index>]. IncludeDirs are package-relative, as
+// written.
 type CImport struct {
 	Name                     string
 	Headers, Defines, Macros []string
 	Vendor                   bool
+	IncludeDirs              []string
+	SDK                      bool // the headers are read with the host's SDK (hostsdk.go)
 	Field                    string
 }
 
@@ -657,8 +660,12 @@ func (d *manDecoder) pkg(c cview, t types.TypeID) {
 				ci.Headers = d.strs(e, et, "headers")
 				ci.Defines = d.strs(e, et, "defines")
 				ci.Macros = d.strs(e, et, "macros")
+				ci.IncludeDirs = d.strs(e, et, "include_dirs")
 				vo, _ := d.field(et, "vendor")
 				ci.Vendor = e.v.Bytes[e.base+vo] != 0
+				if so, ok := d.hasField(et, "sdk"); ok {
+					ci.SDK = e.v.Bytes[e.base+so] != 0
+				}
 				m.CImports = append(m.CImports, ci)
 			}
 		case "c_sources":

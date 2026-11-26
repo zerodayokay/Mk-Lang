@@ -19,14 +19,12 @@
 package driver
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"mk/internal/cache"
-	"mk/internal/source"
+	"mk/internal/cimport"
 	"mk/internal/types"
 )
 
@@ -236,12 +234,6 @@ func (w *world) writeLibcHeaders(st *cache.Store, work string) (string, error) {
 		return "", nil
 	}
 	files := libcHeaders(protos, targetOS(w.cfg.Target))
-	h := source.NewHasher("mk.driver.libch.v1")
-	for _, n := range libcHeaderNames {
-		h.String(n)
-		h.String(files[n])
-	}
-	sum := h.Sum()
 	base := filepath.Join(work, "libc-h")
 	if st != nil {
 		d, err := st.Dir("libch")
@@ -250,27 +242,5 @@ func (w *world) writeLibcHeaders(st *cache.Store, work string) (string, error) {
 		}
 		base = d
 	}
-	dir := filepath.Join(base, fmt.Sprintf("%x", sum[:8]))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	for _, n := range libcHeaderNames {
-		p := filepath.Join(dir, n)
-		if old, err := os.ReadFile(p); err == nil && string(old) == files[n] {
-			continue
-		}
-		// A temporary and a rename, so a concurrent build never reads a
-		// half-written header.
-		tmp := p + fmt.Sprintf(".%d.tmp", os.Getpid())
-		if err := os.WriteFile(tmp, []byte(files[n]), 0o644); err != nil {
-			return "", err
-		}
-		if err := os.Rename(tmp, p); err != nil {
-			os.Remove(tmp)
-			if old, rerr := os.ReadFile(p); rerr != nil || string(old) != files[n] {
-				return "", err
-			}
-		}
-	}
-	return dir, nil
+	return cimport.WriteHeaderDir(base, "mk.driver.libch.v1", libcHeaderNames, files)
 }

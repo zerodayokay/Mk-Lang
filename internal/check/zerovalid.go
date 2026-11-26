@@ -4,12 +4,14 @@
 // misbehave.
 //
 // What: implicitBounds and atomicTypeBound (the E0701 of a call, fn value or
-// type expression), the recognizers (arenaSlice, poolFree, readUnaligned,
-// atomicType, atomicFunc, atomicArith), and the predicates zeroValid and
-// integerArg.
+// type expression), the recognizers (arenaSlice, memZeroed, poolFree,
+// readUnaligned, atomicType, atomicFunc, atomicArith), and the predicates
+// zeroValid and integerArg.
 //
 // How: `Arena.Slice[T]` and `Arena.SliceAligned[T]` zero-fill their
-// elements, so `T` must be zero-valid; `raw.Atomic[T]` and `atomic.Atomic[T]`
+// elements, and `std.mem.Zeroed[T]` is a T of zero bytes, so `T` must be
+// zero-valid; Zeroed's T is its result, so it is also not an error union
+// (whose call would read as fallible); `raw.Atomic[T]` and `atomic.Atomic[T]`
 // need an integer `T` of 1, 2, 4 or 8 bytes or a raw pointer, and their
 // arithmetic (Add, AddOrd to XorOrd, FetchAdd to FetchXor) an integer;
 // `raw.ReadUnaligned[T]` an integer `T`; `Pool[T].Free` a T that is not
@@ -31,6 +33,20 @@ func (c *Checker) arenaSlice(it types.ItemID) bool {
 	}
 	item := c.cfg.Items.Get(it)
 	return item.Owner == c.known.Arena && item.Kind == types.KindFunc && (c.cfg.Interner.Str(item.Name) == "Slice" || c.cfg.Interner.Str(item.Name) == "SliceAligned")
+}
+
+// memZeroed reports whether item it is the free function `std.mem.Zeroed`,
+// whose result is all zero bytes.
+func (c *Checker) memZeroed(it types.ItemID) bool {
+	if it == types.NoItem {
+		return false
+	}
+	item := c.cfg.Items.Get(it)
+	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType || c.cfg.Interner.Str(item.Name) != "Zeroed" {
+		return false
+	}
+	mod := c.cfg.Items.Module(item.Module)
+	return mod != nil && mod.Std && mod.Path == "std.mem"
 }
 
 // poolFree reports whether item it is `std.mem.Pool[T].Free`, which drops
@@ -154,10 +170,11 @@ func (c *Checker) takesOwner(sig *types.Signature, it types.ItemID) bool {
 
 // Bound texts of the implicit bounds (the E0701 `bound` fact).
 const (
-	boundZeroValid = "zero-valid"
-	boundInteger   = "integer"
-	boundAtomicInt = "integer of 1, 2, 4 or 8 bytes or a raw pointer"
-	boundNotLinear = "not linear"
+	boundZeroValid   = "zero-valid"
+	boundInteger     = "integer"
+	boundAtomicInt   = "integer of 1, 2, 4 or 8 bytes or a raw pointer"
+	boundNotLinear   = "not linear"
+	boundNotErrUnion = "not an error union"
 )
 
 // implicitBounds is the E0701 of an instance inst of item (a call, or a fn
@@ -174,6 +191,7 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 	c := u.c
 	var t types.TypeID
 	var bound string
+	param := "T"
 	switch {
 	case c.poolFree(item):
 		if len(g) == 0 || g[0].IsConst {
@@ -200,7 +218,7 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` "+why+": `Pool.Free` drops the value").
 			Text("param", "T").Text("bound", boundNotLinear).Text("type", ts))
 		return
-	case c.heapListExtend(c.cfg.Items.Get(item)): // T: Plain, the elements are copied
+	case c.listCopies(c.cfg.Items.Get(item)): // T: Plain, the elements are copied
 		d, ok := c.declOfItem(c.cfg.Items.Get(item)).(*types.FuncDecl)
 		if !ok || len(g) == 0 || g[0].IsConst || len(d.Sig.Generics) == 0 {
 			return
@@ -214,18 +232,49 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 	case c.releaseRowOf(item) != nil: // the release bounds (freebound.go)
 		u.releaseBound(c.releaseRowOf(item), item, at, g)
 		return
-	case c.arenaSlice(item):
+	case c.arenaSlice(item) || c.memZeroed(item):
 		if len(g) == 0 || g[len(g)-1].IsConst {
 			return
 		}
 		t = g[len(g)-1].Type
-		if t == types.Poison || c.zeroValid(u.env, t, u.x.rec, map[types.TypeID]bool{}) {
+		if t == types.Poison {
+			return
+		}
+		if n := narrowed(c.cfg.Types, u.env, t); c.memZeroed(item) && c.cfg.Types.Kind(n) == types.KErrorUnion {
+			// The call's result is its T: an error union there would make a
+			// call whose signature has no errors read as fallible.
+			ts := u.str(t)
+			u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is an error union, and `mem.Zeroed` never fails: zero its value type, `"+u.str(c.cfg.Types.Get(n).Elem)+"`").
+				Text("param", "T").Text("bound", boundNotErrUnion).Text("type", ts))
+			return
+		}
+		if c.zeroValid(u.env, t, u.x.rec, map[types.TypeID]bool{}) {
 			return
 		}
 		ts := u.str(t)
-		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is not zero-valid: `Arena."+c.cfg.Interner.Str(c.cfg.Items.Get(item).Name)+"` zero-fills its elements").
+		why := "`mem.Zeroed` makes a value of zero bytes"
+		if c.arenaSlice(item) {
+			why = "`Arena." + c.cfg.Interner.Str(c.cfg.Items.Get(item).Name) + "` zero-fills its elements"
+		}
+		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is not zero-valid: "+why).
 			Text("param", "T").Text("bound", boundZeroValid).Text("type", ts))
 		return
+	case c.memAsBytes(item):
+		if len(g) != 1 || g[0].IsConst {
+			return
+		}
+		t = g[0].Type
+		if t == types.Poison {
+			return
+		}
+		if ok, why := c.byteViewArg(u.env, t, u.x.rec, map[types.TypeID]bool{}); ok {
+			return
+		} else {
+			ts := u.str(t)
+			u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` cannot be viewed as bytes: "+why).
+				Text("param", "T").Text("bound", boundByteView).Text("type", ts))
+			return
+		}
 	case c.readUnaligned(item):
 		if len(g) != 1 || g[0].IsConst {
 			return
@@ -246,7 +295,7 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 		if len(g) != 1 || g[0].IsConst {
 			return
 		}
-		t, bound = g[0].Type, boundFnType
+		param, t, bound = "F", g[0].Type, boundFnType
 		if t == types.Poison || c.fnTypeArg(u.env, t) {
 			return
 		}
@@ -269,15 +318,15 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 	default:
 		return
 	}
-	u.b.Diags = append(u.b.Diags, c.implicitFailure(at, t, bound, u.x.gens))
+	u.b.Diags = append(u.b.Diags, c.implicitFailure(at, param, t, bound, u.x.gens))
 }
 
 // implicitFailure is the E0701 of an implicit bound: facts param, bound,
 // type, as boundFailure's.
-func (c *Checker) implicitFailure(at source.Span, t types.TypeID, bound string, gens []types.GenericParam) *diag.Diagnostic {
+func (c *Checker) implicitFailure(at source.Span, param string, t types.TypeID, bound string, gens []types.GenericParam) *diag.Diagnostic {
 	ts := c.cfg.Types.TypeString(t, gens)
-	return diag.New(diag.E0701, at, "`"+ts+"` does not satisfy `T`'s implicit bound: an "+bound).
-		Text("param", "T").Text("bound", bound).Text("type", ts)
+	return diag.New(diag.E0701, at, "`"+ts+"` does not satisfy `"+param+"`'s implicit bound: an "+bound).
+		Text("param", param).Text("bound", bound).Text("type", ts)
 }
 
 // atomicTypeBound is the E0701 of the type expression `raw.Atomic[T]` or
@@ -294,7 +343,7 @@ func (m *Module) atomicTypeBound(env *Env, at source.Span, it *types.Item, args 
 	if t == types.Poison || c.integerArg(env, t, true) {
 		return nil
 	}
-	return c.implicitFailure(at, t, boundAtomicInt, gens)
+	return c.implicitFailure(at, "T", t, boundAtomicInt, gens)
 }
 
 // narrowed is t, or X when t is a type parameter narrowed by an enclosing

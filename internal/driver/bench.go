@@ -7,14 +7,14 @@
 // mk bench writes and compares (BenchRecord, BenchEntry, BenchRecordOf,
 // ReadBenchRecord, BenchDiffers, WriteBenchText).
 //
-// How: mk bench runs each benchmark's child (std.testing's Bench) in
-// batches. The first batch grows n from 1, doubling, until one call of f(n)
-// takes at least 20 ms, then times BenchBatch repetitions of f(n); later
-// batches time BenchBatch more at that n. After each batch the median time
-// per call and its 95% confidence interval are recomputed; the runs stop
-// when both ends of the interval are within BenchTolerance (2%) of the
-// median, or when DefaultBenchLimit (20 s) has passed, whichever comes
-// first.
+// How: mk bench runs each benchmark's child (std.testing's Bench or
+// BenchSys) in batches. The first batch grows n from 1, doubling, until one
+// call of f(n) takes at least 20 ms, then times BenchBatch repetitions of
+// f(n); later batches time BenchBatch more at that n. After each batch the
+// median time per call and its 95% confidence interval are recomputed;
+// the runs stop when both ends of the interval are within BenchTolerance
+// (2%) of the median, or when DefaultBenchLimit (20 s) has passed,
+// whichever comes first.
 //
 // The interval is distribution-free, from order statistics (the binomial
 // interval for the median: with m sorted times, [x_(k), x_(m+1-k)] for the
@@ -144,7 +144,7 @@ func (s *Session) benchRun(out *TestCase, argv, env []string, i int, opt TestOpt
 		}
 		n, times := parseBenchLines(tc.Output)
 		if len(times) == 0 {
-			out.Result, out.Status, out.Detail = "fail", 0, "not a benchmark: the test did not reach testing.Bench"
+			out.Result, out.Status, out.Detail = "fail", 0, "not a benchmark: the test did not reach testing.Bench or testing.BenchSys"
 			out.Output, out.Duration = tc.Output, time.Since(start)
 			return
 		}

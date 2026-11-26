@@ -354,8 +354,12 @@ func (b *build) resolveModule(m *modNode) {
 	b.stage4(m, rm)
 	ds, gs := rm.Settle()
 	gs = b.settleGen(m, rm, gs)
+	for _, d := range m.info.Diags {
+		m.noteGen(d)
+	}
 	for _, d := range ds {
-		m.notePoison(d)
+		m.noteGen(d)
+		m.notePatternGen(d)
 	}
 	m.diags = append(m.diags, m.info.Diags...)
 	m.diags = append(m.diags, ds...)
@@ -363,11 +367,18 @@ func (b *build) resolveModule(m *modNode) {
 	m.failed = len(m.diags) > 0
 }
 
-// stageDiags collects every module's stage 3 diagnostics in slot order.
+// stageDiags collects every module's stage 3 diagnostics in slot order, and
+// the error a poisoned gen line follows from (genRoot), of a later phase and
+// another module: the E0201s it causes stop the build before checkDiags, and
+// the report keeps it as their cause. diag.Order drops it when no kept
+// diagnostic names it, and as a duplicate when checkDiags reports it too.
 func (b *build) stageDiags() []*diag.Diagnostic {
 	var out []*diag.Diagnostic
 	for _, m := range b.mods {
 		out = append(out, m.diags...)
+		if m.genRoot != nil {
+			out = append(out, m.genRoot)
+		}
 	}
 	return out
 }

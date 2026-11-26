@@ -116,20 +116,10 @@ Extract(h: crypto.HashKind, salt: []u8, ikm: []u8): Secret {
 // module's constants, at most 12 bytes; context is a transcript hash or
 // empty, at most 48; out is at most 48 bytes.
 ExpandLabel(secret: &Secret, label: str, context: []u8, out: mut []u8) {
-    var info: [80]u8 = [0; 80]
-    n := out.Len()
-    info[0] = Trunc[u8](n >> 8)
-    info[1] = Trunc[u8](n)
-    info[2] = Trunc[u8](6 + label.Len())
-    (mut info[3..9]).CopyFrom("tls13 ".AsBytes())
-    (mut info[9..9 + label.Len()]).CopyFrom(label.AsBytes())
-    at := 9 + label.Len()
-    info[at] = Trunc[u8](context.Len())
-    (mut info[at + 1..at + 1 + context.Len()]).CopyFrom(context)
-    // The secret is HashLen bytes and out at most 48, so neither BadLength
-    // nor BadKey (a Prk made just now) can happen.
+    // The secret is HashLen bytes, label is 1..12 bytes, context <= 48,
+    // and out <= 48, so neither BadKey nor BadLength can happen.
     var prk := crypto.Prk.FromBytes(secret.kind, secret.Bytes()).Must()
-    crypto.HkdfExpand(&prk, info[0..at + 1 + context.Len()], out).Must()
+    crypto.HkdfExpandLabel(&prk, label, context, out).Must()
     prk.Wipe()
 }
 

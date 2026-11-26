@@ -94,6 +94,10 @@ func (u *unit) memberLookup(t types.TypeID, name *ast.Ident, v *valueSite) (Memb
 		return Member{}, false
 	}
 	if folded && len(cands) > 1 {
+		// A type head and a pattern never name a field.
+		cands = foldedByUse(cands, v == nil || v.call)
+	}
+	if folded && len(cands) != 1 {
 		u.missAt(t, name, v)
 		return Member{}, false
 	}
@@ -110,6 +114,19 @@ func (u *unit) memberLookup(t types.TypeID, name *ast.Ident, v *valueSite) (Memb
 	}
 	u.privateMethod(name.Span(), mb)
 	return mb, true
+}
+
+// foldedByUse narrows a folded miss (field `cpu` and method `Cpu` both fold
+// to `CPU`) by its use: a call, a type head or a pattern keeps the members
+// that are not fields, a read on a value the fields.
+func foldedByUse(cands []Member, call bool) []Member {
+	var out []Member
+	for _, mb := range cands {
+		if (mb.Kind == MemberField) != call {
+			out = append(out, mb)
+		}
+	}
+	return out
 }
 
 // privateMethod is E0204 for a `Type.Name` function without `export` named
@@ -183,7 +200,8 @@ func (u *unit) missAt(t types.TypeID, name *ast.Ident, v *valueSite) {
 
 // memberMiss is E0702 when an interface visible from this module has a
 // method of that name (the type has no impl of it), else E0203 with the
-// type's members.
+// type's members this module can use: another module's private fields and
+// Type.Name functions are left out.
 func (u *unit) memberMiss(t types.TypeID, name *ast.Ident) {
 	in := u.c.cfg.Interner
 	nm := in.Str(name.Name)
@@ -196,6 +214,9 @@ func (u *unit) memberMiss(t types.TypeID, name *ast.Ident) {
 	var names []string
 	seen := map[source.Symbol]bool{}
 	for _, mb := range u.m.visibleMembers(t) {
+		if !mb.Exported && mb.Item != types.NoItem && u.c.cfg.Items.Get(mb.Item).Module != u.m.ID {
+			continue
+		}
 		if !seen[mb.Name] {
 			seen[mb.Name] = true
 			names = append(names, in.Str(mb.Name))

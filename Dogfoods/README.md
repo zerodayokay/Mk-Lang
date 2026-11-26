@@ -1,6 +1,6 @@
 # Dogfoods
 
-Eighteen complete programs written in Mk: command-line tools, servers, a scripting language, a ray tracer and a kernel. Each is a real package with a command line, real input formats, error messages and exit codes, and its own tests. Read them to see how Mk code looks at the scale of a few thousand lines, and how the standard library fits together.
+Twenty complete programs written in Mk: command-line tools, servers, a scripting language, a ray tracer, a GPU renderer, a paint program and a kernel. Each is a real package with a command line, real input formats, error messages and exit codes, and its own tests. Read them to see how Mk code looks at the scale of a few thousand lines, and how the standard library fits together.
 
 ## The programs
 
@@ -9,7 +9,8 @@ Eighteen complete programs written in Mk: command-line tools, servers, a scripti
 | [`bigcalc`](bigcalc) | Arbitrary-precision RPN calculator, plus certificate, key, signature and encryption tools | `std.big`, `std.crypto`, `std.x509`; an arena per input line that is kept only when the whole line succeeds |
 | [`chat`](chat) | Multi-room chat server with a line protocol and a WebSocket front end | Tasks and channels, `std.http` and `std.websocket`, reference-counted broadcast frames, slow-client back-pressure, cancellation |
 | [`cron`](cron) | Scheduler daemon with time zones | `std.time` zones and DST, process groups and timeouts in `std.proc`, an advisory lock, a simulated clock |
-| [`fetch`](fetch) | HTTP and WebSocket client in the manner of curl | `std.http`, `std.tls`, `std.websocket`, `std.compress`, a cookie jar, parallel transfers |
+| [`fetch`](fetch) | HTTP/1.1, HTTP/2, HTTP/3 and WebSocket client | `std.http`, `std.quic`, `std.tls`, `std.websocket`, parallel transfers, Alt-Svc and fallback |
+| [`relay`](relay) | Loopback reverse proxy and load generator | HTTP/1.1, HTTP/2, HTTP/3, bounded forwarding, cancellation and simulated UDP loss |
 | [`fm`](fm) | Two-pane terminal file manager and pager | `std.term` raw mode, mouse and bracketed paste, a shell on a pseudo-terminal, grapheme-aware wrapping |
 | [`imgproc`](imgproc) | Image pipeline over PNM files | SIMD kernels at 128, 256 and 512 bits chosen at run time, parallel tiles, byte-identical output on every path |
 | [`kernel`](kernel) | Freestanding x86-64 kernel booted in QEMU | `x86_64-freestanding`, PVH boot without an assembly file, naked interrupt stubs, `std.mmio`, a frame allocator |
@@ -22,6 +23,8 @@ Eighteen complete programs written in Mk: command-line tools, servers, a scripti
 | [`pack`](pack) | Archiver with signing and encryption | Ed25519 signatures, X25519 sealing in fixed-size chunks, streaming zstd, gzip and zlib |
 | [`procman`](procman) | Process manager and task runner for Procfiles | One task per process, restart back-off, `proc.Supervise`, a status port |
 | [`raft`](raft) | A five-node Raft cluster over UDP with a linearizability checker | `std.sim` partitions, loss and corruption rolled from a seed; recordings of failing seeds |
+| [`scene`](scene) | 3D renderer and viewer over a text scene format, on Direct3D 12 and Vulkan | `std.gpu` shadow, MSAA, instancing and compute passes, `std.window` with an orbit camera, images compared across backends with `std.image` |
+| [`sketch`](sketch) | Paint program with undo, redo and saved strokes, driven by scripts headless or through a real window | `std.window` events, held state, cursor, fullscreen and focus; swapchain frames with `Hidden` and `Outdated`; `import c.windows` from its own `unsafe` module |
 | [`textkit`](textkit) | Unicode text tools: wc, grep, sort, norm, fold, words, width, convert | `std.text` segmentation and normalization, WHATWG encodings, streaming UTF-8 checks |
 | [`tracer`](tracer) | Path tracer and function plotter | A deterministic per-pixel sampler, so the image is the same on any number of carriers; a uniform grid for meshes |
 

@@ -401,6 +401,56 @@ note the allocator store rule's later-hop store cut: an allocator reached on a l
 witness D612-d462-a1.mk D612-d462-a2.mk D612-d462-d1.mk D612-d462-d10.mk D612-d462-d11.mk D612-d462-d12.mk D612-d462-d2b.mk D612-d462-d3.mk D612-d462-d4.mk D612-d462-d5.mk D612-d462-d6.mk D612-d462-d7.mk D612-d462-d8.mk D612-d462-m3.mk FH-d462-r1c.mk FH-d462-r1d.mk FH-d462-r1e.mk
 end
 
+mutant M-SB-below
+rule R11
+class R
+file internal/borrow/store.go
+anchor \t\tif !c.csrConst && ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
+replace \t\tif !c.csrConst && ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType {
+note the provenance cut taken for every frame root, whatever its type can write below itself: a holder that can store through what it borrows (a field holding a reference, a Cell behind a shared reference, a List of references, a generic field, a raw pointer) passes no store on, so each witness is accepted and leaves a reference to a dead local in the caller's memory; expected VDeadScope
+witness SB-provenance-writer-reject.mk SB-cell-holder-reject.mk SB-list-carrier-reject.mk SB-generic-holder-reject.mk SB-view-raw-reject SB-raw-holder-reject SB-raw-shared-reject SB-raw-behind-reject
+end
+
+mutant M-SB-csr
+rule R11
+class R
+file internal/borrow/store.go
+anchor \t\tif !c.csrConst && ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
+replace \t\tif ti.kind != rkAbstract && ti.kind != rkStatic && ti.typ != types.NoType && !c.w.storesBelow(ti.typ) {
+note the self-reach check's walk (and spawnStores', both under csrConst) takes the store cut: a local whose type writes no loan below itself passes no store on, so Keep's S(a: mut t, b: &n) stops at t (T holds a &i32 of u.x) and never reaches u, which holds a Cell inline; the witnesses are accepted; expected none (no generated program draws it, the witness flip is the record)
+witness fld3/csr-sh1.mk SB-csr-direct-reject.mk SB-csr-nested-reject.mk SB-arena-list-reject.mk
+end
+
+mutant M-SB-raw
+rule R11
+class R
+file internal/borrow/storebelow.go
+anchor \t\t// viewBelow instead.\n\t\treturn true
+replace \t\t// viewBelow instead.\n\t\treturn false
+note a raw pointer outside a view taken to reach nothing: a struct that holds one beside a reference, and holds by its maker's signature a loan on what it points at, passes no store on, by value or behind a shared reference, so each witness is accepted and the cell keeps a reference to a dead local; expected VDeadScope
+witness SB-raw-holder-reject SB-raw-shared-reject
+end
+
+mutant M-SB-viewraw
+rule R11
+class R
+file internal/borrow/storebelow.go
+anchor p.Kind == types.KRawPtr && w.tab.Kind(p.Elem) != types.KParam {
+replace p.Kind == types.KRawPtr && !w.paramFrom(p.Elem, 0) {
+note a view's raw pointer trusted as typed whenever its pointee mentions a type parameter: V[u64] over `*Node[T]`, whose Node holds a `&Cell[?&i32]` beside T, passes no store on, so the witness is accepted and the cell keeps a reference to a dead local; expected VDeadScope
+witness SB-view-raw-reject
+end
+
+mutant M-SB-rawbehind
+rule R11
+class R
+file internal/borrow/storebelow.go
+anchor \treturn !w.factsOf(t).Allocator && w.holdsRaw(t, map[types.TypeID]bool{})
+replace \treturn false
+note a referent that holds no loan taken to reach nothing, even when it holds a raw pointer: a holder of `&Bare` whose code stores through Bare's pointer into memory it borrows by another field passes no store on, so the witness is accepted and the cell keeps a reference to a dead local; expected VDeadScope
+witness SB-raw-behind-reject
+end
+
 mutant M-C3-self
 rule R11
 class R

@@ -387,8 +387,10 @@ func TestSTDSIM_APIMatchesReference(t *testing.T) {
 	if len(want) == 0 {
 		t.Fatal("the reference routes no line to std.sim")
 	}
-	if len(blocks) != 2 {
-		t.Errorf("the reference has %d std.sim blocks, want Op and Fault", len(blocks))
+	for _, n := range []string{"Op", "Fault", "NetFaults"} {
+		if _, ok := blocks[n]; !ok {
+			t.Errorf("the reference has no std.sim %s block", n)
+		}
 	}
 	types := moduleTable(t)[mod]
 	decls := moduleDecls(t, mod)
@@ -402,8 +404,14 @@ func TestSTDSIM_APIMatchesReference(t *testing.T) {
 			if !slices.Contains(types, n) {
 				t.Errorf("std.sim exports type %s (%s), which the module map does not list", n, d.file)
 			}
-			if body, ok := blocks[n]; ok && !slices.Equal(body, d.body) {
-				t.Errorf("std.sim's %s body %q, reference %q", n, d.body, body)
+			declared := d.body
+			if strings.Contains(d.text, "struct ") {
+				declared = slices.DeleteFunc(slices.Clone(declared), func(field string) bool {
+					return !strings.HasPrefix(field, "export ")
+				})
+			}
+			if body, ok := blocks[n]; ok && !slices.Equal(body, declared) {
+				t.Errorf("std.sim's %s body %q, reference %q", n, declared, body)
 			}
 			continue
 		}

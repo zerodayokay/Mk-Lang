@@ -1,8 +1,12 @@
 // Why: std.testing must behave in a plain test run and parse its inputs.
-// What: test blocks of Fuzz, Bench, the input file's records and Mutate,
-// run by `mk test --std=std.testing`.
-// How: mk test clears the MK_TESTING_ variables, so Fuzz calls nothing and
-// Bench calls f(1); internal/driver/fuzz_test.go runs both modes.
+// What: test blocks of Fuzz, Bench, BenchSys, ExpectPanic, the bench
+// spec, the input file's records and Mutate, run by
+// `mk test --std=std.testing`.
+// How: a plain mk test child with no fuzz corpus gets only
+// MK_TESTING_EXPECT (the run's token) of the MK_TESTING_ variables, so
+// Fuzz calls nothing, Bench calls f(1), BenchSys f(sys, 1) and
+// ExpectPanic writes its line; internal/driver/fuzz_test.go and
+// bench_test.go run the other modes.
 
 import std.rt
 
@@ -15,9 +19,28 @@ OnlyOne(n: int) {
     Assert(n == 1)
 }
 
+// OnlyOneSys allocates from the heap of the System it is given.
+OnlyOneSys(sys: &System, n: int) {
+    Assert(n == 1)
+    var a := Arena.New(sys.heap).Must()
+    defer a.Free()
+    Assert(a.Slice[u8](64).Must().Len() == 64)
+}
+
 test "Testing Fuzz with no corpus calls nothing, Bench calls f(1)" {
     Fuzz(NeverCalled)
     Bench(OnlyOne)
+}
+
+test "Testing BenchSys calls f(sys, 1)" (sys: &System) {
+    BenchSys(sys, OnlyOneSys)
+}
+
+// mk test passes this block on its panic (internal/driver/expectpanic_test.go
+// covers the failing outcomes); the harness judges its exit and report.
+test "Testing ExpectPanic passes on the panic it names [exit 101: panic: assert]" {
+    ExpectPanic("assert")
+    Assert(Decimal("7".AsBytes(), 0).n == 8)
 }
 
 test "Testing Decimal and PutInt" {
@@ -25,6 +48,7 @@ test "Testing Decimal and PutInt" {
     Assert(d.n == 12 && d.end == 2)
     Assert(Decimal("12 345".AsBytes(), 3).n == 345)
     Assert(Decimal("x".AsBytes(), 0).n == 0)
+    Assert(SpecN("0 20") == 0 && SpecReps("0 20") == 20 && SpecN("64 3") == 64 && SpecReps("64 3") == 3)
     var line: [32]u8 = [0; 32]
     w := PutInt(mut line[..], 0, 9_007_199_254_740_993)
     Assert(str.From(line[0..w]).Must() == "9007199254740993")
