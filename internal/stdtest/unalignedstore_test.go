@@ -4,11 +4,12 @@
 // must write exactly its bytes.
 // What: TestUnalignedStores and the program unalignedStoreProgram.
 // How: builds the program for the host at dev and release, requires the
-// store of each Store function to be align 1 in codegen's IR, and runs it:
-// a u16, u32 and u64 stored at every offset 0 to 7 of a buffer reads back,
-// little-endian, with every other byte untouched, natively and in the
-// compile-time evaluator (a const of the same check), and so does a u32
-// stored through raw.WriteUnaligned named as a fn value.
+// store of each Store function and of the fn value's wrapper to be align 1
+// in codegen's IR, and runs it: a u16, u32 and u64 stored at every offset 0
+// to 7 of a buffer reads back, little-endian, with every other byte
+// untouched, natively and in the compile-time evaluator (a const of the
+// same check), and so does a u32 stored through raw.WriteUnaligned named as
+// a fn value.
 
 package stdtest
 
@@ -115,13 +116,15 @@ const unalignedStorePkg = `const Package = pkg.Package(
 // its alignment in group 2.
 var alignedStore = regexp.MustCompile(`^\s*store i(16|32|64) %[\w.]+, ptr %[\w.]+, align (\d+)`)
 
-// fnBody returns the lines of the definition of fn in ll, or nil.
+// fnBody returns the lines of the definition of fn in ll, or nil. A fn
+// ending in a dot is a prefix: a wrapper's name ends in its pack ordinal.
 func fnBody(ll, fn string) []string {
 	var body []string
 	in := false
 	for _, l := range strings.Split(ll, "\n") {
 		if m := defineLine.FindStringSubmatch(l); m != nil {
-			in = strings.Trim(m[1], `"`) == fn
+			name := strings.Trim(m[1], `"`)
+			in = name == fn || strings.HasSuffix(fn, ".") && strings.HasPrefix(name, fn)
 			continue
 		}
 		if in && l == "}" {
@@ -135,7 +138,8 @@ func fnBody(ll, fn string) []string {
 }
 
 // TestUnalignedStores: at dev and release, Store16, Store32 and Store64's
-// one store of their width is align 1, and the program exits 0.
+// one store of their width, and the WriteUnaligned[u32] wrapper's, is
+// align 1, and the program exits 0.
 func TestUnalignedStores(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "ustore")
@@ -171,7 +175,11 @@ func TestUnalignedStores(t *testing.T) {
 		if len(r.Report.Diags) > 0 || len(paths) != 1 {
 			t.Fatalf("profile %v: build:\n%s", prof, r.Report.Text(r.Sources))
 		}
-		for fn, width := range map[string]string{"mk.main.Store16": "16", "mk.main.Store32": "32", "mk.main.Store64": "64"} {
+		// mk.std.raw.WriteUnaligned.fn. is the wrapper ViaValue's fn value
+		// calls (codegen's wrapper.go): x86_64 runs an aligned store at any
+		// address, so only the IR shows its alignment.
+		for fn, width := range map[string]string{"mk.main.Store16": "16", "mk.main.Store32": "32", "mk.main.Store64": "64",
+			"mk.std.raw.WriteUnaligned.fn.": "32"} {
 			var body []string
 			for _, ll := range lls {
 				if body = fnBody(ll, fn); body != nil {

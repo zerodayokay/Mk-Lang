@@ -159,8 +159,9 @@ const rawDecls = "export ReadUnaligned[T: Plain](p: *T): T\n\nexport WriteUnalig
 
 // TestRawImplicitBounds: `raw.Atomic[T]` needs an integer T of 1, 2,
 // 4 or 8 bytes or a raw pointer (TestAtomicBounds has more cases)
-// and `raw.ReadUnaligned[T]` and `raw.WriteUnaligned[T]` an integer T, else E0701 at the instantiation
-// (a type) or the call (an inferred or fn-value instance).
+// and `raw.ReadUnaligned[T]` and `raw.WriteUnaligned[T]` an integer T,
+// else E0701 at the instantiation (a type) or the call (an inferred or
+// fn-value instance).
 func TestRawImplicitBounds(t *testing.T) {
 	w := newWorld(t, true)
 	raw := w.add("std.raw", opt{std: true}, rawDecls)
