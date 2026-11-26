@@ -7,8 +7,8 @@
 // signedness, aliases, enum tags, a const re-exported through a third
 // module, and the forms that use the value (operators, conversions, const
 // initializers, a const argument, a match pattern, loop bounds), with
-// narrowing conversions `T(m.C)` that check judges by value (MKH-900) and
-// lower folds; TestCImportNegativeConstWidens, the same for a C import's
+// narrowing conversions `T(m.C)` that check judges by value and lower
+// folds; TestCImportNegativeConstWidens, the same for a C import's
 // negative macro and enum constant; TestCImportConstNarrowing, a C
 // import's constants narrowed, and refused when they do not fit.
 // How: one generated package with the consts in module consts, copies of

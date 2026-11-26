@@ -1,5 +1,5 @@
 // verdict: reject E0303
-// note: T(m.C) of another module's const, named qualified or through a third module, is judged by the const's value as T(C) of the module's own is; a u64 above the largest i64 never fits a signed type, and a const of an enum type is judged by its type, as its tag is
+// note: T(m.C) of another module's const, named qualified or through a third module, is judged by the const's value as T(C) of the module's own is; a u64 above the largest i64 never fits a signed type, and a const of an enum type or of char is judged by its type, as its tag or a char literal is
 import lib
 import relay
 
@@ -58,4 +58,10 @@ const Kw: W = W.Hi
 
 EnumConst(): i8 {
     return i8(lib.Kw) + i8(Kw) // <- E0303 E0303
+}
+
+const Ch: char = '\u{1F600}'
+
+CharConst(): u8 {
+    return u8(lib.Ch) + u8(Ch) // <- E0303 E0303
 }

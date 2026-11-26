@@ -669,13 +669,17 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 		}
 		it := u.c.cfg.Items.Get(types.ItemID(r.A))
 		d, ok := it.Decl.(*types.ConstDecl)
-		// A const of an enum type is judged by type, as its tag is
-		// (`i8(W.Hi)`): the fold gives an enum no integer value.
-		if !ok || u.reprEnum(from) != types.NoType {
+		if !ok {
 			return false
 		}
 		if u.isFloat(from) {
 			return to == types.F32 && u.floatConstFitsF32(it, a.Span())
+		}
+		// A const of an enum type or of char is judged by type, as its
+		// tag (`i8(W.Hi)`) or a char literal (`u8('a')`) is: the fold
+		// gives neither an integer value.
+		if !u.isInt(from) {
+			return false
 		}
 		var x int64
 		// wide is an unsigned value past the int64 range (a u64 or uint

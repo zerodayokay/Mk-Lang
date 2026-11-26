@@ -21,3 +21,4 @@ export enum W: i32 {
 }
 
 export const Kw: W = W.Hi
+export const Ch: char = '\u{1F600}'
