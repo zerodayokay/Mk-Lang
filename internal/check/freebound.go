@@ -35,15 +35,18 @@ type releaseRow struct {
 	alts []string
 	// stores: the call moves the value into arena memory (an arena
 	// container's slot, or Arena.Put's fresh piece), which the arena frees
-	// with no consumer, so a linear value there would be lost (MKH-596).
+	// with no consumer, so a linear value there would be lost; the message
+	// says so.
 	stores bool
 }
 
 // releaseRows is the release protocol as a table. Clear of a List or
 // HeapList and the last Shared.Free check at run time and are not here;
-// Pool.Free is judged by poolFree. The stores rows are every call that
-// moves a value into arena memory: an arena container is never linear and
-// ends with its arena, so it must never hold a linear value.
+// Pool.Free is judged by poolFree. An arena container is never linear and
+// ends with its arena, so it must never hold a linear value: the stores
+// rows, with the arena Map's Set and Ensure, BTree.Set and Set.Add (which
+// also drop), are every call that moves a value into arena memory, and the
+// arena rows name the heap container that holds one.
 var releaseRows = []releaseRow{
 	{"std.core", "List", "Push", []int{0}, "T", false, []string{"HeapList"}, true},
 	{"std.core", "List", "Insert", []int{0}, "T", false, []string{"HeapList"}, true},
@@ -66,11 +69,11 @@ var releaseRows = []releaseRow{
 	{"std.coll", "HeapBTree", "Replace", []int{0}, "K", true, nil, false},
 	{"std.core", "TextMap", "Set", []int{0}, "V", true, []string{"Replace"}, false},
 	{"std.core", "TextMap", "Ensure", []int{0}, "V", true, []string{"Replace"}, false},
-	{"std.core", "Map", "Set", []int{0, 1}, "K V", false, []string{"Replace"}, false},
-	{"std.core", "Map", "Ensure", []int{0, 1}, "K V", false, nil, false},
+	{"std.core", "Map", "Set", []int{0, 1}, "K V", false, []string{"HeapMap"}, false},
+	{"std.core", "Map", "Ensure", []int{0, 1}, "K V", false, []string{"HeapMap"}, false},
 	{"std.core", "Map", "Replace", []int{0, 1}, "K V", false, []string{"HeapMap"}, true},
 	{"std.core", "Map", "Remove", []int{0}, "K", false, nil, false},
-	{"std.coll", "BTree", "Set", []int{0, 1}, "K V", false, []string{"Replace"}, false},
+	{"std.coll", "BTree", "Set", []int{0, 1}, "K V", false, []string{"HeapBTree"}, false},
 	{"std.coll", "BTree", "Replace", []int{0, 1}, "K V", false, []string{"HeapBTree"}, true},
 	{"std.core", "HeapMap", "Remove", []int{0}, "K", false, nil, false},
 	{"std.core", "Set", "Add", []int{0}, "T", false, nil, false},
@@ -169,7 +172,6 @@ func (u *unit) releaseBound(r *releaseRow, item types.ItemID, at source.Span, g 
 	if free == types.NoItem {
 		return // no protocol before std.core declares Free
 	}
-	params := strings.Fields(r.names)
 	fixed := false // one fix per call, on its first E0701
 	for k, slot := range r.slots {
 		if slot >= len(g) || g[slot].IsConst {
@@ -210,7 +212,7 @@ func (u *unit) releaseBound(r *releaseRow, item types.ItemID, at source.Span, g 
 			msg = "`" + ts + "` " + why + ": `" + r.owner + "." + r.method + "` would drop the value it replaces"
 		}
 		pn := "T"
-		if k < len(params) {
+		if params := strings.Fields(r.names); k < len(params) {
 			pn = params[k]
 		}
 		d := diag.New(diag.E0701, at, msg).Text("param", pn).Text("bound", bound).Text("type", ts)

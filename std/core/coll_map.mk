@@ -100,8 +100,8 @@ export Map[K, V].Set(mut self, k: K into self, v: V into self): OutOfMemory!void
 /// When k is present the stored key stays and the given k is dropped, so a
 /// call with a linear K is E0701. A linear V is E0701 too: the arena would
 /// free the stored v unconsumed (the diagnostic names HeapMap). OutOfMemory
-/// as Set. Expected O(1); growth is amortized O(1) and
-/// allocates from the arena.
+/// as Set. Expected O(1); growth is amortized O(1) and allocates from the
+/// arena.
 export Map[K, V].Replace(mut self, k: K into self, v: V into self): OutOfMemory!?V {
     hash := TableHash(&self.t, &k)
     r := TableLookup(&self.t, hash, &k)

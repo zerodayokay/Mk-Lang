@@ -95,17 +95,17 @@ HeapReplace(a: &Alloc) {
 ArenaSet(ar: &Arena) {
     var t := coll.BTree[int, Tok].New(ar)
     x := Tok(n: 1)
-    t.Set(1, x) else { // E0701 Replace
+    t.Set(1, x) else { // E0701 HeapBTree
         Burn(x)
     }
     var s := coll.BTree[Tok, int].New(ar)
     k := Tok(n: 1)
-    s.Set(k, 1) else { // E0701 Replace
+    s.Set(k, 1) else { // E0701 HeapBTree
         Burn(k)
     }
     var f := coll.BTree[int, Res].New(ar)
     r := Res(n: 1)
-    f.Set(1, r) else { // E0701 Replace
+    f.Set(1, r) else { // E0701 HeapBTree
         r.Free(ar.Alloc())
     }
     var p := coll.BTree[int, int].New(ar)
@@ -129,7 +129,7 @@ GenericHeapSet[V](a: &Alloc, u: mut coll.HeapBTree[int, V], v: V) {
 }
 
 GenericArenaSet[V](t: mut coll.BTree[int, V], v: V) {
-    t.Set(1, v) else { // E0701 Replace
+    t.Set(1, v) else { // E0701 HeapBTree
         return
     }
 }
@@ -160,11 +160,11 @@ func rwCollDiags(out string) map[int][]string {
 }
 
 // TestRwColl_BTreeSetAndReplaceBounds: E0701 at exactly the marked
-// calls, naming Replace on every refused Set, and nothing elsewhere: the
-// heap tree's Set (K and V not linear or Free), the heap tree's Replace (K),
-// the arena tree's Set and Replace (K and V not linear, a Free type included;
-// its Replace names HeapBTree, MKH-596), and a generic Set whose V may be
-// linear.
+// calls, naming the marked alternative, and nothing elsewhere: the heap
+// tree's Set (K and V not linear or Free, naming Replace), the heap tree's
+// Replace (K), the arena tree's Set and Replace (K and V not linear, a Free
+// type included, naming HeapBTree, since the arena tree holds no linear
+// value), and a generic Set whose V may be linear.
 func TestRwColl_BTreeSetAndReplaceBounds(t *testing.T) {
 	t.Parallel()
 	out := checkUncapped(t, rwCollSetProgram)

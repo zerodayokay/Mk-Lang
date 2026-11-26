@@ -309,7 +309,7 @@ A `for` loop takes an iterator by value, never through `&` or `mut` (E0301; [ite
 
 - `Get`, `GetMut`, `Has`, `Set`, `Replace`, `Ensure` and `Remove` are expected O(1). `Get` returns `?&V`.
 - `Set` on a present key replaces the value. It keeps the stored key and drops the given key and the old value.
-- `Replace` stores the value and returns the old one, so `V` may be linear.
+- `Replace` stores the value and returns the old one, so on a `HeapMap` or `TextMap` `V` may be linear. An arena map holds no linear value ([releasing](#releasing-what-a-container-holds)).
 - `Ensure(k, v)` returns the value for `k` as `mut V`, inserting `v` first if the key is absent.
 - `Set.Add(x)` returns `false` when `x` was already a member.
 - `Remove` drops the stored key. In an arena map its memory stays in the arena, and a grown table leaves the old one there.
@@ -385,7 +385,7 @@ A call with no allocator cannot free what it drops, so the dropped type must not
 - `Remove` by key on a map, a `Set` or a [`coll.BTree`](coll.md), which drops the stored key.
 - `Store` on a `Guard` or an [`atomic.SpinGuard`](atomic.md#spin). `Replace(g.Mut(), x)` gives the old value back instead.
 - [`mem.Pool`](mem.md#pools-and-handles)'s `Free` and `Sweep`.
-- An arena `Map`'s `Set`, `Ensure` and `Replace`, an arena `BTree`'s `Set` and `Replace`, and `Set.Add`, for the key and the value they would drop or store.
+- An arena `Map`'s `Set`, `Ensure` and `Replace`, an arena `BTree`'s `Set` and `Replace`, and `Set.Add`, for the key and the value they would drop or store. For a map or a tree, the diagnostic names `HeapMap` or `HeapBTree`.
 - Every other call that moves a value into arena memory, where the arena would free it unconsumed: `List`'s `Push` and `Insert`, [`coll`](coll.md)'s `Deque.Push`, `Deque.PushFront` and `PriorityQueue.Push`, [`mem.Pool`](mem.md#pools-and-handles)'s `Add`, and `Arena.Put`. The diagnostic names the heap container that holds such a value (`HeapList`, `HeapDeque`, `HeapMap`, `HeapBTree`), or `Box` for `Arena.Put`. In a generic function the bounds must say the type is not linear, as `T: Plain` does.
 
 ```mk
@@ -2901,9 +2901,10 @@ export List[T].Truncate(mut self, n: int)
 ```
 
 Keeps the first n elements and drops the rest, keeping the capacity; n at
-or above Len() changes nothing. Panics (code 2) when n < 0, and (code 8)
-when it would drop a linear element, as Clear does. O(1); allocates
-nothing.
+or above Len() changes nothing. Panics (code 2) when n < 0. O(1);
+allocates nothing. A list holds no linear element, since Push and Insert
+refuse one; were it to hold one, a Truncate that would drop it would
+panic (code 8), as Clear would.
 
 ### `Map`
 
@@ -3029,8 +3030,8 @@ Sets k's value to v and returns the old one, or none when k was absent.
 When k is present the stored key stays and the given k is dropped, so a
 call with a linear K is E0701. A linear V is E0701 too: the arena would
 free the stored v unconsumed (the diagnostic names HeapMap). OutOfMemory
-as Set. Expected O(1); growth is amortized O(1) and
-allocates from the arena.
+as Set. Expected O(1); growth is amortized O(1) and allocates from the
+arena.
 
 ### `Map.Set`
 

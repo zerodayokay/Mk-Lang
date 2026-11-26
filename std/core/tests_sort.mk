@@ -752,7 +752,7 @@ test "every sort of owned elements of 8, 16 and 40 bytes, under an order and und
     for n in [0, 1, 2, 3, 8, 9, 12, 13, 16, 17, 20, 21, 31, 32, 33, 63, 64, 65, 100, 300, 1_000] {
         for way in 0..4 {
             for rel in 0..4 {
-                // Heap lists: an arena List refuses a linear element (MKH-596).
+                // Heap lists: an arena List holds no linear element.
                 var l8 := HeapList[TsOwn8].New(h)
                 var l16 := HeapList[TsOwn16].New(h)
                 var l40 := HeapList[TsOwn40].New(h)

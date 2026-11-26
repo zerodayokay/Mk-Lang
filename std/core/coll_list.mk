@@ -86,9 +86,10 @@ export List[T].Clear(mut self) {
 }
 
 /// Keeps the first n elements and drops the rest, keeping the capacity; n at
-/// or above Len() changes nothing. Panics (code 2) when n < 0, and (code 8)
-/// when it would drop a linear element, as Clear does. O(1); allocates
-/// nothing.
+/// or above Len() changes nothing. Panics (code 2) when n < 0. O(1);
+/// allocates nothing. A list holds no linear element, since Push and Insert
+/// refuse one; were it to hold one, a Truncate that would drop it would
+/// panic (code 8), as Clear would.
 export List[T].Truncate(mut self, n: int) {
     if n < 0 {
         raw.Fail(2, "List.Truncate: negative length")

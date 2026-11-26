@@ -419,9 +419,10 @@ export BTree[K, V].Replace(mut self, k: K into self, v: V into self): OutOfMemor
 Stores v under k and returns the old value, or none when k was absent.
 A present key keeps the stored key and drops the given k, so K may not
 be linear (E0701 at the call); nor may V, since the arena would free the
-stored v unconsumed (E0701, naming HeapBTree). Fails with OutOfMemory as Set does, and then k and v are
-not consumed. O(log n) nodes and O(B log n) compares; allocates at most
-one node per level, and nothing for a present key.
+stored v unconsumed (E0701, naming HeapBTree). Fails with OutOfMemory as
+Set does, and then k and v are not consumed. O(log n) nodes and
+O(B log n) compares; allocates at most one node per level, and nothing
+for a present key.
 
 ### `BTree.Set`
 
@@ -433,7 +434,7 @@ export BTree[K, V].Set(mut self, k: K into self, v: V into self): OutOfMemory!vo
 
 Stores v under k. A present key keeps the stored key and gets v; the
 given key and the old value are dropped, so neither K nor V may be
-linear (E0701 at the call, which names Replace). Fails with
+linear (E0701 at the call, which names HeapBTree). Fails with
 OutOfMemory when a node split needs a node the arena cannot give; the
 nodes are allocated before anything moves, so k and v are then not
 consumed. O(log n) nodes and O(B log n) compares, where B, from 6 to
@@ -858,7 +859,7 @@ export HeapDeque[T].PushFront(mut self, a: &Alloc, x: T into self): OutOfMemory!
 
 - Errors: OutOfMemory
 
-Prepends x at the front, as Push; T may not be linear. Amortized O(1).
+Prepends x at the front, as Push. Amortized O(1).
 
 ### `PriorityQueue`
 

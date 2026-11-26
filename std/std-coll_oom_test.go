@@ -120,7 +120,7 @@ impl Free for CollTok {
 }
 
 // CollTik is CollTok's plain twin for the arena containers, which hold no
-// linear value (MKH-596).
+// linear value.
 struct CollTik {
     id: int
 }

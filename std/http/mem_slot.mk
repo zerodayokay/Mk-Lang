@@ -12,6 +12,7 @@
 // client's shared loan keeps the Slot alive and in place. The argument
 // follows.
 
+import std.core
 import std.raw
 
 // A reference from the Line to the Slot would be a store of the client's
@@ -63,16 +64,20 @@ SlotOf(p: *Slot): &Slot {
 
 // PutLine moves m into fresh memory of a, as Arena.Put does, and returns a
 // shared reference to it. Arena.Put refuses a linear value, which the arena
-// would free unconsumed (MKH-596), and a Line is linear for its connection.
-// Here nothing linear is lost: the Line's one linear part is its connection,
-// and TakeConn takes it out on every way out of the Line's use (the argument
+// would free unconsumed, and a Line is linear for its connection. Here
+// nothing linear is lost: the Line's one linear part is its connection, and
+// TakeConn takes it out on every way out of the Line's use (the argument
 // above: Send's failure path, Exchange.Close and Exchange.Abandon), so the
-// arena frees a Line whose connection is none. OutOfMemory when the arena
-// cannot grow, and then the caller still owns m.
+// arena frees a Line whose connection is none. The memory is bumped from a
+// through its Alloc, as Arena.Put bumps it, and not zero-filled. OutOfMemory
+// when the arena cannot grow, and then the caller still owns m.
 PutLine(a: &Arena, m: Mutex[Line] into a): OutOfMemory!&Mutex[Line] from a {
-    b := try a.SliceAligned[u8](SizeOf[Mutex[Line]](), AlignOf[Mutex[Line]]())
+    b := core.AllocBytes(a.Alloc(), SizeOf[Mutex[Line]](), AlignOf[Mutex[Line]]())
+    if raw.IsNull(b) {
+        fail OutOfMemory
+    }
     unsafe "b is fresh arena memory of one Mutex[Line]'s size and alignment, alive while a is; m's connection is taken out by TakeConn before the arena ends (see above)" {
-        p := raw.PtrCast[u8, Mutex[Line]](raw.DataMut(b))
+        p := raw.PtrCast[u8, Mutex[Line]](b)
         raw.Write(p, m)
         return &*p
     }

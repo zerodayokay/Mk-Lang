@@ -68,7 +68,7 @@ Linear(sys: &System, which: str) {
     if which == "BTree.GetMut.linear" {
         // COLL2-2: GetMut updates a linear value in place (Replace fills
         // a tree of values that are not Free, whose Set takes none; an
-        // arena tree holds no linear value, MKH-596); Has sees every key.
+        // arena tree holds no linear value); Has sees every key.
         var t := coll.HeapBTree[int, Tok].New(h)
         var u := coll.HeapBTree[int, Res].New(h)
         for i in 0..200 {
@@ -289,8 +289,9 @@ func TestSTDCOLL_Panics(t *testing.T) {
 
 // c2SetLinearProgram is the two former '.linear' Set rows of
 // TestSTDCOLL_Panics, which once panicked with code 8: a B-tree's
-// Set of a linear value that is not Free. Each Set marked "// E0701" must be
-// refused at check, naming Replace.
+// Set of a linear value that is not Free. Each Set marked "// E0701 X" must be
+// refused at check, naming X: Replace for the heap tree, HeapBTree for the
+// arena tree, whose Replace refuses a linear value too.
 const c2SetLinearProgram = `import std.coll
 
 linear struct Tok {
@@ -305,7 +306,7 @@ ArenaSetLinear(sys: &System) {
     var t := coll.BTree[int, Tok].New(sys.arena)
     for i in 0..2 {
         x := Tok(n: i)
-        t.Set(1, x) else { // E0701
+        t.Set(1, x) else { // E0701 HeapBTree
             Burn(x)
         }
     }
@@ -316,7 +317,7 @@ HeapSetLinear(sys: &System) {
     var u := coll.HeapBTree[int, Tok].New(h)
     for i in 0..2 {
         x := Tok(n: i)
-        u.Set(h, 1, x) else { // E0701
+        u.Set(h, 1, x) else { // E0701 Replace
             Burn(x)
         }
     }
@@ -334,7 +335,7 @@ export Main(sys: &System) {
 `
 
 // TestSTDCOLL_BTreeSetLinearIsE0701: the rows BTree.Set.linear and HeapBTree.Set.linear
-// expect E0701 naming Replace at their Sets, and nothing else. They are a
+// expect E0701 at their Sets, naming the alternative marked, and nothing else. They are a
 // check, not a mode of the panic program, which must build. Free of a
 // container of linear values that are not Free, Remove by a linear key, and a
 // B-tree's Set of a linear key or value (not Free, for HeapBTree) are E0701 at
@@ -342,23 +343,23 @@ export Main(sys: &System) {
 func TestSTDCOLL_BTreeSetLinearIsE0701(t *testing.T) {
 	t.Parallel()
 	out := checkUncapped(t, c2SetLinearProgram)
-	want := map[int]bool{}
+	want := map[int]string{}
 	for i, l := range strings.Split(c2SetLinearProgram, "\n") {
-		if strings.HasSuffix(l, "// E0701") {
-			want[i+1] = true
+		if _, alt, ok := strings.Cut(l, "// E0701 "); ok {
+			want[i+1] = "E0701 try: " + strings.TrimSpace(alt)
 		}
 	}
 	if len(want) != 2 {
 		t.Fatalf("fixture: %d marked Sets, want 2", len(want))
 	}
 	got := rwCollDiags(out)
-	for n := range want {
-		if len(got[n]) != 1 || got[n][0] != "E0701 try: Replace" {
-			t.Errorf("main.mk:%d: got %q, want E0701 naming Replace\n%s", n, got[n], out)
+	for n, w := range want {
+		if len(got[n]) != 1 || got[n][0] != w {
+			t.Errorf("main.mk:%d: got %q, want %q\n%s", n, got[n], w, out)
 		}
 	}
 	for n, codes := range got {
-		if !want[n] {
+		if _, ok := want[n]; !ok {
 			t.Errorf("unexpected %v at main.mk:%d\n%s", codes, n, out)
 		}
 	}

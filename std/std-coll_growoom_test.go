@@ -189,7 +189,7 @@ HeapPut(t: mut coll.HeapBTree[int, Tok], a: &Alloc, k: int, x: Tok): int {
 }
 
 // Tik is Tok's plain twin for the arena containers, which hold no linear
-// value (MKH-596).
+// value.
 struct Tik {
     id: int
 }

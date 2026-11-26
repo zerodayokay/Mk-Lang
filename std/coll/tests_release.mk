@@ -434,8 +434,8 @@ test "HeapBTree.Replace fills a tree of linear values that are not Free" (sys: &
     u.FreeEmpty(a)
 }
 
-// An arena BTree refuses a linear value (MKH-596): HeapBTree's test above
-// covers Replace of linear values.
+// An arena BTree holds no linear value: HeapBTree's test above covers
+// Replace of linear values.
 test "BTree.Replace hands back the old value" (sys: &System) {
     var t := BTree[int, int].New(sys.arena)
     for i in 0..500 {

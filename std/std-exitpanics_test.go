@@ -119,7 +119,7 @@ func TestStd_ExactDigitsPanics(t *testing.T) {
 // TestStd_ListTruncatePanics: List.Truncate to a negative length panics
 // with code 2 and prints nothing after (exit 101); a Truncate at or above Len
 // is a no-op, and one below it keeps the first n. A List holds no linear
-// element (Push and Insert refuse one, MKH-596), so Truncate's code 8 has no
+// element (Push and Insert refuse one), so Truncate's code 8 has no
 // case. The other List, text, sync and Deque checks are test
 // blocks in tests_list.mk, tests_text.mk, tests_sync.mk and tests_deque.mk.
 func TestStd_ListTruncatePanics(t *testing.T) {

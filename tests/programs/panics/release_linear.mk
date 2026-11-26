@@ -1,6 +1,6 @@
 // Source: the release protocol's run-time checks. With no
 // argument, Clear of an emptied HeapList clears, and Clear of one that still holds a linear
-// element panics (code 11; an arena List holds no linear element, MKH-596); with one, a
+// element panics (code 11; an arena List holds no linear element); with one, a
 // Shared handle that is not the last frees, and the last Shared.Free of a linear value panics
 // (code 8). Both are the library's explicit panic, so the report is the message alone; the
 // .err files move when std does.

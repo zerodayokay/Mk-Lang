@@ -126,7 +126,7 @@ export Main(sys: &System) {
 // their Free on linear values that are not Free is E0701. Each panics with
 // exit 101 and its message and prints nothing after; the same containers
 // emptied first (Pop, Remove) clear and free with no panic. An arena List
-// holds no linear element (MKH-596), so it has no case here. HeapList.Free's
+// holds no linear element (Push refuses one), so it has no case here. HeapList.Free's
 // own case is conformance's tests/programs/panics/free_nonempty.mk, and the
 // map drops of code 8 are tested in regress_test.go.
 func TestStdColl_LinearContentsPanic(t *testing.T) {

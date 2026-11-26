@@ -402,7 +402,9 @@ func TestHomeIsTheModule(t *testing.T) {
 // that is linear and not Free is E0701 at the call (the reference's release
 // paragraph). It was once accepted and panicked at run time (code 11).
 // The diagnostic names Replace as the alternative, and judges the arena
-// BTree.Set too (K and V not linear), whose run-time panic (code 8) is gone.
+// BTree.Set too (K and V not linear), whose run-time panic (code 8) is gone;
+// there it names HeapBTree, since the arena tree's Replace refuses a linear
+// value too.
 func TestHeapBTreeSet(t *testing.T) {
 	const coll = "export linear view struct HeapBTree[K, V] {\n\tk: *K\n\tv: *V\n}\n\n" +
 		"export HeapBTree[K, V].Set(mut self, a: &Alloc, k: K into self, v: V into self) {\n}\n\n" +
@@ -434,8 +436,12 @@ func TestHeapBTreeSet(t *testing.T) {
 			if g := strings.Join(got, " "); g != c.want {
 				t.Fatalf("got %q, want %q\n%s", g, c.want, dump(w, ds))
 			}
+			alts := []string{"Replace"}
+			if strings.HasPrefix(c.name, "arena") {
+				alts = []string{"HeapBTree"}
+			}
 			for _, d := range ds {
-				if fact(d, "element") != c.elem || !slices.Equal(d.Alternatives, []string{"Replace"}) ||
+				if fact(d, "element") != c.elem || !slices.Equal(d.Alternatives, alts) ||
 					!strings.Contains(d.Message, "BTree.Set` would drop the value it replaces") {
 					t.Errorf("facts: element %q alts %v message %q", fact(d, "element"), d.Alternatives, d.Message)
 				}
