@@ -2,7 +2,7 @@
 // union's own bytes: a copy would leave a returned reference dangling and
 // a write lost.
 // What: TestErrorSideBorrowsInPlace.
-// How: builds errSideSrc for the host in dev and release, runs it, and
+// How: builds two programs for the host in dev and release, runs them, and
 // reads each borrowing function's IR for a slot of the error set.
 
 package driver
@@ -18,14 +18,14 @@ import (
 	"mk/internal/types"
 )
 
-// errSideSrc takes the error side of F|F2!int (F2's u8 beside an int ok
-// payload) and of G|W!u8 apart by every form: a payload field and the
-// whole error, shared and returned through from r or a struct, under
-// ok(..) and some(..), on a call, written through mut (a field, a nested
-// field, the whole error replaced by another), behind a mut parameter and
-// at compile time. Smash reuses the stack between taking a reference and
-// reading it.
-const errSideSrc = `
+// errSideFns takes the error side of F|F2!int (F2's u8 beside an int ok
+// payload) and of G|W!u8 apart by every shared form: a payload field and
+// the whole error, returned through from r or a struct, under ok(..) and
+// some(..), on a call; and returns E!T values whose payloads are floats.
+// Smash reuses the stack between taking a reference and reading it.
+const errSideFns = `
+error Ef(x: f32)
+error Ed(x: f64)
 error E
 error F
 error F2(code: u8)
@@ -76,7 +76,7 @@ Pick(r: &(F|F2!int), d: &u8): &u8 from r, d {
 }
 
 // The whole error side, shared.
-Whole(r: &(F|F2!int)): ?&(F|F2) from r {
+Whole(r: &(F|F2!int)): ?&(F | F2) from r {
     return match r {
         err(e) { some(e) }
         _ { none }
@@ -131,6 +131,40 @@ Smash(n: int): int {
     return t
 }
 
+MkF(n: int): Ef!f64 {
+    if n < 0 {
+        fail Ef(x: 1.5)
+    }
+    return 2.25
+}
+
+MkD(n: int): Ed!u8 {
+    if n < 0 {
+        fail Ed(x: 3.5)
+    }
+    return 4
+}
+
+TakeF(r: &(Ef!f64)): f64 {
+    return match r {
+        err(Ef(x: x)) { Cast[f64](*x) }
+        ok(v) { *v }
+    }
+}
+
+TakeD(r: &(Ed!u8)): f64 {
+    return match r {
+        err(Ed(x: x)) { *x }
+        ok(v) { Cast[f64](*v) }
+    }
+}
+
+`
+
+// errSideMutFns writes through mut: a field, a nested field, a field under
+// some(..), the whole error replaced by another, a mut parameter, and the
+// same folded at compile time.
+const errSideMutFns = `
 // A field written through mut, stored and nested.
 MutField(n: int): int {
     var s: F|F2!int = Mk(n)
@@ -197,6 +231,9 @@ Bump(r: mut (G|W!u8)) {
 
 const Folded: int = MutField(-2) + MutNested(-2) * 100
 
+`
+
+const errSideMainShared = `
 export Main(sys: &System): WriteError!void {
     var s: F|F2!int = Mk(-7)
     var d: u8 = 1
@@ -247,6 +284,70 @@ export Main(sys: &System): WriteError!void {
         _ { 0 }
     }))
 
+    var fa: Ef!f64 = MkF(-1)
+    var fb: Ef!f64 = MkF(1)
+    var fc: Ed!u8 = MkD(-1)
+    var fd: Ed!u8 = MkD(1)
+    try sys.Print("float {a} {b} {c} {d}\n", (a: TakeF(&fa), b: TakeF(&fb), c: TakeD(&fc), d: TakeD(&fd)))
+}
+`
+
+const errSideMainAll = `
+export Main(sys: &System): WriteError!void {
+    var s: F|F2!int = Mk(-7)
+    var d: u8 = 1
+    p := Pick(&s, &d)
+    _ = Smash(255)
+    try sys.Print("pick {x}\n", (x: *p))
+
+    w := Whole(&s)
+    _ = Smash(254)
+    wn := match w {
+        some(e) { match e {
+            F2(code: c) { int(*c) }
+            F { -1 }
+        } }
+        none { 0 }
+    }
+    try sys.Print("whole {x}\n", (x: wn))
+
+    v := Viewed(&s, &d)
+    _ = Smash(253)
+    try sys.Print("view {x}\n", (x: *v.c))
+
+    var r: E!(F|F2!int) = Get(&s, false)
+    q := PickOk(&r, &d)
+    _ = Smash(252)
+    try sys.Print("ok {x}\n", (x: *q))
+
+    var s6: F|F2!int = Mk(-6)
+    var o: ?(F|F2!int) = Wrap(&s6)
+    so := PickSome(&o, &d)
+    _ = Smash(251)
+    try sys.Print("some {x}\n", (x: *so))
+
+    var g: G|W!u8 = MkG(-5)
+    var d16: u16 = 1
+    pg := PickG(&g, &d16)
+    _ = Smash(250)
+    try sys.Print("g {x}\n", (x: *pg))
+
+    var gw: G|W!u8 = MkG(-1)
+    var d64: u64 = 1
+    pw := PickW(&gw, &d64)
+    _ = Smash(249)
+    try sys.Print("w {x}\n", (x: *pw))
+
+    try sys.Print("call {x}\n", (x: match Mk(-3) {
+        err(F2(code: c)) { int(c) }
+        _ { 0 }
+    }))
+
+    var fa: Ef!f64 = MkF(-1)
+    var fb: Ef!f64 = MkF(1)
+    var fc: Ed!u8 = MkD(-1)
+    var fd: Ed!u8 = MkD(1)
+    try sys.Print("float {a} {b} {c} {d}\n", (a: TakeF(&fa), b: TakeF(&fb), c: TakeD(&fc), d: TakeD(&fd)))
     try sys.Print("mut {a} {b} {c} {d} {e}\n", (a: MutField(-2), b: MutNested(-2), c: MutSome(-2), d: MutWhole(-4), e: MutWhole(3)))
     Bump(mut g)
     try sys.Print("bump {x}\n", (x: match g {
@@ -257,55 +358,62 @@ export Main(sys: &System): WriteError!void {
 }
 `
 
-// TestErrorSideBorrowsInPlace: the program prints the values it stored in
+// TestErrorSideBorrowsInPlace: each program prints the values it stored in
 // both profiles, and no function that returns a borrow of an error side
 // has a slot of the error set F|F2 (8 bytes, align 4) to copy it into.
+// "shared" holds only shared borrows, so it builds on a compiler that
+// cannot write through an error side; "all" adds the writes.
 func TestErrorSideBorrowsInPlace(t *testing.T) {
 	t.Parallel()
 	tools := needTools(t)
 	target := HostTarget()
-	const want = "pick 7\nwhole 7\nview 7\nok 7\nsome 6\ng 300\nw 77\ncall 3\n" +
-		"mut 9 9 11 123456789012 3\nbump 6301\nconst 909\n"
+	const shared = "pick 7\nwhole 7\nview 7\nok 7\nsome 6\ng 300\nw 77\ncall 3\nfloat 1.5 2.25 3.5 4\n"
+	progs := []struct{ name, src, want string }{
+		{"shared", errSideFns + errSideMainShared, shared},
+		{"all", errSideFns + errSideMutFns + errSideMainAll, shared + "mut 9 9 11 123456789012 3\nbump 6301\nconst 909\n"},
+	}
 	setSlot := regexp.MustCompile(`alloca \[8 x i8\], align 4\b`)
-	for _, prof := range []types.Profile{types.Dev, types.Release} {
-		t.Run(prof.String(), func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			file := filepath.Join(dir, "main.mk")
-			if err := os.WriteFile(file, []byte(errSideSrc), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			var mu sync.Mutex
-			var ll strings.Builder
-			cfg := Config{Root: file, Target: target, Profile: prof, CacheDir: t.TempDir(), Tools: tools}
-			cfg.TestHooks.OnLL = func(_, text string) { mu.Lock(); ll.WriteString(text); mu.Unlock() }
-			s, err := NewSession(cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r, paths, err := s.Build(filepath.Join(dir, "main"+exeSuffix(target)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(r.Report.Diags) > 0 || len(paths) != 1 {
-				t.Fatalf("build:\n%s", r.Report.Text(r.Sources))
-			}
-			out, errOut, code := runExe(t, target, paths[0], "")
-			if code != 0 || out != want {
-				t.Errorf("exit %d, stdout %q, stderr %q; want %q", code, out, errOut, want)
-			}
-			text := ll.String()
-			for _, fn := range []string{"Pick", "Whole", "Viewed", "PickOk", "PickSome"} {
-				body := llFunc(text, "@mk.main."+fn+"(")
-				if body == "" {
-					t.Fatalf("no %s in the IR", fn)
+	for _, p := range progs {
+		for _, prof := range []types.Profile{types.Dev, types.Release} {
+			t.Run(p.name+"/"+prof.String(), func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				file := filepath.Join(dir, "main.mk")
+				if err := os.WriteFile(file, []byte(p.src), 0o644); err != nil {
+					t.Fatal(err)
 				}
-				// Viewed copies the View it returns, never the set.
-				if setSlot.MatchString(body) || fn != "Viewed" && strings.Contains(body, "memcpy") {
-					t.Errorf("%s copies the error side:\n%s", fn, body)
+				var mu sync.Mutex
+				var ll strings.Builder
+				cfg := Config{Root: file, Target: target, Profile: prof, CacheDir: t.TempDir(), Tools: tools}
+				cfg.TestHooks.OnLL = func(_, text string) { mu.Lock(); ll.WriteString(text); mu.Unlock() }
+				s, err := NewSession(cfg)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-		})
+				r, paths, err := s.Build(filepath.Join(dir, "main"+exeSuffix(target)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(r.Report.Diags) > 0 || len(paths) != 1 {
+					t.Fatalf("build:\n%s", r.Report.Text(r.Sources))
+				}
+				out, errOut, code := runExe(t, target, paths[0], "")
+				if code != 0 || out != p.want {
+					t.Errorf("exit %d, stdout %q, stderr %q; want %q", code, out, errOut, p.want)
+				}
+				text := ll.String()
+				for _, fn := range []string{"Pick", "Whole", "Viewed", "PickOk", "PickSome"} {
+					body := llFunc(text, "@mk.main."+fn+"(")
+					if body == "" {
+						t.Fatalf("no %s in the IR", fn)
+					}
+					// Viewed copies the View it returns, never the set.
+					if setSlot.MatchString(body) || fn != "Viewed" && strings.Contains(body, "memcpy") {
+						t.Errorf("%s copies the error side:\n%s", fn, body)
+					}
+				}
+			})
+		}
 	}
 }
 
