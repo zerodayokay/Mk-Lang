@@ -61,6 +61,9 @@ func TestStdNet_Blocks(t *testing.T) {
 		t.Run(where, func(t *testing.T) {
 			t.Setenv("MK_CARRIERS", fmt.Sprint(c.carriers))
 			if c.longTemp {
+				// mk is built first, in the package's temporary directory,
+				// which outlives this one.
+				mkExe(t)
 				long := unixLongTemp(t)
 				t.Setenv("TEMP", long)
 				t.Setenv("TMP", long)

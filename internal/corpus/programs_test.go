@@ -263,6 +263,9 @@ func TestProgramsSocketsLongTemp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The shared runner, made first, keeps its builds in a directory that
+	// outlives this test's.
+	run := sharedRunner(t, root, needLLVM(t))
 	long := t.TempDir()
 	if n := 112 - len(long) - 1; n > 0 {
 		long = filepath.Join(long, strings.Repeat("u", n))
@@ -272,7 +275,6 @@ func TestProgramsSocketsLongTemp(t *testing.T) {
 	}
 	t.Setenv("TEMP", long)
 	t.Setenv("TMP", long)
-	run := sharedRunner(t, root, needLLVM(t))
 	n := 0
 	for _, c := range cases {
 		if c.Program != ProgramsDir+"/sockets.mk" || !slices.Contains(c.Targets, "x86_64-windows") {
