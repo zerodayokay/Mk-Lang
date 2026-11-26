@@ -102,9 +102,9 @@ export Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str):
 /// none); with offer empty the handshake is Connect's, and chosen is -1.
 /// A connector made by Of negotiates nothing: this is its Connect, offer
 /// unused, and chosen is -1. Provisional. Errors: Connect's. On a client,
-/// a name in offer that is empty or over 255 bytes is SecureFailed(why:
-/// Handshake) before the ClientHello is sent: the peer gets only a
-/// handshake_failure alert (a server never matches such a name). A
+/// an offer std.tls cannot send (a name that is empty or over 255 bytes,
+/// or names of more than 65,535 bytes in all) is SecureFailed(why:
+/// Handshake) before any I/O; a server never matches such a name. A
 /// server that shares none of the client's protocols sends the
 /// no_application_protocol alert, and both sides fail with
 /// SecureFailed(why: Handshake). O(1) here plus the handshake's cost,

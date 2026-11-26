@@ -4,8 +4,9 @@
 // end.
 // What: test blocks for Connector and Acceptor through Negotiate: a
 // client offering h2 and http/1.1 against servers accepting each order,
-// one, and neither; empty offers on either side; and offers the client
-// refuses to send, which reach the peer as one alert.
+// one, and neither; empty offers on either side; an offer of about 20
+// KiB; and offers the client cannot send, which it refuses before any
+// I/O.
 // How: run by mk test --std=std.tls. tls.Connector and tls.Acceptor run
 // as two tasks of one test over loopback, with a P-256 leaf and root
 // valid from 2000 to 2200 given as constants; each case reports both
@@ -259,22 +260,76 @@ NgUnsent(h: &Heap, io: Io, addr: str, c: &Config): bool {
     return false
 }
 
-test "A refused offer name fails the client handshake with Unsupported before its ClientHello: the server reads only the handshake_failure alert" (sys: &System) {
+// NgSilent runs tls.Client offering bad against a listener that counts
+// what reaches it: whether the client failed with Unsupported, and the
+// bytes the server read.
+NgSilent(sys: &System, bad: []str): Error!(refused: bool, got: int) {
     io := sys.io
     l := try net.Listen(io, "127.0.0.1:0")
     defer l.Close()
     addr := try sys.arena.Fmt("127.0.0.1:{p}", (p: l.Port()))
-    bad: [2]str = ["h2", ""]
     var ccfg := DefaultConfig
     var refused := false
     var got := 0
-    n := WithOffer(&ccfg, bad[..])
+    n := WithOffer(&ccfg, bad)
     scope s := io.Scope() {
         s.go NgCount(io, &l, mut got)
         refused = NgUnsent(sys.heap, io, addr, &n)
     }
-    Assert(refused)
-    // One plaintext alert record, 5 bytes of header and 2 of alert (RFC
-    // 8446 5.1, 6), where a ClientHello would be hundreds of bytes.
-    Assert(got == 7)
+    return (refused: refused, got: got)
+}
+
+test "An offer the client cannot send fails tls.Client with Unsupported before any I/O: the server reads nothing" (sys: &System) {
+    empty: [2]str = ["h2", ""]
+    r := try NgSilent(sys, empty[..])
+    Assert(r.refused && r.got == 0)
+    var long: [256]u8 = [0x61; 256]
+    // 256 bytes of ASCII are valid UTF-8, so From cannot fail.
+    name := str.From(long[..]).Must()
+    big: [1]str = [name]
+    r1 := try NgSilent(sys, big[..])
+    Assert(r1.refused && r1.got == 0)
+    // 257 names of 255 bytes are 65,792 bytes of list, past its 2-byte
+    // length (RFC 7301 3.1).
+    many: [257]str = [name[0..255]; 257]
+    r2 := try NgSilent(sys, many[..])
+    Assert(r2.refused && r2.got == 0)
+}
+
+test "AlpnFits takes names of 1 to 255 bytes up to a list of 65,535 bytes" (sys: &System) {
+    var long: [255]u8 = [0x61; 255]
+    name := str.From(long[..]).Must()
+    // 255 names of 256 bytes on the wire and one of 255: 65,535 bytes.
+    var full: [256]str = [name; 256]
+    full[255] = name[0..254]
+    Assert(AlpnFits(full[..]))
+    full[255] = name
+    Assert(!AlpnFits(full[..]))
+    nothing: [0]str = []
+    Assert(AlpnFits(nothing[..]))
+    one: [1]str = [""]
+    Assert(!AlpnFits(one[..]))
+}
+
+// NgMany is count names of 250 bytes, each made distinct by its first
+// three bytes, then last: an offer of about 250 * count bytes.
+NgMany(a: &Arena, count: int, last: str): OutOfMemory![]str from a {
+    var out := List[str].New(a)
+    for i in 0..count {
+        var b: [250]u8 = [0x62; 250]
+        b[0] = Trunc[u8](0x41 + i / 676 % 26)
+        b[1] = Trunc[u8](0x41 + i / 26 % 26)
+        b[2] = Trunc[u8](0x41 + i % 26)
+        try out.Push(try a.Dup(str.From(b[..]).Must()))
+    }
+    try out.Push(try a.Dup(last))
+    return out.Done()[..]
+}
+
+test "Negotiate with an offer of about 20 KiB, a ClientHello over two records, picks its last name" (sys: &System) {
+    offer := try NgMany(sys.arena, 80, "h2")
+    accept: [1]str = ["h2"]
+    own: [0]str = []
+    r := try NgCase(sys, offer, accept[..], own[..])
+    Assert(r.client == 80 && r.server == 0 && r.echoed)
 }

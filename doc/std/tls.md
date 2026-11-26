@@ -59,7 +59,7 @@ A `Config` is a plain record of settings: references and slices into your memory
 
 With `roots` set to `none`, a client verifies against the system's roots: `x509.SystemPool`, or `x509.SystemRoots` under a `Sim`'s, `Recorder`'s or `Replayer`'s `Io`. See [the system's roots](x509.md#the-systems-roots).
 
-A client checks the server's chain with `x509.Verify` for the `host` it was given, at the wall clock. `Client` refuses an empty `host` with `Unsupported` before it sends anything, since an empty name would match any certificate.
+A client checks the server's chain with `x509.Verify` for the `host` it was given, at the wall clock. `Client` refuses an empty `host` with `Unsupported` before it sends anything, since an empty name would match any certificate. It refuses the same way an `alpn` list it cannot send: a name that is empty or longer than 255 bytes, or names of more than 65,535 bytes in all (RFC 7301).
 
 ## Connections
 
@@ -383,7 +383,9 @@ through that Io at each handshake.
 
 Errors: the peer's Alert; Protocol and Unsupported, after the matching
 alert was sent; Unsupported also, before any I/O, for an empty host,
-which names nothing to check; x509.Error's members for the chain; the
+which names nothing to check, and for a c.alpn that cannot be sent (a
+name that is empty or over 255 bytes, or names of more than 65,535
+bytes in all, RFC 7301 3.1); x509.Error's members for the chain; the
 connection's net.Error, and time.TimedOut past c.handshake;
 OutOfMemory. A cancel leaves conn with the caller mid-handshake, with
 an unknown part of the handshake sent: close it.
@@ -412,7 +414,9 @@ Fields:
 - `identities: []Identity`: A server's chains and keys. The server presents the first whose key
   the client's signature schemes allow.
 - `alpn: []str`: The application protocols offered (a client) or accepted (a
-  server), in preference order (RFC 7301); empty offers none.
+  server), in preference order (RFC 7301); empty offers none. Each
+  is 1 to 255 bytes, at most 65,535 bytes in all: a client refuses
+  another list before any I/O, and a server never matches such a name.
 - `min_version: Version`: The lowest version a client accepts. Tls12 turns on the TLS 1.2
   client; the default, Tls13, offers TLS 1.3 only.
 - `handshake: time.Duration`: The longest a handshake may take before it fails with
