@@ -1,12 +1,13 @@
 // Why: the Windows SDK is the header set the Microsoft flavour exists for,
 // and only the real one shows that windows.h, the Direct3D 12, DXGI and
 // shader compiler headers parse and bind with mk's own toolset headers.
-// What: TestCImport_WindowsSDK, run only when MK_CIMPORT_WINDOWS_SDK names
-// the SDK's Include\<version> directory (CI's runners have no SDK).
-// How: one import of windows.h, d3d12.h, dxgi1_6.h and d3dcompiler.h for
-// the SDK's um, shared and ucrt directories through SystemFor; Translate
-// fails on any Clang error in a header, so success is 0 errors; then the
-// bound share and the names the toolset headers fix.
+// What: TestCImport_WindowsSDK and _WindowsSDKHeaders, run only when
+// MK_CIMPORT_WINDOWS_SDK names the SDK's Include\<version> directory (CI's
+// runners have no SDK).
+// How: imports of the SDK's headers for its um, shared and ucrt
+// directories through SystemFor; Translate fails on any Clang error in a
+// header, so success is 0 errors; then the bound share and the names the
+// toolset headers fix.
 
 package cimport
 
@@ -79,5 +80,44 @@ func TestCImport_WindowsSDK(t *testing.T) {
 	}
 	if n := st.Skipped["extern var redeclared with another type"]; n != 0 {
 		t.Errorf("%d redeclared extern vars disagree in type", n)
+	}
+}
+
+// TestCImport_WindowsSDKHeaders: with mk's headers, every header the
+// first system views name (windows.h, windowsx.h, d3d12.h,
+// d3d12sdklayers.h, dxgi1_6.h, dxgidebug.h, d3dcompiler.h) translates in
+// one import with no Clang error, and so does the ucrt's stdlib.h alone;
+// wchar.h alone fails, naming the setjmp.h mk does not supply (Clang's
+// intrin.h includes it).
+func TestCImport_WindowsSDKHeaders(t *testing.T) {
+	dirs := sdkInclude(t)
+	tl, rd := clangFor(t)
+	sys, err := SystemFor("x86_64-windows", dirs, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(headers ...string) (*Result, error) {
+		return Translate(context.Background(), tl, rd, Request{Target: "x86_64-windows", Triple: sys.Triple,
+			Imports: []Import{{Name: "h", Headers: headers}}, Include: []string{t.TempDir()}, Sysroot: sys.Dirs,
+			WorkDir: filepath.Join(t.TempDir(), "w")})
+	}
+	for _, hs := range [][]string{
+		{"windows.h", "windowsx.h", "d3d12.h", "d3d12sdklayers.h", "dxgi1_6.h", "dxgidebug.h", "d3dcompiler.h"},
+		{"stdlib.h"},
+	} {
+		res, err := run(hs...)
+		if err != nil {
+			if ce, ok := err.(*Error); ok {
+				t.Fatalf("%v: %v\n%.4000s", hs, ce, ce.Stderr)
+			}
+			t.Fatal(err)
+		}
+		st := res.Stats[0]
+		t.Logf("%v: bound %d of %d (%s)", hs, st.Bound(), st.Decls, pct(st.Bound(), st.Decls))
+	}
+	_, err = run("wchar.h")
+	ce, ok := err.(*Error)
+	if !ok || !strings.Contains(ce.Stderr, "'setjmp.h' file not found") {
+		t.Errorf("wchar.h alone: %v, want an error naming setjmp.h", err)
 	}
 }
