@@ -21,7 +21,8 @@ func TestMkTestShowOutput(t *testing.T) {
 		"test \"quiet\" {\n    Assert(true)\n}\n\n" +
 		"test \"fails\" (sys: &System) {\n    sys.Print(\"measured: 43 units\\n\") else {}\n    Assert(false)\n}\n"
 	dir := testPkg(t, map[string]string{"t.mk": src})
-	rep := mkTest(t, Config{Root: filepath.Join(dir, "t.mk")}, TestOptions{})
+	// FramePointers keeps the non-Windows frame chain consistent with cmd/mk's test default.
+	rep := mkTest(t, Config{Root: filepath.Join(dir, "t.mk"), FramePointers: true}, TestOptions{})
 	if got := results(rep); got != "main prints pass\nmain quiet pass\nmain fails panic" {
 		t.Fatalf("results:\n%s", got)
 	}

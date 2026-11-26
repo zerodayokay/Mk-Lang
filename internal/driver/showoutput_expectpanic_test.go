@@ -24,7 +24,8 @@ func TestShowOutputExpectedPanic(t *testing.T) {
 		"    testing.ExpectPanic(\"assert\")\n    _ = Load(9)\n}\n\n" +
 		"test \"returns\" (sys: &System) {\n    sys.Print(\"measured 8\\n\") else {}\n    _ = Load(8)\n}\n"
 	dir := testPkg(t, map[string]string{"t.mk": src})
-	rep := mkTest(t, Config{Root: filepath.Join(dir, "t.mk")}, TestOptions{})
+	// FramePointers keeps the non-Windows frame chain consistent with cmd/mk's test default.
+	rep := mkTest(t, Config{Root: filepath.Join(dir, "t.mk"), FramePointers: true}, TestOptions{})
 	if got := results(rep); got != "main refused pass\nmain returns pass" {
 		t.Fatalf("results:\n%s", got)
 	}
