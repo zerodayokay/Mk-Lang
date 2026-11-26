@@ -2,11 +2,12 @@
 // directory of the search path, which shadows the one the compile read,
 // as the translation's entry does.
 // What: tests that a C object's candidate keeps its negative lookups and
-// misses once one exists, that a path that existed when the candidate was
-// saved is no negative, that a shadowing header added between two builds
-// rebuilds the shim and the C source's objects, not only the binding,
-// also through nested include directories, and that a header found beside
-// its includer leaves the translation's entry a hit.
+// misses once one holds a file, that a file there when the candidate was
+// saved is no negative while a directory there is one, that a shadowing
+// header added between two builds rebuilds the shim and the C source's
+// objects, not only the binding, also through nested include directories
+// and in a directory's place, and that a header found beside its includer
+// leaves the translation's entry a hit.
 // How: cobjKey and cobjCandidate over a store with a fake dependency
 // file, and packages with include_dirs built or checked twice against one
 // cache.
@@ -113,6 +114,57 @@ func TestCObj_ExistingIsNoNegative(t *testing.T) {
 	}
 }
 
+// TestCObj_DirectoryIsNegative: a directory named like a dependency under
+// an earlier search directory is no file, so it stays a negative lookup and
+// the candidate hits while it is a directory, then misses once a header
+// takes its place.
+func TestCObj_DirectoryIsNegative(t *testing.T) {
+	st, err := cache.Open(t.TempDir(), cache.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	src, dep, shadow := filepath.Join(root, "x.c"), filepath.Join(b, "dep.h"), filepath.Join(a, "dep.h")
+	if err := os.MkdirAll(shadow, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{src, dep} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("int x;\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	depFile := filepath.Join(root, "x.d")
+	if err := os.WriteFile(depFile, []byte("obj: "+src+" "+dep+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dh := cimport.NewDepHasher(st)
+	base := source.HashBytes("test", []byte("base"))
+	key, cand, ok := cobjKey(dh, base, depFile, src, []string{a, b})
+	if !ok {
+		t.Fatal("cobjKey failed")
+	}
+	if want := []string{shadow}; !slices.Equal(cand.Neg, want) {
+		t.Fatalf("negatives %q, want %q", cand.Neg, want)
+	}
+	saveCobjCandidate(st, base, cand)
+	if got, ok := cobjCandidate(st, cimport.NewDepHasher(st), base); !ok || got != key {
+		t.Fatalf("a directory named like the header: hit %v, key %v, want %v", ok, got, key)
+	}
+	if err := os.Remove(shadow); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shadow, []byte("int y;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cobjCandidate(st, cimport.NewDepHasher(st), base); ok {
+		t.Error("a header put in the directory's place still hit the candidate")
+	}
+}
+
 // TestCImport_IncludeDirsShadow: a dep.h added to include_dirs' first
 // directory, shadowing the second's, rebuilds the shim (k_inl) and the C
 // source (k_fn) as well as the binding (DepMagic); so does one added to
@@ -138,6 +190,34 @@ func TestCImport_IncludeDirsShadow(t *testing.T) {
 		if out := buildRun(t, dir, cache); out != want {
 			t.Errorf("after adding %s printed %q, want %q", c.path, out, want)
 		}
+	}
+}
+
+// TestCImport_DirectoryThenHeaderShadows: a directory a/inc/dep.h, which
+// Clang passes over, is replaced by a header between two builds; the
+// binding, the shim and the C source all read the new header.
+func TestCImport_DirectoryThenHeaderShadows(t *testing.T) {
+	needTools(t)
+	files := cBin("dirshadow", "#include \"dep.h\"\nint k_fn(void);\nstatic inline int k_inl(void) { return DEP_MAGIC; }\n",
+		"#include \"lib/k.h\"\nint k_fn(void) { return DEP_MAGIC; }\n",
+		cMain("", "        a := k.k_inl()\n        b := k.k_fn()\n", "{a} {b} {c}", "a: a, b: b, c: k.DepMagic"))
+	files["pkg.mk"] = strings.Replace(files["pkg.mk"], "vendor: false)", `vendor: false, include_dirs: ["a/inc", "b/inc"])`, 1)
+	files["a/inc/dep.h/README"] = "a directory named like the header\n"
+	files["b/inc/dep.h"] = "#define DEP_MAGIC 2\n"
+	dir := writeTree(t, files)
+	cache := t.TempDir()
+	if out := buildRun(t, dir, cache); out != "2 2 2\n" {
+		t.Fatalf("first build printed %q, want 2 2 2", out)
+	}
+	shadow := filepath.Join(dir, "a", "inc", "dep.h")
+	if err := os.RemoveAll(shadow); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shadow, []byte("#define DEP_MAGIC 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := buildRun(t, dir, cache); out != "1 1 1\n" {
+		t.Errorf("after the directory became a header printed %q, want 1 1 1", out)
 	}
 }
 

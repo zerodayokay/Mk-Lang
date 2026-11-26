@@ -10,8 +10,10 @@
 // How: an entry holds the bindings, the shim, the dependency files with
 // their content hashes, and the negative lookups: for each dependency under
 // search directory k, the same relative path under every directory before
-// k, none of which existed when the entry was saved. A hit needs every hash
-// to match and every negative to be absent.
+// k, none of which held a file when the entry was saved. A hit needs every
+// hash to match and no negative to hold a file. A directory is no file
+// here: Clang's search passes over a directory named like the header, so
+// it shadows nothing until a file takes its place.
 
 package cimport
 
@@ -131,20 +133,28 @@ func (d *DepHasher) Hash(p string) (source.Hash, bool) {
 	return h, true
 }
 
-// Exists reports whether a file is at p, a negative lookup, statting each
-// path once per DepHasher: a package's C objects share most of theirs. A
-// DepHasher lasts one build's step (a Load, a Save, one package's C
-// objects), so a file added later is seen by the next build.
+// Exists reports whether a file is at p (isFile), a negative lookup,
+// statting each path once per DepHasher: a package's C objects share most
+// of theirs. A DepHasher lasts one build's step (a Load, a Save, one
+// package's C objects), so a file added later is seen by the next build.
 func (d *DepHasher) Exists(p string) bool {
 	if e, ok := d.exists[p]; ok {
 		return e
 	}
-	_, err := os.Stat(p)
+	e := isFile(p)
 	if d.exists == nil {
 		d.exists = map[string]bool{}
 	}
-	d.exists[p] = err == nil
-	return err == nil
+	d.exists[p] = e
+	return e
+}
+
+// isFile reports whether an include lookup at p finds a header: something
+// other than a directory is there. Clang's search passes over a directory
+// named like the header, so a directory shadows nothing yet.
+func isFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
 }
 
 // Save writes the memo; a failure costs a rehash next time.
@@ -156,9 +166,9 @@ func (d *DepHasher) Save() {
 
 // Negatives are the negative lookups of a unit that read deps through the
 // ordered search path dirs: the paths that would shadow a dependency and
-// are absent now. For a file under dirs[k] as rel, each dirs[j]/rel with
-// j < k. A C object's cache entry (internal/driver) keeps them as a
-// translation's does.
+// hold no file now (isFile). For a file under dirs[k] as rel, each
+// dirs[j]/rel with j < k. A C object's cache entry (internal/driver) keeps
+// them as a translation's does.
 func Negatives(deps, dirs []string) []string {
 	var out []string
 	// A path the unit read is no negative: #include_next reads a header
@@ -185,11 +195,13 @@ func Negatives(deps, dirs []string) []string {
 					continue
 				}
 				seen[p] = true
-				// A path that exists now was not picked by the unit (a quoted
+				// A file there now was not picked by the unit (a quoted
 				// include found beside its includer first, which this does not
 				// model): it shadows nothing, and keeping it would make the
-				// entry miss on every build.
-				if _, err := os.Stat(p); err != nil {
+				// entry miss on every build. A directory there stays a
+				// negative: Clang passed over it, and a header put in its
+				// place would shadow the dependency.
+				if !isFile(p) {
 					out = append(out, p)
 				}
 			}
@@ -221,7 +233,7 @@ func Load(st *cache.Store, key source.Hash) (*Result, bool) {
 		}
 	}
 	for _, n := range e.Neg {
-		if _, err := os.Stat(n); err == nil {
+		if isFile(n) {
 			return nil, false
 		}
 	}

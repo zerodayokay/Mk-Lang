@@ -2,8 +2,9 @@
 // each C form must map the same way every time and on every target.
 // What: TestCImport_Mapping, _Linux, _Names, _TwoImportsOneIdentity,
 // _Deterministic, _HeaderError, _Negatives, _NegativesNested,
-// _NegativesExisting and TestCTypeParse.
-// How: translates sampleHeader through clang and checks the Mk lines, in order.
+// _NegativesExisting, _NegativesDirectory and TestCTypeParse.
+// How: translates sampleHeader through clang and checks the Mk lines, in
+// order; the negative lookups over paths in a temporary directory.
 
 package cimport
 
@@ -13,6 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mk/internal/cache"
+	"mk/internal/source"
 )
 
 // TestCImport_Mapping: the sample header's declarations, mapped as cimport
@@ -215,5 +219,46 @@ func TestCImport_NegativesExisting(t *testing.T) {
 	got := Negatives([]string{filepath.Join(b, "x.h"), filepath.Join(b, "y.h")}, []string{a, b})
 	if want := []string{filepath.Join(a, "x.h")}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
+	}
+}
+
+// TestCImport_NegativesDirectory: a directory named like a dependency
+// under an earlier search directory is a negative (Clang's search passed
+// over it, and a header put in its place shadows the dependency), and a
+// translation's entry hits while it is a directory and misses once a file
+// takes its place.
+func TestCImport_NegativesDirectory(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	shadow, dep := filepath.Join(a, "y.h"), filepath.Join(b, "y.h")
+	if err := os.MkdirAll(shadow, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dep, []byte("#define Y 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := Negatives([]string{dep}, []string{a, b}); strings.Join(got, "|") != shadow {
+		t.Fatalf("negatives %q, want [%q]", got, shadow)
+	}
+	st, err := cache.Open(t.TempDir(), cache.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := source.HashBytes("test", []byte("key"))
+	Save(st, key, &Result{Modules: []string{"m"}, Deps: []string{dep}, SearchDirs: []string{a, b}})
+	if _, ok := Load(st, key); !ok {
+		t.Fatal("a directory named like the header made the entry miss")
+	}
+	if err := os.Remove(shadow); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shadow, []byte("#define Y 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Load(st, key); ok {
+		t.Error("a header put in the directory's place still hit the entry")
 	}
 }

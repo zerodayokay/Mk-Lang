@@ -212,4 +212,12 @@ func TestDepHasher_Exists(t *testing.T) {
 	if !NewDepHasher(nil).Exists(p) {
 		t.Error("a new DepHasher does not see the added file")
 	}
+	// A directory named like a header is no file: Clang passes over it.
+	dir := filepath.Join(filepath.Dir(p), "d.h")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if NewDepHasher(nil).Exists(dir) {
+		t.Error("a directory counts as a header")
+	}
 }

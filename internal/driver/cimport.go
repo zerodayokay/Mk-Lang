@@ -719,10 +719,10 @@ func asmSourcesFor(man *Manifest, target string) []int {
 // cobjCand is one candidate of a C object's KindManifest entry: the files
 // the compile read (-MD), with their content hashes, and the negative
 // lookups (cimport.Negatives over the compile's search path), none of
-// which may exist: a header added to an earlier search directory would
-// shadow a dependency. The object's key is cobjObjKey of the entry's base
-// and the dependencies (the negatives follow from them and the search
-// path, which base holds).
+// which may hold a file (a directory there is none): a header added to an
+// earlier search directory would shadow a dependency. The object's key is
+// cobjObjKey of the entry's base and the dependencies (the negatives
+// follow from them and the search path, which base holds).
 type cobjCand struct {
 	Deps []cobjDep
 	Neg  []string `json:",omitempty"`
