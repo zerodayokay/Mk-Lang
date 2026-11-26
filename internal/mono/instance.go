@@ -504,7 +504,7 @@ func (bl *builder) instSig() *types.Signature {
 		return nil
 	}
 	sig := *bl.sig
-	sig.Generics, sig.OwnGenerics = nil, 0
+	sig.Generics, sig.OwnGenerics, sig.Spelled = nil, 0, nil
 	sig.Params = append([]types.Param(nil), bl.sig.Params...)
 	for i := range sig.Params {
 		sig.Params[i].Type = bl.s.typ(sig.Params[i].Type)

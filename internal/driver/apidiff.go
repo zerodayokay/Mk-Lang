@@ -214,7 +214,7 @@ func sessionAPIFacts(s *Session, std bool) (map[string][]apiFact, map[string]api
 		var fs []apiFact
 		switch d := it.Decl.(type) {
 		case *types.FuncDecl:
-			fs = append(fs, apiFact{"signature", qx.sigLine(e.name, &d.Sig), Breaking},
+			fs = append(fs, apiFact{"signature", qx.sigResolved(e.name, &d.Sig), Breaking},
 				apiFact{"flows", strings.Join(qx.flows(e), "; "), Breaking},
 				apiFact{"errors", strings.Join(qx.errors(e), "; "), Breaking},
 				apiFact{"fn flows", strings.Join(qx.sigFnFlows(&d.Sig, "", nil), "; "), Breaking})

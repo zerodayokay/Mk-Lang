@@ -10707,7 +10707,7 @@ PASS main "prop Span.Len"
 These are library features that run inside `test` blocks:
 
 - `testing.Fuzz(f)` registers a fuzz target. `mk test` runs it over saved inputs, and `mk test --fuzz name` searches for new failing ones. See [fuzz targets](std/testing.md#fuzz-targets).
-- `testing.Bench(f)` registers a benchmark that `mk bench` runs. See [benchmarks](std/testing.md#benchmarks).
+- `testing.Bench(f)` registers a benchmark that `mk bench` runs, and `testing.BenchSys(sys, f)` one that takes the test's `System`, to allocate. See [benchmarks](std/testing.md#benchmarks).
 - `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` runs every test that way. See [`std.sim`](std/sim.md).
 
 See also: [write a test and a property](cookbook.md#write-a-test-and-a-property), [tests beside code](codebase.md#6-tests-beside-code), [`mk test`](tools.md#mk-test).
@@ -11399,7 +11399,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch Zeroed` |
 | `std.coll` | `Deque HeapDeque PriorityQueue BTree HeapBTree BTreeIter Bitset` |
 | `std.text` | `Graphemes Clusters Normalize Form FoldCase Width ToUtf16 FromUtf16 WordBounds SentenceBounds Bounds ParagraphBounds BidiLevels Levels Run Direction Mirror LineBreaks Breaks Capped Sink CategoryOf Category ScriptOf Script ScriptExtensions Has Property UnicodeVersion` |
-| `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ExactDigits Digits DigitMode` |
+| `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ShortestDigitsInto ExactDigits Digits DigitMode` |
 | `std.simd` | `Vec Mask Lane CpuFeatures Choice Cpu Lanes Lookup16 Dispatch IndexByte IndexAny Count Equal Compare ValidUtf8 ValidWtf8 IsAscii Utf16Len Utf16LenBytes LastIndexByte Dot Sum` |
 | `std.free` | `PanicInfo`, `Heap`, on the freestanding target only |
 | `std.libc` | No Mk names: C-callable functions that a package's C sources link against, written in Mk and exported with `export extern`: the memory and string functions, `malloc`, `calloc`, `realloc` and `free` over the `Heap`, and what sqlite needs as `SQLITE_OS_OTHER`; on `x86_64-windows` also `__C_specific_handler`, the language handler a C source's `__try`, `__except` and `__finally` need, forwarded to ntdll's |
@@ -11429,7 +11429,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
-| `std.testing` | `Fuzz Bench` |
+| `std.testing` | `Fuzz Bench BenchSys` |
 | `std.build` | `File Profile ProfileKind`, read at compile time only |
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
@@ -11595,6 +11595,7 @@ List[T].Len(&self): int
 List[T].Clear(mut self)
 List[T].Truncate(mut self, n: int)
 List[T].Resize(mut self, n: int, x: T into self): OutOfMemory!void
+List[T].Extend(mut self, xs: []T): OutOfMemory!void *xs into self
 List[T].Insert(mut self, i: int, x: T into self): OutOfMemory!void
 List[T].Remove(mut self, i: int): T
 List[T].Done(self): mut []T
@@ -12396,6 +12397,7 @@ math.Gcd(a: u64, b: u64): u64
 math.CheckedPow(x: i64, n: u32): ?i64
 math.CheckedPowU64(x: u64, n: u32): ?u64
 math.ShortestDigits(x: f64): Digits
+math.ShortestDigitsInto(out: mut []u8, x: f64): (len: int, exp: int)
 math.ExactDigits(x: f64, n: int, mode: DigitMode): Digits
 
 struct Digits {
@@ -13528,6 +13530,7 @@ linux.Syscall(nr: uint, a0: uint, a1: uint, a2: uint, a3: uint, a4: uint, a5: ui
 // std.testing
 testing.Fuzz(f: fn([]u8))
 testing.Bench(f: fn(n: int))
+testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))
 
 // std.build. ProfileKind below is build.ProfileKind; build.Profile is its constant, set by the driver
 build.File(path: str): []u8

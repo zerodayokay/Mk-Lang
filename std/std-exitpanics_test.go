@@ -62,7 +62,8 @@ export Main(sys: &System) {
 `
 
 // std10DigitsPanicProgram calls math.ExactDigits with a digit count its
-// mode refuses: code 8, exit 101.
+// mode refuses, or math.ShortestDigitsInto with an out of 16 bytes: code 8,
+// exit 101.
 const std10DigitsPanicProgram = `import std.math
 
 export Main(sys: &System) {
@@ -81,6 +82,9 @@ export Main(sys: &System) {
         d = math.ExactDigits(1.5, 0, math.DigitMode.SignificantHalfUp)
     } else if which == "negative" {
         d = math.ExactDigits(1.5, -1, math.DigitMode.FractionHalfUp)
+    } else if which == "short" {
+        var b: [16]u8 = [0; 16]
+        d.len = math.ShortestDigitsInto(mut b[..], 1.5).len
     }
     Print(mut out, "after {n}\n", (n: d.len)) else {
         return
@@ -89,7 +93,8 @@ export Main(sys: &System) {
 `
 
 // TestStd_ExactDigitsPanics: fewer than one significant digit, or a
-// negative count, panics with code 8; zero fraction digits does not.
+// negative count, panics with code 8, and so does a ShortestDigitsInto
+// whose out holds fewer than 17 bytes; zero fraction digits does not.
 func TestStd_ExactDigitsPanics(t *testing.T) {
 	t.Parallel()
 	exe := collBuild(t, std10DigitsPanicProgram)
@@ -97,6 +102,7 @@ func TestStd_ExactDigitsPanics(t *testing.T) {
 		{"significant", "math.ExactDigits: fewer than one significant digit"},
 		{"halfup", "math.ExactDigits: fewer than one significant digit"},
 		{"negative", "math.ExactDigits: a negative digit count"},
+		{"short", "math.ShortestDigitsInto: out holds fewer than 17 bytes"},
 		{"fraction", ""},
 	}
 	for _, c := range cases {

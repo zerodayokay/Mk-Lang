@@ -99,6 +99,11 @@ func (w *walker) writeSig(s *types.Signature, literal bool) {
 	e.Bool(s.Exported)
 	e.Bool(s.Extern)
 	w.writeStrings(s.CPU) // the cpu clause's closure
+	if w.store() {
+		// The declaration's spelling of its aliases: display only, so
+		// not in the hash, which a spelling-only edit then keeps.
+		w.writeStrings(s.Spelled)
+	}
 	w.span(s.Span)
 }
 
@@ -187,6 +192,7 @@ func (r *reader) readSig(d *Decoder) types.Signature {
 	s.Exported = d.Bool()
 	s.Extern = d.Bool()
 	s.CPU = readStrings(d)
+	s.Spelled = readStrings(d)
 	s.Span = r.span(d)
 	return s
 }

@@ -439,6 +439,7 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Link.Takeover":              {Module: "std.http", Lines: []string{"Link.Takeover(&self): ?Taken"}},
 	"List.Clear":                 {Module: "", Lines: []string{"List[T].Clear(mut self)"}},
 	"List.Done":                  {Module: "", Lines: []string{"List[T].Done(self): mut []T"}},
+	"List.Extend":                {Module: "", Lines: []string{"List[T].Extend(mut self, xs: []T): OutOfMemory!void *xs into self"}},
 	"List.Insert":                {Module: "", Lines: []string{"List[T].Insert(mut self, i: int, x: T into self): OutOfMemory!void"}},
 	"List.Len":                   {Module: "", Lines: []string{"List[T].Len(&self): int"}},
 	"List.New":                   {Module: "", Lines: []string{"List[T].New(a: &Arena): List[T]"}},
@@ -903,5 +904,4 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Xx64State.Bytes":            {Module: "std.hash", Lines: []string{"Xx64State.Bytes(mut self, data: []u8)"}},
 	"Xx64State.New":              {Module: "std.hash", Lines: []string{"Xx64State.New(seed: u64): Xx64State"}},
 	"Xx64State.Sum":              {Module: "std.hash", Lines: []string{"Xx64State.Sum(self): u64"}},
-	"Zone.Fixed":                 {Module: "std.time", Lines: []string{"Zone.Fixed(offset_seconds: i32): Zone"}},
 }

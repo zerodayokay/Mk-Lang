@@ -644,7 +644,7 @@ func (s *Session) QueryChecked(q string, args []string) (*QueryAnswer, error) {
 	if qx == nil {
 		return nil, nil
 	}
-	return s.localizeAnswer(answerQuery(qx, q, args, !reachedTypes(s.p.diags))), nil // local names
+	return answerQuery(qx, q, args, !reachedTypes(s.p.diags)), nil
 }
 
 // reachedTypes is checkedToTypes over a pipeline's diagnostics.
@@ -710,7 +710,7 @@ func answerQuery(qx *queryIndex, q string, args []string, partial bool) *QueryAn
 			if t, ok := qx.typeNamed(args[0], e); ok {
 				// `members Eq`: the prelude interface, with the
 				// generator of that name after it.
-				lines = append(qx.members(t), "also "+lastSeg(e.mod)+"."+e.name+", a function: "+qx.sigLine(e.name, qx.funcSig(e.id)))
+				lines = append(qx.members(t), "also "+lastSeg(qx.modPath(e.mod))+"."+e.name+", a function: "+qx.sigLine(e.name, qx.funcSig(e.id)))
 				break
 			}
 			lines = qx.members(e)

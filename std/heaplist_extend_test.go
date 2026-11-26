@@ -1,8 +1,11 @@
-// Why: HeapList[T].Extend must copy its new elements with one Slice.CopyFrom
-// (one raw.Move), not an element loop with a check on each element.
-// What: TestHeapListExtend_OneCopyFrom, with extendProgram and insnCycle.
-// How: reads Extend's body for one CopyFrom and no loop, then disassembles a dev
-// build for x86_64-linux and checks every Extend instance has no cycle.
+// Why: HeapList[T].Extend and List[T].Extend must copy their new elements
+// with one Slice.CopyFrom (one raw.Move), not an element loop with a check on
+// each element.
+// What: TestExtend_OneCopyFrom, with extendProgram, extendBodies and
+// insnCycle.
+// How: reads each Extend's body for one CopyFrom and no loop, then
+// disassembles a dev build for x86_64-linux and checks every Extend instance
+// has no cycle.
 
 package std
 
@@ -17,8 +20,8 @@ import (
 	"testing"
 )
 
-// extendProgram extends a HeapList of bytes, of words and of a plain
-// struct, so a dev build has three Extend instances.
+// extendProgram extends a HeapList and a List of bytes, of words and of a
+// plain struct, so a dev build has three instances of each Extend.
 const extendProgram = `struct P {
     k: u32
     v: u16
@@ -37,8 +40,21 @@ export Main(sys: &System): OutOfMemory!void {
     defer s.Free(a)
     ps: [2]P = [P(k: 1, v: 2), P(k: 3, v: 4)]
     try s.Extend(a, ps[..])
+    var lb := List[u8].New(sys.arena)
+    try lb.Extend("hello".AsBytes())
+    var lw := List[u64].New(sys.arena)
+    try lw.Extend(xs[..])
+    var ls := List[P].New(sys.arena)
+    try ls.Extend(ps[..])
 }
 `
+
+// extendBodies are the Extend methods the test reads and disassembles: the
+// file and head of each, and its symbols' prefix in an ELF.
+var extendBodies = []struct{ file, head, sym string }{
+	{"coll_heap.mk", "export HeapList[T].Extend(", "mk.std.core.HeapList:Extend"},
+	{"coll_list.mk", "export List[T].Extend(", "mk.std.core.List:Extend"},
+}
 
 // extendLoopRe matches a for statement in Mk text.
 var extendLoopRe = regexp.MustCompile(`(?m)^\s*for\s`)
@@ -87,16 +103,18 @@ func insnCycle(ins []ctInsn) bool {
 	return len(ins) > 0 && visit(0)
 }
 
-// TestHeapListExtend_OneCopyFrom: Extend's body holds one CopyFrom of xs
-// and no loop; and in a dev build for x86_64-linux (the ELF keeps the
-// names) every Extend instance calls Slice.CopyFrom and has no cycle,
-// while every CopyFrom instance calls memmove (TestCore_BytePathsCallSimd
-// checks it has no back edge).
-func TestHeapListExtend_OneCopyFrom(t *testing.T) {
+// TestExtend_OneCopyFrom: each Extend's body holds one CopyFrom of xs and
+// no loop; and in a dev build for x86_64-linux (the ELF keeps the names)
+// every Extend instance calls Slice.CopyFrom and has no cycle, while every
+// CopyFrom instance calls memmove (TestCore_BytePathsCallSimd checks it has
+// no back edge).
+func TestExtend_OneCopyFrom(t *testing.T) {
 	t.Parallel()
-	body := core11Body(t, "coll_heap.mk", "export HeapList[T].Extend(")
-	if !strings.Contains(body, ".CopyFrom(xs)") || extendLoopRe.MatchString(body) {
-		t.Errorf("std/core/coll_heap.mk: Extend is not one CopyFrom of xs with no loop\n%s", body)
+	for _, e := range extendBodies {
+		body := core11Body(t, e.file, e.head)
+		if !strings.Contains(body, ".CopyFrom(xs)") || extendLoopRe.MatchString(body) {
+			t.Errorf("std/core/%s: Extend is not one CopyFrom of xs with no loop\n%s", e.file, body)
+		}
 	}
 	objdump := cryptoObjdump()
 	if objdump == "" {
@@ -132,26 +150,32 @@ func TestHeapListExtend_OneCopyFrom(t *testing.T) {
 			return strings.HasPrefix(x.op, "call") && strings.Contains(x.args, callee)
 		})
 	}
-	extends, copies := 0, 0
+	extends := make([]int, len(extendBodies))
+	copies := 0
 	for _, fn := range order {
-		switch {
-		case strings.HasPrefix(fn, "mk.std.core.HeapList:Extend"):
-			extends++
+		if strings.HasPrefix(fn, "mk.std.core.Slice:CopyFrom") {
+			copies++
+			if !calls(fn, "<memmove>") {
+				t.Errorf("%s calls no memmove", fn)
+			}
+		}
+		for i, e := range extendBodies {
+			if !strings.HasPrefix(fn, e.sym) {
+				continue
+			}
+			extends[i]++
 			if !calls(fn, "<mk.std.core.Slice:CopyFrom") {
 				t.Errorf("%s calls no Slice.CopyFrom", fn)
 			}
 			if insnCycle(byFn[fn]) {
 				t.Errorf("%s has a loop", fn)
 			}
-		case strings.HasPrefix(fn, "mk.std.core.Slice:CopyFrom"):
-			copies++
-			if !calls(fn, "<memmove>") {
-				t.Errorf("%s calls no memmove", fn)
-			}
 		}
 	}
-	if extends < 3 {
-		t.Errorf("%d Extend instances, want those of u8, u64 and P", extends)
+	for i, e := range extendBodies {
+		if extends[i] < 3 {
+			t.Errorf("%d %s instances, want those of u8, u64 and P", extends[i], e.sym)
+		}
 	}
 	if copies < 3 {
 		t.Errorf("%d CopyFrom instances, want at least Extend's three", copies)

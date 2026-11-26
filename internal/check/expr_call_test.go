@@ -8,6 +8,7 @@ package check
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 
 	"mk/internal/ast"
@@ -135,6 +136,42 @@ func TestE0203_E0207_Members(t *testing.T) {
 		f, _ := b.bodyDiags(t)[0].FactValue("members")
 		if len(f.List) != 3 || f.List[0].Str != "Sum" || f.List[1].Str != "x" || f.List[2].Str != "y" {
 			t.Errorf("members %+v", f.List)
+		}
+	})
+	// The list names what the calling module can use: another
+	// module's private fields and Type.Name functions are left out, and an
+	// invariant (an unnamed item of the struct) is no member in any module.
+	t.Run("members fact visible from the caller", func(t *testing.T) {
+		w := newWorld(t, true)
+		w.add("geo", opt{}, "export struct P {\n\texport x: int\n\ty: int\n\tinvariant y >= 0\n}\n\nexport P.New(): P {\n\treturn P(x: 0, y: 0)\n}\n\nP.Fix(&self): int {\n\treturn self.y\n}\n")
+		b := w.add("m", opt{}, "import geo\n\nF(p: geo.P): int {\n\treturn p.z\n}\n")
+		ds := b.bodyDiags(t)
+		if got := codes(w, ds); got != "E0203@4:11" {
+			t.Fatalf("got %q\n%s", got, dump(w, ds))
+		}
+		f, _ := ds[0].FactValue("members")
+		var got []string
+		for _, x := range f.List {
+			got = append(got, x.Str)
+		}
+		if strings.Join(got, ",") != "New,x" {
+			t.Errorf("members from another module %q, want New,x", got)
+		}
+		own := checkBody(t, newWorld(t, true), "E0203@7:11", "struct P {\n\tx: int\n\tinvariant x >= 0\n}\n\nF(p: P): int {\n\treturn p.z\n}\n")
+		f, _ = own.bodyDiags(t)[0].FactValue("members")
+		if len(f.List) != 1 || f.List[0].Str != "x" {
+			t.Errorf("members in the declaring module %+v, want [x]", f.List)
+		}
+		// Another module's error fields are readable (no E0204), so listed.
+		w = newWorld(t, true)
+		w.add("geo", opt{}, "export error Bad(n: int)\n")
+		b = w.add("m", opt{}, "import geo\n\nF(e: geo.Bad): int {\n\treturn e.z\n}\n")
+		ds = b.bodyDiags(t)
+		if got := codes(w, ds); got != "E0203@4:11" {
+			t.Fatalf("error: got %q\n%s", got, dump(w, ds))
+		}
+		if f, _ = ds[0].FactValue("members"); len(f.List) != 2 || f.List[1].Str != "n" {
+			t.Errorf("members of another module's error %+v, want [Format n]", f.List)
 		}
 	})
 }
