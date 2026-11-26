@@ -25,6 +25,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -594,6 +595,7 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 		TestNoOverflowChecks: w.cfg.TestHooks.NoOverflowChecks, TestNoBoundsChecks: w.cfg.TestHooks.NoBoundsChecks}
 	cfg.FramePointers, cfg.Size, cfg.Cover = w.cfg.FramePointers, w.cfg.Size, w.cfg.Cover
 	cfg.TrapForm = trapForm(w.cfg, j.lib != nil, j.gro)
+	cfg.Lazy = w.lazyBinds().syms() // dl.Present's fold (lazylink.go)
 	if id := w.mainEntry(j.mainMod); id != types.NoItem {
 		cfg.Main = w.items.Get(id).Key
 	}
@@ -634,14 +636,22 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 			What: fmt.Sprintf("driver: the link plan's system-libc mode is %v, mono folded LibcBuild to %v", libc, opt.LibcMode)})}
 	}
 	var specs []importLib
+	// The lazy-binding object (lazylink.go), when a name binds lazily: it
+	// follows the C objects in the link, and its key the C objects' keys.
+	var lazyObj string
+	var lazyKey source.Hash
 	if w.cfg.Target.OS == types.OSWindows {
 		// Only the shim's undefined names reach the system DLLs: it is the
 		// C import's own code (a static inline calling Win32). A C source
 		// links against std.libc alone, so its other calls fail at link
 		// (E0001); a named link may supply them.
-		specs, ds = w.neededImportLibs(insts, cObjectUndefined(shimObjects(cobjs)), plan)
+		var lazy []lazyUse
+		specs, lazy, ds = w.neededImportLibs(insts, cObjectUndefined(shimObjects(cobjs)), plan)
 		if len(ds) == 0 {
 			ds = w.externVarFaults(unit.Globals, cobjs, plan, specs)
+		}
+		if len(ds) == 0 && len(lazy) > 0 {
+			lazyObj, lazyKey, ds = w.lazyObject(ctx, tools, st, cfg, work, lazy)
 		}
 		if len(ds) > 0 {
 			return "", ds
@@ -679,6 +689,9 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 		return "", []*diag.Diagnostic{d}
 	}
 	xkeys = append(xkeys, ckeys...)
+	if lazyObj != "" {
+		xkeys = append(xkeys, lazyKey)
+	}
 	xkeys = append(xkeys, plan.keys()...)
 	if stub != "" {
 		xkeys = append(xkeys, stubKey)
@@ -750,6 +763,9 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	objs, libs, ds := w.compileAndImportLibs(ctx, tools, st, ir, cfg, specs, work, j.timed)
 	if len(ds) > 0 {
 		return "", ds
+	}
+	if lazyObj != "" {
+		cobjs = append(slices.Clip(cobjs), lazyObj)
 	}
 	if !linked {
 		return "", nil

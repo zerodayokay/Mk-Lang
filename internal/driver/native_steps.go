@@ -24,9 +24,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -421,12 +423,14 @@ func (l importLib) fileName() string {
 // Win32 through those.
 //
 // With a plan (links.go), the named DLLs come between std's lists and the
-// system set.
-func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *linkPlan) ([]importLib, []*diag.Diagnostic) {
+// system set. A name that binds lazily (lazylink.go) gets no import
+// library: it is returned in the lazy uses, for the lazy-binding object,
+// and a lazy link's .dll joins the plan's copies.
+func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *linkPlan) ([]importLib, []lazyUse, []*diag.Diagnostic) {
 	t := w.stdTree()
 	ents, err := fs.ReadDir(t.fsys, "sys/windows")
 	if err != nil {
-		return nil, []*diag.Diagnostic{diag.Toolchain("fs", "list std/sys/windows", err.Error(), "cannot list std/sys/windows")}
+		return nil, nil, []*diag.Diagnostic{diag.Toolchain("fs", "list std/sys/windows", err.Error(), "cannot list std/sys/windows")}
 	}
 	used := map[string]bool{} // extern symbols; lookup only
 	for i := range in.List {
@@ -434,19 +438,48 @@ func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *link
 			used[in.List[i].Symbol] = true
 		}
 	}
+	var lazy []lazyUse
+	if lb := w.lazyBinds(); lb != nil {
+		var defs map[string]bool
+		if !plan.empty() {
+			defs = plan.defs
+		}
+		cand := slices.Sorted(maps.Keys(used))
+		if !plan.empty() {
+			cand = append(cand, plan.cand...)
+		}
+		_, lazy = lb.takeLazy(append(cand, cUndef...), defs, nil)
+		for _, u := range lazy {
+			for _, n := range u.names {
+				delete(used, n)
+			}
+		}
+		cUndef = slices.DeleteFunc(slices.Clone(cUndef), func(n string) bool { return lazyHolds(lazy, n) })
+		if !plan.empty() {
+			plan.lazyNames = map[string]bool{}
+			for _, u := range lazy {
+				for _, n := range u.names {
+					plan.lazyNames[n] = true
+				}
+				if u.lib.copy != "" {
+					plan.copies = append(plan.copies, &dynLib{file: u.lib.file, copy: u.lib.copy})
+				}
+			}
+		}
+	}
 	var libs []importLib
 	for _, e := range ents {
-		if e.IsDir() || path.Ext(e.Name()) != ".def" {
+		if e.IsDir() || path.Ext(e.Name()) != ".def" || strings.HasSuffix(e.Name(), lazyStdSuffix) {
 			continue
 		}
 		dll := strings.TrimSuffix(e.Name(), ".def")
 		raw, err := t.readFile("sys/windows/" + e.Name())
 		if err != nil {
-			return nil, []*diag.Diagnostic{diag.Toolchain("fs", "read std/sys/windows/"+e.Name(), err.Error(), "cannot read "+e.Name())}
+			return nil, nil, []*diag.Diagnostic{diag.Toolchain("fs", "read std/sys/windows/"+e.Name(), err.Error(), "cannot read "+e.Name())}
 		}
 		names, err := toolchain.ParseDefList(string(raw))
 		if err != nil {
-			return nil, []*diag.Diagnostic{diag.Toolchain("llvm-lib", "", err.Error(), "std/sys/windows/"+e.Name()+" is not a name list")}
+			return nil, nil, []*diag.Diagnostic{diag.Toolchain("llvm-lib", "", err.Error(), "std/sys/windows/"+e.Name()+" is not a name list")}
 		}
 		needed := dll == "kernel32"
 		for _, n := range names {
@@ -464,7 +497,17 @@ func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *link
 	if !plan.empty() {
 		libs, all = plan.namedImportLibs(libs, all)
 	}
-	return addSystemLibs(libs, all), nil
+	return addSystemLibs(libs, all), lazy, nil
+}
+
+// lazyHolds reports whether a lazy use binds name.
+func lazyHolds(uses []lazyUse, name string) bool {
+	for _, u := range uses {
+		if _, ok := slices.BinarySearch(u.names, name); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // compileAndImportLibs runs compilePacks (under j.timed("clang", ...)) while

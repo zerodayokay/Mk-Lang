@@ -113,6 +113,9 @@ type world struct {
 	// bitcode, for the bin being built: a static library's host links it
 	// with its own linker (libout.go). Bins build one after another.
 	nativeObjects bool
+	// lazy is the target's lazy predicate (lazylink.go), computed once.
+	lazyOnce sync.Once
+	lazy     *lazyBinds
 }
 
 // noteSitePath records a build file's package-relative path.
