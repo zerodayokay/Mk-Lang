@@ -14,6 +14,6 @@ Pair.Bump(mut self) {
 
 var P: Pair = Pair(a: atomic.AtomicInt.New(0), n: 0)
 
-Use() {
+Call() {
     P.Bump() // <- E0507
 }
