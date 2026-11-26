@@ -1,7 +1,9 @@
 // Why: std.hash's secret paths (HMAC keys, messages) must not branch on
 // secret data, on the portable or the instruction paths, with or without PGO.
 // What: TestSTDHASH_ConstantTimeDisassembly and its tables h2CtAllow,
-// h2CtByBuild, h2CtMust and h2CtAbsent.
+// h2CtByBuild, h2CtMust and h2CtAbsent; h2CtProfile, the PGO legs' training
+// run in a fixed environment (h2CtTrain), which
+// TestSTDHASH_PgoTrainingIgnoresEnvironment checks.
 // How: four x86_64-linux builds of one probe, every conditional jump of
 // every std.hash function classified by ctClassify against the tables.
 

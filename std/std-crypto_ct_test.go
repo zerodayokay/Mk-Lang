@@ -1,7 +1,9 @@
 // Why: a conditional jump on a secret leaks it through timing; the source has
 // no `if` on a secret, but LLVM can still turn a mask select into a branch.
-// What: the classifier ctParse and ctClassify, the allowance tables, and
-// TestSTDCRYPTO_ConstantTimeDisassembly over std.crypto's secret paths.
+// What: the classifier ctParse and ctClassify, the allowance tables with
+// their presence rule (ctRequirePresent, ctPresence) and the probe-function
+// rule (ctProbeFn), and TestSTDCRYPTO_ConstantTimeDisassembly over
+// std.crypto's secret paths.
 // How: llvm-objdump on an x86_64-linux build; each jump is "check" (reaches a
 // Panic), "back" (a loop) or "other", and a new "other" fails for a human.
 
