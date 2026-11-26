@@ -172,9 +172,10 @@ var h2CtAbsent = map[string][]string{
 	"mk.std.simd.kernel.Sha512Blocks": {"kernel", "masked", "masked-pgo"},
 }
 
-// h2CtChecked reports whether fn is on the probe's secret path.
+// h2CtChecked reports whether fn is on the probe's secret path: the
+// probe's functions (ctProbeFn), Hmac256, std.hash's and the kernel's.
 func h2CtChecked(fn string) bool {
-	return fn == "mk.main.Main" || fn == "mk.std.crypto.Hmac256" ||
+	return ctProbeFn(fn) || fn == "mk.std.crypto.Hmac256" ||
 		strings.HasPrefix(fn, "mk.std.hash.") || strings.HasPrefix(fn, "mk.std.simd.kernel.")
 }
 

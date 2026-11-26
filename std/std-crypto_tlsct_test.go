@@ -323,9 +323,9 @@ var cr2CtMust = []string{"mk.std.crypto.AesEncrypt4", "mk.std.crypto.GhashPortab
 
 // cr2CtChecked reports whether fn is on the probe's secret path and read
 // here: std.crypto's functions (std.hash's are std-hash2's test), the
-// kernel's AES, GHASH and Wipe, and Main.
+// kernel's AES, GHASH and Wipe, and the probe's (ctProbeFn).
 func cr2CtChecked(fn string) bool {
-	if fn == "mk.main.Main" || strings.HasPrefix(fn, "mk.std.crypto.") {
+	if ctProbeFn(fn) || strings.HasPrefix(fn, "mk.std.crypto.") {
 		return true
 	}
 	// Every kernel function but the SHA ones (std-hash_ct_test.go's): the

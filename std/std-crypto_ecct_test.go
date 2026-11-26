@@ -107,11 +107,18 @@ var cr2EcCtAllow = map[string]int{
 	// The output length and the inlined identity test in P256PtBytes.
 	// The identity branch cannot be taken for a valid secret.
 	"mk.std.crypto.EcSecret:Public": 2,
-	// Main: checks around the crypto calls and the parsed key's kind,
-	// including the inlined key validation in release. Print adds write
-	// error tags and the inlined Writer.Bytes buffer checks. PGO keeps
-	// a different set of calls out of line.
+	// Main: the error tags of the probe's tries (FromBytes's too under PGO;
+	// in release FromBytes is inlined, and Main tests its two public range
+	// answers, EcP256Valid's and P256nDecode's: BadKey), Print's write
+	// error tags (13, 7 in release) and seven inlined Writer.Bytes pairs:
+	// the remaining capacity and the empty buffer, which move only with
+	// the text already printed.
 	"mk.main.Main": 37,
+	// ParseSign, the probe's: ParsePrivateKey's error tag, the match on the
+	// parsed key's kind (the DER's, public) and EcdsaSign's error tag; in
+	// release the inlined Wipe of t (EcSecret:Wipe): the head's count from
+	// the stack address and the tail's tests of i against the length 32.
+	"mk.main.ParseSign": 7,
 	// Generate: the curve, Random's try edge, and the inlined Wipe of b
 	// (the unrolled head's tests of constants, andl $7, cmpq of the
 	// length). The draw's range check (js, ptest) is the rejection loop's
@@ -252,6 +259,7 @@ var cr2EcCtAllow = map[string]int{
 // the test's -v log), every one at or below the reading above.
 var cr2EcCtByBuild = ctByBuild{
 	"mk.main.Main":                    {"release": 32},
+	"mk.main.ParseSign":               {"release-pgo": 3},
 	"mk.std.crypto.Drbg:New":          {"release-pgo": 6},
 	"mk.std.crypto.Drbg:Next":         {"release-pgo": 6},
 	"mk.std.crypto.EcSecret:Generate": {"release-pgo": 2},
@@ -375,7 +383,7 @@ func TestSTDCRYPTO_EcConstantTimeDisassembly(t *testing.T) {
 			for fn := range seen {
 				// kernel.Wipe: the release build calls it where main
 				// calls crypto.Wipe.
-				if fn == "mk.main.Main" || strings.HasPrefix(fn, "mk.std.crypto.") || fn == "mk.std.simd.kernel.Wipe" {
+				if cr2EcCtChecked(fn) {
 					names = append(names, fn)
 				}
 			}
@@ -443,10 +451,11 @@ func cr2CtBuildSrc(t *testing.T, objdump, src string, forces []sdForce, pgo bool
 }
 
 // cr2EcCtChecked reports whether TestSTDCRYPTO_EcConstantTimeDisassembly
-// reads fn: Main, std.crypto's functions and the kernel's Wipe (its
-// callers call it where Main called crypto.Wipe).
+// reads fn: the probe's functions (ctProbeFn: Main and ParseSign),
+// std.crypto's functions and the kernel's Wipe (its callers call it where
+// Main called crypto.Wipe).
 func cr2EcCtChecked(fn string) bool {
-	return fn == "mk.main.Main" || strings.HasPrefix(fn, "mk.std.crypto.") || fn == "mk.std.simd.kernel.Wipe"
+	return ctProbeFn(fn) || strings.HasPrefix(fn, "mk.std.crypto.") || fn == "mk.std.simd.kernel.Wipe"
 }
 
 // cr2EcCtUnrecorded are the cr2EcCtAbsent functions whose build's DWARF

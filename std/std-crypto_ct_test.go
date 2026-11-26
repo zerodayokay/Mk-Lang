@@ -301,10 +301,20 @@ func ctInlined(t *testing.T, exe string) ctInlinedInto {
 }
 
 // ctChecked reports whether TestSTDCRYPTO_ConstantTimeDisassembly reads
-// fn: a function ctAllow lists, or any of std.crypto's.
+// fn: a function ctAllow lists, any of std.crypto's, or one of the
+// probe's own (ctProbeFn).
 func ctChecked(fn string) bool {
 	_, known := ctAllow[fn]
-	return known || strings.HasPrefix(fn, "mk.std.crypto.")
+	return known || strings.HasPrefix(fn, "mk.std.crypto.") || ctProbeFn(fn)
+}
+
+// ctProbeFn reports whether fn is a function of a probe's own module, main,
+// which every constant-time test reads, since the probe hands it secrets.
+// Main#report, the compiler's wrapper that calls Main and prints the error
+// it returns, is left out: it formats that error alone, and Main is in every
+// table, so a Main inlined into it fails as a missing function.
+func ctProbeFn(fn string) bool {
+	return strings.HasPrefix(fn, "mk.main.") && fn != "mk.main.Main#report"
 }
 
 // ctByBuild refines an allowance table per build: for a function whose
@@ -609,8 +619,8 @@ func TestSTDCRYPTO_ConstantTimeDisassembly(t *testing.T) {
 		switch {
 		case ctPublic[fn]:
 			continue
-		case !known && strings.HasPrefix(fn, "mk.std.crypto."):
-			t.Errorf("%s is a new std.crypto function: read its jumps (%d other: %q) and add it to ctAllow or ctPublic", fn, len(other[fn]), other[fn])
+		case !known && (strings.HasPrefix(fn, "mk.std.crypto.") || ctProbeFn(fn)):
+			t.Errorf("%s is a new std.crypto or probe function: read its jumps (%d other: %q) and add it to ctAllow or ctPublic", fn, len(other[fn]), other[fn])
 			continue
 		case !known:
 			continue
@@ -734,6 +744,27 @@ func TestSTDCRYPTO_PresenceRule(t *testing.T) {
 	}
 	if len(notes) != 1 || !strings.HasPrefix(notes[0], "inlined: ") {
 		t.Errorf("notes %q, want the one for inlined", notes)
+	}
+}
+
+// TestSTDCRYPTO_ProbeFunctionsRead: each constant-time test reads every
+// function of its probe's module but Main's error reporter, so a probe
+// function the optimizer keeps out of line, as the EC probe's ParseSign
+// with the parsed secret, is read and not skipped.
+func TestSTDCRYPTO_ProbeFunctionsRead(t *testing.T) {
+	tests := []struct {
+		name    string
+		checked func(string) bool
+	}{{"ctChecked", ctChecked}, {"cr2CtChecked", cr2CtChecked}, {"cr2EcCtChecked", cr2EcCtChecked}, {"h2CtChecked", h2CtChecked}}
+	for _, tc := range tests {
+		for _, fn := range []string{"mk.main.Main", "mk.main.ParseSign", "mk.main.Pick.0123456789abcdef"} {
+			if !tc.checked(fn) {
+				t.Errorf("%s(%q) is false: the test skips a function of its probe", tc.name, fn)
+			}
+		}
+		if tc.checked("mk.main.Main#report") {
+			t.Errorf("%s reads mk.main.Main#report, which only formats Main's error", tc.name)
+		}
 	}
 }
 
