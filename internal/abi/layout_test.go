@@ -3,7 +3,8 @@
 // What: a small layout engine over the suite's declarations: sa, layout,
 // structOf, tagged and compute on the test world.
 // How: natural alignment, an optional pack cap, and tagged unions as
-// { tag, union of variants }. It is test code; abi itself lays out nothing
+// { tag, union of variants }, an E!T's variants each at its own
+// alignment. It is test code; abi itself lays out nothing
 // but scalars and slices.
 
 package abi
@@ -76,8 +77,10 @@ func (w *world) structOf(ts []types.TypeID, pack uint32) *types.Layout {
 }
 
 // tagged lays out { tag, union of variants }: each variant a struct of its
-// fields, the union at the tag's end rounded up to the union's alignment.
-func (w *world) tagged(tagSize uint8, tagAlign uint32, discrs []uint64, variants [][]types.TypeID) *types.Layout {
+// fields, the union at the tag's end rounded up to the union's alignment,
+// or with own (an E!T or an error set, as check lays them out) each variant
+// at the tag's end rounded up to its own alignment.
+func (w *world) tagged(tagSize uint8, tagAlign uint32, own bool, discrs []uint64, variants [][]types.TypeID) *types.Layout {
 	var vs []*types.Layout
 	usize, ualign := uint64(0), uint32(1)
 	for _, fs := range variants {
@@ -89,10 +92,21 @@ func (w *world) tagged(tagSize uint8, tagAlign uint32, discrs []uint64, variants
 	align := max(tagAlign, ualign)
 	l := &types.Layout{HasTag: true, Tag: types.TagLayout{Size: tagSize}}
 	l.Shape.Size, l.Shape.Align = alignUp(p+usize, align), align
+	if own {
+		end := uint64(tagSize)
+		for _, v := range vs {
+			end = max(end, alignUp(uint64(tagSize), v.Shape.Align)+v.Shape.Size)
+		}
+		l.Shape.Size = alignUp(end, align)
+	}
 	for i, v := range vs {
 		vl := types.VariantLayout{Discr: discrs[i]}
+		at := p
+		if own {
+			at = alignUp(uint64(tagSize), v.Shape.Align)
+		}
 		for _, f := range v.Fields {
-			vl.Fields = append(vl.Fields, types.FieldLayout{Offset: p + f.Offset, Type: f.Type})
+			vl.Fields = append(vl.Fields, types.FieldLayout{Offset: at + f.Offset, Type: f.Type})
 		}
 		l.Variants = append(l.Variants, vl)
 	}
@@ -117,7 +131,7 @@ func (w *world) compute(t types.TypeID) *types.Layout {
 				Tag:      types.TagLayout{Size: 8, Niche: true},
 				Variants: []types.VariantLayout{{Discr: 0}, {Discr: 1, Fields: []types.FieldLayout{{Offset: 0, Type: ty.Elem}}}}}
 		}
-		return w.tagged(1, 1, []uint64{0, 1}, [][]types.TypeID{nil, {ty.Elem}})
+		return w.tagged(1, 1, false, []uint64{0, 1}, [][]types.TypeID{nil, {ty.Elem}})
 	case types.KErrorUnion, types.KErrorSet:
 		var discrs []uint64
 		var vs [][]types.TypeID
@@ -139,7 +153,7 @@ func (w *world) compute(t types.TypeID) *types.Layout {
 			}
 			vs = append(vs, fs)
 		}
-		return w.tagged(4, 4, discrs, vs)
+		return w.tagged(4, 4, true, discrs, vs)
 	case types.KNamed:
 		switch d := w.items.Get(ty.Item).Decl.(type) {
 		case *types.StructDecl:
@@ -164,7 +178,7 @@ func (w *world) compute(t types.TypeID) *types.Layout {
 				s, _ := w.sa(d.Tag)
 				ts = uint8(s)
 			}
-			return w.tagged(ts, uint32(ts), discrs, vs)
+			return w.tagged(ts, uint32(ts), false, discrs, vs)
 		}
 	}
 	source.ICEf(source.Span{}, "test layout: no layout for kind %s", ty.Kind)
