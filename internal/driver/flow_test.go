@@ -93,3 +93,17 @@ func TestStage7ReportsUserBorrowErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestQualifiedGlobalWritesAreE0507 checks that qualified and unqualified
+// globals reach the same shared-place rule for both assignment forms.
+func TestQualifiedGlobalWritesAreE0507(t *testing.T) {
+	files := pkgFiles(map[string]string{
+		"globals/values.mk": "export var Count: int = 0\n\nDirect() {\n    Count = 1\n}\n",
+		"main.mk":           "import globals\n\nexport Main() {\n    globals.Count = 1\n    globals.Count += 1\n}\n",
+	})
+	r := check(t, Config{Root: writeTree(t, files), StdDir: fakeStd(t)})
+	want := []string{"E0507", "E0507", "E0507"}
+	if got := codes(r); !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v\n%s", got, want, r.Report.Text(r.Sources))
+	}
+}
