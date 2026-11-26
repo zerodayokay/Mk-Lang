@@ -226,7 +226,7 @@ func TestStdMkTests(t *testing.T) {
 					name = "release"
 				}
 				t.Run(name, func(t *testing.T) {
-					cache := t.TempDir()
+					cache := stdTestCacheDir(t)
 					for _, mod := range mods {
 						if only, ok := targetOnlyModules[mod]; ok && only != target.Name {
 							continue
@@ -289,6 +289,84 @@ func stdTestTargets() []types.Target {
 		ts = append(ts, h)
 	}
 	return ts
+}
+
+// stdTestCacheDir returns a temporary cache directory whose path does not grow
+// with TEMP on Windows. Starting 64 copies of an executable at once fails
+// there with ERROR_NOT_ENOUGH_MEMORY once the image path reaches ~190 bytes,
+// and placing <cache>/v1/bin/<hash>/mk-test.exe under a long TEMP exceeds it.
+func stdTestCacheDir(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return t.TempDir()
+	}
+	var roots []string
+	if uc, err := os.UserCacheDir(); err == nil && uc != "" {
+		roots = append(roots, uc)
+	}
+	if sd := os.Getenv("SystemDrive"); sd != "" {
+		roots = append(roots, sd+string(filepath.Separator))
+	}
+	if vol := filepath.VolumeName(os.TempDir()); vol != "" {
+		roots = append(roots, vol+string(filepath.Separator))
+	}
+	for _, maxLen := range []int{75, 1 << 20} {
+		for _, r := range roots {
+			if len(r) > maxLen {
+				continue
+			}
+			dir, err := os.MkdirTemp(r, "mkst-")
+			if err == nil {
+				t.Cleanup(func() { os.RemoveAll(dir) })
+				return dir
+			}
+		}
+	}
+	return t.TempDir()
+}
+
+// TestStdMkProcLongTemp runs std.proc's 64-worker Supervise block under a
+// TEMP past 120 bytes: stdTestCacheDir keeps mk-test.exe at a short path that
+// does not grow with TEMP.
+func TestStdMkProcLongTemp(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows 64-start long-path limit is Windows-only")
+	}
+	root := stdRoot(t)
+	long := t.TempDir()
+	if n := 124 - len(long) - 1; n > 0 {
+		long = filepath.Join(long, strings.Repeat("p", n))
+		if err := os.Mkdir(long, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("TEMP", long)
+	t.Setenv("TMP", long)
+	for _, prof := range []types.Profile{types.TestProfile, types.Release} {
+		name := "dev"
+		if prof == types.Release {
+			name = "release"
+		}
+		t.Run(name, func(t *testing.T) {
+			cache := stdTestCacheDir(t)
+			if strings.HasPrefix(strings.ToLower(cache), strings.ToLower(long)) || len(cache) >= 85 {
+				t.Fatalf("stdTestCacheDir(%q) grew with TEMP or is too long (%d bytes)", cache, len(cache))
+			}
+			cfg := driver.Config{
+				StdTests:    "std.proc",
+				StdDir:      root,
+				Target:      types.X86_64Windows,
+				Profile:     prof,
+				CacheDir:    cache,
+				TestTimeout: 2 * time.Minute,
+			}
+			rep := stdMkTest(t, cfg, driver.TestOptions{Run: "Supervise: 64 workers"})
+			if len(rep.Tests) != 1 {
+				t.Fatalf("selected %d tests, want 1", len(rep.Tests))
+			}
+			judgeStdTest(t, rep.Tests[0])
+		})
+	}
 }
 
 // BenchmarkStdCheck: mk check of an empty program over the live
