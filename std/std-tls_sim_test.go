@@ -1,6 +1,6 @@
 // Why: std.tls's calls must keep their cancel-safety classes under any cut:
-// Conn.Read repeatable, Client and Server prefix, a cut WriteAll failing the
-// conn.
+// Conn.Read repeatable, Client and Server prefix, and so the connectors'
+// Negotiate, a cut WriteAll failing the conn.
 // What: TestStdTls_SimCancel and TestStdTls_SimCancelLinux, which run the
 // blocks of tls/tests_tlssim.mk at 1 and 16 carriers.
 // How: under std.sim a task cancels at every 250 us of a story or every point
@@ -653,6 +653,142 @@ test "Close over a peer that stopped reading fails with time.TimedOut at the clo
         }
     }
 }
+
+// NegNoConn is NegServer's code when no connection came.
+const NegNoConn: int = 500
+
+// NegServer accepts one connection and negotiates accept through sec,
+// under a scope cancelled at nap ns when cut: code is the index chosen,
+// 300 for Canceled, 400 for another failure, NegNoConn for none.
+NegServer(h: &Heap, io: Io, l: &net.Listener, sec: &net.Secure, accept: []str, cut: bool, nap: i64, code: mut int) {
+    s := l.Accept(io) else {
+        *code = NegNoConn
+        return
+    }
+    conn := s.Conn()
+    scope r := io.Scope() {
+        if cut {
+            r.go SimCancelAt(&r, io, nap)
+        }
+        (conn: c, chosen) := sec.Negotiate(h, io, conn, "", accept) else e {
+            // Prefix: the connection is the caller's again.
+            conn.Abandon()
+            *code = match e {
+                Canceled { 300 }
+                _ { 400 }
+            }
+            r.Cancel()
+            return
+        }
+        r.Cancel()
+        *code = chosen
+        var b: [16]u8 = [0; 16]
+        _ = c.Read(io, mut b[..]) else {
+            0
+        }
+        c.Close(io) else {
+            c.Abandon()
+        }
+    }
+}
+
+// NegClient negotiates offer through sec under a scope cancelled at nap
+// ns when cut: the index chosen and the handshake's length, or 300 for
+// Canceled and 400 for another error, the connection given back and
+// abandoned.
+NegClient(h: &Heap, io: Io, conn: net.Conn, sec: &net.Secure, offer: []str, cut: bool, nap: i64): (code: int, took: i64) {
+    start := time.Now(io)
+    scope r := io.Scope() {
+        if cut {
+            r.go SimCancelAt(&r, io, nap)
+        }
+        (conn: c, chosen) := sec.Negotiate(h, io, conn, "localhost", offer) else e {
+            conn.Abandon()
+            code := match e {
+                Canceled { 300 }
+                _ { 400 }
+            }
+            r.Cancel()
+            return (code: code, took: 0)
+        }
+        took := time.Now(io).Since(start).Nanos()
+        r.Cancel()
+        c.Close(io) else {
+            c.Abandon()
+        }
+        return (code: chosen, took: took)
+    }
+}
+
+// CutNegotiate is CutHandshake through tls.Connector's and
+// tls.Acceptor's Negotiate: the client offers http/1.1 then h2, the
+// server accepts h2 then http/1.1.
+CutNegotiate(h: &Heap, a: &Arena, p: &SimPki, seed: u64, side: int, nap: i64): Error|OutOfMemory!(client: int, server: int, took: i64) {
+    var sm := try sim.Sim.New(a, seed)
+    defer sm.Free()
+    io := sm.Io()
+    ids: [1]Identity = [Identity(chain: p.chain, key: &p.key)]
+    var scfg := DefaultConfig
+    scfg.identities = ids[..]
+    var ccfg := DefaultConfig
+    ccfg.roots = some(&p.pool)
+    server := Acceptor(&scfg)
+    client := Connector(&ccfg)
+    accept: [2]str = ["h2", "http/1.1"]
+    offer: [2]str = ["http/1.1", "h2"]
+    l := try net.Listen(io, SimAddrA)
+    defer l.Close()
+    var srv := 0
+    var cl := 0
+    var took: i64 = 0
+    scope outer := io.Scope() {
+        outer.go NegServer(h, io, &l, &server, accept[..], side == 1 && nap >= 0, nap, mut srv)
+        stream := try net.Dial(io, SimAddrA)
+        r := NegClient(h, io, stream.Conn(), &client, offer[..], side == 0 && nap >= 0, nap)
+        cl = r.code
+        took = r.took
+    }
+    return (client: cl, server: srv, took: took)
+}
+
+// RunCutNeg is CutNegotiate in an arena of its own.
+RunCutNeg(h: &Heap, p: &SimPki, side: int, nap: i64): Error|OutOfMemory!(client: int, server: int, took: i64) {
+    var ar := try Arena.New(h)
+    defer ar.Free()
+    return try CutNegotiate(h, &ar, p, 11, side, nap)
+}
+test "tls.Connector and tls.Acceptor Negotiate are prefix: cancelled at every point of the handshake, each returns its index or Canceled with the connection the caller's, and the other side ends" (sys: &System) {
+    p := try LoadSimPki(sys.arena)
+    whole := try RunCutNeg(sys.heap, &p, 0, -1)
+    // The server's order wins: h2, the client's second, the server's first.
+    Assert(whole.client == 1 && whole.server == 0)
+    Assert(whole.took > 0)
+    step := whole.took / 40 + 1
+    for side in 0..2 {
+        var cancelled := 0
+        var nap: i64 = 0
+        for nap <= whole.took + step {
+            r := try RunCutNeg(sys.heap, &p, side, nap)
+            if side == 0 {
+                Assert(r.client == 1 || r.client == 300)
+                if r.client == 300 {
+                    cancelled += 1
+                    // The server's handshake fails or, if it finished
+                    // first, its Read ends: either way it returned.
+                    Assert(r.server == 0 || r.server == 400)
+                }
+            } else {
+                Assert(r.server == 0 || r.server == 300)
+                if r.server == 300 {
+                    cancelled += 1
+                    Assert(r.client == 1 || r.client == 400)
+                }
+            }
+            nap += step
+        }
+        Assert(cancelled >= 5)
+    }
+}
 `
 
 // tlsSimFixture is tlsSimBlocks with the bench row's certificates and key.
@@ -686,7 +822,7 @@ func TestStdTls_SimCancel(t *testing.T) {
 			if strings.Contains(out, "no usable LLVM") {
 				t.Skipf("needs the LLVM toolchain: %s", out)
 			}
-			if status != 0 || strings.Count(out, "PASS std.tls") != 4+tlsDiskBlocks(t) {
+			if status != 0 || strings.Count(out, "PASS std.tls") != 5+tlsDiskBlocks(t) {
 				t.Fatalf("status %d\n%s", status, out)
 			}
 		})
@@ -715,7 +851,7 @@ func TestStdTls_SimCancelLinux(t *testing.T) {
 			if strings.Contains(out, "no usable LLVM") {
 				t.Skipf("needs the LLVM toolchain: %s", out)
 			}
-			if status != 0 || strings.Count(out, "PASS std.tls") != 4+tlsDiskBlocks(t) {
+			if status != 0 || strings.Count(out, "PASS std.tls") != 5+tlsDiskBlocks(t) {
 				t.Fatalf("status %d\n%s", status, out)
 			}
 			t.Logf("%s", out[max(0, len(out)-300):])
