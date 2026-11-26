@@ -514,13 +514,12 @@ func TestGeneratorAPIDeclared(t *testing.T) {
 	if len(enums) != 3 {
 		t.Fatalf("genSurface declares %d enums, want TypeKind, Receiver and FlowKind", len(enums))
 	}
-	enumSource := regexp.MustCompile(`(?m)^[ \t]*//[^\n]*\n`).ReplaceAllString(have, "")
 	for _, e := range enums {
 		if !slices.Contains(PreludeNames[:], e[1]) {
 			t.Errorf("PreludeNames lacks the generator API enum %s", e[1])
 		}
-		if want := "\nexport enum " + e[1] + " {\n" + e[2] + "}\n"; !strings.Contains(enumSource, want) {
-			t.Errorf("core_gen.mk does not declare %q", want)
+		if !declaresEnum(have, e[1], e[2]) {
+			t.Errorf("core_gen.mk does not declare `export enum %s` with the variants, in order:\n%s", e[1], e[2])
 		}
 	}
 	methods := 0
@@ -535,6 +534,36 @@ func TestGeneratorAPIDeclared(t *testing.T) {
 	}
 	if methods < 30 {
 		t.Errorf("genSurface lists %d methods; the scan is broken", methods)
+	}
+}
+
+// declaresEnum reports whether src declares `export enum name` with
+// exactly the variant lines of variants, in that order, once its comment
+// lines (a variant's `///` documentation) are left out.
+func declaresEnum(src, name, variants string) bool {
+	code := regexp.MustCompile(`(?m)^[ \t]*//[^\n]*\n`).ReplaceAllString(src, "")
+	return strings.Contains(code, "\nexport enum "+name+" {\n"+variants+"}\n")
+}
+
+// TestGeneratorAPIDeclared_SeesDrift: the enum check passes documented
+// variants and fails a reordered, a missing, an extra or a commented-out
+// one.
+func TestGeneratorAPIDeclared_SeesDrift(t *testing.T) {
+	const want = "    Struct\n    Enum\n    Error\n"
+	for _, c := range []struct {
+		name, src string
+		ok        bool
+	}{
+		{"documented", "\nexport enum TypeKind {\n    /// A named struct.\n    Struct\n    /// A named enum.\n    Enum\n    Error\n}\n", true},
+		{"reordered", "\nexport enum TypeKind {\n    /// A named enum.\n    Enum\n    Struct\n    Error\n}\n", false},
+		{"missing", "\nexport enum TypeKind {\n    Struct\n    Enum\n}\n", false},
+		{"extra", "\nexport enum TypeKind {\n    Struct\n    Enum\n    Error\n    Record\n}\n", false},
+		{"commented out", "\nexport enum TypeKind {\n    Struct\n    Enum\n    // Error\n}\n", false},
+		{"not exported", "\nenum TypeKind {\n    Struct\n    Enum\n    Error\n}\n", false},
+	} {
+		if got := declaresEnum(c.src, "TypeKind", want); got != c.ok {
+			t.Errorf("%s: declaresEnum = %v, want %v", c.name, got, c.ok)
+		}
 	}
 }
 
