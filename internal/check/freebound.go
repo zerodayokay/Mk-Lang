@@ -45,8 +45,8 @@ type releaseRow struct {
 // Pool.Free is judged by poolFree. An arena container is never linear and
 // ends with its arena, so it must never hold a linear value: the stores
 // rows, with the arena Map's Set and Ensure, BTree.Set and Set.Add (which
-// also drop), are every call that moves a value into arena memory, and the
-// arena rows name the heap container that holds one.
+// also drop), are every call that moves a value into arena memory; each
+// names the heap container that holds one, where std has one.
 var releaseRows = []releaseRow{
 	{"std.core", "List", "Push", []int{0}, "T", false, []string{"HeapList"}, true},
 	{"std.core", "List", "Insert", []int{0}, "T", false, []string{"HeapList"}, true},
