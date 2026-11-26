@@ -196,7 +196,9 @@ func callsSliceFn(items *types.Items, b *mir.Body) bool {
 // monoOptions are the build's mono.Options. Validate is on, as for lower
 // (the driver validates in dev and test builds of mk itself).
 func (w *world) monoOptions() mono.Options {
-	return mono.Options{Profile: w.cfg.Profile, Target: w.cfg.Target, Known: &w.sem5.known, Validate: true, LibcMode: w.libcBuild()}
+	opt := mono.Options{Profile: w.cfg.Profile, Target: w.cfg.Target, Known: &w.sem5.known, Validate: true, LibcMode: w.libcBuild()}
+	w.lazyMonoOptions(&opt) // lazylink.go
+	return opt
 }
 
 // noWorld is the iface.World monoEnv gives mono: every part

@@ -154,13 +154,20 @@ func (u *unit) externVarPlace(e ast.Expr) (types.ItemID, bool) {
 
 // externVarWrite is E0404 for `name = x` or `mut name` on an extern var
 // the language grants the read and the address only,
-// so a write goes through the pointer, `*(&name) = x`, in unsafe.
+// so a write goes through the pointer, `*(&name) = x`, in unsafe; for
+// another module's, the pointer is spelled as written, `*(&m.name)`.
 func (u *unit) externVarWrite(e ast.Expr, how string) {
 	it, ok := u.externVarPlace(e)
 	if !ok {
 		return
 	}
 	name := u.c.cfg.Interner.Str(u.c.cfg.Items.Get(it).Name)
-	u.err(diag.E0404, e.Span(), "extern var `"+name+"` is no Mk var: "+how+" it through its address, `*(&"+name+")`, in unsafe").
+	place := name
+	if fe, ok := unparenExpr(e).(*ast.FieldExpr); ok {
+		if m, ok := fe.X.(*ast.Ident); ok {
+			place = u.c.cfg.Interner.Str(m.Name) + "." + name
+		}
+	}
+	u.err(diag.E0404, e.Span(), "extern var `"+name+"` is no Mk var: "+how+" it through its address, `*(&"+place+")`, in unsafe").
 		Text("reason", "extern-var")
 }

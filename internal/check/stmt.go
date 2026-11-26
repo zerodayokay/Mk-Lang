@@ -369,7 +369,8 @@ func (u *unit) dropped(s ast.Stmt, e ast.Expr, t types.TypeID, discard bool) {
 
 // assign is `p = e` and `p op= e`: e against the place's type; the
 // target must be a place (E0301 otherwise); a compound operator needs a
-// numeric place (E0308).
+// numeric place (E0308). An extern var, also another module's (`m.Var`,
+// no place either), is E0404 alone, which says how to write it.
 func (u *unit) assign(s *ast.AssignStmt) {
 	// A plain store into a C struct's function-pointer field reads
 	// nothing out of C (cfnptr.go).
@@ -378,7 +379,7 @@ func (u *unit) assign(s *ast.AssignStmt) {
 	}
 	t := u.operand(s.Target, types.NoType)
 	u.cFnStore = 0
-	if t != types.Poison && !u.isPlace(s.Target) {
+	if _, extern := u.externVarPlace(s.Target); t != types.Poison && !extern && !u.isPlace(s.Target) {
 		u.err(diag.E0301, s.Target.Span(), "only a local, a field, an element or a dereference can be assigned").
 			Text("reason", "not a place").Text("expected", "a place").Text("found", "an expression")
 	}

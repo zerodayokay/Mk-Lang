@@ -1,14 +1,14 @@
 // Why: the panic texts are part of the report format, and the runtime must
 // print exactly the compiler's names for its panic codes.
-// What: RT-F8-PanicTextIsCodeName (the 16 panic texts) and RT-Site (a pc
+// What: RT-F8-PanicTextIsCodeName (the 17 panic texts) and RT-Site (a pc
 // outside the image has no site), run by mk test over std.
 // How: the driver test TestPanicTextsMatchPanicCode compares the texts with
-// types.PanicCode.String(); this block pins the same 16 texts in the
+// types.PanicCode.String(); this block pins the same 17 texts in the
 // runtime itself.
 
 import std.raw
 
-test "RT-F8-PanicTextIsCodeName the 16 panic texts" {
+test "RT-F8-PanicTextIsCodeName the 17 panic texts" {
     Assert(PanicText(1) == "overflow")
     Assert(PanicText(2) == "bounds")
     Assert(PanicText(3) == "divide by zero")
@@ -25,6 +25,7 @@ test "RT-F8-PanicTextIsCodeName the 16 panic texts" {
     Assert(PanicText(14) == "contract")
     Assert(PanicText(15) == "unreachable")
     Assert(PanicText(16) == "suspend in callback")
+    Assert(PanicText(17) == "unresolved function")
 }
 
 test "RT-Site a pc outside the executable image has no site" {

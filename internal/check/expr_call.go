@@ -448,6 +448,12 @@ func (u *unit) applyCall(e *ast.CallExpr, cs *callee, want types.TypeID) types.T
 		count--
 	}
 	u.argShape(e, count, sig.Variadic, "", sig, names[:count])
+	present := u.presentItem(cs.item) // present.go
+	if present {
+		prev := u.presentArg
+		u.presentArg = u.presentFnArg(e)
+		defer func() { u.presentArg = prev }()
+	}
 	for i, a := range e.Args {
 		if a == nil || a.Value == nil {
 			continue
@@ -500,6 +506,9 @@ func (u *unit) applyCall(e *ast.CallExpr, cs *callee, want types.TypeID) types.T
 	}
 	in.lateArgs()
 	u.judgePending(in)
+	if present {
+		u.presentArgRule(e)
+	}
 	nameAt := e.Fun.Span()
 	if cs.name != nil {
 		nameAt = cs.name.Span()

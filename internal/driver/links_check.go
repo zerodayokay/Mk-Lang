@@ -101,7 +101,7 @@ func (w *world) externVarFaults(globals []codegen.Global, cobjs []string, plan *
 // named DLLs, then the system set; "" when none does.
 func varLibrary(name string, plan *linkPlan, libs []importLib) string {
 	for _, l := range libs {
-		if l.file == "" && slices.Contains(l.names, name) {
+		if (l.file == "" || l.file == l.dll) && slices.Contains(l.names, name) {
 			return l.fileName() + " (std's list or the system DLLs)"
 		}
 	}

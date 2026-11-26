@@ -4,8 +4,8 @@
 //
 // What: emitPacks, compileOpts and compilePacks (codegen and clang per
 // pack), stagedHits and copyNewFile (how a stored object reaches the link),
-// importLib, neededImportLibs and writeImportLibs (the Windows import
-// libraries), and linkKey with nativeOptions (the key of the
+// importLib, neededImportLibs, windowsLibs and writeImportLibs (the Windows
+// import libraries and the lazy-binding object), and linkKey with nativeOptions (the key of the
 // content-addressed executable).
 //
 // How: packs run at most Jobs at a time with results in slots, so every
@@ -421,12 +421,14 @@ func (l importLib) fileName() string {
 // Win32 through those.
 //
 // With a plan (links.go), the named DLLs come between std's lists and the
-// system set.
-func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *linkPlan) ([]importLib, []*diag.Diagnostic) {
+// system set. A name that binds lazily (lazylink.go) gets no import
+// library: it is returned in the lazy uses, for the lazy-binding object,
+// and a lazy link's .dll joins the plan's copies.
+func (w *world) neededImportLibs(in *mono.Instances, cUndef, cobjs []string, plan *linkPlan) ([]importLib, lazyLink, []*diag.Diagnostic) {
 	t := w.stdTree()
 	ents, err := fs.ReadDir(t.fsys, "sys/windows")
 	if err != nil {
-		return nil, []*diag.Diagnostic{diag.Toolchain("fs", "list std/sys/windows", err.Error(), "cannot list std/sys/windows")}
+		return nil, lazyLink{}, []*diag.Diagnostic{diag.Toolchain("fs", "list std/sys/windows", err.Error(), "cannot list std/sys/windows")}
 	}
 	used := map[string]bool{} // extern symbols; lookup only
 	for i := range in.List {
@@ -434,19 +436,21 @@ func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *link
 			used[in.List[i].Symbol] = true
 		}
 	}
+	var lazy lazyLink
+	cUndef, lazy = w.lazyBinds().split(used, cUndef, plan) // lazylink.go
 	var libs []importLib
 	for _, e := range ents {
-		if e.IsDir() || path.Ext(e.Name()) != ".def" {
+		if e.IsDir() || path.Ext(e.Name()) != ".def" || strings.HasSuffix(e.Name(), lazyStdSuffix) {
 			continue
 		}
 		dll := strings.TrimSuffix(e.Name(), ".def")
 		raw, err := t.readFile("sys/windows/" + e.Name())
 		if err != nil {
-			return nil, []*diag.Diagnostic{diag.Toolchain("fs", "read std/sys/windows/"+e.Name(), err.Error(), "cannot read "+e.Name())}
+			return nil, lazyLink{}, []*diag.Diagnostic{diag.Toolchain("fs", "read std/sys/windows/"+e.Name(), err.Error(), "cannot read "+e.Name())}
 		}
 		names, err := toolchain.ParseDefList(string(raw))
 		if err != nil {
-			return nil, []*diag.Diagnostic{diag.Toolchain("llvm-lib", "", err.Error(), "std/sys/windows/"+e.Name()+" is not a name list")}
+			return nil, lazyLink{}, []*diag.Diagnostic{diag.Toolchain("llvm-lib", "", err.Error(), "std/sys/windows/"+e.Name()+" is not a name list")}
 		}
 		needed := dll == "kernel32"
 		for _, n := range names {
@@ -464,7 +468,35 @@ func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *link
 	if !plan.empty() {
 		libs, all = plan.namedImportLibs(libs, all)
 	}
-	return addSystemLibs(libs, all), nil
+	libs = addSystemLibs(libs, all)
+	libs = addSysViewLibs(libs, all, w.sysviews)
+	libs, ds := w.addSDKImportLibs(libs, in, cobjs, all)
+	return libs, lazy, ds
+}
+
+// windowsLibs is a Windows bin's import libraries (neededImportLibs), with
+// its extern var faults, and its lazy-binding object and that object's key
+// (lazylink.go; none when no name binds lazily). Only the shim's undefined
+// names reach the system DLLs: it is the C import's own code (a static
+// inline calling Win32). A C source links against std.libc alone, so its
+// other calls fail at link (E0001); a named link may supply them.
+func (w *world) windowsLibs(ctx context.Context, tools *toolchain.Tools, st *cache.Store, cfg codegen.Config, work string, insts *mono.Instances,
+	globals []codegen.Global, cobjs []string, plan *linkPlan) ([]importLib, []string, []source.Hash, []*diag.Diagnostic) {
+	specs, lazy, ds := w.neededImportLibs(insts, cObjectUndefined(shimObjects(cobjs)), cobjs, plan)
+	if len(ds) == 0 {
+		ds = w.externVarFaults(globals, cobjs, plan, specs)
+	}
+	if len(ds) == 0 {
+		ds = lazy.faults()
+	}
+	if len(ds) > 0 || lazy.empty() {
+		return specs, nil, nil, ds
+	}
+	obj, key, ds := w.lazyObject(ctx, tools, st, cfg, work, lazy)
+	if len(ds) > 0 {
+		return nil, nil, nil, ds
+	}
+	return specs, []string{obj}, []source.Hash{key}, nil
 }
 
 // compileAndImportLibs runs compilePacks (under j.timed("clang", ...)) while

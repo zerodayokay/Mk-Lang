@@ -34,6 +34,8 @@ var intrinsicFiles = map[string]string{
 	"atomic/pause.mk": "std.atomic",
 	// The trapped call (trapform.go): std.sys.TrapEntry.
 	"sys/windows/fault.mk": "std.sys",
+	// dl.Present and std.sys's LazyPresent (present.go).
+	"dl/dl.mk": "std.dl", "sys/windows/lazy.mk": "std.sys",
 }
 
 // notYet are std intrinsics codegen does not implement yet (none).

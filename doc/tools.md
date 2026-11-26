@@ -305,10 +305,23 @@ mk apidiff ../mylib-1.0 .
 
 ### `mk cimport`
 
-`mk cimport` translates the package's C imports and prints one block per import: the generated Mk declarations, the share of the headers' declarations it bound, and the declarations it skipped, with the reason for each.
+`mk cimport` translates the package's C imports and prints one block per import: the generated Mk declarations, the share of the headers' declarations it bound, and the declarations it skipped, with the reason for each. `--skipped` lists each skipped declaration with its kind and reason; `--why <name>` explains what happened to a single C name.
 
 ```sh
 mk cimport
+mk cimport --skipped
+mk cimport --why INVALID_HANDLE_VALUE
+```
+
+### `mk sdk`
+
+`mk sdk views` lists the [system views](reference.md#system-views) this mk carries (`c.windows`, `c.dxgi`, `c.d3d12`, `c.d3dcompiler`, and `c.vulkan` for `x86_64-windows`): for each view and target, its item count, headers, the views it requires, the inputs it was generated from (the Windows SDK or header repository version, the importer's format, mk's toolset headers when used, Clang's version) and its identity, or that it is not carried and how to generate it.
+
+`mk sdk` prints that, then for each target the system headers a `pkg.CImport` reads: without `sdk: true`, those `MK_SYSROOT_<target>` lists (else `$MK_EVIDENCE/c-import/sysroots/<target>`, else none); with `sdk: true`, the first of `MK_SYSROOT_<target>`, the host's SDK and the evidence directory ([packages](packages.md)). Each line says where the directories come from and the flavour and Clang triple they are read for.
+
+```sh
+mk sdk views
+mk sdk
 ```
 
 ### `mk cache`
@@ -341,7 +354,7 @@ mk tree
 
 ### `mk version`, `mk upgrade` and `mk toolchain`
 
-`mk version` prints mk's version and build, the Go version it was built with, and the LLVM tools it uses, with the rule that chose them ([section 11](#11-llvm-and-toolchains)).
+`mk version` prints mk's version and build, the Go version it was built with, how many system views it carries and what they were generated from (`mk sdk` lists them), and the LLVM tools it uses, with the rule that chose them ([section 11](#11-llvm-and-toolchains)).
 
 `mk upgrade` installs a signed release and makes it current. A release build of mk, the one the [install scripts](../README.md#install) put in place, knows where releases are; an mk built from source needs `MK_RELEASES`. `mk toolchain` lists, selects and removes installed releases. [Section 11](#11-llvm-and-toolchains) describes both.
 

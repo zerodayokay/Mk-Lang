@@ -27,9 +27,15 @@ func init() {
 func runCImport(args []string, stdout, stderr io.Writer) int {
 	var cf compileFlags
 	fs := newFlagSet("cimport", stderr, &cf)
+	skipped := fs.Bool("skipped", false, "list every skipped C declaration and why")
+	why := fs.String("why", "", "explain what happened to one C name")
 	path, _, err := parseArgs(fs, args, false)
 	if err != nil {
 		return usageErr(stderr, fs, err)
+	}
+	if *skipped && *why != "" {
+		fmt.Fprintln(stderr, "mk cimport: --skipped and --why cannot be used together")
+		return 2
 	}
 	cfg, ok := cf.config(path, stderr)
 	if !ok {
@@ -53,14 +59,25 @@ func runCImport(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "no C imports")
 		return 0
 	}
+	if *why != "" {
+		exps := s.CImportWhy(*why)
+		if len(exps) == 0 {
+			fmt.Fprintf(stdout, "%s: not found in the package's C imports\n", *why)
+			return 0
+		}
+		for _, e := range exps {
+			fmt.Fprintln(stdout, e)
+		}
+		return 0
+	}
 	for _, c := range infos {
-		writeCImport(stdout, c)
+		writeCImport(stdout, c, *skipped)
 	}
 	return 0
 }
 
 // writeCImport prints one import's block.
-func writeCImport(w io.Writer, c driver.CImportInfo) {
+func writeCImport(w io.Writer, c driver.CImportInfo, showSkipped bool) {
 	bound := c.Direct + c.Generated
 	share := 0.0
 	if c.Decls > 0 {
@@ -72,6 +89,22 @@ func writeCImport(w io.Writer, c driver.CImportInfo) {
 	}
 	fmt.Fprintf(w, "c.%s for %s%s\n  view     %s\n  bound    %d of %d declarations (%.1f%%): %d direct, %d through accessors or shims\n",
 		c.Name, c.Target, hit, c.View, bound, c.Decls, share, c.Direct, c.Generated)
+	if showSkipped {
+		items := append([]driver.SkippedCDecl(nil), c.SkippedDecls...)
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].Reason != items[j].Reason {
+				return items[i].Reason < items[j].Reason
+			}
+			if items[i].Kind != items[j].Kind {
+				return items[i].Kind < items[j].Kind
+			}
+			return items[i].Name < items[j].Name
+		})
+		for _, d := range items {
+			fmt.Fprintf(w, "  skipped  %-7s  %-32s  %s\n", d.Kind, d.Name, d.Reason)
+		}
+		return
+	}
 	reasons := make([]string, 0, len(c.Skipped))
 	for r := range c.Skipped {
 		reasons = append(reasons, r)
