@@ -26,24 +26,26 @@ import (
 	"mk/internal/types"
 )
 
-// widenForm is one use of a const C of type st: T is the type of the
-// form's value, text the form with @ for the const.
+// widenForm is one use of a const: t is the type of the form's value, text
+// the form with @ for the const.
 type widenForm struct {
 	t, text string
 }
 
 // widenRow is one const: its name, declared type ("" for untyped), the
-// integer type its value has, its initializer, and the forms to print.
+// integer type its value has, its initializer, whether relay re-exports
+// it, and the forms to print.
 type widenRow struct {
 	name, decl, st, value string
 	relay                 bool
 	forms                 []widenForm
 }
 
-// intForms are the forms over an integer const of type st; wider lists
-// the lossless conversions to wider types. A narrowing `T(C)` of a
-// qualified const is judged by type, not value (E0303), so narrowing goes
-// through Trunc and Cast.
+// intForms are the forms over an integer const of type st; signed adds one
+// for a signed st, small adds f64(@) (lossless only up to 32 bits), and
+// wider lists the lossless conversions to wider types. A narrowing `T(C)`
+// of a qualified const is judged by type, not value (E0303), so narrowing
+// goes through Trunc and Cast.
 func intForms(st string, signed, small bool, wider ...string) []widenForm {
 	fs := []widenForm{{"i8", "Trunc[i8](@)"}, {"u16", "Trunc[u16](@)"},
 		{st, "@ >> 1"}, {st, "@ / 3"}, {st, "@ % 3"}, {"bool", "@ < 0"}, {"bool", "@ == 0"},
@@ -174,7 +176,8 @@ func TestImportedConstMatchesLocal(t *testing.T) {
 			lines := map[string]string{}
 			for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 				view, rest, _ := strings.Cut(strings.TrimSpace(l), " ")
-				lines[view+" "+rest[:strings.Index(rest, ":")]] = rest
+				name, _, _ := strings.Cut(rest, ":")
+				lines[view+" "+name] = rest
 			}
 			for _, row := range widenRows {
 				same := lines["same "+row.name]

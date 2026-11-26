@@ -968,31 +968,26 @@ func (bl *builder) mentionsParam(t types.TypeID) bool {
 // from that width before the pattern is cut to T's: `i64(m.C)` of a
 // `const C: i32 = -4` is -4, not 4294967292.
 func (bl *builder) constConversion(a ast.Expr, to types.TypeID) (mir.Operand, bool) {
-	tt := bl.tab.Get(to)
-	if !tt.IsInteger() {
+	toSize, _ := intShape(bl.tab, to)
+	if toSize == 0 {
 		return mir.Operand{}, false
 	}
 	l := bl.in.Literal(unparen(a).ID())
-	if l.Kind != LitScalar || !bl.tab.Get(l.Type).IsInteger() {
+	if l.Kind != LitScalar {
 		return mir.Operand{}, false
 	}
-	ft := bl.tab.Get(l.Type)
+	size, signed := intShape(bl.tab, l.Type)
+	if size == 0 {
+		return mir.Operand{}, false
+	}
 	v := l.Bits
-	if from := intWidth(ft); ft.Signed && from < 64 && v>>(from-1)&1 != 0 {
+	if from := 8 * size; signed && from < 64 && v>>(from-1)&1 != 0 {
 		v |= ^uint64(0) << from
 	}
-	if bits := intWidth(tt); bits < 64 {
+	if bits := 8 * toSize; bits < 64 {
 		v &= 1<<bits - 1
 	}
 	return mir.Imm(to, v), true
-}
-
-// intWidth is an integer type's width in bits: 64 for int and uint.
-func intWidth(t *types.Type) uint8 {
-	if t.Kind != types.KIntPtr && t.Bits > 0 {
-		return t.Bits
-	}
-	return 64
 }
 
 // builtin lowers a universe call inline.
