@@ -455,6 +455,7 @@ BuildNextDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int, 
                     e.keys.DiscardInitial()
                     e.rec.Discard(Space.Initial)
                     e.crypto.Discard(Space.Initial)
+                    e.acks.ClearSpace(Space.Initial)
                 }
             }
         }
@@ -640,7 +641,14 @@ QConn.BuildSendBatch(&self, nc: Io, batch_buf: mut HeapList[u8], dsts: mut []net
     if any_sent_data {
         self.WakeSatisfied(e)
     }
+    e.RecomputeTimer(now)
+    nudge_srv := count > 0 && e.is_server && e.tok.Reading()
     eg.Unlock()
+    if nudge_srv {
+        if ep := &self.ep {
+            ep.Ref().InboxNotify(self.ep_conn_idx).NotifyOne()
+        }
+    }
     return count
 }
 

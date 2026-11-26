@@ -210,7 +210,7 @@ ApplyFrames(
             }
         }
         match frame {
-            .Padding { }
+            .Padding {}
             .Ping {
                 ack_eliciting = true
                 non_probing = true
@@ -275,6 +275,7 @@ ApplyFrames(
                     e.keys.DiscardHandshake()
                     e.rec.Discard(Space.Handshake)
                     e.crypto.Discard(Space.Handshake)
+                    e.acks.ClearSpace(Space.Handshake)
                     e.rec.SetHandshakeConfirmed(true, now)
                 }
             }
@@ -547,6 +548,7 @@ ProcessDatagram(e: mut Engine, io: Io, dgram: mut []u8, from: net.Addr, now: tim
                             e.keys.DiscardInitial()
                             e.rec.Discard(Space.Initial)
                             e.crypto.Discard(Space.Initial)
+                            e.acks.ClearSpace(Space.Initial)
                             e.addr_validated = true
                             e.rec.SetServerAmpBlocked(false, now)
                             e.close.SetValidatedAddr(from)

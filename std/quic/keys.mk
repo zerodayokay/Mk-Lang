@@ -61,16 +61,8 @@ DeriveNextKeepingHp(suite: Suite, secret: mut []u8, orig_hp: &HeaderKey): Error!
     return k
 }
 
-// Per-connection packet and header protection key manager for all levels.
-// Linear: Wipe must be called when the connection closes or is abandoned.
-linear struct KeyRing {
-    is_client: bool
-    init_read: ?Keys
-    init_write: ?Keys
-    init_discarded: bool
-    hs_read: ?Keys
-    hs_write: ?Keys
-    hs_discarded: bool
+// Lazily heap-allocated 1-RTT key state so half-open connections stay compact.
+linear struct AppKeyState {
     app_suite: Suite
     app_read_installed: bool
     app_write_installed: bool
@@ -82,6 +74,65 @@ linear struct KeyRing {
     app_read_prev: ?Keys
     app_write_cur: ?Keys
     app_write_next: ?Keys
+}
+
+AppKeyState.New(): AppKeyState {
+    return AppKeyState(
+        app_suite: Suite.Aes128Gcm,
+        app_read_installed: false,
+        app_write_installed: false,
+        app_secret_len: 0,
+        app_read_secret: [0; 48],
+        app_write_secret: [0; 48],
+        app_read_cur: none,
+        app_read_next: none,
+        app_read_prev: none,
+        app_write_cur: none,
+        app_write_next: none,
+    )
+}
+
+AppKeyState.Wipe(self) {
+    AppKeyState(
+        app_suite: _,
+        app_read_installed: _,
+        app_write_installed: _,
+        app_secret_len: _,
+        app_read_secret,
+        app_write_secret,
+        app_read_cur,
+        app_read_next,
+        app_read_prev,
+        app_write_cur,
+        app_write_next,
+    ) := self
+    var arc := app_read_cur
+    var arn := app_read_next
+    var arp := app_read_prev
+    var awc := app_write_cur
+    var awn := app_write_next
+    var ars := app_read_secret
+    var aws := app_write_secret
+    WipeOptKeys(mut arc)
+    WipeOptKeys(mut arn)
+    WipeOptKeys(mut arp)
+    WipeOptKeys(mut awc)
+    WipeOptKeys(mut awn)
+    crypto.Wipe(mut ars[..])
+    crypto.Wipe(mut aws[..])
+}
+
+// Per-connection packet and header protection key manager for all levels.
+// Linear: Wipe must be called when the connection closes or is abandoned.
+linear struct KeyRing {
+    is_client: bool
+    init_read: ?Keys
+    init_write: ?Keys
+    init_discarded: bool
+    hs_read: ?Keys
+    hs_write: ?Keys
+    hs_discarded: bool
+    app: ?PtrBox[AppKeyState]
     key_phase: bool
     updates_initiated: u64
     write_phase_min_pn: i64
@@ -107,17 +158,7 @@ KeyRing.New(dcid: &Cid, is_client: bool): KeyRing {
         hs_read: none,
         hs_write: none,
         hs_discarded: false,
-        app_suite: Suite.Aes128Gcm,
-        app_read_installed: false,
-        app_write_installed: false,
-        app_secret_len: 0,
-        app_read_secret: [0; 48],
-        app_write_secret: [0; 48],
-        app_read_cur: none,
-        app_read_next: none,
-        app_read_prev: none,
-        app_write_cur: none,
-        app_write_next: none,
+        app: none,
         key_phase: false,
         updates_initiated: 0,
         write_phase_min_pn: 0,
@@ -143,17 +184,7 @@ KeyRing.Wipe(self) {
         hs_read,
         hs_write,
         hs_discarded: _,
-        app_suite: _,
-        app_read_installed: _,
-        app_write_installed: _,
-        app_secret_len: _,
-        app_read_secret,
-        app_write_secret,
-        app_read_cur,
-        app_read_next,
-        app_read_prev,
-        app_write_cur,
-        app_write_next,
+        app,
         key_phase: _,
         updates_initiated: _,
         write_phase_min_pn: _,
@@ -171,24 +202,14 @@ KeyRing.Wipe(self) {
     var iw := init_write
     var hr := hs_read
     var hw := hs_write
-    var arc := app_read_cur
-    var arn := app_read_next
-    var arp := app_read_prev
-    var awc := app_write_cur
-    var awn := app_write_next
-    var ars := app_read_secret
-    var aws := app_write_secret
     WipeOptKeys(mut ir)
     WipeOptKeys(mut iw)
     WipeOptKeys(mut hr)
     WipeOptKeys(mut hw)
-    WipeOptKeys(mut arc)
-    WipeOptKeys(mut arn)
-    WipeOptKeys(mut arp)
-    WipeOptKeys(mut awc)
-    WipeOptKeys(mut awn)
-    crypto.Wipe(mut ars[..])
-    crypto.Wipe(mut aws[..])
+    if ab := app {
+        st := ab.Free()
+        st.Wipe()
+    }
 }
 
 // Re-derives Initial keys from the Retry SCID (RFC 9001 5.2). O(1).
@@ -241,9 +262,14 @@ KeyRing.ConfLimit(&self): u64 {
     if l := self.conf_limit_override {
         return l
     }
-    return match self.app_suite {
-        .Chacha20Poly1305 { NoConfLimit }
-        _ { AesGcmConfLimit }
+    return match &self.app {
+        none { AesGcmConfLimit }
+        some(ab) {
+            match ab.Ref().app_suite {
+                .Chacha20Poly1305 { NoConfLimit }
+                _ { AesGcmConfLimit }
+            }
+        }
     }
 }
 
@@ -252,12 +278,19 @@ KeyRing.IntegLimit(&self): u64 {
     if l := self.integ_limit_override {
         return l
     }
-    if !self.app_read_installed && !self.app_write_installed {
-        return AesGcmIntegLimit
-    }
-    return match self.app_suite {
-        .Chacha20Poly1305 { ChaChaIntegLimit }
-        _ { AesGcmIntegLimit }
+    return match &self.app {
+        none { AesGcmIntegLimit }
+        some(ab) {
+            st := ab.Ref()
+            if !st.app_read_installed && !st.app_write_installed {
+                AesGcmIntegLimit
+            } else {
+                match st.app_suite {
+                    .Chacha20Poly1305 { ChaChaIntegLimit }
+                    _ { AesGcmIntegLimit }
+                }
+            }
+        }
     }
 }
 
@@ -266,7 +299,12 @@ KeyRing.HasWriteKeys(&self, space: Space): bool {
     return match space {
         .Initial { !self.init_discarded && self.init_write.IsSome() }
         .Handshake { !self.hs_discarded && self.hs_write.IsSome() }
-        .App { self.app_write_installed && self.app_write_cur.IsSome() }
+        .App {
+            match &self.app {
+                none { false }
+                some(ab) { ab.Ref().app_write_installed && ab.Ref().app_write_cur.IsSome() }
+            }
+        }
     }
 }
 
@@ -275,13 +313,32 @@ KeyRing.HasReadKeys(&self, space: Space): bool {
     return match space {
         .Initial { !self.init_discarded && self.init_read.IsSome() }
         .Handshake { !self.hs_discarded && self.hs_read.IsSome() }
-        .App { self.app_read_installed && self.app_read_cur.IsSome() }
+        .App {
+            match &self.app {
+                none { false }
+                some(ab) { ab.Ref().app_read_installed && ab.Ref().app_read_cur.IsSome() }
+            }
+        }
+    }
+}
+
+// Ensures AppKeyState box is allocated on a and returns a mutable reference.
+KeyRing.EnsureApp(mut self, a: &Alloc): Error!mut AppKeyState from self {
+    if self.app.IsNone() {
+        var aks := AppKeyState.New()
+        onerr aks.Wipe()
+        box := try PtrBox[AppKeyState].New(a, aks)
+        self.app = some(box)
+    }
+    match mut self.app {
+        some(ab) { return ab.Mut() }
+        none { fail OutOfMemory }
     }
 }
 
 // Installs TLS traffic secrets for Handshake or App in one direction, pre-deriving
 // next-generation 1-RTT receive and send keys in advance (RFC 9001 5.1, 6.3, 9.5).
-KeyRing.InstallSecret(mut self, level: Space, write: bool, suite: Suite, secret: []u8): Error!void {
+KeyRing.InstallSecret(mut self, a: &Alloc, level: Space, write: bool, suite: Suite, secret: []u8): Error!void {
     k := try KeysFrom(suite, secret)
     match level {
         .Initial {
@@ -310,26 +367,31 @@ KeyRing.InstallSecret(mut self, level: Space, write: bool, suite: Suite, secret:
                 tmp.Wipe()
                 fail crypto.BadLength
             }
-            self.app_suite = suite
-            self.app_secret_len = slen
+            st := self.EnsureApp(a) else err {
+                var tmp := k
+                tmp.Wipe()
+                fail err
+            }
+            st.app_suite = suite
+            st.app_secret_len = slen
             if write {
-                WipeOptKeys(mut self.app_write_cur)
-                WipeOptKeys(mut self.app_write_next)
-                (mut self.app_write_secret[0..slen]).CopyFrom(secret)
+                WipeOptKeys(mut st.app_write_cur)
+                WipeOptKeys(mut st.app_write_next)
+                (mut st.app_write_secret[0..slen]).CopyFrom(secret)
                 orig_hp := k.hp
-                self.app_write_cur = some(k)
-                self.app_write_next = some(try DeriveNextKeepingHp(suite, mut self.app_write_secret[0..slen], &orig_hp))
-                self.app_write_installed = true
+                st.app_write_cur = some(k)
+                st.app_write_next = some(try DeriveNextKeepingHp(suite, mut st.app_write_secret[0..slen], &orig_hp))
+                st.app_write_installed = true
                 self.sealed_in_phase = 0
             } else {
-                WipeOptKeys(mut self.app_read_cur)
-                WipeOptKeys(mut self.app_read_next)
-                WipeOptKeys(mut self.app_read_prev)
-                (mut self.app_read_secret[0..slen]).CopyFrom(secret)
+                WipeOptKeys(mut st.app_read_cur)
+                WipeOptKeys(mut st.app_read_next)
+                WipeOptKeys(mut st.app_read_prev)
+                (mut st.app_read_secret[0..slen]).CopyFrom(secret)
                 orig_hp := k.hp
-                self.app_read_cur = some(k)
-                self.app_read_next = some(try DeriveNextKeepingHp(suite, mut self.app_read_secret[0..slen], &orig_hp))
-                self.app_read_installed = true
+                st.app_read_cur = some(k)
+                st.app_read_next = some(try DeriveNextKeepingHp(suite, mut st.app_read_secret[0..slen], &orig_hp))
+                st.app_read_installed = true
             }
         }
     }
@@ -339,7 +401,14 @@ KeyRing.InstallSecret(mut self, level: Space, write: bool, suite: Suite, secret:
 // When for_limit is true, skips the 3*PTO cooldown SHOULD so confidentiality limits
 // are never exceeded when an update is otherwise legal. O(1).
 KeyRing.CanInitiateUpdate(&self, now: time.Instant, pto: time.Duration, for_limit: bool): bool {
-    if !self.handshake_confirmed || !self.app_write_installed || !self.app_read_installed {
+    if !self.handshake_confirmed {
+        return false
+    }
+    ok_app := match &self.app {
+        none { false }
+        some(ab) { ab.Ref().app_write_installed && ab.Ref().app_read_installed }
+    }
+    if !ok_app {
         return false
     }
     if self.updates_initiated > 0 && !self.write_phase_acked {
@@ -369,25 +438,29 @@ KeyRing.InitiateKeyUpdate(mut self, next_write_pn: i64, now: time.Instant, pto: 
 // Rotates both write and read keys to the next generation while keeping original
 // header protection keys (RFC 9001 5.4, 6.1, 6.2).
 KeyRing.RotateKeys(mut self, next_write_pn: i64, local_initiated: bool): Error!void {
-    slen := self.app_secret_len
-    w_next := self.app_write_next else {
+    st := match mut self.app {
+        some(ab) { ab.Mut() }
+        none { fail TransportError(code: ErrInternal, frame: 0) }
+    }
+    slen := st.app_secret_len
+    w_next := st.app_write_next else {
         fail TransportError(code: ErrInternal, frame: 0)
     }
-    r_next := self.app_read_next else {
+    r_next := st.app_read_next else {
         fail TransportError(code: ErrInternal, frame: 0)
     }
-    WipeOptKeys(mut self.app_write_cur)
-    self.app_write_cur = some(w_next)
-    self.app_write_next = none
+    WipeOptKeys(mut st.app_write_cur)
+    st.app_write_cur = some(w_next)
+    st.app_write_next = none
     w_hp := w_next.hp
-    self.app_write_next = some(try DeriveNextKeepingHp(self.app_suite, mut self.app_write_secret[0..slen], &w_hp))
+    st.app_write_next = some(try DeriveNextKeepingHp(st.app_suite, mut st.app_write_secret[0..slen], &w_hp))
 
-    WipeOptKeys(mut self.app_read_prev)
-    self.app_read_prev = self.app_read_cur
-    self.app_read_cur = some(r_next)
-    self.app_read_next = none
+    WipeOptKeys(mut st.app_read_prev)
+    st.app_read_prev = st.app_read_cur
+    st.app_read_cur = some(r_next)
+    st.app_read_next = none
     r_hp := r_next.hp
-    self.app_read_next = some(try DeriveNextKeepingHp(self.app_suite, mut self.app_read_secret[0..slen], &r_hp))
+    st.app_read_next = some(try DeriveNextKeepingHp(st.app_suite, mut st.app_read_secret[0..slen], &r_hp))
 
     self.key_phase = !self.key_phase
     self.sealed_in_phase = 0
@@ -419,7 +492,10 @@ KeyRing.OnAck1Rtt(mut self, largest_acked: i64, now: time.Instant) {
 KeyRing.ExpirePrev(mut self, now: time.Instant) {
     if t := self.prev_expire_at {
         if now.Since(t).Nanos() >= 0 {
-            WipeOptKeys(mut self.app_read_prev)
+            match mut self.app {
+                some(ab) { WipeOptKeys(mut ab.Mut().app_read_prev) }
+                none {}
+            }
             self.prev_expire_at = none
         }
     }
@@ -483,13 +559,18 @@ KeyRing.SealPacket(
             }
         }
         .App {
-            self.app_write_cur else {
-                fail TransportError(code: ErrInternal, frame: 0)
+            match &self.app {
+                none { fail TransportError(code: ErrInternal, frame: 0) }
+                some(ab) {
+                    ab.Ref().app_write_cur else {
+                        fail TransportError(code: ErrInternal, frame: 0)
+                    }
+                }
             }
         }
     }
-    var aad: [64]u8 = [0; 64]
-    if header_len > 64 {
+    var aad: [256]u8 = [0; 256]
+    if header_len > 256 {
         fail TransportError(code: ErrInternal, frame: 0)
     }
     (mut aad[0..header_len]).CopyFrom(out_pkt[0..header_len])
@@ -571,12 +652,25 @@ KeyRing.OpenShort(
     pto: time.Duration,
     out: mut []u8,
 ): Error!?(pn: i64, plain_len: int, key_updated: bool) {
-    if !self.app_read_installed {
+    read_inst := match &self.app {
+        none { false }
+        some(ab0) { ab0.Ref().app_read_installed }
+    }
+    if !read_inst {
         return none
     }
     self.ExpirePrev(now)
-    cur := self.app_read_cur else {
-        return none
+    cur := match &self.app {
+        none { return none }
+        some(ab) {
+            ab.Ref().app_read_cur else {
+                return none
+            }
+        }
+    }
+    has_prev := match &self.app {
+        none { false }
+        some(ab) { ab.Ref().app_read_prev.IsSome() }
     }
     pn_len := Unprotect(&cur, pkt, hdr.pn_offset) else {
         try self.NoteDecryptFailure()
@@ -600,7 +694,7 @@ KeyRing.OpenShort(
         match self.min_pn_cur_read {
             none {
                 self.min_pn_cur_read = some(pn)
-                if self.app_read_prev.IsSome() {
+                if has_prev {
                     self.prev_expire_at = some(InstantAdd(now, time.Nanos(3 * pto.Nanos())))
                 }
             }
@@ -615,11 +709,15 @@ KeyRing.OpenShort(
 
     // Key phase differs from current phase.
     use_prev := match self.min_pn_cur_read {
-        none { true }
+        none { has_prev }
         some(m) { pn < m }
     }
     if use_prev {
-        if prev := self.app_read_prev {
+        prev_opt := match &self.app {
+            none { none }
+            some(ab) { ab.Ref().app_read_prev }
+        }
+        if prev := prev_opt {
             n := Open(&prev, pn, pkt[0..header_len], pkt[header_len..], out) else {
                 try self.NoteDecryptFailure()
                 return none
@@ -632,7 +730,11 @@ KeyRing.OpenShort(
     }
 
     // pn > min_pn_cur_read with flipped key phase: try pre-derived next keys (RFC 9001 6.3).
-    if nxt := self.app_read_next {
+    nxt_opt := match &self.app {
+        none { none }
+        some(ab) { ab.Ref().app_read_next }
+    }
+    if nxt := nxt_opt {
         var opened := true
         n := Open(&nxt, pn, pkt[0..header_len], pkt[header_len..], out) else {
             opened = false
@@ -648,7 +750,11 @@ KeyRing.OpenShort(
     }
 
     // Check whether an old-phase packet used a higher PN than a newer-phase packet (RFC 9001 6.4).
-    if prev := self.app_read_prev {
+    prev_opt2 := match &self.app {
+        none { none }
+        some(ab) { ab.Ref().app_read_prev }
+    }
+    if prev := prev_opt2 {
         var opened_old := true
         _ = Open(&prev, pn, pkt[0..header_len], pkt[header_len..], out) else {
             opened_old = false

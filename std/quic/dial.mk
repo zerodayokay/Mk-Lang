@@ -14,12 +14,10 @@ import std.net
 // Receive buffer size requested on client and server QUIC UDP sockets (3.6.7).
 const QuicUdpRecvBuf: int = 2_097_152
 
-// Sets the IPv4 Don't Fragment option when supported by the OS (QT-271).
+// Sets the IPv4/IPv6 Don't Fragment option when supported by the OS (QT-271).
 // Errors are ignored on targets or virtual Ios that do not expose it.
 SetDontFragmentUdp(udp: &net.Datagram) {
-    _ = udp
-    // Note: std.core/sys socket options currently expose IoSockNoDelay..IoSockLinger;
-    // when IoSockDontFrag is wired in std.sys, it is applied here.
+    udp.SetDontFragment() else {}
 }
 
 // Dials a QUIC connection to `to`, authenticating `host` and negotiating `alpn`,

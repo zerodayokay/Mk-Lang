@@ -46,9 +46,9 @@ struct PoolChunk {
 }
 
 // Endpoint-wide datagram pool of up to 4,096 1,472-byte slots.
-// Linear: owns Heap-allocated Box[PoolChunk] entries.
+// Linear: owns Heap-allocated PoolChunkBox entries.
 linear struct DgramPool {
-    chunks: HeapList[Box[PoolChunk]]
+    chunks: HeapList[PoolChunkBox]
     free_head: u16
     in_use: int
 }
@@ -56,7 +56,7 @@ linear struct DgramPool {
 // Creates an empty DgramPool (no chunks allocated until first AllocSlot). O(1).
 DgramPool.New(a: &Alloc): DgramPool {
     return DgramPool(
-        chunks: HeapList[Box[PoolChunk]].New(a),
+        chunks: HeapList[PoolChunkBox].New(a),
         free_head: PoolSlotNone,
         in_use: 0,
     )
@@ -102,11 +102,11 @@ DgramPool.AllocSlot(mut self, a: &Alloc into self): ?u16 {
             return none
         }
         ci := self.chunks.Len()
-        var chunk := Box[PoolChunk].New(a, PoolChunk(slots: [EmptyPoolSlot(); PoolChunkSlots])) else {
+        var chunk := PoolChunkBox.NewZero(a) else {
             return none
         }
         base := ci * PoolChunkSlots
-        InitPoolChunk(mut *chunk.Mut(), base)
+        InitPoolChunk(chunk.Mut(), base)
         self.chunks.Push(a, chunk) else {
             chunk.Free(a)
             return none
@@ -116,7 +116,7 @@ DgramPool.AllocSlot(mut self, a: &Alloc into self): ?u16 {
     idx := self.free_head
     ci := int(idx) / PoolChunkSlots
     off := int(idx) % PoolChunkSlots
-    self.free_head = ClaimChunkSlot(mut *self.chunks.ItemsMut()[ci].Mut(), off)
+    self.free_head = ClaimChunkSlot(self.chunks.ItemsMut()[ci].Mut(), off)
     self.in_use += 1
     return some(idx)
 }
@@ -128,7 +128,7 @@ DgramPool.FreeSlot(mut self, idx: u16) {
     if ci < 0 || ci >= self.chunks.Len() {
         return
     }
-    ReleaseChunkSlot(mut *self.chunks.ItemsMut()[ci].Mut(), off, self.free_head)
+    ReleaseChunkSlot(self.chunks.ItemsMut()[ci].Mut(), off, self.free_head)
     self.free_head = idx
     if self.in_use > 0 {
         self.in_use -= 1

@@ -290,6 +290,26 @@ impl lead.Driven for QConn {
             self.DrainIncomingNonBlocking(nc)
         }
         self.Timers(nc)
+        if !got_one {
+            var stuck_dl := false
+            var eg := self.eng.Lock(nc).Must()
+            re := eg.Mut()
+            if nt := re.next_timer {
+                if nt.Since(time.Now(nc)).Nanos() <= 0 {
+                    // Only sleep 1ms if no sendable stream work can progress without waiting on clock.
+                    can_prog := re.streams.HasPending() && re.rec.CanSend(MaxSendDatagram, time.Now(nc))
+                    if !can_prog {
+                        stuck_dl = true
+                    }
+                }
+            }
+            eg.Unlock()
+            if stuck_dl {
+                _ = io.Sleep(time.Millis(1)) else {
+                    fail Canceled
+                }
+            }
+        }
     }
 
     Timers(&self, nc: Io) {
@@ -300,8 +320,18 @@ impl lead.Driven for QConn {
 
     End(&self, nc: Io, p: int): int {
         var g := self.eng.Lock(nc).Must()
-        wake := g.Mut().tok.Leave(p)
+        e := mut *g.Mut()
+        wake := e.tok.Leave(p)
+        var extra_all := false
+        if wake >= 0 {
+            if e.bucket_counts[wake % NotifyBuckets] > 1 {
+                extra_all = true
+            }
+        }
         g.Unlock()
+        if extra_all {
+            self.parties[wake % NotifyBuckets].NotifyAll()
+        }
         return wake
     }
 

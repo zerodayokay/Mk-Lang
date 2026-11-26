@@ -256,6 +256,7 @@ var fuzzMinimizeTime = map[string]string{
 	"./std FuzzStdHttpFields_Qpack":   "100x",
 	"./std FuzzStdHttpFields_Check":   "100x",
 	"./std FuzzStdHttpH2_Frames":      "100x",
+	"./std FuzzStdQuic_Endpoint":      "100x",
 }
 
 // skipNames are the values -skip accepts.

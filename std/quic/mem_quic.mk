@@ -141,3 +141,86 @@ QueuedConn.Unpack(self, h: &Heap): QConn from h {
         return val
     }
 }
+
+// Zero-initialized heap box for PoolChunk (avoids placing ~387 KiB PoolChunk on a task stack).
+linear struct PoolChunkBox {
+    ptr: *PoolChunk
+}
+
+unsafe impl Send for PoolChunkBox {}
+unsafe impl Share for PoolChunkBox {}
+
+PoolChunkBox.NewZero(a: &Alloc): OutOfMemory!PoolChunkBox {
+    size := core.SizeOfT[PoolChunk]()
+    buf := core.AllocBytes(a, size, core.AlignOfT[PoolChunk]())
+    if raw.IsNull(buf) {
+        fail OutOfMemory
+    }
+    unsafe "buf is a fresh size-byte allocation for PoolChunk" {
+        raw.Fill(buf, 0, size)
+        return PoolChunkBox(ptr: raw.PtrCast[u8, PoolChunk](buf))
+    }
+}
+
+PoolChunkBox.Free(self, a: &Alloc) {
+    PoolChunkBox(ptr) := self
+    unsafe "ptr was allocated by PoolChunkBox.NewZero on a" {
+        core.FreeBytes(a, raw.PtrCast[PoolChunk, u8](ptr), core.SizeOfT[PoolChunk](), core.AlignOfT[PoolChunk]())
+    }
+}
+
+PoolChunkBox.Ref(&self): &PoolChunk {
+    unsafe "ptr is live for &self's borrow" {
+        return &(*self.ptr)
+    }
+}
+
+PoolChunkBox.Mut(mut self): mut PoolChunk {
+    unsafe "ptr is uniquely borrowed through mut self" {
+        return mut *self.ptr
+    }
+}
+
+// Generic heap box for large structures inside Engine (e.g. AppKeyState).
+// Ownership is enforced by the enclosing linear struct (KeyRing.Wipe).
+struct PtrBox[T] {
+    ptr: *T
+    owner: *Alloc
+}
+
+unsafe impl[T: Send] Send for PtrBox[T] {}
+unsafe impl[T: Share] Share for PtrBox[T] {}
+
+PtrBox[T].New(a: &Alloc, val: T): OutOfMemory!PtrBox[T] from val {
+    size := core.SizeOfT[T]()
+    buf := core.AllocBytes(a, size, core.AlignOfT[T]())
+    if raw.IsNull(buf) {
+        fail OutOfMemory
+    }
+    unsafe "p is a fresh size/aligned allocation for T" {
+        p := raw.PtrCast[u8, T](buf)
+        raw.Write(p, val)
+        return PtrBox[T](ptr: p, owner: raw.Of(a))
+    }
+}
+
+PtrBox[T].Ref(&self): &T {
+    unsafe "ptr is live for &self's borrow" {
+        return &(*self.ptr)
+    }
+}
+
+PtrBox[T].Mut(mut self): mut T {
+    unsafe "ptr is uniquely borrowed through mut self" {
+        return mut *self.ptr
+    }
+}
+
+PtrBox[T].Free(self): T {
+    PtrBox(ptr, owner) := self
+    unsafe "ptr was allocated by PtrBox.New on owner" {
+        val := raw.Read(ptr)
+        core.FreeBytes(&(*owner), raw.PtrCast[T, u8](ptr), core.SizeOfT[T](), core.AlignOfT[T]())
+        return val
+    }
+}

@@ -537,10 +537,17 @@ Engine.RecomputeTimer(mut self, now: time.Instant) {
         best = EarliestInstant(best, some(InstantAdd(now, d)))
     }
     if d := self.acks.Due(now) {
-        best = EarliestInstant(best, some(InstantAdd(now, d)))
+        can_tx := !self.IsDead() && !self.pn_exhausted && (!self.is_server || self.addr_validated || self.RemainingAmpBudget(&self.path.Destination()) >= 64)
+        if can_tx {
+            best = EarliestInstant(best, some(InstantAdd(now, d)))
+        }
     }
     if d := self.rec.NextPaceDelay(MaxSendDatagram, now) {
         best = EarliestInstant(best, some(InstantAdd(now, d)))
+    } else if !self.IsDead() && !self.pn_exhausted && self.streams.HasPending() && self.rec.CanSend(MaxSendDatagram, now) {
+        if !self.is_server || self.addr_validated || self.RemainingAmpBudget(&self.path.Destination()) >= 64 {
+            best = EarliestInstant(best, some(now))
+        }
     }
     best = EarliestInstant(best, self.keys.Due())
     best = EarliestInstant(best, self.path.Due())
@@ -936,6 +943,7 @@ QConn.FinishHandshakeSuccess(&self, nc: Io, party: int): net.Error!void {
         e.keys.DiscardHandshake()
         e.rec.Discard(Space.Handshake)
         e.crypto.Discard(Space.Handshake)
+        e.acks.ClearSpace(Space.Handshake)
         e.rec.SetHandshakeConfirmed(true, now)
         if ep_q := &self.ep {
             if !e.ep_half_open_cleared {
@@ -1103,7 +1111,7 @@ QConn.HsSecret(&self, level: Space, write: bool, suite: Suite, secret: []u8): ne
             fail net.SecureFailed(why: net.SecureFailure.Protocol)
         }
     }
-    e.keys.InstallSecret(level, write, suite, secret) else {
+    e.keys.InstallSecret(e.h.Alloc(), level, write, suite, secret) else {
         e.FailTransport(ErrInternal, 0, now)
         g.Unlock()
         fail net.SecureFailed(why: net.SecureFailure.Handshake)

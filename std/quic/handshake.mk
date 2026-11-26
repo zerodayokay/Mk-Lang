@@ -37,7 +37,7 @@ ValidatePeerParams(
     retry_scid: ?Cid,
     peer_init_scid: ?Cid,
 ): Error!Params {
-    p := try DecodeParams(raw, !is_server)
+    p := try DecodeParams(raw, is_server)
     iscid := p.initial_scid else {
         fail TransportError(code: ErrTransportParameter, frame: 0)
     }
