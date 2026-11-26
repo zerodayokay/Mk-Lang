@@ -1,6 +1,6 @@
 # std.testing
 
-`std.testing` turns a `test` block into a fuzz target or a benchmark. `testing.Fuzz(f)` calls `f` with inputs: saved files under plain `mk test`, mutated ones under `mk test --fuzz`. `testing.Bench(f)` lets `mk bench` time `f`, and `testing.BenchSys(sys, f)` does the same for an `f` that takes the test's `System`. None needs syntax of its own: a test block calls the function, and the `mk` command decides what happens. For ordinary tests, `Assert` and the `test` block are enough; for checking a function's contract with generated arguments, use `mk test --prop` ([contracts and the property tester](../tools.md#7-contracts-and-the-property-tester)).
+`std.testing` turns a `test` block into a fuzz target or a benchmark. `testing.Fuzz(f)` calls `f` with inputs: saved files under plain `mk test`, mutated ones under `mk test --fuzz`, and `testing.FuzzSys(sys, f)` does the same for an `f` that takes the test's `System`. `testing.Bench(f)` lets `mk bench` time `f`, and `testing.BenchSys(sys, f)` does the same for an `f` that takes the test's `System`. None needs syntax of its own: a test block calls the function, and the `mk` command decides what happens. For ordinary tests, `Assert` and the `test` block are enough; for checking a function's contract with generated arguments, use `mk test --prop` ([contracts and the property tester](../tools.md#7-contracts-and-the-property-tester)).
 
 Read the [`mk test`](../tools.md#mk-test) and [`mk bench`](../tools.md#mk-bench) commands first, and [fuzzing and benchmarks](../tools.md#10-debugging-coverage-fuzzing-and-profiling) for the flags.
 
@@ -16,7 +16,7 @@ import std.testing
 - [The mutation loop](#the-mutation-loop)
 - [Benchmarks](#benchmarks)
 - [Memory and cost](#memory-and-cost)
-- [Examples](#examples): [run a fuzz target over saved inputs](#run-a-fuzz-target-over-saved-inputs), [a saved input that fails](#a-saved-input-that-fails), [find a failing input](#find-a-failing-input), [a benchmark](#a-benchmark), [a benchmark that allocates](#a-benchmark-that-allocates)
+- [Examples](#examples): [run a fuzz target over saved inputs](#run-a-fuzz-target-over-saved-inputs), [a saved input that fails](#a-saved-input-that-fails), [find a failing input](#find-a-failing-input), [a fuzz target with an external oracle](#a-fuzz-target-with-an-external-oracle), [a benchmark](#a-benchmark), [a benchmark that allocates](#a-benchmark-that-allocates)
 - [API](#api)
 
 ## The main pieces
@@ -24,6 +24,7 @@ import std.testing
 | Task | Use |
 |---|---|
 | Declare a fuzz target | `testing.Fuzz(f)` in a `test` block, `f: fn([]u8)` |
+| Declare a fuzz target that needs the `System` (an external oracle, an artifact, the heap) | `testing.FuzzSys(sys, f)` in a `test` block that takes `(sys: &System)`, `f: fn(sys: &System, data: []u8)` |
 | Run it over saved inputs | `mk test` |
 | Search for failing inputs | `mk test --fuzz <test name> [--fuzztime d]` |
 | Declare a benchmark | `testing.Bench(f)` in a `test` block, `f: fn(n: int)` |
@@ -44,6 +45,12 @@ A fuzz target is a function `f: fn([]u8)` that fails by panicking: a failed `Ass
   - a name that another test of the package shares, ignoring case.
 
   The hex digits come from the SHA-256 of the module path and the test name: in module `main`, the test `a:b` reads `testdata/fuzz/a_b~977664b1/`. When the plain directory `a_b/` holds files, `mk test` prints a note naming the one it reads.
+
+A function value captures nothing, so `f: fn([]u8)` cannot reach a `System`: it cannot run an external oracle (a reference implementation or a disassembler, through `std.proc`), write a finding's artifact, or allocate from `sys.heap`. A target that needs one is a function `f: fn(sys: &System, data: []u8)`. Its test block takes `(sys: &System)` and calls `testing.FuzzSys(sys, f)`, which calls `f(sys, data)` wherever `Fuzz` calls `f(data)`, in plain `mk test` and in the mutation loop alike.
+
+- The fuzzer's own work, reading the saved inputs and writing the state the driver saves a failing input from, never goes through `sys`: it uses the native `Io` and the process heap, under `mk test --sim` too.
+- Under `mk test --sim SEED`, `f`'s `sys` is the simulated `System` every test block gets, so what `f` does through `sys.io` repeats with the seed. An `f` that reaches past it, to a real process or to C, is deterministic only as far as what it reaches is.
+- The hang limit counts the whole call of `f`, an oracle's time included.
 
 Commit the `testdata/fuzz/` directories: they are the regression tests the mutation loop leaves behind.
 
@@ -71,11 +78,11 @@ A function value captures nothing, so `f: fn(n: int)` cannot reach a `System`, a
 
 ## Memory and cost
 
-`Fuzz` reads its inputs into memory from the process heap and frees them before it returns. In plain `mk test` it costs one call of `f` per saved input. `Bench` and `BenchSys` allocate nothing themselves. In any other run `Fuzz` costs one check, `Bench` one call of `f(1)` and `BenchSys` one call of `f(sys, 1)`.
+`Fuzz` and `FuzzSys` read their inputs into memory from the process heap and free them before they return. In plain `mk test` each costs one call of `f` per saved input. `Bench` and `BenchSys` allocate nothing themselves. In any other run `Fuzz` and `FuzzSys` cost one check, `Bench` one call of `f(1)` and `BenchSys` one call of `f(sys, 1)`.
 
 ## Examples
 
-Each example is a package directory: the file shown (`port.mk`, `digits.mk`, `header.mk`, `sum.mk`, `list.mk`, in order) and, for the fuzz targets, the files under `testdata/fuzz/`.
+Each example is a package directory: the file shown (`port.mk`, `digits.mk`, `header.mk`, `upper.mk`, `sum.mk`, `list.mk`, in order) and, for the fuzz targets, the files under `testdata/fuzz/`.
 
 ### Run a fuzz target over saved inputs
 
@@ -209,6 +216,44 @@ FAIL main "payload": panic (exit 101)
 
 The backtrace and the summary line that follow are cut here.
 
+### A fuzz target with an external oracle
+
+```mk
+// verdict: ok
+import std.proc
+import std.testing
+
+// Upper is the function under test: ASCII letters to upper case.
+Upper(b: []u8, out: mut []u8) {
+    for i in 0..b.Len() {
+        c := b[i]
+        out[i] = if c >= b'a' && c <= b'z' { c - 32 } else { c }
+    }
+}
+
+// Check compares Upper with tr, the oracle, run through sys.io.
+Check(sys: &System, b: []u8) {
+    var a := Arena.New(sys.heap).Must()
+    defer a.Free()
+    out := a.Slice[u8](b.Len()).Must()
+    Upper(b, out)
+    args := ["tr", "a-z", "A-Z"]
+    r := proc.Run(&a, sys.io, args[..], b, 1 << 16) else {
+        return // no tr on this machine: nothing to compare with
+    }
+    Assert(r.stdout.Len() == out.Len())
+    for i in 0..out.Len() {
+        Assert(r.stdout[i] == out[i])
+    }
+}
+
+test "upper" (sys: &System) {
+    testing.FuzzSys(sys, Check) // calls Check(sys, b) on each saved input
+}
+```
+
+`Check` allocates its output from `sys.heap` and runs the oracle through `sys.io`, neither of which a `fn([]u8)` can reach. With no saved inputs, plain `mk test` passes; `mk test --fuzz upper` runs `tr` on every input it makes.
+
 ### A benchmark
 
 ```mk
@@ -336,6 +381,27 @@ have failed. It saves an input that panics, leaks, hangs or exits
 non-zero into that directory, one input per distinct failure. f fails
 by panicking. Under plain `mk test` with no corpus files, and in any run
 outside `mk test`, f is not called.
+
+It allocates its inputs from the process heap and frees them before it
+returns; O(the corpus) in plain mode.
+
+### `FuzzSys`
+
+```
+export FuzzSys(sys: &System, f: fn(sys: &System, data: []u8))
+```
+
+FuzzSys is Fuzz for a target that needs the System, to reach sys.io (to
+run an external oracle through std.proc, or to write a finding's
+artifact) or to allocate from sys.heap: the test block passes its own
+sys, and FuzzSys calls f(sys, data) wherever Fuzz would call f(data).
+The fuzzer's own work, reading the corpus and writing the state file
+the driver saves a failing input from, runs on the native Io and the
+process heap, never on sys, so it is the same under `mk test --sim`;
+there f's sys is the simulated System, as for any test block, and an f
+that reaches past it (a real process, C) is deterministic only as far
+as what it reaches is. The hang limit counts f's whole call, an
+oracle's time included.
 
 It allocates its inputs from the process heap and frees them before it
 returns; O(the corpus) in plain mode.

@@ -180,8 +180,8 @@ func TestDocStdModule(t *testing.T) {
 	for _, it := range dp.Modules[0].Items {
 		names = append(names, it.Name)
 	}
-	if strings.Join(names, " ") != "Bench BenchSys Fuzz" {
-		t.Errorf("std.testing's surface %q, want Bench, BenchSys and Fuzz only", names)
+	if strings.Join(names, " ") != "Bench BenchSys Fuzz FuzzSys" {
+		t.Errorf("std.testing's surface %q, want Bench, BenchSys, Fuzz and FuzzSys only", names)
 	}
 }
 

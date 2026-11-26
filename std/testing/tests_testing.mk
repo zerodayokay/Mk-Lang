@@ -1,15 +1,21 @@
 // Why: std.testing must behave in a plain test run and parse its inputs.
-// What: test blocks of Fuzz, Bench, BenchSys, the bench spec, the input
-// file's records and Mutate, run by `mk test --std=std.testing`.
-// How: mk test clears the MK_TESTING_ variables, so Fuzz calls nothing,
-// Bench calls f(1) and BenchSys f(sys, 1); internal/driver/fuzz_test.go
-// and bench_test.go run the other modes.
+// What: test blocks of Fuzz, FuzzSys, Bench, BenchSys, the bench spec,
+// the input file's records and Mutate, run by `mk test --std=std.testing`.
+// How: mk test clears the MK_TESTING_ variables, so Fuzz and FuzzSys call
+// nothing, Bench calls f(1) and BenchSys f(sys, 1);
+// internal/driver/fuzz_test.go and bench_test.go run the other modes.
 
 import std.rt
 
 NeverCalled(b: []u8) {
     _ = b
     Panic("a fuzz target ran with no corpus")
+}
+
+NeverCalledSys(sys: &System, b: []u8) {
+    _ = sys
+    _ = b
+    Panic("a FuzzSys target ran with no corpus")
 }
 
 OnlyOne(n: int) {
@@ -31,6 +37,10 @@ test "Testing Fuzz with no corpus calls nothing, Bench calls f(1)" {
 
 test "Testing BenchSys calls f(sys, 1)" (sys: &System) {
     BenchSys(sys, OnlyOneSys)
+}
+
+test "Testing FuzzSys with no corpus calls nothing" (sys: &System) {
+    FuzzSys(sys, NeverCalledSys)
 }
 
 test "Testing Decimal and PutInt" {
