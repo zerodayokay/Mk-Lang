@@ -1,7 +1,8 @@
 // Why: the end-to-end programs are the proof that built executables behave
 // the same on every target and profile.
-// What: TestPrograms, TestPanics, the executable-format tests
-// (TestExeImportsOnlyKernel32, TestELFStatic) and the WSL guards and probes.
+// What: TestPrograms, TestPanics, TestProgramsSocketsLongTemp, the
+// executable-format tests (TestExeImportsOnlyKernel32, TestELFStatic) and the
+// WSL guards and probes.
 // How: each program is built once per target and profile, and each case of
 // its .cases file is run; stdout, stderr and the exit status are compared
 // byte for byte.
@@ -248,6 +249,45 @@ func TestPrograms(t *testing.T) {
 // both targets, exits 101 with exactly its report on stderr (strict).
 func TestPanics(t *testing.T) {
 	runPrograms(t, func(p string) bool { return strings.HasPrefix(p, ProgramsDir+"/panics/") })
+}
+
+// TestProgramsSocketsLongTemp runs sockets.mk's Windows cases with TEMP and
+// TMP at least 112 bytes long, past sun_path's 108: its Unix socket is named
+// relative to the run directory there, so no temporary path can reach it.
+func TestProgramsSocketsLongTemp(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("sockets.mk names its Unix socket relative to the run directory on Windows only")
+	}
+	root := repoRoot(t)
+	cases, err := LoadCases(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := t.TempDir()
+	if n := 112 - len(long) - 1; n > 0 {
+		long = filepath.Join(long, strings.Repeat("u", n))
+		if err := os.Mkdir(long, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("TEMP", long)
+	t.Setenv("TMP", long)
+	run := sharedRunner(t, root, needLLVM(t))
+	n := 0
+	for _, c := range cases {
+		if c.Program != ProgramsDir+"/sockets.mk" || !slices.Contains(c.Targets, "x86_64-windows") {
+			continue
+		}
+		for _, prof := range c.Profiles {
+			n++
+			t.Run(c.Name+"/"+prof, func(t *testing.T) {
+				checkProgramCase(t, run, c, "x86_64-windows", prof)
+			})
+		}
+	}
+	if n == 0 {
+		t.Fatal("no x86_64-windows case of sockets.mk")
+	}
 }
 
 // runPrograms runs every case of the programs keep accepts.

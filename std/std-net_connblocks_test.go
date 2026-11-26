@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -37,17 +38,33 @@ func net3Judge(t *testing.T, where, out string, status int) {
 
 // TestStdNet_Blocks runs every std.net block once per configuration and
 // judges net3BlockFiles' blocks; another file's failing block is logged.
+// On Windows one configuration has a TEMP past sun_path (unixLongTemp),
+// which the Unix blocks' relative socket names must not depend on.
 func TestStdNet_Blocks(t *testing.T) {
 	root := t.TempDir()
 	stdDir := copyStd(t, root, nil)
 	t.Setenv("MK_CACHE", filepath.Join(root, "cache"))
-	for _, c := range []struct {
+	type config struct {
 		carriers int
 		flags    []string
-	}{{1, nil}, {16, nil}, {16, []string{"--release"}}} {
+		longTemp bool
+	}
+	configs := []config{{1, nil, false}, {16, nil, false}, {16, []string{"--release"}, false}}
+	if runtime.GOOS == "windows" {
+		configs = append(configs, config{16, nil, true})
+	}
+	for _, c := range configs {
 		where := fmt.Sprintf("carriers=%d%s", c.carriers, strings.Join(c.flags, ""))
+		if c.longTemp {
+			where += " long TEMP"
+		}
 		t.Run(where, func(t *testing.T) {
 			t.Setenv("MK_CARRIERS", fmt.Sprint(c.carriers))
+			if c.longTemp {
+				long := unixLongTemp(t)
+				t.Setenv("TEMP", long)
+				t.Setenv("TMP", long)
+			}
 			args := append([]string{"test", "--std=std.net"}, c.flags...)
 			out, status := mkCmd(t, root, stdDir, args...)
 			if strings.Contains(out, "no usable LLVM") {

@@ -1,5 +1,6 @@
 // Why: std.net must interoperate with a real, independent network stack.
-// What: TestStdNet_GoPeer, Go's net as the peer on loopback, TCP and Unix.
+// What: TestStdNet_GoPeer, Go's net as the peer on loopback, TCP and Unix,
+// and unixLongTemp, a directory past sun_path for the Unix fixtures' tests.
 // How: Mk dials and is dialled by Go; Go checks addresses, Shutdown(Write) and
 // options, including an IPv4-mapped peer on [::] that Mk reports as IPv4.
 
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -319,45 +321,73 @@ func TestStdNet_GoPeer(t *testing.T) {
 	}
 
 	// Each direction shares a private current directory with the child.
-	// Windows counts the bytes of the relative address, even under long TEMP.
+	// Windows counts the bytes of the relative address, so it fits even in
+	// a directory past sun_path, as under a long TEMP, which the second
+	// round also gives TEMP and TMP.
 	const path = "sock"
-	t.Run("mk dials go over unix", func(t *testing.T) {
-		dir := t.TempDir()
-		t.Chdir(dir)
-		l, err := net.Listen("unix", path)
-		if errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.Errno(10047)) {
-			t.Skipf("no Unix sockets here: %v", err)
+	for _, under := range []string{"", " under a long TEMP"} {
+		scratch := func(t *testing.T) string {
+			if under == "" {
+				return t.TempDir()
+			}
+			dir := unixLongTemp(t)
+			t.Setenv("TEMP", dir)
+			t.Setenv("TMP", dir)
+			return dir
 		}
-		if err != nil {
-			t.Fatalf("listen unix %q in %q: %v", path, dir, err)
-		}
-		defer l.Close()
-		got := make(chan string, 1)
-		go net3Serve(t, l, got)
-		readLine, wait := net3Start(t, exe, dir, "dialunix", path)
-		if line := readLine(); line != "unix" {
-			t.Fatalf("Mk said %q", line)
-		}
-		res := <-got
-		final := readLine()
-		wait()
-		if !strings.HasPrefix(res, "ping|") || final != "got pong:ping" {
-			t.Errorf("Go saw %q, Mk read %q", res, final)
-		}
-	})
+		t.Run("mk dials go over unix"+under, func(t *testing.T) {
+			dir := scratch(t)
+			t.Chdir(dir)
+			l, err := net.Listen("unix", path)
+			if errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.Errno(10047)) {
+				t.Skipf("no Unix sockets here: %v", err)
+			}
+			if err != nil {
+				t.Fatalf("listen unix %q in %q: %v", path, dir, err)
+			}
+			defer l.Close()
+			got := make(chan string, 1)
+			go net3Serve(t, l, got)
+			readLine, wait := net3Start(t, exe, dir, "dialunix", path)
+			if line := readLine(); line != "unix" {
+				t.Fatalf("Mk said %q", line)
+			}
+			res := <-got
+			final := readLine()
+			wait()
+			if !strings.HasPrefix(res, "ping|") || final != "got pong:ping" {
+				t.Errorf("Go saw %q, Mk read %q", res, final)
+			}
+		})
 
-	t.Run("go dials mk over unix", func(t *testing.T) {
-		dir := t.TempDir()
-		t.Chdir(dir)
-		readLine, wait := net3Start(t, exe, dir, "listenunix", path)
-		if line := readLine(); line != "ready" {
-			t.Fatalf("Mk said %q", line)
+		t.Run("go dials mk over unix"+under, func(t *testing.T) {
+			dir := scratch(t)
+			t.Chdir(dir)
+			readLine, wait := net3Start(t, exe, dir, "listenunix", path)
+			if line := readLine(); line != "ready" {
+				t.Fatalf("Mk said %q", line)
+			}
+			reply, c := net3Client(t, "unix", path)
+			c.Close()
+			wait()
+			if reply != "pong:ping" {
+				t.Errorf("Go read %q", reply)
+			}
+		})
+	}
+}
+
+// unixLongTemp is a new directory under t.TempDir() whose path has at least
+// 112 bytes, past sun_path's 108: no socket named by a path inside it can
+// bind, so a fixture must name its socket relative to it.
+func unixLongTemp(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if n := 112 - len(dir) - 1; n > 0 {
+		dir = filepath.Join(dir, strings.Repeat("u", n))
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
 		}
-		reply, c := net3Client(t, "unix", path)
-		c.Close()
-		wait()
-		if reply != "pong:ping" {
-			t.Errorf("Go read %q", reply)
-		}
-	})
+	}
+	return dir
 }
