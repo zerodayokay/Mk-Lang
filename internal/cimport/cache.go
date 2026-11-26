@@ -3,17 +3,21 @@
 // including a new header that would now shadow one found before.
 //
 // What: Key (Clang identity, target, defines, sysroot hash, ordered search
-// paths), the cached entry with Load and Save, Negatives, and DepHasher,
-// which hashes the -MD dependency files through a stat memo and answers
-// negative lookups.
+// paths), Load and Save, Cand with Cands and PutCand (the candidate lists
+// of this cache and of internal/driver's C objects), Negatives, and
+// DepHasher, which hashes the -MD dependency files through a stat memo and
+// answers negative lookups.
 //
-// How: an entry holds the bindings, the shim, the dependency files with
-// their content hashes, and the negative lookups: for each dependency under
-// search directory k, the same relative path under every directory before
-// k, none of which held a file when the entry was saved. A hit needs every
-// hash to match and no negative to hold a file. A directory is no file
-// here: Clang's search passes over a directory named like the header, so
-// it shadows nothing until a file takes its place.
+// How: the C object's shape. Key names a mutable list (KindManifest) of at
+// most MaxCands candidates, newest first: each the dependency files with
+// their content hashes and the negative lookups (Negatives), none of which
+// held a file when it was saved. A candidate holds while every hash matches
+// and no negative holds a file; the first that holds names the immutable
+// entry (KindCImport) keyed by Key and its dependencies' hashes, which holds
+// the bindings and the shim. So a header edit adds a candidate, and the old
+// content stays a hit too. A directory is no file here: Clang's search
+// passes over a directory named like the header, so it shadows nothing
+// until a file takes its place.
 
 package cimport
 
@@ -21,6 +25,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,8 +33,9 @@ import (
 	"mk/internal/source"
 )
 
-// formatVersion changes whenever the mapping changes what it writes.
-const formatVersion = "mk.cimport.v3"
+// formatVersion changes whenever the mapping changes what it writes or what
+// a candidate's negatives cover.
+const formatVersion = "mk.cimport.v4"
 
 // Key is the cache key of r translated by the Clang of identity: every
 // input but the header contents, which the entry checks itself.
@@ -58,18 +64,70 @@ func Key(identity source.Hash, resourceDir string, r Request) source.Hash {
 	return h.Sum()
 }
 
-// entry is what the store holds for a key.
+// entry is what the store holds for a key and one candidate.
 type entry struct {
 	Modules []string
 	Shim    string
 	Stats   []Stats
-	Deps    []depHash
-	Neg     []string
 }
 
-type depHash struct {
+// Cand is one candidate of a C cache's list: the files the unit read
+// (-MD), with their content hashes, and its negative lookups (Negatives).
+type Cand struct {
+	Deps []Dep
+	Neg  []string `json:",omitempty"`
+}
+
+// Dep is one file a unit read and its content hash.
+type Dep struct {
 	Path string
 	Hash source.Hash
+}
+
+// MaxCands bounds a list's candidates; the oldest go.
+const MaxCands = 4
+
+// Cands are the candidates stored under the KindManifest key lk.
+func Cands(st *cache.Store, lk source.Hash) []Cand {
+	raw, ok, _ := st.Get(cache.KindManifest, lk)
+	if !ok {
+		return nil
+	}
+	var cs []Cand
+	if json.Unmarshal(raw, &cs) != nil {
+		return nil
+	}
+	return cs
+}
+
+// PutCand puts c first among lk's candidates, dropping an older one with
+// the same dependencies (its negatives are older) and any beyond MaxCands.
+func PutCand(st *cache.Store, lk source.Hash, c Cand) {
+	cs := []Cand{c}
+	for _, o := range Cands(st, lk) {
+		if len(cs) < MaxCands && !slices.Equal(o.Deps, c.Deps) {
+			cs = append(cs, o)
+		}
+	}
+	if data, err := json.Marshal(cs); err == nil {
+		_ = st.Put(cache.KindManifest, lk, data)
+	}
+}
+
+// Holds reports whether c still describes the files: every dependency has
+// its hash and no negative lookup finds a file.
+func (d *DepHasher) Holds(c Cand) bool {
+	for _, dep := range c.Deps {
+		if h, ok := d.Hash(dep.Path); !ok || h != dep.Hash {
+			return false
+		}
+	}
+	for _, n := range c.Neg {
+		if d.Exists(n) {
+			return false
+		}
+	}
+	return true
 }
 
 // fileHash is the content hash of a dependency file.
@@ -165,11 +223,22 @@ func (d *DepHasher) Save() {
 }
 
 // Negatives are the negative lookups of a unit that read deps through the
-// ordered search path dirs: the paths that would shadow a dependency and
-// hold no file now (isFile). For a file under dirs[k] as rel, each
-// dirs[j]/rel with j < k. A C object's cache entry (internal/driver) keeps
-// them as a translation's does.
-func Negatives(deps, dirs []string) []string {
+// ordered search path dirs, with roots the files of the unit that are not
+// in deps and whose directory may gain a header (a C source; not the
+// translation's unit or the shim, which mk writes to a fresh work
+// directory): the paths that would shadow a dependency and hold no file
+// now (isFile). A C object's candidate (internal/driver) keeps them as a
+// translation's does.
+//
+// A dependency P has a name under each directory L holding it, rel(L, P),
+// one of which is the name an #include spelled. Through search directory
+// dirs[k], each dirs[j]/name with j < k comes first. A quoted include
+// first searches the directory of its includer, and on the msvc target
+// the directories of the whole include stack (Clang's MSVC compatibility),
+// and every includer is a root or a dependency: so each such directory B
+// gives B/name, whatever L was, and one rule covers both targets. A name
+// with ".." is not modelled (the limit of -MD, which keeps no names).
+func Negatives(deps, dirs, roots []string) []string {
 	var out []string
 	// A path the unit read is no negative: #include_next reads a header
 	// under a later directory after the one under an earlier (Clang's
@@ -178,6 +247,30 @@ func Negatives(deps, dirs []string) []string {
 	for _, d := range deps {
 		seen[filepath.Clean(d)] = true
 	}
+	var bases []string
+	hasBase := map[string]bool{}
+	for _, f := range append(slices.Clone(roots), deps...) {
+		if b := filepath.Dir(filepath.Clean(f)); !hasBase[b] {
+			hasBase[b] = true
+			bases = append(bases, b)
+		}
+	}
+	add := func(dir, name string) {
+		p := filepath.Clean(filepath.Join(dir, name))
+		if seen[p] {
+			return
+		}
+		seen[p] = true
+		// A file there now was not picked by the unit (an #include with
+		// <> does not search beside its includer, or one in an inactive
+		// #if): it shadows nothing, and keeping it would make the entry
+		// miss on every build. A directory there stays a negative: Clang
+		// passed over it, and a header put in its place would shadow the
+		// dependency.
+		if !isFile(p) {
+			out = append(out, p)
+		}
+	}
 	for _, d := range deps {
 		ad := filepath.Clean(d)
 		// -MD does not say which directory found a file. Where directories
@@ -185,24 +278,19 @@ func Negatives(deps, dirs []string) []string {
 		// "sub/y.h" through inc or "y.h" through inc/sub, so every
 		// directory holding it counts, each with its own name for it.
 		for k, dir := range dirs {
-			rel, err := filepath.Rel(filepath.Clean(dir), ad)
-			if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				continue
-			}
-			for _, earlier := range dirs[:k] {
-				p := filepath.Clean(filepath.Join(earlier, rel))
-				if seen[p] {
-					continue
+			if rel, ok := nameUnder(dir, ad); ok {
+				for _, earlier := range dirs[:k] {
+					add(earlier, rel)
 				}
-				seen[p] = true
-				// A file there now was not picked by the unit (a quoted
-				// include found beside its includer first, which this does not
-				// model): it shadows nothing, and keeping it would make the
-				// entry miss on every build. A directory there stays a
-				// negative: Clang passed over it, and a header put in its
-				// place would shadow the dependency.
-				if !isFile(p) {
-					out = append(out, p)
+				for _, b := range bases {
+					add(b, rel)
+				}
+			}
+		}
+		for _, l := range bases {
+			if rel, ok := nameUnder(l, ad); ok {
+				for _, b := range bases {
+					add(b, rel)
 				}
 			}
 		}
@@ -210,48 +298,69 @@ func Negatives(deps, dirs []string) []string {
 	return out
 }
 
-// Load is the stored result of key, when every dependency still has its
-// hash and no negative lookup finds a file.
+// nameUnder is p's name under dir, false when p is not below it.
+func nameUnder(dir, p string) (string, bool) {
+	rel, err := filepath.Rel(filepath.Clean(dir), p)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
+// candsKey is the KindManifest key of key's candidates.
+func candsKey(key source.Hash) source.Hash {
+	h := source.NewHasher("mk.cimport.cands.v1")
+	h.Hash(key)
+	return h.Sum()
+}
+
+// entryKey is the KindCImport key of key's translation with c's files:
+// the bindings are a function of the request and the headers' contents.
+func entryKey(key source.Hash, c Cand) source.Hash {
+	h := source.NewHasher("mk.cimport.entry.v1")
+	h.Hash(key)
+	h.Uvarint(uint64(len(c.Deps)))
+	for _, d := range c.Deps {
+		h.String(d.Path)
+		h.Hash(d.Hash)
+	}
+	return h.Sum()
+}
+
+// Load is the stored result of key, from the first of its candidates that
+// still holds.
 func Load(st *cache.Store, key source.Hash) (*Result, bool) {
 	if st == nil {
 		return nil, false
 	}
-	data, ok, err := st.Get(cache.KindCImport, key)
-	if err != nil || !ok {
-		return nil, false
-	}
-	var e entry
-	if json.Unmarshal(data, &e) != nil {
-		return nil, false
-	}
 	dh := NewDepHasher(st)
 	defer dh.Save()
-	for _, d := range e.Deps {
-		h, ok := dh.Hash(d.Path)
-		if !ok || h != d.Hash {
-			return nil, false
+	for _, c := range Cands(st, candsKey(key)) {
+		if !dh.Holds(c) {
+			continue
 		}
-	}
-	for _, n := range e.Neg {
-		if isFile(n) {
-			return nil, false
+		data, ok, err := st.Get(cache.KindCImport, entryKey(key, c))
+		var e entry
+		if err != nil || !ok || json.Unmarshal(data, &e) != nil {
+			continue // collected, or unreadable: an older candidate may hold
 		}
+		res := &Result{Modules: e.Modules, Shim: e.Shim, Stats: e.Stats}
+		for _, d := range c.Deps {
+			res.Deps = append(res.Deps, d.Path)
+		}
+		return res, true
 	}
-	res := &Result{Modules: e.Modules, Shim: e.Shim, Stats: e.Stats}
-	for _, d := range e.Deps {
-		res.Deps = append(res.Deps, d.Path)
-	}
-	return res, true
+	return nil, false
 }
 
-// Save stores res under key with its dependencies' hashes and negative
-// lookups. A file that cannot be read is no entry (the next run
-// translates again).
+// Save stores res under key: the entry, then the candidate naming it, so a
+// list never names an entry not yet written. A file that cannot be read is
+// no entry (the next run translates again).
 func Save(st *cache.Store, key source.Hash, res *Result) {
 	if st == nil {
 		return
 	}
-	e := entry{Modules: res.Modules, Shim: res.Shim, Stats: res.Stats, Neg: Negatives(res.Deps, res.SearchDirs)}
+	c := Cand{Neg: Negatives(res.Deps, res.SearchDirs, nil)}
 	dh := NewDepHasher(st)
 	defer dh.Save()
 	for _, d := range res.Deps {
@@ -259,11 +368,13 @@ func Save(st *cache.Store, key source.Hash, res *Result) {
 		if !ok {
 			return
 		}
-		e.Deps = append(e.Deps, depHash{Path: d, Hash: h})
+		c.Deps = append(c.Deps, Dep{Path: d, Hash: h})
 	}
-	data, err := json.Marshal(e)
+	data, err := json.Marshal(entry{Modules: res.Modules, Shim: res.Shim, Stats: res.Stats})
 	if err != nil {
 		return
 	}
-	_ = st.Put(cache.KindCImport, key, data)
+	if st.Put(cache.KindCImport, entryKey(key, c), data) == nil {
+		PutCand(st, candsKey(key), c)
+	}
 }

@@ -54,23 +54,24 @@ func TestCObj_NegativeLookups(t *testing.T) {
 	}
 	dh := cimport.NewDepHasher(st)
 	base := source.HashBytes("test", []byte("base"))
-	key, cand, ok := cobjKey(dh, base, depFile, src, []string{root, a, b})
+	key, cand, ok := cobjKey(dh, base, depFile, src, []string{root, a, b}, []string{src})
 	if !ok {
 		t.Fatal("cobjKey failed")
 	}
 	shadow := filepath.Join(a, "dep.h")
-	if want := []string{filepath.Join(root, "dep.h"), shadow}; !slices.Equal(cand.Neg, want) {
+	// b/b/dep.h: "b/dep.h" (its name under root) beside b/dep.h itself.
+	if want := []string{filepath.Join(b, "b", "dep.h"), filepath.Join(root, "dep.h"), shadow}; !slices.Equal(cand.Neg, want) {
 		t.Fatalf("negatives %q, want %q", cand.Neg, want)
 	}
-	saveCobjCandidate(st, base, cand)
-	if got, ok := cobjCandidate(st, dh, base); !ok || got != key {
+	cimport.PutCand(st, cobjListKey(base), cand)
+	if got, ok := cobjCandidate(dh, cimport.Cands(st, cobjListKey(base)), base); !ok || got != key {
 		t.Fatalf("no shadowing header: hit %v, key %v, want %v", ok, got, key)
 	}
 	if err := os.WriteFile(shadow, []byte("int y;\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// The next build's DepHasher: one remembers its stats for a build.
-	if _, ok := cobjCandidate(st, cimport.NewDepHasher(st), base); ok {
+	if _, ok := cobjCandidate(cimport.NewDepHasher(st), cimport.Cands(st, cobjListKey(base)), base); ok {
 		t.Error("a header shadowing a dependency still hit the candidate")
 	}
 }
@@ -78,7 +79,7 @@ func TestCObj_NegativeLookups(t *testing.T) {
 // TestCObj_ExistingIsNoNegative: a path under an earlier directory that
 // exists when the candidate is saved was not picked by the compile (a
 // quoted include found beside its includer), so it is no negative and the
-// candidate hits.
+// candidate hits; the absent path beside the source is one.
 func TestCObj_ExistingIsNoNegative(t *testing.T) {
 	st, err := cache.Open(t.TempDir(), cache.Options{})
 	if err != nil {
@@ -101,15 +102,16 @@ func TestCObj_ExistingIsNoNegative(t *testing.T) {
 	}
 	dh := cimport.NewDepHasher(st)
 	base := source.HashBytes("test", []byte("base"))
-	key, cand, ok := cobjKey(dh, base, depFile, src, []string{a, b})
+	key, cand, ok := cobjKey(dh, base, depFile, src, []string{a, b}, []string{src})
 	if !ok {
 		t.Fatal("cobjKey failed")
 	}
-	if len(cand.Neg) != 0 {
-		t.Fatalf("negatives %q, want none", cand.Neg)
+	// root/bar.h, beside the source, is searched first by a quoted include.
+	if want := []string{filepath.Join(root, "bar.h"), filepath.Join(b, "b", "bar.h")}; !slices.Equal(cand.Neg, want) {
+		t.Fatalf("negatives %q, want %q", cand.Neg, want)
 	}
-	saveCobjCandidate(st, base, cand)
-	if got, ok := cobjCandidate(st, dh, base); !ok || got != key {
+	cimport.PutCand(st, cobjListKey(base), cand)
+	if got, ok := cobjCandidate(dh, cimport.Cands(st, cobjListKey(base)), base); !ok || got != key {
 		t.Errorf("hit %v, key %v, want %v", ok, got, key)
 	}
 }
@@ -143,15 +145,18 @@ func TestCObj_DirectoryIsNegative(t *testing.T) {
 	}
 	dh := cimport.NewDepHasher(st)
 	base := source.HashBytes("test", []byte("base"))
-	key, cand, ok := cobjKey(dh, base, depFile, src, []string{a, b})
+	key, cand, ok := cobjKey(dh, base, depFile, src, []string{a, b}, []string{src})
 	if !ok {
 		t.Fatal("cobjKey failed")
 	}
-	if want := []string{shadow}; !slices.Equal(cand.Neg, want) {
-		t.Fatalf("negatives %q, want %q", cand.Neg, want)
+	// root/dep.h is beside the source and b/b/dep.h beside the header
+	// ("b/dep.h", its name under root): absent, so negatives too.
+	want := []string{shadow, filepath.Join(root, "dep.h"), filepath.Join(b, "b", "dep.h")}
+	if !slices.Equal(slices.Sorted(slices.Values(cand.Neg)), slices.Sorted(slices.Values(want))) {
+		t.Fatalf("negatives %q, want %q in any order", cand.Neg, want)
 	}
-	saveCobjCandidate(st, base, cand)
-	if got, ok := cobjCandidate(st, cimport.NewDepHasher(st), base); !ok || got != key {
+	cimport.PutCand(st, cobjListKey(base), cand)
+	if got, ok := cobjCandidate(cimport.NewDepHasher(st), cimport.Cands(st, cobjListKey(base)), base); !ok || got != key {
 		t.Fatalf("a directory named like the header: hit %v, key %v, want %v", ok, got, key)
 	}
 	if err := os.Remove(shadow); err != nil {
@@ -160,7 +165,7 @@ func TestCObj_DirectoryIsNegative(t *testing.T) {
 	if err := os.WriteFile(shadow, []byte("int y;\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cobjCandidate(st, cimport.NewDepHasher(st), base); ok {
+	if _, ok := cobjCandidate(cimport.NewDepHasher(st), cimport.Cands(st, cobjListKey(base)), base); ok {
 		t.Error("a header put in the directory's place still hit the candidate")
 	}
 }
