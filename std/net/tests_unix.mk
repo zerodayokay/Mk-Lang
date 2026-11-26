@@ -74,6 +74,21 @@ UxReadExact(c: &Stream, io: Io, dst: mut []u8): bool {
     return true
 }
 
+// UxReadExactConn reads dst.Len() bytes from c, returning false on an error or early end.
+UxReadExactConn(c: &Conn, io: Io, dst: mut []u8): bool {
+    var n := 0
+    for n < dst.Len() {
+        k := c.Read(io, mut dst[n..]) else {
+            return false
+        }
+        if k == 0 {
+            return false
+        }
+        n += k
+    }
+    return true
+}
+
 // UxEcho accepts one connection on l and echoes one length-framed message under
 // a bounded deadline, so it does not wait on a lost Windows AF_UNIX EOF.
 UxEcho(l: &Listener, io: Io, done: mut int) {
@@ -93,6 +108,10 @@ UxEcho(l: &Listener, io: Io, done: mut int) {
         var buf: [256]u8 = [0; 256]
         if want > 0 && !UxReadExact(&c, io, mut buf[0..want]) {
             *done = -2
+            return
+        }
+        c.WriteAll(io, hdr[..]) else {
+            *done = -3
             return
         }
         if want > 0 {
@@ -117,7 +136,7 @@ test "A Unix stream echoes through a Conn, half-closes, and has no address or TC
     defer l.Close()
     Assert(l.Port() == 0)
     var echoed := 0
-    var buf: [64]u8 = [0; 64]
+    var buf: [256]u8 = [0; 256]
     scope s := sys.io.Scope() {
         s.go UxEcho(&l, sys.io, mut echoed)
         st := try DialUnix(sys.io, path)
@@ -139,22 +158,20 @@ test "A Unix stream echoes through a Conn, half-closes, and has no address or TC
         try conn.WriteAll(sys.io, hdr[..])
         try conn.WriteAll(sys.io, "hello, unix".AsBytes())
         try conn.Shutdown(sys.io, Shutdown.Write)
-        var n := 0
+        var rhdr: [1]u8 = [0]
+        var n := -1
         // The echo is length-framed and bounded, since Windows' AF_UNIX can
         // lose a peer's close under an overlapped receive (an OS defect).
         scope r := sys.io.Scope() {
             r.CancelAfter(time.Seconds(10))
-            for n < 11 {
-                k := conn.Read(sys.io, mut buf[n..11]) else {
-                    break
+            if UxReadExactConn(&conn, sys.io, mut rhdr[..]) {
+                want := int(rhdr[0])
+                if want == 0 || UxReadExactConn(&conn, sys.io, mut buf[0..want]) {
+                    n = want
                 }
-                if k == 0 {
-                    break
-                }
-                n += k
             }
         }
-        Assert(n == 11 && buf[0] == 0x68 && buf[10] == 0x78)
+        Assert(n == 11 && str.From(buf[0..n]).Must() == "hello, unix")
         try conn.Close(sys.io)
     }
     Assert(echoed == 11)

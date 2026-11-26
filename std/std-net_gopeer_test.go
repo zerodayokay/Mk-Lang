@@ -67,7 +67,7 @@ ReadExact(io: Io, c: &net.Conn, buf: mut []u8): net.Error!bool {
 ReadFrame(io: Io, c: &net.Conn, buf: mut []u8): net.Error!int {
     var hdr: [1]u8 = [0]
     if !try ReadExact(io, c, mut hdr[..]) {
-        return 0
+        fail Closed
     }
     n := int(hdr[0])
     if n > buf.Len() || !try ReadExact(io, c, mut buf[0..n]) {
@@ -77,9 +77,14 @@ ReadFrame(io: Io, c: &net.Conn, buf: mut []u8): net.Error!int {
 }
 
 WriteFrame(io: Io, c: &net.Conn, data: []u8): net.Error!void {
+    if data.Len() > 255 {
+        Panic("unix frame too large")
+    }
     var hdr: [1]u8 = [Trunc[u8](data.Len())]
     try c.WriteAll(io, hdr[..])
-    try c.WriteAll(io, data)
+    if data.Len() > 0 {
+        try c.WriteAll(io, data)
+    }
 }
 
 Dial(sys: &System, mode: str, addr: str): net.Error|WriteError!void {
@@ -276,6 +281,9 @@ func net3ReadFrame(c net.Conn) ([]byte, error) {
 
 // net3WriteFrame writes data as a 1-byte length-prefixed frame to c.
 func net3WriteFrame(c net.Conn, data []byte) error {
+	if len(data) > 255 {
+		return fmt.Errorf("frame length %d exceeds 255", len(data))
+	}
 	buf := append([]byte{byte(len(data))}, data...)
 	_, err := c.Write(buf)
 	return err
@@ -491,6 +499,39 @@ func TestStdNet_GoPeer(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("readframe fails on premature unix eof", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Chdir(dir)
+		l, err := net.Listen("unix", path)
+		if errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.Errno(10047)) {
+			t.Skipf("no Unix sockets here: %v", err)
+		}
+		if err != nil {
+			t.Fatalf("listen unix %q in %q: %v", path, dir, err)
+		}
+		defer l.Close()
+		done := make(chan error, 1)
+		go func() {
+			c, err := l.Accept()
+			if err == nil {
+				_, _ = net3ReadFrame(c)
+				_ = c.Close()
+			}
+			done <- err
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, exe, "dialunix", path)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if aerr := <-done; aerr != nil {
+			t.Fatalf("accept: %v", aerr)
+		}
+		if err == nil || strings.Contains(string(out), "got ") {
+			t.Fatalf("Mk succeeded or printed empty frame on premature EOF: err=%v out=%q", err, out)
+		}
+	})
 }
 
 // unixLongTemp is a new directory under t.TempDir() whose path has at least

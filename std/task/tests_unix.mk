@@ -60,13 +60,13 @@ UxEcho(io: Io, l: uint, done: &raw.Atomic[u64], ph: &raw.Atomic[u64], k: int) {
     for {
         UxPhase(ph, k, 2)
         hr := UxRecvAll(io, s, mut hdr[..])
-        if hr.err != core.SysErr.None {
+        if hr.err != core.SysErr.None || hr.value <= 0 {
             UxPhase(ph, k, 6)
             rt.Abandon(s)
             UxPhase(ph, k, 7)
             return
         }
-        if hr.value == 0 || hdr[0] == 0 {
+        if hdr[0] == 0 {
             break
         }
         n := int(hdr[0])
