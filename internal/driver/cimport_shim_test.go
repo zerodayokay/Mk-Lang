@@ -161,13 +161,14 @@ func TestCImport_ShimHeaderImplementation(t *testing.T) {
 	}
 }
 
-// TestCImport_ShimInitGuid: a header that defines selectany GUID constants
+// TestCImport_ShimInitGuid: a header that defines coalescible GUID constants
 // under INITGUID still compiles them into the kept shim when no inline
-// wrapper is used.
+// wrapper is used. COFF uses selectany and ELF uses a weak definition.
 func TestCImport_ShimInitGuid(t *testing.T) {
 	needTools(t)
 	h := "typedef struct K_GUID { unsigned int data1; unsigned short data2; } K_GUID;\n" +
-		"#ifdef INITGUID\n#define K_DEFINE_GUID(name, l, w) extern const K_GUID __declspec(selectany) name = { l, w }\n" +
+		"#ifdef _WIN32\n#define K_COALESCIBLE __declspec(selectany)\n#else\n#define K_COALESCIBLE __attribute__((weak))\n#endif\n" +
+		"#ifdef INITGUID\n#define K_DEFINE_GUID(name, l, w) extern const K_GUID K_COALESCIBLE name = { l, w }\n" +
 		"#else\n#define K_DEFINE_GUID(name, l, w) extern const K_GUID name\n#endif\n" +
 		"K_DEFINE_GUID(IID_K, 42, 7);\nstatic inline int k_unused(void) { return 1; }\n"
 	files := cBin("sig", h, "", cMain("", "        d := k.IidK.data1\n", "{d}", "d: d"))
