@@ -134,6 +134,19 @@ export SealedBox.With[T: Send + Share, A](&self, a: A, f: fn(&T, A): void) {
     }
 }
 
+/// Calls f with a shared reference to the boxed value, flow source h (which
+/// f may store into *out), argument a and mutable destination out. Returns
+/// void so no loan of self or a escapes. Panics (code 8) when T mismatches.
+/// O(1).
+export SealedBox.WithInto[T: Send + Share, H, A, R](&self, h: H into out, a: A, out: mut R, f: fn(&T, h: H into out, a: A, out: mut R): void) {
+    if self.key != erased.Key[T]() {
+        ErasedMismatch()
+    }
+    unsafe "Fill stored the address of a live T that this SealedBox owns, and the key says the type is T; f may only store h into *out so no loan of self escapes" {
+        f(&*raw.PtrCast[u8, T](self.ptr), h, a, out)
+    }
+}
+
 /// Consumes the SealedBox and calls f with the recovered Box and argument a.
 /// Because f's type declares no `into` flow and returns void, f can neither
 /// store any non-static loan into the boxed value nor carry a loan out of it.

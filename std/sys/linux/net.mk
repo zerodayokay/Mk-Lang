@@ -43,6 +43,55 @@ export SocketOpenUdp(family: u16): OsResult {
     return SocketMake(family, SockDgram, true)
 }
 
+/// SocketConnectUdp connects the UDP socket h to a (no wait).
+/// O(1) system calls; allocates nothing.
+export SocketConnectUdp(h: uint, a: &SockAddr): OsResult {
+    var sa: [4]u64 = [0; 4]
+    var n := 0
+    unsafe "sa holds 32 bytes" {
+        n = EncodeAddr(a, raw.PtrCast[u64, u8](raw.DataMut(mut sa[..])))
+    }
+    if n == 0 {
+        return FailWith(core.SysErr.InvalidAddress)
+    }
+    unsafe "system call; sa is the encoded address" {
+        r := Syscall(Nrs().connect, h, raw.Addr(raw.Data(sa[..])), Trunc[uint](n), 0, 0, 0)
+        if IsErr(r) {
+            return ConnectFail(i64(-r))
+        }
+    }
+    return Ok(0)
+}
+
+/// SocketRecvFromNow performs a non-blocking recvfrom(MSG_DONTWAIT) on h:
+/// returns the count, or -1 with err None when nothing is queued.
+/// O(1) system calls; allocates nothing.
+export SocketRecvFromNow(h: uint, buf: *u8, len: int, from: mut SockAddr): OsResult {
+    var sa: [4]u64 = [0; 4]
+    var sa_len: [1]u32 = [32]
+    n := if len < 0 { 0 } else { len }
+    unsafe "system call; buf holds n bytes; sa holds 32 bytes" {
+        for {
+            sa_len[0] = 32
+            r := Syscall(Nrs().recvfrom, h, raw.Addr(buf), Trunc[uint](n), 0x40,
+                raw.Addr(raw.DataMut(mut sa[..])), raw.Addr(raw.DataMut(mut sa_len[..])))
+            if !IsErr(r) {
+                if !DecodeAddr(raw.PtrCast[u64, u8](raw.Data(sa[..])), from) {
+                    *from = SockAddr(family: 0, port: 0, addr: [0; 16], scope_id: 0)
+                }
+                return Ok(i64(r))
+            }
+            if r == -4 {
+                continue
+            }
+            if r == -11 {
+                return Ok(-1)
+            }
+            return SockFail(i64(-r))
+        }
+    }
+}
+
 /// SocketBind binds h to a, with no SO_REUSEADDR (a UDP socket with it
 /// could share a port another process holds).
 /// O(1) system calls; allocates nothing.

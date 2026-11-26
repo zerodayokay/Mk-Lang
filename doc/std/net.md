@@ -625,6 +625,24 @@ export Datagram.Close(self)
 Closes the socket. Infallible and not cancellable: the OS's answer to
 the close is ignored. O(1); allocates nothing.
 
+### `Datagram.Connect`
+
+```
+export Datagram.Connect(&self, io: Io, to: Addr): Error!void
+```
+
+Connects the UDP socket to `to`: only `to`'s datagrams are received.
+Errors: InvalidAddress, Canceled, or the OS's. O(1); allocates nothing.
+
+### `Datagram.LocalAddr`
+
+```
+export Datagram.LocalAddr(&self): Addr
+```
+
+The bound address of this socket (zero Addr for another Io's socket).
+O(1): one system call; allocates nothing.
+
 ### `Datagram.Port`
 
 ```
@@ -675,6 +693,26 @@ socket an IPv4-mapped to goes as IPv4, and any other IPv6 to is
 InvalidAddress. A link-local to (fe80::/10) goes in the socket's zone,
 the one Bind was given (0 when none, which the OS may refuse). Empty
 data sends an empty datagram.
+
+### `Datagram.SetBuffers`
+
+```
+export Datagram.SetBuffers(&self, recv: int, send: int): Error!void
+```
+
+Asks the OS for receive and send buffer sizes of `recv` and `send`
+bytes (0 keeps the current size). Errors: Unsupported for another Io's
+socket; Os for the OS's refusal. O(1): at most two system calls;
+allocates nothing.
+
+### `Datagram.Share`
+
+```
+export Datagram.Share(self): SharedDatagram
+```
+
+Converts the socket into a SharedDatagram that tasks share by
+reference. O(1); allocates nothing.
 
 ### `DefaultListenOptions`
 
@@ -869,6 +907,16 @@ one system call that sets TCP_NODELAY when ListenWith asked for
 no_delay (a failure of that one is ignored: the stream works without
 it); allocates nothing.
 
+### `Listener.Addr`
+
+```
+export Listener.Addr(&self): Addr
+```
+
+The address the listener is bound to: zero Addr for a Unix-domain
+listener or another Io's listener. O(1): one system call; allocates
+nothing.
+
 ### `Listener.Close`
 
 ```
@@ -890,6 +938,146 @@ export Listener.Port(&self): int
 The port the listener is bound to; 0 for a Unix-domain
 listener. O(1); allocates nothing.
 
+### `Mux`
+
+```
+export linear view struct Mux
+```
+
+One multiplexed connection (a QUIC connection or an in-memory engine of
+std.net.pipe): linear, Send and Share; many tasks call it by reference.
+Provisional.
+
+### `Mux.Abandon`
+
+```
+export Mux.Abandon(self)
+```
+
+Releases the connection without waiting or speaking to the peer.
+Provisional.
+
+### `Mux.Accept`
+
+```
+export Mux.Accept(&self, io: Io, uni: bool, wait: bool): Error!?MuxStream
+```
+
+Returns the next stream the peer opened, or none at once when `wait` is
+false. Provisional.
+
+### `Mux.Close`
+
+```
+export Mux.Close(self, io: Io, code: u64): Error!void
+```
+
+Closes the connection with application `code`. On failure, `self` stays
+the caller's to Abandon or retry. Provisional.
+
+### `Mux.Credit`
+
+```
+export Mux.Credit(&self, s: &MuxStream, total: i64)
+```
+
+Raises the bytes the peer may send on `s` to at least `total`. Never
+waits. Provisional.
+
+### `Mux.Limits`
+
+```
+export Mux.Limits(&self): MuxLimits
+```
+
+Returns the peer's current stream and idle limits. O(1). Provisional.
+
+### `Mux.Of`
+
+```
+export Mux.Of[T: MuxEngine + Send + Share](h: &Heap, b: core.SealedBox): Mux from h, b
+```
+
+Wraps an engine boxed in `b` on `h` as a Mux. Only std builds one.
+Provisional.
+
+### `Mux.Open`
+
+```
+export Mux.Open(&self, io: Io, uni: bool, wait: bool): Error!?MuxStream
+```
+
+Opens a bidirectional or unidirectional stream; returns none immediately
+when `wait` is false and the stream limit is reached. Provisional.
+
+### `Mux.PeerAddr`
+
+```
+export Mux.PeerAddr(&self): ?Addr
+```
+
+Returns the peer's address, if known. O(1). Provisional.
+
+### `Mux.Read`
+
+```
+export Mux.Read(&self, io: Io, s: &MuxStream, buf: mut []u8, wait: bool): Error!?int
+```
+
+Reads into `buf`: byte count, 0 at end of stream, or none when `wait` is
+false and nothing is queued. Provisional.
+
+### `Mux.Release`
+
+```
+export Mux.Release(&self, s: MuxStream)
+```
+
+Releases the stream handle `s` back to the connection. O(1). Provisional.
+
+### `Mux.Reset`
+
+```
+export Mux.Reset(&self, s: &MuxStream, code: u64)
+```
+
+Abandons sending on `s` with error `code`. Never waits. Provisional.
+
+### `Mux.Stop`
+
+```
+export Mux.Stop(&self, s: &MuxStream, code: u64)
+```
+
+Abandons receiving on `s` with error `code`. Never waits. Provisional.
+
+### `Mux.Usable`
+
+```
+export Mux.Usable(&self, io: Io): bool
+```
+
+Processes queued packets without waiting and reports whether the
+connection can take a new stream. Provisional.
+
+### `Mux.Wait`
+
+```
+export Mux.Wait(&self, io: Io, ids: []i64, incoming: bool): Error!MuxReady
+```
+
+Waits until one of `ids` is readable or, when `incoming` is true, a new
+peer stream can be accepted. Provisional.
+
+### `Mux.Write`
+
+```
+export Mux.Write(&self, io: Io, s: &MuxStream, data: []u8, fin: bool): Error!void
+```
+
+Writes all of `data`, then the stream's end when `fin` is true, waiting
+for flow-control credit. Provisional.
+
 ### `MuxClosed`
 
 ```
@@ -901,6 +1089,167 @@ code is the error code of the close: in the application's space (an
 HTTP/2 GOAWAY's or HTTP/3's code) when app, the transport's (QUIC's)
 otherwise; peer is true when the peer closed it, false when this side
 did. Provisional.
+
+### `MuxDialer`
+
+```
+export plain view struct MuxDialer
+```
+
+A client connector of multiplexed connections, made only by std.
+Provisional.
+
+### `MuxDialer.Dial`
+
+```
+export MuxDialer.Dial(&self, h: &Heap, io: Io, to: Addr, host: str, alpn: str): Error!Mux from h
+```
+
+Opens a multiplexed connection to `to`, verifies `host`, and negotiates
+`alpn`. Provisional.
+
+### `MuxDialer.Of`
+
+```
+export MuxDialer.Of[T: Share](c: core.ErasedCall): MuxDialer from c
+```
+
+Wraps `c` as a MuxDialer. Only std calls this. Provisional.
+
+### `MuxEngine`
+
+```
+export interface MuxEngine
+```
+
+The contract std's multiplexed transports implement behind Mux.Of.
+Provisional.
+
+### `MuxLimits`
+
+```
+export struct MuxLimits {
+    export bidi: i64
+    export uni: i64
+    export idle: time.Duration
+}
+```
+
+Stream and idle-timeout limits reported by the peer. Provisional.
+
+### `MuxListener`
+
+```
+export linear view struct MuxListener
+```
+
+A bound multiplexed server endpoint. Release with Close. Provisional.
+
+### `MuxListener.Accept`
+
+```
+export MuxListener.Accept(&self, io: Io): Error!Mux
+```
+
+Accepts the next incoming multiplexed connection on `self`'s heap.
+Provisional.
+
+### `MuxListener.Close`
+
+```
+export MuxListener.Close(self)
+```
+
+Releases the listener and its socket. Provisional.
+
+### `MuxListener.Of`
+
+```
+export MuxListener.Of[T: MuxListening + Send + Share](h: &Heap, b: core.SealedBox): MuxListener from h, b
+```
+
+Wraps a listening endpoint boxed in `b` on `h`. Only std calls this.
+Provisional.
+
+### `MuxListener.Port`
+
+```
+export MuxListener.Port(&self): int
+```
+
+Returns the bound port. O(1). Provisional.
+
+### `MuxListener.Run`
+
+```
+export MuxListener.Run(&self, io: Io): Error!void
+```
+
+Reads packets and routes them until `io`'s scope is cancelled.
+Provisional.
+
+### `MuxListening`
+
+```
+export interface MuxListening
+```
+
+The contract a multiplexed server listener implements for MuxListener.Of.
+Provisional.
+
+### `MuxReady`
+
+```
+export enum MuxReady {
+    Readable(index: int)
+    Incoming(uni: bool)
+}
+```
+
+Result of Mux.Wait: either `ids[index]` is readable or an incoming
+stream (`uni` tells whether unidirectional) is ready to accept.
+Provisional.
+
+### `MuxServer`
+
+```
+export plain view struct MuxServer
+```
+
+A server endpoint factory of multiplexed connections, made only by std.
+Provisional.
+
+### `MuxServer.Listen`
+
+```
+export MuxServer.Listen(&self, h: &Heap, io: Io, addr: str, alpn: str): Error!MuxListener from h, self
+```
+
+Binds UDP on `addr` and returns a MuxListener. Provisional.
+
+### `MuxServer.Of`
+
+```
+export MuxServer.Of[T: Share](c: core.ErasedCall): MuxServer from c
+```
+
+Wraps `c` as a MuxServer. Only std calls this. Provisional.
+
+### `MuxStream`
+
+```
+export linear struct MuxStream
+```
+
+One stream of a Mux. Linear: Mux.Release consumes it. Provisional.
+
+### `MuxStream.Id`
+
+```
+export MuxStream.Id(&self): i64
+```
+
+The stream's QUIC stream id. O(1); allocates nothing. Provisional.
 
 ### `NewConn`
 
@@ -1131,6 +1480,83 @@ Variants:
 - `NameMismatch`: The certificate does not name the host dialled.
 - `Protocol`: The peer broke the protocol after the handshake began.
 
+### `SharedDatagram`
+
+```
+export linear struct SharedDatagram
+```
+
+A bound UDP socket shared across tasks by reference (`Datagram.Share`).
+Read-side calls take the read lock and write-side calls take the write
+lock, so one Recv or TryRecv and one Send or SendBatch run concurrently.
+Linear: Close releases it.
+
+### `SharedDatagram.Close`
+
+```
+export SharedDatagram.Close(self)
+```
+
+Closes the socket. Infallible and not cancellable. O(1); allocates
+nothing.
+
+### `SharedDatagram.LocalAddr`
+
+```
+export SharedDatagram.LocalAddr(&self): Addr
+```
+
+The bound address of this socket (zero Addr for another Io's socket).
+O(1): one system call; allocates nothing.
+
+### `SharedDatagram.Port`
+
+```
+export SharedDatagram.Port(&self): int
+```
+
+The port the socket is bound to. O(1); allocates nothing.
+
+### `SharedDatagram.Recv`
+
+```
+export SharedDatagram.Recv(&self, io: Io, buf: mut []u8): Error!(n: int, peer: Addr)
+```
+
+Waits for one datagram into `buf` under the read lock, as Datagram.Recv.
+O(1) runtime call; allocates nothing.
+
+### `SharedDatagram.Send`
+
+```
+export SharedDatagram.Send(&self, io: Io, data: []u8, to: ?Addr): Error!void
+```
+
+Sends `data` as one datagram to `to`, or to the connected peer when `to`
+is none, under the write lock. Fails with InvalidAddress when `to` is
+none on an unconnected socket. O(1) runtime call; allocates nothing.
+
+### `SharedDatagram.SendBatch`
+
+```
+export SharedDatagram.SendBatch(&self, io: Io, buf: []u8, seg: int, to: ?Addr): Error!void
+```
+
+Sends `buf` split into datagrams of at most `seg` bytes each, in order,
+to `to` (or connected peer when none) under the write lock. Fails with
+Os(code: 0) when `seg <= 0`. O(buf.Len() / seg) syscalls; allocates
+nothing.
+
+### `SharedDatagram.TryRecv`
+
+```
+export SharedDatagram.TryRecv(&self, io: Io, buf: mut []u8): Error!?(n: int, peer: Addr)
+```
+
+Receives one queued datagram into `buf` without waiting under the read
+lock, returning none immediately when nothing is queued. One runtime
+call; allocates nothing.
+
 ### `Shutdown`
 
 ```
@@ -1141,7 +1567,8 @@ Which directions Stream.Shutdown and Conn.Shutdown end.
 
 Variants:
 
-- `Read`
+- `Read`: No more reads: later reads return 0, and a read waiting in
+  another task returns 0.
 - `Write`: No more writes: the peer reads the end of the stream after what was
   sent.
 - `Both`: No more reads and no more writes.
@@ -1280,6 +1707,17 @@ prefix of data sent: close the stream); Closed or Reset for a peer gone;
 Os for any other failure. O(1) system calls per try, plus WriteAll's
 for the rest; while the buffer is full it sleeps between tries (1 ms
 doubling to 50 ms); allocates nothing.
+
+### `Stream.SetBuffers`
+
+```
+export Stream.SetBuffers(&self, recv: int, send: int): Error!void
+```
+
+Asks the OS for receive and send buffer sizes of `recv` and `send`
+bytes (0 keeps the current size). Errors: Unsupported on another Io's
+stream; Os for the OS's refusal. O(1): at most two system calls;
+allocates nothing.
 
 ### `Stream.SetKeepAlive`
 

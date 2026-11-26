@@ -345,6 +345,22 @@ export Listener.Port(&self): int {
     return self.bound
 }
 
+/// The bound address of the listener: the IP and port (zero Addr for a
+/// Unix-domain listener or another Io's listener). O(1); one runtime call;
+/// allocates nothing.
+export Listener.Addr(&self): Addr {
+    if self.kind != StreamTcp || !rt.IsNativeSocket(self.h) {
+        return ZeroAddr
+    }
+    var ip: [16]u8 = [0; 16]
+    var w := core.IoWords(a: 0, b: 0, c: 0, d: 0)
+    r := rt.SockAddress(rt.NativeIo(), self.h, false, mut ip[..], mut w)
+    if r.err != core.SysErr.None || w.a < 0 || w.a > 65535 {
+        return ZeroAddr
+    }
+    return Unmapped(Addr(ip: ip, port: Trunc[u16](w.a), v6: w.b == 1))
+}
+
 /// Closes the listener. Infallible and not cancellable: the OS's answer
 /// to the close is ignored. O(1); allocates nothing.
 ///
