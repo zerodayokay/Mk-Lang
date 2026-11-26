@@ -30426,138 +30426,119 @@ body m.Copy generics=1 params=1 {
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
-  let _2: Negative // temp
+  let _2: [2]int // temp
   let _3: int // temp
-  let _4: Negative!int // temp
-  let _5: Negative!int // var a
-  let _6: Negative // temp
-  let _7: int // temp
-  let _8: Negative!int // temp
-  let _9: Negative!int // var b
-  let _10: &(Negative!int) // temp
+  let _4: int // temp
+  let _5: bool // temp
+  let _6: int // n
+  let _7: Negative // temp
+  let _8: int // temp
+  let _9: Negative!int // temp
+  let _10: Negative!int // var r
   let _11: &(Negative!int) // temp
-  let _12: [2]&(Negative!int) // temp
-  let _13: int // temp
-  let _14: int // temp
-  let _15: bool // temp
-  let _16: &(Negative!int) // r
-  let _17: Negative!int // temp
-  let _18: u64 // temp
-  let _19: Negative // e
-  let _20: WriteError // temp
-  let _21: (e: Negative) // temp
-  let _22: void // temp
-  let _23: int // v
-  let _24: WriteError // temp
-  let _25: (v: int) // temp
-  let _26: void // temp
+  let _12: Negative!int // temp
+  let _13: u64 // temp
+  let _14: Negative // e
+  let _15: WriteError // temp
+  let _16: (e: Negative) // temp
+  let _17: void // temp
+  let _18: int // v
+  let _19: WriteError // temp
+  let _20: (v: int) // temp
+  let _21: void // temp
   bb0:
-    _3 = call m.Root(int 4) -> bb2 err match _2 -> bb1
+    _2 = [2]int(int 4, int 18446744073709551612)
+    _3 = Len(_2)
+    _4 = int 0
+    goto bb1
   bb1:
-    _4 = err(move _2)
-    goto bb3
+    _5 = Lt(copy _4, copy _3)
+    switch copy _5 [0: bb4, _: bb2]
   bb2:
-    _4 = ok(move _3)
-    goto bb3
+    _6 = copy _2[_4]
+    _8 = call m.Root(copy _6) -> bb6 err match _7 -> bb5
   bb3:
-    _5 = copy _4
+    _4 = AddNoWrap(copy _4, int 1)
+    goto bb1
+  bb4:
     scope_end _4
     scope_end _3
     scope_end _2
-    _7 = call m.Root(int 18446744073709551612) -> bb5 err match _6 -> bb4
-  bb4:
-    _8 = err(move _6)
-    goto bb6
+    _0 = ok()
+    return normal
   bb5:
-    _8 = ok(move _7)
-    goto bb6
+    _9 = err(move _7)
+    goto bb7
   bb6:
-    _9 = copy _8
-    scope_end _8
-    scope_end _7
-    scope_end _6
-    _10 = &_5
-    _11 = &_9
-    _12 = [2]&(Negative!int)(copy _10, copy _11)
-    scope_end _11
-    scope_end _10
-    _13 = Len(_12)
-    _14 = int 0
+    _9 = ok(move _8)
     goto bb7
   bb7:
-    _15 = Lt(copy _14, copy _13)
-    switch copy _15 [0: bb10, _: bb8]
+    _10 = copy _9
+    scope_end _9
+    scope_end _8
+    scope_end _7
+    _11 = &_10
+    _12 = call m.Copy[Negative!int](copy _11) -> bb8
   bb8:
-    _16 = copy _12[_14]
-    _17 = call m.Copy[Negative!int](copy _16) -> bb11
+    _13 = Discriminant(_12)
+    switch copy _13 [0: bb9, _: bb10]
   bb9:
-    _14 = AddNoWrap(copy _14, int 1)
-    goto bb7
+    _18 = copy (_12 as ok).0
+    scope_end _13
+    scope_end _12
+    scope_end _11
+    _20 = (v: int)(copy _18)
+    _21 = call std.core.System:Print[(v: int)](copy _1, const str "{v}\n", copy _20) -> bb14 err try _19 -> bb13
   bb10:
-    scope_end _14
-    scope_end _13
-    scope_end _12
-    _0 = ok()
-    scope_end _9
-    scope_end _5
-    return normal
+    _14 = copy (_12 as err)
+    _16 = (e: Negative)(copy _14)
+    _17 = call std.core.System:Print[(e: Negative)](copy _1, const str "{e}\n", copy _16) -> bb12 err try _15 -> bb11
   bb11:
-    _18 = Discriminant(_17)
-    switch copy _18 [0: bb12, _: bb13]
+    _0 = err(copy _15)
+    scope_end _17
+    scope_end _16
+    scope_end _15
+    scope_end _14
+    scope_end _13
+    scope_end _12
+    scope_end _11
+    scope_end _10
+    scope_end _6
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    return try
   bb12:
-    _23 = copy (_17 as ok).0
-    scope_end _18
     scope_end _17
-    _25 = (v: int)(copy _23)
-    _26 = call std.core.System:Print[(v: int)](copy _1, const str "{v}\n", copy _25) -> bb17 err try _24 -> bb16
+    scope_end _16
+    scope_end _15
+    scope_end _14
+    scope_end _13
+    scope_end _12
+    scope_end _11
+    scope_end _10
+    scope_end _6
+    goto bb3 else-exit
   bb13:
-    _19 = copy (_17 as err)
-    _21 = (e: Negative)(copy _19)
-    _22 = call std.core.System:Print[(e: Negative)](copy _1, const str "{e}\n", copy _21) -> bb15 err try _20 -> bb14
+    _0 = err(copy _19)
+    scope_end _21
+    scope_end _20
+    scope_end _19
+    scope_end _18
+    scope_end _10
+    scope_end _6
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    return try
   bb14:
-    _0 = err(copy _20)
-    scope_end _22
     scope_end _21
     scope_end _20
     scope_end _19
     scope_end _18
-    scope_end _17
-    scope_end _16
-    scope_end _14
-    scope_end _13
-    scope_end _12
-    scope_end _9
-    scope_end _5
-    return try
-  bb15:
-    scope_end _22
-    scope_end _21
-    scope_end _20
-    scope_end _19
-    scope_end _18
-    scope_end _17
-    scope_end _16
-    goto bb9 else-exit
-  bb16:
-    _0 = err(copy _24)
-    scope_end _26
-    scope_end _25
-    scope_end _24
-    scope_end _23
-    scope_end _16
-    scope_end _14
-    scope_end _13
-    scope_end _12
-    scope_end _9
-    scope_end _5
-    return try
-  bb17:
-    scope_end _26
-    scope_end _25
-    scope_end _24
-    scope_end _23
-    scope_end _16
-    goto bb9
+    scope_end _10
+    scope_end _6
+    goto bb3
 }
 body m.Root generics=0 params=1 {
   let _0: Negative!int // return
