@@ -2,7 +2,8 @@
 // unusual alignment, bitfields, SSE unions, missing headers) that must fail
 // cleanly or map correctly.
 // What: TestParseProto, TestCImport_Enum, _PointerOnly, _FuncPtrNullable,
-// _Bitfield, _OpaqueSSE, _HeaderMissing, TestDepHasher and _Exists.
+// _Bitfield, _OpaqueSSE, _HeaderMissing, _RedeclaredVar, TestDepHasher and
+// _Exists.
 // How: small headers through translate, and the cache's dependency hasher.
 
 package cimport
@@ -51,6 +52,35 @@ func TestCImport_Enum(t *testing.T) {
 		Import{Name: "e", Headers: []string{"e.h"}})
 	wantLines(t, res.Modules[0], "export const A: E = 16", "export const B: E = 17", "export const C: E = 4",
 		"export const D: E = 120", "export const F: E = 3", "export const G: E = 4")
+}
+
+// TestCImport_RedeclaredVar: an extern variable C declares twice binds
+// once, also when the two spell its type through different typedefs; two
+// declarations that disagree in type bind neither and count one skip with
+// its reason; a variable two imports declare binds in the first only.
+func TestCImport_RedeclaredVar(t *testing.T) {
+	res := translate(t, "x86_64-windows", map[string]string{
+		"a.h": "typedef struct G { int d; } G;\ntypedef G I;\nextern int x;\nextern int x;\nextern const I iid;\nextern const G iid;\n" +
+			"extern int z[];\nextern int z[3];\nextern int w;\n",
+		"b.h": "extern int w;\nextern int x;\nint b_f(void);\n",
+	}, Import{Name: "a", Headers: []string{"a.h"}}, Import{Name: "b", Headers: []string{"b.h"}})
+	a, b := res.Modules[0], res.Modules[1]
+	for name, want := range map[string]int{"x": 1, "iid": 1, "z": 0, "w": 1} {
+		if n := strings.Count(a, "export extern var "+name+":"); n != want {
+			t.Errorf("c.a binds %s %d times, want %d:\n%s", name, n, want, a)
+		}
+	}
+	if strings.Contains(b, "export extern var") {
+		t.Errorf("c.b binds a variable c.a binds:\n%s", b)
+	}
+	st := res.Stats[0]
+	if st.Skipped["extern var redeclared with another type"] != 1 {
+		t.Errorf("skips %v", st.Skipped)
+	}
+	// G, I, x, iid, z and w: one declaration each.
+	if st.Decls != 6 || st.Direct != 5 {
+		t.Errorf("stats %+v, want 6 declarations, 5 direct", st)
+	}
 }
 
 // TestCImport_PointerOnly: a record whose alignment no Mk integer

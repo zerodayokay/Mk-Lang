@@ -44,6 +44,9 @@ type emitter struct {
 	stats   []Stats
 	emitted map[*decl]bool
 	shims   []shimFunc
+	// vars are the extern variable declarations by C name, in order: C
+	// may declare one variable more than once.
+	vars map[string][]*decl
 	// funcLike are the function-like macros the headers define.
 	funcLike map[string]bool
 }
@@ -484,6 +487,12 @@ func (e *emitter) name() {
 // Emit writes every binding. It returns one text per import.
 func (e *emitter) emit() []string {
 	e.pointerOnly()
+	e.vars = map[string][]*decl{}
+	for _, d := range e.u.decls {
+		if d.kind == dVar && d.extern && d.vt != nil {
+			e.vars[d.name] = append(e.vars[d.name], d)
+		}
+	}
 	for _, d := range e.u.decls {
 		if e.emitted[d] {
 			continue
@@ -672,11 +681,27 @@ func (e *emitter) typedef(d *decl) {
 // unsafe-permitted (the driver's cimport.go), and the name is the link symbol.
 // A variable that is not extern (a definition in a header), or whose type has
 // no Mk spelling or is a function or void, is skipped with its reason.
+// C may declare an extern variable again (C11 6.2.2p4; the Windows SDK
+// declares many IID_ names twice): it binds once, in the module of its
+// first declaration, and counts as one declaration. When the declarations
+// disagree in type (typedefs followed), it is skipped with the reason
+// "extern var redeclared with another type": no declaration is preferred.
 func (e *emitter) externVar(d *decl) {
-	e.stats[d.imp].Decls++
 	if !d.extern || d.vt == nil {
+		e.stats[d.imp].Decls++
 		e.skipped(d.imp, "variable that is not extern")
 		return
+	}
+	all := e.vars[d.name]
+	if len(all) > 0 && all[0] != d {
+		return // a redeclaration: the first declaration binds the variable
+	}
+	e.stats[d.imp].Decls++
+	for _, o := range all[1:] {
+		if !e.sameType(d.vt, o.vt) {
+			e.skipped(d.imp, "extern var redeclared with another type")
+			return
+		}
 	}
 	s, why := e.mkType(d.vt, d.imp)
 	if why == "" && (s == "void" || strings.HasPrefix(s, "fn(")) {
@@ -690,4 +715,33 @@ func (e *emitter) externVar(d *decl) {
 	fmt.Fprintf(w, "\n// C: extern %s\n", d.name)
 	fmt.Fprintf(w, "export extern var %s: %s\n", d.name, s)
 	e.stats[d.imp].Direct++
+}
+
+// sameType reports whether C types a and b are one type once every
+// typedef at every level is followed (qualifiers are already dropped):
+// `extern const IID x` and `extern const GUID x` agree.
+func (e *emitter) sameType(a, b *ctype) bool {
+	a, b = e.resolve(a), e.resolve(b)
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.kind != b.kind || a.name != b.name || a.anon != b.anon || a.union != b.union {
+		return false
+	}
+	switch a.kind {
+	case tPointer:
+		return e.sameType(a.elem, b.elem)
+	case tArray:
+		return a.n == b.n && e.sameType(a.elem, b.elem)
+	case tFunc:
+		if a.variadic != b.variadic || len(a.params) != len(b.params) || !e.sameType(a.ret, b.ret) {
+			return false
+		}
+		for i := range a.params {
+			if !e.sameType(a.params[i], b.params[i]) {
+				return false
+			}
+		}
+	}
+	return true
 }
