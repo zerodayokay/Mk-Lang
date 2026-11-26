@@ -681,3 +681,77 @@ func TestProbeWSL(t *testing.T) {
 		t.Errorf("failing probe: %q", why)
 	}
 }
+
+// TestRunSlots verifies that Runner.RunSlots bounds concurrent non-WSL child
+// executions and releases its slot after normal exits, panics, and setup
+// errors alike.
+func TestRunSlots(t *testing.T) {
+	if runtime.GOARCH != "amd64" || (runtime.GOOS != "windows" && runtime.GOOS != "linux") {
+		t.Skipf("no direct host runner on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	target := "x86_64-" + runtime.GOOS
+	tools := needLLVM(t)
+	root := t.TempDir()
+	prog := filepath.Join(root, "slot.mk")
+	const src = "export Main(sys: &System) {\n    if sys.args.Len() > 1 {\n        Panic(\"slot-fail\")\n    }\n}\n"
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRunner(root, driver.Config{Tools: tools, CacheDir: t.TempDir()}, t.TempDir())
+	r.RunSlots = make(chan struct{}, 1)
+	exe, err := r.Build("slot.mk", target, "dev")
+	if err != nil {
+		t.Fatalf("build slot.mk: %v", err)
+	}
+
+	assertSlotFree := func(when string) {
+		t.Helper()
+		select {
+		case r.RunSlots <- struct{}{}:
+			<-r.RunSlots
+		default:
+			t.Fatalf("RunSlots leaked (%s)", when)
+		}
+	}
+
+	cPass := ProgramCase{Program: "slot.mk", Name: "ok", Timeout: DefaultCaseTimeout}
+	r.RunSlots <- struct{}{}
+	type runOut struct {
+		res RunResult
+		err error
+	}
+	done := make(chan runOut, 1)
+	go func() {
+		res, err := r.Run(cPass, target, "dev")
+		done <- runOut{res, err}
+	}()
+	select {
+	case got := <-done:
+		<-r.RunSlots
+		t.Fatalf("r.Run completed while RunSlots was held: %+v", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+	<-r.RunSlots
+	got := <-done
+	if got.err != nil || got.res.Exit != 0 {
+		t.Fatalf("r.Run after slot release = (%+v, %v), want exit 0", got.res, got.err)
+	}
+	assertSlotFree("after passing run")
+
+	cPanic := ProgramCase{Program: "slot.mk", Name: "panic", Args: []string{"boom"}, Timeout: DefaultCaseTimeout}
+	if res, err := r.Run(cPanic, target, "dev"); err != nil || res.Exit != 101 {
+		t.Fatalf("panic run = (%+v, %v), want exit 101", res, err)
+	}
+	assertSlotFree("after exit-101 run")
+
+	cMissingFile := ProgramCase{Program: "slot.mk", Name: "missing-file", Files: []string{"absent.in"}, Timeout: DefaultCaseTimeout}
+	if _, err := r.Run(cMissingFile, target, "dev"); err == nil {
+		t.Fatal("missing-file case succeeded, want error")
+	}
+	assertSlotFree("after missing-file setup error")
+
+	if _, _, err := r.runOnce(cPass, "aarch64-macos", exe); !ErrNoRunner(err) {
+		t.Fatalf("unsupported target err = %v, want ErrNoRunner", err)
+	}
+	assertSlotFree("after ErrNoRunner")
+}
