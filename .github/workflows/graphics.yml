@@ -60,7 +60,7 @@ jobs:
           rm -f llvm.tar.xz
           echo "MK_LLVM=$RUNNER_TEMP/$name/bin" >> "$GITHUB_ENV"
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gdb libglfw3-wayland libvulkan1 mesa-vulkan-drivers weston
+          sudo apt-get install -y --no-install-recommends gdb libglfw3-wayland libvulkan1 mesa-vulkan-drivers weston xvfb xauth
 
       - name: Select lavapipe on Linux
         if: runner.os == 'Linux'
@@ -154,13 +154,15 @@ jobs:
       - name: Render and present through Wayland on Linux ARM64
         if: runner.os == 'Linux' && runner.arch == 'ARM64'
         run: |
+          xvfb-run -a bash --noprofile --norc -e <<'WAYLAND'
           runtime=$(mktemp -d "$RUNNER_TEMP/mk-wayland.XXXXXX")
           export XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=mk-smoke
-          unset DISPLAY
           log="$RUNNER_TEMP/weston.log"
-          weston --backend=headless --renderer=pixman --no-config --socket="$WAYLAND_DISPLAY" > "$log" 2>&1 &
+          # The X11 backend provides the input seat required by Noble's GLFW.
+          weston --backend=x11 --renderer=pixman --no-config --socket="$WAYLAND_DISPLAY" > "$log" 2>&1 &
           weston_pid=$!
           trap 'kill "$weston_pid" 2>/dev/null || true; wait "$weston_pid" 2>/dev/null || true' EXIT
+          unset DISPLAY
           for ((attempt=0; attempt<100; attempt++)); do
             if [ -S "$runtime/$WAYLAND_DISPLAY" ] || ! kill -0 "$weston_pid" 2>/dev/null; then
               break
@@ -191,6 +193,7 @@ jobs:
           fi
           printf '%s\n' "$output"
           grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"
+          WAYLAND
 
       - name: Render and present on macOS
         if: runner.os == 'macOS'

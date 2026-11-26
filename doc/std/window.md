@@ -69,6 +69,8 @@ A key press usually produces both a `Key` event and a `Text` event; a text field
 
 On Wayland the compositor controls window positions and GLFW may not report move or minimisation events. GLFW 3.3 uses the default cursor for `Cursor.NotAllowed`.
 
+GLFW 3.3.10 and 3.4 can crash during `Open` if the Wayland compositor does not advertise an input seat, as with Weston's headless backend. For headless testing, run Weston nested in Xvfb or use a GLFW build with the [upstream no-seat fix](https://github.com/glfw/glfw/commit/3573c5a).
+
 The setters (`SetTitle`, `SetSize`, `SetFullscreen`, `SetCursor`, `SetCursorMode`, `Show`) never wait: each records the newest value and wakes the window thread, which applies it soon after. Their effects arrive as events like any other change: a `SetSize` or a switch to `Fullscreen.Borderless` (a borderless window covering its monitor) reports `Resized` once applied. `SetCursorMode(CursorMode.Hidden)` hides the cursor over the client area only.
 
 ## Surfaces
