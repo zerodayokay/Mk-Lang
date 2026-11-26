@@ -25,7 +25,9 @@ struct Ring[T] {
 
 /// A double-ended queue in an arena: push and pop at either end, and
 /// index from the front, each O(1) (a push amortized). Its storage lives
-/// in the arena and is freed with it.
+/// in the arena and is freed with it, its elements unconsumed, so it holds
+/// no linear value: Push and PushFront of one are E0701. A HeapDeque holds
+/// one.
 export view struct Deque[T] {
     r: Ring[T]
     alloc: &Alloc
@@ -154,7 +156,7 @@ export Deque[T].New(a: &Arena): Deque[T] {
 /// and the arena cannot double its capacity; the deque grows before it
 /// takes x, so x is consumed only on success. Amortized O(1); a growth
 /// allocates twice the capacity from the arena and leaves the old buffer
-/// to it.
+/// to it. T may not be linear (E0701 at the call, which names HeapDeque).
 export Deque[T].Push(mut self, x: T into self): OutOfMemory!void {
     if self.r.n == self.r.cap {
         if !RingGrow(mut self.r, self.alloc, false) {
@@ -164,7 +166,8 @@ export Deque[T].Push(mut self, x: T into self): OutOfMemory!void {
     RingPush(mut self.r, x)
 }
 
-/// Prepends x at the front, as Push. Amortized O(1).
+/// Prepends x at the front, as Push; T may not be linear (E0701 at the
+/// call, which names HeapDeque). Amortized O(1).
 export Deque[T].PushFront(mut self, x: T into self): OutOfMemory!void {
     if self.r.n == self.r.cap {
         if !RingGrow(mut self.r, self.alloc, false) {

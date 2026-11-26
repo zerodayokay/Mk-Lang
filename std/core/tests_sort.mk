@@ -650,8 +650,8 @@ impl TsOwned for TsOwn40 {
 
 // TsOPush pushes x; out of memory, it frees x and panics, which fails the
 // block.
-TsOPush[T: TsOwned](l: mut List[T], h: &Alloc, x: T into l) {
-    l.Push(x) else {
+TsOPush[T: TsOwned](l: mut HeapList[T], h: &Alloc, x: T into l) {
+    l.Push(h, x) else {
         x.TsOFree(h)
         Panic("TsOPush: out of memory")
     }
@@ -726,7 +726,7 @@ TsOSortBy[T: TsOwned](s: mut []T, h: &Alloc, way: int, rel: int): OutOfMemory!vo
 // TsOCheck sorts l, n owned elements with ids 0 to n - 1, by way and rel,
 // checks every id once (and the keys in order under the order), then frees
 // every element.
-TsOCheck[T: TsOwned](a: &Arena, h: &Alloc, l: mut List[T], n: int, way: int, rel: int): OutOfMemory!void {
+TsOCheck[T: TsOwned](a: &Arena, h: &Alloc, l: mut HeapList[T], n: int, way: int, rel: int): OutOfMemory!void {
     try TsOSortBy(l.ItemsMut(), h, way, rel)
     var ids := List[int].New(a)
     for i in 0..l.Len() {
@@ -752,17 +752,36 @@ test "every sort of owned elements of 8, 16 and 40 bytes, under an order and und
     for n in [0, 1, 2, 3, 8, 9, 12, 13, 16, 17, 20, 21, 31, 32, 33, 63, 64, 65, 100, 300, 1_000] {
         for way in 0..4 {
             for rel in 0..4 {
-                var l8 := List[TsOwn8].New(sys.arena)
-                var l16 := List[TsOwn16].New(sys.arena)
-                var l40 := List[TsOwn40].New(sys.arena)
+                // Heap lists: an arena List holds no linear element.
+                var l8 := HeapList[TsOwn8].New(h)
+                var l16 := HeapList[TsOwn16].New(h)
+                var l40 := HeapList[TsOwn40].New(h)
                 for i in 0..n {
-                    TsOPush(mut l8, h, try TsOwn8New(h, i))
-                    TsOPush(mut l16, h, TsOwn16(b: try Box[int].New(h, i)))
-                    TsOPush(mut l40, h, TsOwn40(b: try Box[int].New(h, i), x: i, y: i, z: i))
+                    t8 := TsOwn8New(h, i) else {
+                        Panic("TsOwn8New: out of memory")
+                    }
+                    TsOPush(mut l8, h, t8)
+                    b16 := Box[int].New(h, i) else {
+                        Panic("Box.New: out of memory")
+                    }
+                    TsOPush(mut l16, h, TsOwn16(b: b16))
+                    b40 := Box[int].New(h, i) else {
+                        Panic("Box.New: out of memory")
+                    }
+                    TsOPush(mut l40, h, TsOwn40(b: b40, x: i, y: i, z: i))
                 }
-                try TsOCheck(sys.arena, h, mut l8, n, way, rel)
-                try TsOCheck(sys.arena, h, mut l16, n, way, rel)
-                try TsOCheck(sys.arena, h, mut l40, n, way, rel)
+                TsOCheck(sys.arena, h, mut l8, n, way, rel) else {
+                    Panic("TsOCheck: out of memory")
+                }
+                TsOCheck(sys.arena, h, mut l16, n, way, rel) else {
+                    Panic("TsOCheck: out of memory")
+                }
+                TsOCheck(sys.arena, h, mut l40, n, way, rel) else {
+                    Panic("TsOCheck: out of memory")
+                }
+                l8.FreeEmpty(h)
+                l16.FreeEmpty(h)
+                l40.FreeEmpty(h)
             }
         }
     }

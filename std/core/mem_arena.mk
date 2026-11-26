@@ -693,8 +693,9 @@ NewArena(a: &Alloc, line: bool): OutOfMemory!Arena from a {
 
 /// Moves x into the arena and returns a writable reference to it, in fresh
 /// memory, disjoint from every other piece, on every call. OutOfMemory when
-/// no chunk can be had, and then the caller still owns x. O(1) amortized;
-/// allocates SizeOf[T]() bytes.
+/// no chunk can be had, and then the caller still owns x. T may not be linear
+/// (E0701 at the call, which names Box): the arena frees x unconsumed. O(1)
+/// amortized; allocates SizeOf[T]() bytes.
 export Arena.Put[T](&self, x: T into self): OutOfMemory!mut T from self {
     p := Bump(self.hdr, SizeOfT[T](), AlignOfT[T]())
     if raw.IsNull(p) {

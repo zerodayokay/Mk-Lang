@@ -33,40 +33,56 @@ type releaseRow struct {
 	// frees with its a); otherwise not linear (nothing to free with).
 	free bool
 	alts []string
+	// stores: the call moves the value into arena memory (an arena
+	// container's slot, or Arena.Put's fresh piece), which the arena frees
+	// with no consumer, so a linear value there would be lost; the message
+	// says so.
+	stores bool
 }
 
 // releaseRows is the release protocol as a table. Clear of a List or
 // HeapList and the last Shared.Free check at run time and are not here;
-// Pool.Free is judged by poolFree.
+// Pool.Free is judged by poolFree. An arena container is never linear and
+// ends with its arena, so it must never hold a linear value: the stores
+// rows, with the arena Map's Set and Ensure, BTree.Set and Set.Add (which
+// also drop), are every call that moves a value into arena memory; each
+// names the heap container that holds one, where std has one.
 var releaseRows = []releaseRow{
-	{"std.core", "HeapList", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "HeapMap", "Free", []int{0, 1}, "K V", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "TextMap", "Free", []int{0}, "V", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "Chan", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "Box", "Free", []int{0}, "T", true, []string{"Take"}},
-	{"std.coll", "HeapDeque", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.coll", "HeapBTree", "Free", []int{0, 1}, "K V", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "HeapMap", "Set", []int{0, 1}, "K V", true, []string{"Replace"}},
-	{"std.core", "HeapMap", "Ensure", []int{0, 1}, "K V", true, []string{"Replace"}},
-	{"std.core", "HeapMap", "Replace", []int{0}, "K", true, nil},
-	{"std.coll", "HeapBTree", "Set", []int{0, 1}, "K V", true, []string{"Replace"}},
-	{"std.coll", "HeapBTree", "Replace", []int{0}, "K", true, nil},
-	{"std.core", "TextMap", "Set", []int{0}, "V", true, []string{"Replace"}},
-	{"std.core", "TextMap", "Ensure", []int{0}, "V", true, []string{"Replace"}},
-	{"std.core", "Map", "Set", []int{0, 1}, "K V", false, []string{"Replace"}},
-	{"std.core", "Map", "Ensure", []int{0, 1}, "K V", false, nil},
-	{"std.core", "Map", "Replace", []int{0}, "K", false, nil},
-	{"std.core", "Map", "Remove", []int{0}, "K", false, nil},
-	{"std.coll", "BTree", "Set", []int{0, 1}, "K V", false, []string{"Replace"}},
-	{"std.coll", "BTree", "Replace", []int{0}, "K", false, nil},
-	{"std.core", "HeapMap", "Remove", []int{0}, "K", false, nil},
-	{"std.core", "Set", "Add", []int{0}, "T", false, nil},
-	{"std.core", "Set", "Remove", []int{0}, "T", false, nil},
-	{"std.coll", "BTree", "Remove", []int{0}, "K", false, nil},
-	{"std.coll", "HeapBTree", "Remove", []int{0}, "K", false, nil},
-	{"std.core", "Guard", "Store", []int{0}, "T", false, []string{"Replace(g.Mut(), x)"}},
-	{"std.atomic", "SpinGuard", "Store", []int{0}, "T", false, []string{"Replace(g.Mut(), x)"}},
-	{"std.mem", "Pool", "Sweep", []int{0}, "T", false, nil},
+	{"std.core", "List", "Push", []int{0}, "T", false, []string{"HeapList"}, true},
+	{"std.core", "List", "Insert", []int{0}, "T", false, []string{"HeapList"}, true},
+	{"std.coll", "Deque", "Push", []int{0}, "T", false, []string{"HeapDeque"}, true},
+	{"std.coll", "Deque", "PushFront", []int{0}, "T", false, []string{"HeapDeque"}, true},
+	{"std.coll", "PriorityQueue", "Push", []int{0}, "T", false, nil, true},
+	{"std.mem", "Pool", "Add", []int{0}, "T", false, nil, true},
+	{"std.core", "Arena", "Put", []int{0}, "T", false, []string{"Box"}, true},
+	{"std.core", "HeapList", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "HeapMap", "Free", []int{0, 1}, "K V", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "TextMap", "Free", []int{0}, "V", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "Chan", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "Box", "Free", []int{0}, "T", true, []string{"Take"}, false},
+	{"std.coll", "HeapDeque", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.coll", "HeapBTree", "Free", []int{0, 1}, "K V", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "HeapMap", "Set", []int{0, 1}, "K V", true, []string{"Replace"}, false},
+	{"std.core", "HeapMap", "Ensure", []int{0, 1}, "K V", true, []string{"Replace"}, false},
+	{"std.core", "HeapMap", "Replace", []int{0}, "K", true, nil, false},
+	{"std.coll", "HeapBTree", "Set", []int{0, 1}, "K V", true, []string{"Replace"}, false},
+	{"std.coll", "HeapBTree", "Replace", []int{0}, "K", true, nil, false},
+	{"std.core", "TextMap", "Set", []int{0}, "V", true, []string{"Replace"}, false},
+	{"std.core", "TextMap", "Ensure", []int{0}, "V", true, []string{"Replace"}, false},
+	{"std.core", "Map", "Set", []int{0, 1}, "K V", false, []string{"HeapMap"}, false},
+	{"std.core", "Map", "Ensure", []int{0, 1}, "K V", false, []string{"HeapMap"}, false},
+	{"std.core", "Map", "Replace", []int{0, 1}, "K V", false, []string{"HeapMap"}, true},
+	{"std.core", "Map", "Remove", []int{0}, "K", false, nil, false},
+	{"std.coll", "BTree", "Set", []int{0, 1}, "K V", false, []string{"HeapBTree"}, false},
+	{"std.coll", "BTree", "Replace", []int{0, 1}, "K V", false, []string{"HeapBTree"}, true},
+	{"std.core", "HeapMap", "Remove", []int{0}, "K", false, nil, false},
+	{"std.core", "Set", "Add", []int{0}, "T", false, nil, false},
+	{"std.core", "Set", "Remove", []int{0}, "T", false, nil, false},
+	{"std.coll", "BTree", "Remove", []int{0}, "K", false, nil, false},
+	{"std.coll", "HeapBTree", "Remove", []int{0}, "K", false, nil, false},
+	{"std.core", "Guard", "Store", []int{0}, "T", false, []string{"Replace(g.Mut(), x)"}, false},
+	{"std.atomic", "SpinGuard", "Store", []int{0}, "T", false, []string{"Replace(g.Mut(), x)"}, false},
+	{"std.mem", "Pool", "Sweep", []int{0}, "T", false, nil, false},
 }
 
 // releaseContainers are the containers whose Free deep-frees: an instance
@@ -156,7 +172,6 @@ func (u *unit) releaseBound(r *releaseRow, item types.ItemID, at source.Span, g 
 	if free == types.NoItem {
 		return // no protocol before std.core declares Free
 	}
-	params := strings.Fields(r.names)
 	fixed := false // one fix per call, on its first E0701
 	for k, slot := range r.slots {
 		if slot >= len(g) || g[slot].IsConst {
@@ -191,11 +206,13 @@ func (u *unit) releaseBound(r *releaseRow, item types.ItemID, at source.Span, g 
 			why += ", since its element `" + es + "` " + ew + " and not `Free`"
 		}
 		msg := "`" + ts + "` " + why + ": `" + r.owner + "." + r.method + "` would drop it"
-		if r.method == "Set" || r.method == "Ensure" {
+		if r.stores {
+			msg = "`" + ts + "` " + why + ": `" + r.owner + "." + r.method + "` would store it in arena memory, which the arena frees without consuming it"
+		} else if r.method == "Set" || r.method == "Ensure" {
 			msg = "`" + ts + "` " + why + ": `" + r.owner + "." + r.method + "` would drop the value it replaces"
 		}
 		pn := "T"
-		if k < len(params) {
+		if params := strings.Fields(r.names); k < len(params) {
 			pn = params[k]
 		}
 		d := diag.New(diag.E0701, at, msg).Text("param", pn).Text("bound", bound).Text("type", ts)
@@ -259,7 +276,7 @@ func (c *Checker) releaseGap(env *Env, t types.TypeID, free bool, freeIface type
 		return releaseGapAt{elem: n, open: true}
 	}
 	if !free {
-		return releaseGapAt{elem: n}
+		return releaseGapAt{elem: n, open: c.linearThroughParams(env, n)}
 	}
 	if nt.Kind == types.KNamed && c.isReleaseContainer(n) {
 		for _, a := range nt.Args {
@@ -277,7 +294,26 @@ func (c *Checker) releaseGap(env *Env, t types.TypeID, free bool, freeIface type
 	if _, ok := c.implOf(env, freeIface, nil, n, rec, 0); ok {
 		return releaseGapAt{ok: true}
 	}
-	return releaseGapAt{elem: n}
+	return releaseGapAt{elem: n, open: c.linearThroughParams(env, n)}
+}
+
+// linearThroughParams reports whether n, linear in env, is linear only
+// through the type parameters it mentions (`?T`, `[N]T`, a record of a T):
+// with each one that is not narrowed taken as int it is not linear, so the
+// report says it may be linear, not that it is. Kinds only grow from their
+// parts, so a type still linear then (`(a: Ticket, b: T)`) is linear for
+// every T.
+func (c *Checker) linearThroughParams(env *Env, n types.TypeID) bool {
+	if c.closed(n) {
+		return false
+	}
+	e := env
+	for i := range env.gen {
+		if !env.gen[i].Const && env.narrow[i] == types.NoType {
+			e = e.Narrow(uint32(i), types.Int)
+		}
+	}
+	return c.FactsIn(e, n).Kind != types.Linear
 }
 
 // releaseGapAt is releaseGap's answer.

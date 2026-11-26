@@ -252,6 +252,7 @@ Over() {
 
 - `_ = e` does not consume a linear value (E0402).
 - Leaving a statement by `try` or `else` while a linear temporary of it is still live is E0402.
+- An arena container (`List`, `Map`, `coll.Deque` and the others) is not linear and ends with its arena, which frees what it holds without consuming it, so it holds no linear value: a call that would store one there is E0701. A heap container (`HeapList`, `HeapMap`) is linear and holds them ([releasing what a container holds](std/core.md#releasing-what-a-container-holds)).
 
 **Fallible calls consume only on success.** A function returning `E!T` that takes a non-plain argument by value consumes it only when it succeeds. On the error edge of `try` or `else`, the caller still owns the argument and must still consume it, for example in an `onerr`:
 

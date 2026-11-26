@@ -434,7 +434,9 @@ test "HeapBTree.Replace fills a tree of linear values that are not Free" (sys: &
     u.FreeEmpty(a)
 }
 
-test "BTree.Replace hands back the old value, linear values included" (sys: &System) {
+// An arena BTree holds no linear value: HeapBTree's test above covers
+// Replace of linear values.
+test "BTree.Replace hands back the old value" (sys: &System) {
     var t := BTree[int, int].New(sys.arena)
     for i in 0..500 {
         Assert(t.Replace(i * 7919 % 1009, i).Must().IsNone())
@@ -444,21 +446,4 @@ test "BTree.Replace hands back the old value, linear values included" (sys: &Sys
     }
     k1 := 7919 % 1009
     Assert(t.Len() == 500 && *t.Get(&k1).Must() == -1)
-    var u := BTree[int, CrTok].New(sys.arena)
-    for i in 0..200 {
-        Assert(CrNone(u.Replace(i, CrTok(n: i)).Must()))
-    }
-    var back := 0
-    for i in 0..200 {
-        if o := u.Replace(i, CrTok(n: 1000 + i)).Must() {
-            back += CrClose(o)
-        }
-    }
-    Assert(back == 19900 && u.Len() == 200)
-    for i in 0..200 {
-        if v := u.Remove(&i) {
-            Assert(CrClose(v) == 1000 + i)
-        }
-    }
-    Assert(u.Len() == 0)
 }

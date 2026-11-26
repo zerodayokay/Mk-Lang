@@ -427,11 +427,11 @@ Client.Exchange(&self, a: &Arena into lm, io: Io, lm: &Mutex[Line] into a, key: 
 // NewLineIn puts an empty Line under its Mutex in a.
 NewLineIn(a: &Arena): OutOfMemory!&Mutex[Line] from a {
     m := Mutex[Line].New(NewLine())
-    p := a.Put(m) else {
+    p := PutLine(a, m) else {
         DropLine(m.Into())
         fail OutOfMemory
     }
-    return &*p
+    return p
 }
 
 // DropLine releases a Line's connection, if it holds one.

@@ -1919,7 +1919,7 @@ The library's types have these kinds:
 
 | Library types | Kind | Release | Crosses tasks by value | Shared across tasks by `&` |
 |---|---|---|---|---|
-| `List Map Set Text` | Unique | None. The arena ends them | No: they hold `&Arena` | No |
+| `List Map Set Text` | Unique | None. The arena ends them, so they hold no linear value (E0701 at a call that would store one) | No: they hold `&Arena` | No |
 | `Arena` | Linear | `Free()`, or `Reset()` to reuse | No | No |
 | `Heap` | Reached by `&Heap` | Never | | Yes |
 | `HeapList HeapMap TextMap HeapText Box Shared` | Linear | `Free(a)`; `Shared` lives on the heap and takes `&Heap` | If contents are | If contents are |
@@ -10753,6 +10753,7 @@ PASS main "prints"
 - In a test, the heap counts its allocations. Memory still allocated when the test ends fails it with `leak (exit 102)`.
 - Test names are strings, unique in their module (E0206). No naming convention makes a function a test.
 - A test is checked with its module by every command, but built only by `mk test`. `mk build` and `mk run` leave tests out.
+- `mk test --show-output` also prints a passing test's output under its `PASS` line, indented as a failing test's is, so a test that measures or reports something can be read without failing it ([`mk test`](tools.md#mk-test)).
 
 ```mk
 // verdict: reject E0206
