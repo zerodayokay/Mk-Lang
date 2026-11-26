@@ -1,9 +1,12 @@
 // Why: std.testing must behave in a plain test run and parse its inputs.
-// What: test blocks of Fuzz, Bench, BenchSys, the bench spec, the input
-// file's records and Mutate, run by `mk test --std=std.testing`.
-// How: mk test clears the MK_TESTING_ variables, so Fuzz calls nothing,
-// Bench calls f(1) and BenchSys f(sys, 1); internal/driver/fuzz_test.go
-// and bench_test.go run the other modes.
+// What: test blocks of Fuzz, Bench, BenchSys, ExpectPanic, the bench
+// spec, the input file's records and Mutate, run by
+// `mk test --std=std.testing`.
+// How: a plain mk test child with no fuzz corpus gets only
+// MK_TESTING_EXPECT (the run's token) of the MK_TESTING_ variables, so
+// Fuzz calls nothing, Bench calls f(1), BenchSys f(sys, 1) and
+// ExpectPanic writes its line; internal/driver/fuzz_test.go and
+// bench_test.go run the other modes.
 
 import std.rt
 
@@ -31,6 +34,13 @@ test "Testing Fuzz with no corpus calls nothing, Bench calls f(1)" {
 
 test "Testing BenchSys calls f(sys, 1)" (sys: &System) {
     BenchSys(sys, OnlyOneSys)
+}
+
+// mk test passes this block on its panic (internal/driver/expectpanic_test.go
+// covers the failing outcomes); the harness judges its exit and report.
+test "Testing ExpectPanic passes on the panic it names [exit 101: panic: assert]" {
+    ExpectPanic("assert")
+    Assert(Decimal("7".AsBytes(), 0).n == 8)
 }
 
 test "Testing Decimal and PutInt" {

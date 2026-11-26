@@ -319,7 +319,7 @@ Each name links the module's page. Run `mk doc --std std.<module>` for one modul
 | [`std.simd`](simd.md) | Vector types, CPU feature dispatch, and fast byte routines. Provisional |
 | [`std.sync`](sync.md) | `RwLock`, `Select` over channels, `Shared`, `Semaphore`, `Notify`, `Barrier`, `Once` |
 | [`std.term`](term.md) | Terminal control: key and mouse events, styles and colours, cursor movement, the alternate screen |
-| [`std.testing`](testing.md) | Fuzz targets and benchmarks registered from `test` blocks |
+| [`std.testing`](testing.md) | Fuzz targets, benchmarks and expected panics, called from `test` blocks |
 | [`std.text`](text.md) | Unicode: graphemes, normalization, case folding, display width, word, sentence and line breaks, bidirectional text, character properties |
 | [`std.time`](time.md) | Instants, durations, wall-clock time, calendar dates, time zones |
 | [`std.time.tzdata`](time.md#stdtimetzdata) | The time-zone database, embedded, linked only when named |

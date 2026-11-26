@@ -2,7 +2,8 @@
 // text; keeping those renderers apart from the lookup keeps query.go short.
 //
 // What: the answers sig, members, import, kind, shape, flows and errors, and
-// the spellers they share: sigLine, declHead, flowClauses, perFieldClause,
+// the spellers they share: sigHead (sig's lines before its doc, which mk
+// query sig --member reads too), sigLine, declHead, flowClauses, perFieldClause,
 // boundString and genericsString.
 //
 // How: every answer reads the checked tables (Signature, Facts, Layout) and
@@ -215,10 +216,15 @@ func (qx *queryIndex) flowClauses(s *types.Signature) string {
 
 // sig is the full signature, its contracts, and the item's /// doc lines.
 func (qx *queryIndex) sig(e qEntry) []string {
-	it := qx.w.items.Get(e.id)
+	return append(qx.sigHead(e), qx.doc(qx.w.items.Get(e.id))...)
+}
+
+// sigHead is sig's lines before the doc lines: a function's signature, its
+// contracts and its module, or another item's head (declLine).
+func (qx *queryIndex) sigHead(e qEntry) []string {
 	s := qx.funcSig(e.id)
 	if s == nil {
-		return append([]string{qx.declLine(e)}, qx.doc(it)...)
+		return []string{qx.declLine(e)}
 	}
 	out := []string{qx.sigLine(e.name, s)}
 	for _, c := range s.Contracts {
@@ -228,8 +234,7 @@ func (qx *queryIndex) sig(e qEntry) []string {
 		}
 		out = append(out, "    "+w+c.Text)
 	}
-	out = append(out, "module "+qx.modPath(e.mod)+classSuffix(e.mod))
-	return append(out, qx.doc(it)...)
+	return append(out, "module "+qx.modPath(e.mod)+classSuffix(e.mod))
 }
 
 // declLine spells a non-function item's head: kind, name, generics, and
@@ -689,14 +694,9 @@ func (qx *queryIndex) providedFormatSig(subject string) ([]string, bool) {
 	if !ok || qx.w.items.Get(e.id).Kind != types.KindError {
 		return nil, false
 	}
-	tab := qx.w.tab
 	for i := 1; i < qx.w.items.NumItems(); i++ {
 		im, ok := qx.w.items.Get(types.ItemID(i)).Decl.(*types.ImplDecl)
-		if !ok || im.For == types.NoType || im.Bound.Item == types.NoItem {
-			continue
-		}
-		ty := tab.Get(im.For)
-		if ty.Kind != types.KErrorSet || singleError(tab, ty.Errors) != e.id || qx.w.items.Get(im.Bound.Item).Key != types.ItemKey("std.core", "Format") {
+		if !ok || qx.providedFormatOf(im) != e.id {
 			continue
 		}
 		for _, m := range im.Methods {
@@ -706,6 +706,24 @@ func (qx *queryIndex) providedFormatSig(subject string) ([]string, bool) {
 		}
 	}
 	return nil, false
+}
+
+// providedFormatOf is the error whose built-in Format impl im is: an impl of
+// std.core.Format for an error's set of one, which only the compiler
+// declares (a written one is E0704). NoItem for any other impl.
+func (qx *queryIndex) providedFormatOf(im *types.ImplDecl) types.ItemID {
+	if im.For == types.NoType || im.Bound.Item == types.NoItem {
+		return types.NoItem
+	}
+	ty := qx.w.tab.Get(im.For)
+	if ty.Kind != types.KErrorSet {
+		return types.NoItem
+	}
+	e := singleError(qx.w.tab, ty.Errors)
+	if e == types.NoItem || qx.w.items.Get(im.Bound.Item).Key != types.ItemKey("std.core", "Format") {
+		return types.NoItem
+	}
+	return e
 }
 
 // primMembers are the methods of a primitive type (str, i64, f64), which is
