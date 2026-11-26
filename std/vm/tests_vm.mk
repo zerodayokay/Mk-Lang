@@ -200,6 +200,47 @@ test "VM a code region runs code written through Edit" {
     Assert(CallAt(e) == 42)
 }
 
+// TaskEmit writes `return v` at 0 of a region another task made.
+TaskEmit(c: mut CodeRegion, v: u8, ok: mut bool) {
+    EmitRet(c, 0, v) else {
+        return
+    }
+    *ok = true
+}
+
+// TaskCall runs the code at 0 of a region shared by several tasks.
+TaskCall(c: &CodeRegion, out: mut u32) {
+    *out = CallAt(c.Entry(0))
+}
+
+// TaskRelease ends a region another task made.
+TaskRelease(c: CodeRegion) {
+    c.Release()
+}
+
+// A CodeRegion is Send and Share; a CodeWriter stays on its task.
+test "VM a code region crosses tasks: one writes it, two run it, one releases it" (sys: &System) {
+    var c := CodeRegion.New(PageSize()) else {
+        Assert(false)
+        return
+    }
+    var ok := false
+    scope sc := sys.io.Scope() {
+        sc.go TaskEmit(mut c, 9, mut ok)
+    }
+    Assert(ok)
+    var a: u32 = 0
+    var b: u32 = 0
+    scope sc := sys.io.Scope() {
+        sc.go TaskCall(&c, mut a)
+        sc.go TaskCall(&c, mut b)
+    }
+    Assert(a == 9 && b == 9)
+    scope sc := sys.io.Scope() {
+        sc.go TaskRelease(c)
+    }
+}
+
 test "VM a code region of a size that is not positive is Misaligned" {
     c := CodeRegion.New(0) else e {
         Assert(IsMisaligned(e))

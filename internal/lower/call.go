@@ -963,22 +963,28 @@ func (bl *builder) mentionsParam(t types.TypeID) bool {
 
 // constConversion folds T(c) for an integer constant c into an integer T:
 // check judged it by value (E0303), so it fits T, and a narrowing
-// CastLossless would not be value-defined.
+// CastLossless would not be value-defined. The literal's Bits are c's
+// pattern at c's own width, zero above it, so a signed c is sign-extended
+// from that width before the pattern is cut to T's: `i64(m.C)` of a
+// `const C: i32 = -4` is -4, not 4294967292.
 func (bl *builder) constConversion(a ast.Expr, to types.TypeID) (mir.Operand, bool) {
-	tt := bl.tab.Get(to)
-	if !tt.IsInteger() {
+	toSize, _ := intShape(bl.tab, to)
+	if toSize == 0 {
 		return mir.Operand{}, false
 	}
 	l := bl.in.Literal(unparen(a).ID())
-	if l.Kind != LitScalar || !bl.tab.Get(l.Type).IsInteger() {
+	if l.Kind != LitScalar {
 		return mir.Operand{}, false
 	}
-	bits := uint8(64)
-	if tt.Kind != types.KIntPtr && tt.Bits > 0 {
-		bits = tt.Bits
+	size, signed := intShape(bl.tab, l.Type)
+	if size == 0 {
+		return mir.Operand{}, false
 	}
 	v := l.Bits
-	if bits < 64 {
+	if from := 8 * size; signed && from < 64 && v>>(from-1)&1 != 0 {
+		v |= ^uint64(0) << from
+	}
+	if bits := 8 * toSize; bits < 64 {
 		v &= 1<<bits - 1
 	}
 	return mir.Imm(to, v), true
