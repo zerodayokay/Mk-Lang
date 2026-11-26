@@ -884,9 +884,8 @@ test "Supervise: only Canceled ends a slot whose wait failed" (sys: &System) {
 // 64 workers: the first and last rounds cancel 1.5 s after a reply, and
 // the middle two cancel immediately or after 300 ms. Every cancel ends
 // all workers (Refused after the listener closes) without a handle leak:
-// a waiting slot holds
-// no pool thread (procwait is a poller operation), which a thread handle
-// per worker would show on Windows.
+// a waiting slot holds no pool thread (procwait is a poller operation),
+// which a thread handle per worker would show on Windows.
 test "Supervise: 64 workers serve; a cancel at 1.5 s, 0, 300 ms and 1.5 s ends all of them with no handle left" (sys: &System) {
     var port: i64 = 0
     l := PtListen(sys.io, mut port)
