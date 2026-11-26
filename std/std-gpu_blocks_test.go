@@ -1,8 +1,11 @@
 // Why: std.gpu's portable test blocks must pass at dev and release and under
-// both carrier counts, and its API must type-check on every target.
-// What: TestGpu_Blocks and TestGpu_CheckTargets.
-// How: runs `mk test --std=std.gpu` over a copy of std in each mode, and
-// runs `mk check --target=<t>` on a minimal caller importing std.gpu.
+// both carrier counts, its device blocks on every adapter this host has, and
+// its API must type-check on every target.
+// What: TestGpu_Blocks, TestGpu_DeviceAdapters and TestGpu_CheckTargets.
+// How: runs `mk test --std=std.gpu` over a copy of std in each mode (the
+// device blocks then run on WARP), runs the device blocks again with
+// MK_GPU_ADAPTER=d3d12 and =vulkan (each block skips when its adapter is
+// absent), and runs `mk check --target=<t>` on a minimal caller.
 
 package std
 
@@ -10,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,10 +22,18 @@ var gpuSummary = regexp.MustCompile(`(?m)^(\d+) passed, (\d+) failed`)
 
 func gpuBlocks(t *testing.T, carriers string, flags ...string) {
 	t.Helper()
+	gpuBlocksOn(t, "", carriers, flags...)
+}
+
+// gpuBlocksOn runs the std.gpu blocks with MK_GPU_ADAPTER set to adapter
+// (unset when empty).
+func gpuBlocksOn(t *testing.T, adapter, carriers string, flags ...string) {
+	t.Helper()
 	root := t.TempDir()
 	stdDir := copyStd(t, root, nil)
 	t.Setenv("MK_CARRIERS", carriers)
 	t.Setenv("MK_CACHE", filepath.Join(root, "cache"))
+	t.Setenv("MK_GPU_ADAPTER", adapter)
 	args := append([]string{"test", "--std=std.gpu"}, flags...)
 	out, status := mkCmd(t, root, stdDir, args...)
 	if strings.Contains(out, "no usable LLVM") {
@@ -34,6 +46,7 @@ func gpuBlocks(t *testing.T, carriers string, flags ...string) {
 	if m[1] == "0" {
 		t.Fatalf("mk %s: no block ran\n%s", strings.Join(args, " "), out)
 	}
+	t.Logf("MK_GPU_ADAPTER=%q: %s", adapter, m[0])
 }
 
 // TestGpu_Blocks runs every std.gpu block on this host.
@@ -48,6 +61,19 @@ func TestGpu_Blocks(t *testing.T) {
 				gpuBlocks(t, carriers, flags...)
 			})
 		}
+	}
+}
+
+// TestGpu_DeviceAdapters runs the device blocks on the hardware adapters;
+// TestGpu_Blocks already ran them on WARP.
+func TestGpu_DeviceAdapters(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the hardware adapter runs are x86_64-windows only")
+	}
+	for _, adapter := range []string{"d3d12", "vulkan"} {
+		t.Run(adapter, func(t *testing.T) {
+			gpuBlocksOn(t, adapter, "16", "--run=device")
+		})
 	}
 }
 
