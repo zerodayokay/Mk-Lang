@@ -170,6 +170,9 @@ func (m *Module) placeMethod(it *types.Item) {
 			orphan(c.cfg.Interner.Str(o.Name))
 			return
 		}
+		if m.errorFormatMethod(it, o) {
+			return
+		}
 		if s := m.members[o.ID]; s != nil {
 			s.add(c.cfg.Interner, mb, it.Span)
 		}
@@ -183,6 +186,9 @@ func (m *Module) placeMethod(it *types.Item) {
 		ck, ok := c.ctorOf(ad.Type)
 		switch {
 		case ok && ck.item != types.NoItem && c.ctorModule(ck) == m.ID:
+			if m.errorFormatMethod(it, c.cfg.Items.Get(ck.item)) {
+				return
+			}
 			if s := m.members[ck.item]; s != nil {
 				s.add(c.cfg.Interner, mb, it.Span)
 			}
@@ -192,6 +198,20 @@ func (m *Module) placeMethod(it *types.Item) {
 			orphan(c.cfg.Types.TypeString(ad.Type, nil))
 		}
 	}
+}
+
+// errorFormatMethod reports a Type.Name Format of error o, directly or
+// through an alias, as E0206: an error's Format is the compiler's impl
+// method, decided after implCollisions, so it is judged here as a written
+// impl's would be there, and `e.Format(w)` stays the impl's.
+func (m *Module) errorFormatMethod(it, o *types.Item) bool {
+	in := m.c.cfg.Interner
+	if o.Kind != types.KindError || resolve.MemberKey(in.Str(it.Name), false) != resolve.MemberKey("Format", false) {
+		return false
+	}
+	m.Diags = append(m.Diags, diag.New(diag.E0206, it.Span, "`"+in.Str(it.Name)+"` is already a member of `"+
+		in.Str(o.Name)+"`: an error's `Format` is the compiler's").In(diag.PhaseTypes).Loc("first", o.Span))
+	return true
 }
 
 // primSet is the std member set of a builtin owner type in this module.

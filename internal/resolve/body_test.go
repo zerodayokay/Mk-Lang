@@ -8,6 +8,7 @@
 package resolve
 
 import (
+	"strings"
 	"testing"
 
 	"mk/internal/ast"
@@ -315,14 +316,76 @@ func TestBareOkIsE0101(t *testing.T) {
 	b.want(t, "E0101@3:9")
 }
 
-func TestPascalBindingDeferred(t *testing.T) {
+// A pattern binding that is not snake_case is E0207, at the top of an arm
+// or in a payload, used or not, with no proven recase: the arm it stands in
+// matches every value. A const is a value test and a snake_case name a
+// binding, neither of them a diagnostic. A recase that is not declarable
+// (`None` to `none`) is not offered.
+func TestPascalBindingIsE0207(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, false)
-	b := w.add("main", opt{}, "enum Color { Red\n Green }\nF(c: Color) {\n    match c {\n        Red { }\n        other { _ = other }\n    }\n}\n")
-	b.want(t, "E0208@5:9")
-	body := itemInfo(b, "main.F").Body
-	if !body.Locals[2].Pascal || body.Locals[3].Pascal {
-		t.Errorf("locals %+v", body.Locals)
+	b := w.add("main", opt{}, "enum Color { Red\n Green }\nconst Limit = 3\nF(c: Color, x: int, y: ?int): int {\n    match c {\n        Red { }\n        other { _ = other }\n    }\n    match y {\n        some(Lmit) { return Lmit }\n        none { }\n    }\n    return match x {\n        Limit { 1 }\n        Color { Color }\n    }\n}\nG(y: ?int): int {\n    return match y {\n        some(v) { v }\n        None { 0 }\n    }\n}\n")
+	b.want(t, "E0207@6:9", "E0207@10:14", "E0207@15:9", "E0207@21:9")
+	for _, d := range b.info.Diags {
+		if len(d.Fixes) != 0 && d.Fixes[0].Class == diag.Proven {
+			t.Errorf("%s: a proven fix %+v", d.Message, d.Fixes[0])
+		}
+		for _, a := range d.Alternatives {
+			if strings.Contains(a, "`none`") {
+				t.Errorf("%s: offers an undeclarable name: %s", d.Message, a)
+			}
+		}
+	}
+}
+
+// A binding spelled as a const generic in scope is E0206, a pattern's with
+// no proven rename. A binding that differs from it in case only is no
+// shadow, nor is one spelled as a type parameter.
+func TestBindingShadowsConstParam(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, false)
+	b := w.add("main", opt{}, "F[const N: int, const k: int, T](x: int, t: T): int {\n    n := x\n    match x {\n        N { return N }\n        _ { }\n    }\n    k := n\n    _ = t\n    return k\n}\nG[const k: int](k: int) { }\n")
+	b.want(t, "E0206@4:9", "E0206@7:5", "E0206@11:17")
+	for _, d := range b.info.Diags {
+		if d.At.Start == b.info.Diags[0].At.Start && len(d.Fixes) != 0 && d.Fixes[0].Class == diag.Proven {
+			t.Errorf("pattern E0206 has a proven fix %+v", d.Fixes[0])
+		}
+	}
+}
+
+// A destructure cannot fail: a binding of one, nested or not, in a
+// statement or a loop head, keeps a local's E0207 with its proven recase,
+// and an unused one in a loop head keeps E0208's hint to write `_`.
+func TestDestructureBindingKeepsRecase(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, false)
+	b := w.add("main", opt{}, "struct P { x: int\n y: int }\nF(p: P, q: (a: int, b: P), rs: [](c: int, d: int)): int {\n    P(X, y) := p\n    (a, b: P(x: Z, y: _)) := q\n    var s := X + y + a + Z\n    for (c, d: W) in rs {\n        s += c + W\n    }\n    for (c, d: e) in rs {\n        s += c\n    }\n    return s\n}\n")
+	b.want(t, "E0207@4:7", "E0207@5:17", "E0207@7:16", "E0208@10:16")
+	for _, d := range b.info.Diags {
+		if d.Code == diag.E0208 {
+			if len(d.Alternatives) == 0 || !strings.Contains(d.Alternatives[0], "`_`") {
+				t.Errorf("%s: no hint to write `_`: %v", d.Message, d.Alternatives)
+			}
+			continue
+		}
+		if len(d.Fixes) == 0 || d.Fixes[0].Class != diag.Proven {
+			t.Errorf("%s: no proven recase", d.Message)
+		}
+	}
+}
+
+// An `if x := e` binding always binds, so it takes a local's rules: E0207
+// with the proven recase, and over a const generic E0206 with the proven
+// rename.
+func TestIfBindingKeepsCaseRule(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, false)
+	b := w.add("main", opt{}, "F(o: ?int): int {\n    if X := o {\n        return X\n    }\n    return 0\n}\nG[const n: int](o: ?int): int {\n    if n := o {\n        return n\n    }\n    return 0\n}\n")
+	b.want(t, "E0207@2:8", "E0206@8:8")
+	for _, d := range b.info.Diags {
+		if len(d.Fixes) == 0 || d.Fixes[0].Class != diag.Proven {
+			t.Errorf("%s: no proven fix", d.Message)
+		}
 	}
 }
 
@@ -331,6 +394,9 @@ func TestBindingShadowsLocal(t *testing.T) {
 	w := newWorld(t, false)
 	b := w.add("main", opt{}, "F(x: ?int) {\n    v := 1\n    match x {\n        some(v) { _ = v }\n        none { }\n    }\n    _ = v\n}\n")
 	b.want(t, "E0206@4:14")
+	if d := b.info.Diags[0]; len(d.Fixes) == 0 || d.Fixes[0].Class != diag.Proven {
+		t.Errorf("a snake_case binding over a local lost its proven rename: %+v", d)
+	}
 }
 
 func TestAltNameMustResolve(t *testing.T) {

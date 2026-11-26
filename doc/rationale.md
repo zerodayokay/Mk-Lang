@@ -189,6 +189,10 @@ Cancellation is level-triggered, as in Trio: once a scope is cancelled, every ca
 
 Moving a stack needs a precise map of every pointer on it, and segmented stacks are slow when a call sits on a segment boundary. Mk gives each task a fixed slot of address space, touched on demand, with a guard page below it. A scope can ask for a larger stack size.
 
+### Why can't an `extern` be declared stack-free?
+
+A direct `extern` call switches to the system stack, because C code may need more stack than a task has. A stub that uses no stack does not need the switch. But a marker saying so, on the declaration or in the manifest, would be a second way to do what a call through a `fn` value already does: that is an ordinary call on the task's stack, and when the value is named in the calling function, `--release` makes it a direct call. Inline `asm` needs no call at all. The claim that the stub uses no stack is the `unsafe` reason on the line that names it as a value ([stubs that use no stack](reference.md#c-sources-and-assembly-files)).
+
 ### Why no `select` statement?
 
 It is rare. `sync.Select` provides typed selection over channels as a library.

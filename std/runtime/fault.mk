@@ -60,11 +60,14 @@ SpReg(): int {
 }
 
 /// A filter's answer: Resume at the context it edited, which the handler
-/// installs, or Pass to the next filter and then to Mk's own report.
+/// installs, or Pass to the next filter and after the last on as with no
+/// filter: to Mk's own report, or, for a fault in C code on Windows, to
+/// the C code's own handler or the system (AddFaultFilter).
 export enum FaultAction {
     /// Resume at ctx, the context the filter edited.
     Resume(ctx: FaultContext)
-    /// Pass the fault to the next filter, and then to Mk's own report.
+    /// Pass the fault to the next filter, and after the last on as with no
+    /// filter.
     Pass
 }
 
@@ -154,21 +157,25 @@ FWord(p: *u64): &raw.Atomic[u64] {
 /// process with `panic: fault in a fault filter`, status 101.
 ///
 /// Which faults reach the filters differs by target. On Windows: a stack
-/// overflow, an access or illegal-instruction fault in Mk code, and any
-/// fault whose pc is in a std.vm code region; never a fault that C code
-/// handles itself (`__try`). On Linux: a SIGSEGV, SIGBUS or SIGILL that Mk
-/// owns, which is one whose pc is in the executable's image, whose thread
-/// is the main thread or one std started, or whose stack is a task's or a
-/// carrier's; and any fault whose pc is in a std.vm code region. So on
-/// Linux a fault in a shared library's C code called on an Mk thread
-/// reaches the filters and Mk's report, where Windows routes only a fault
-/// whose pc is in the image.
+/// overflow, an access or illegal-instruction fault in Mk code, any fault
+/// whose pc is in a std.vm code region, and any other access or
+/// illegal-instruction fault whose thread is one std started (a carrier, a
+/// blocking-pool thread) or whose stack is a task's or a carrier's (in a
+/// program with no task, every one), whatever its pc: C code's, a system
+/// DLL's. The filters see such a fault before the C code's own handler
+/// (`__try`), and one they all pass goes on to it, or to the system, as
+/// it would without filters. On Linux: a
+/// SIGSEGV, SIGBUS or SIGILL that Mk owns, which is one whose pc is in
+/// the executable's image, whose thread is the main thread or one std
+/// started, or whose stack is a task's or a carrier's; and any fault whose
+/// pc is in a std.vm code region. One every filter passes is Mk's report.
 ///
 /// macOS routes as Linux does.
 ///
 /// On Linux, a fault in C code outside the image on a thread std did not
 /// make gets the signal's default action, raised again at once, as on
-/// Windows it gets the system's. So does a SIGSEGV, SIGBUS or SIGILL that
+/// Windows it gets the system's (in a program with no task, after the
+/// filters). So does a SIGSEGV, SIGBUS or SIGILL that
 /// another process or thread sends (kill, tgkill): it is not a fault and
 /// is never reported as Mk's. C code that installs a signal handler of its
 /// own replaces std's.
