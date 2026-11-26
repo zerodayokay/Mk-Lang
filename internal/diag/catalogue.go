@@ -216,7 +216,7 @@ var catalogue = [...]Entry{
 	{E0704, "impl-conflict", "Alternatives"},
 	{E0705, "not-const", "Alternatives"},
 	{E0706, "requires-failed", "Proven: the restated `requires` of a `const` passed on, when the clause keeps no name of the callee; alternatives otherwise"},
-	{E0707, "impl-signature", "Proven: copy signature"},
+	{E0707, "impl-signature", "Proven: copy signature; alternatives for a method that fails where its interface method cannot"},
 	{E0708, "instantiation-limit", "Alternatives"},
 	{E0709, "const-arithmetic", "Alternatives: use a slice"},
 	{E0711, "cannot-infer", "Proven when one type fits"},

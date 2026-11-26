@@ -5535,7 +5535,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
-- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be stored, passed or returned as it is. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
 ```mk
@@ -5552,6 +5552,41 @@ Root(n: int): Negative!int {
 Twice(n: int): Negative!int {
     return Root(n) // <- E0802
 }
+```
+
+A function can fail only when its signature names an error set, as a result written `E!T` does. A generic whose result is its type parameter, called with an `E!T` for it, cannot fail, and neither can a function whose result is an alias of an `E!T`: each returns the `E!T` as a value, which the caller handles with `try`, `else` or `match` as any other. So does an interface method whose result is such a type parameter or alias, and an `impl` method must fail exactly when its interface method can (E0707).
+
+```mk
+// verdict: ok
+error Negative
+
+Root(n: int): Negative!int {
+    if n < 0 {
+        fail Negative
+    }
+    return n * 2
+}
+
+Copy[T: Plain](x: &T): T {
+    return *x
+}
+
+export Main(sys: &System): WriteError!void {
+    var a: Negative!int = Root(4)
+    var b: Negative!int = Root(-4)
+    for r in [&a, &b] {
+        v := Copy(r) else e { // Copy cannot fail: else handles the E!T it returns
+            try sys.Print("{e}\n", (e: e))
+            continue
+        }
+        try sys.Print("{v}\n", (v: v))
+    }
+}
+```
+
+```text
+8
+Negative
 ```
 
 ### `fail`
@@ -6646,7 +6681,7 @@ Total(s: &Shape): f64 { // <- E0301
 
 ### `impl`
 
-`impl I for T { ... }` makes `T` implement `I`. It holds one method for each method of `I`, with the same signature.
+`impl I for T { ... }` makes `T` implement `I`. It holds one method for each method of `I`, with the same signature. An impl's method fails exactly when the method of `I` names an error set (E0707). Where the result of `I`'s method is a type parameter of `I` and the impl's argument is an `E!T`, as `Get(&self): T` in an `impl Source[E!int]`, the method cannot fail: it returns the `E!T` as a value. A generic impl writes that result as its own type parameter, and any other as an alias of the `E!T` (`type R = E!int`, then `Get(&self): R`), since a result written `E!int` fails.
 
 ```mk
 // verdict: ok
@@ -7356,7 +7391,7 @@ Start(): int {
 | E0704 | impl-conflict | A duplicate, orphan or blanket `impl`, or an `impl` of `Plain` or `Fields[B]` ([`impl`](#impl)) |
 | E0705 | not-const | A const argument that is not constant, a misused `const` `fn` parameter ([const parameters](#const-parameters)) |
 | E0706 | requires-failed | A compile-time `requires` that is false or not restated ([requirements](#compile-time-requirements)) |
-| E0707 | impl-signature | An `impl` method missing, extra or with another signature ([`impl`](#impl)) |
+| E0707 | impl-signature | An `impl` method missing, extra or with another signature, or one that fails where its interface method cannot, or the reverse ([`impl`](#impl)) |
 | E0708 | instantiation-limit | Instantiation without end ([runaway instantiation](#runaway-instantiation)) |
 | E0709 | const-arithmetic | Arithmetic in a const argument inside a generic ([const arguments](#const-arguments-in-a-generic)) |
 | E0711 | cannot-infer | A type argument nothing fixes, or a generic value without its arguments ([generic functions](#generic-functions), [values](#generic-functions-as-values)) |
@@ -8348,7 +8383,7 @@ both: Bad(n: 2)
 body: Late
 ```
 
-- A task in a `Scope[E]` returns `E!void`, or `F!void` where every error of `F` is in `E` (E0801). A task returning `void` there is E0301.
+- A task in a `Scope[E]` returns `E!void`, or `F!void` where every error of `F` is in `E` (E0801). A task returning `void` there is E0301, and so is a call that [cannot fail](#results-et) and returns an `E!void` as a value, which the scope would drop.
 - The first error a task returns cancels the scope: the body and every other task. Those tasks see `Canceled` at their next cancellable operation, and their `Canceled` is not reported. After the join, `try scope` fails with the first error.
 - A `scope` over a `Scope[E]` must be written `try scope` (E0802). `try scope` over a plain `Scope` is E0804. There is no `else` form: to handle the error, put the scope in a function of its own and handle that function's error, as `Main` does above.
 - The function's error set must hold `E` (E0801), as for any `try`.
