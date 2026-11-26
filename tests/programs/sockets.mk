@@ -149,6 +149,9 @@ UpperUnix(io: Io, l: &net.Listener, failed: mut ?net.Error) {
 // ExchangeUnix sends a length-framed message over c and reads the framed reply
 // under a bounded wait.
 ExchangeUnix(a: &Arena, io: Io, c: &net.Conn, text: str): net.Error|OutOfMemory!str from a {
+    if text.Len() > 255 {
+        Panic("unix frame too large")
+    }
     scope r := io.Scope() {
         r.CancelAfter(time.Seconds(10))
         var hdr: [1]u8 = [Trunc[u8](text.Len())]
