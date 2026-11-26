@@ -15,7 +15,7 @@ TFlDummy(): SentFrame {
 
 TFlCode(e: Error): u64 {
     return match e {
-        TransportError(code) { code }
+        TransportError(code, frame: _) { code }
         _ { 9999 }
     }
 }
@@ -85,7 +85,7 @@ test "RFC 9000 4.1: data past stream or connection credit is FLOW_CONTROL_ERROR"
     var buf21: [21]u8 = [b'x'; 21]
     var e1: u64 = 0
     srv.OnStream(h, 0, 0, buf21[..], false) else e { e1 = TFlCode(e) }
-    Assert(e1 == ErrFlowControlError)
+    Assert(e1 == ErrFlowControl)
 
     var buf18: [18]u8 = [b'y'; 18]
     try srv.OnStream(h, 0, 0, buf18[..], false)
@@ -93,7 +93,7 @@ test "RFC 9000 4.1: data past stream or connection credit is FLOW_CONTROL_ERROR"
     // Total rx_total is 28; 5 more bytes on stream 4 (offset 10..15 <= stream 20) exceeds conn 30!
     var e2: u64 = 0
     srv.OnStream(h, 4, 10, buf18[0..5], false) else e { e2 = TFlCode(e) }
-    Assert(e2 == ErrFlowControlError)
+    Assert(e2 == ErrFlowControl)
 }
 
 test "RFC 9000 4.2: MAX_STREAM_DATA and MAX_DATA go out at half the window with no BLOCKED frame received" (sys: &System) {
@@ -175,25 +175,25 @@ test "RFC 9000 4.5: a changed final size, data past it, or a final size below re
     try srv.OnStream(h, 0, 0, "hello".AsBytes(), true)
     var e1: u64 = 0
     srv.OnStream(h, 0, 0, "hello!".AsBytes(), true) else e { e1 = TFlCode(e) }
-    Assert(e1 == ErrFinalSizeError)
+    Assert(e1 == ErrFinalSize)
     var e2: u64 = 0
     srv.OnStream(h, 0, 5, "x".AsBytes(), false) else e { e2 = TFlCode(e) }
-    Assert(e2 == ErrFinalSizeError)
+    Assert(e2 == ErrFinalSize)
     var e3: u64 = 0
     srv.OnReset(h, 0, 0, 4) else e { e3 = TFlCode(e) }
-    Assert(e3 == ErrFinalSizeError)
+    Assert(e3 == ErrFinalSize)
     var e4: u64 = 0
     srv.OnReset(h, 0, 0, 6) else e { e4 = TFlCode(e) }
-    Assert(e4 == ErrFinalSizeError)
+    Assert(e4 == ErrFinalSize)
 
     // Final size below already-received data on new stream 4.
     try srv.OnStream(h, 4, 0, "0123456789".AsBytes(), false)
     var e5: u64 = 0
     srv.OnStream(h, 4, 0, "0123".AsBytes(), true) else e { e5 = TFlCode(e) }
-    Assert(e5 == ErrFinalSizeError)
+    Assert(e5 == ErrFinalSize)
     var e6: u64 = 0
     srv.OnReset(h, 4, 0, 9) else e { e6 = TFlCode(e) }
-    Assert(e6 == ErrFinalSizeError)
+    Assert(e6 == ErrFinalSize)
 }
 
 test "RFC 9000 3.5: data after STOP_SENDING is counted toward flow control and discarded" (sys: &System) {

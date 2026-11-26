@@ -3,44 +3,12 @@
 // half-window consumption or body admission, and account for RESET_STREAM final
 // sizes without exceeding 2^62 - 1.
 //
-// What: transport error codes (RFC 9000 20.1), TransportError, GapLimit, Error,
-// StreamLimits, Credit, ConnFlow, and local Q3 frame writers Q23Write*.
+// What: StreamLimits, Credit, ConnFlow, and StreamHeaderLen.
 //
 // How: Credit tracks consumed bytes, advertised limit, admission floor, and
 // sequence numbers so lost MAX_DATA/MAX_STREAM_DATA frames retransmit the latest
 // limit rather than a stale copy (RFC 9000 13.3). ConnFlow tracks both receive
 // and send connection windows.
-
-import std.net
-
-// RFC 9000 20.1 transport error codes (lines 6759-6830).
-const ErrNoError: u64 = 0x00
-const ErrInternalError: u64 = 0x01
-const ErrConnectionRefused: u64 = 0x02
-const ErrFlowControlError: u64 = 0x03
-const ErrStreamLimitError: u64 = 0x04
-const ErrStreamStateError: u64 = 0x05
-const ErrFinalSizeError: u64 = 0x06
-const ErrFrameEncodingError: u64 = 0x07
-const ErrTransportParameterError: u64 = 0x08
-const ErrConnectionIdLimitError: u64 = 0x09
-const ErrProtocolViolation: u64 = 0x0A
-const ErrInvalidToken: u64 = 0x0B
-const ErrApplicationError: u64 = 0x0C
-const ErrCryptoBufferExceeded: u64 = 0x0D
-const ErrKeyUpdateError: u64 = 0x0E
-const ErrAeadLimitReached: u64 = 0x0F
-const ErrNoViablePath: u64 = 0x10
-
-// A QUIC transport protocol error (RFC 9000 20.1).
-error TransportError(code: u64)
-
-// Receiving a STREAM frame would create a 33rd reassembly gap; the caller must
-// drop the entire packet unacknowledged (RFC 9000 13.1).
-error GapLimit
-
-// Module-private error set for recovery, streams, flow control, and CRYPTO streams.
-type Error = TransportError | GapLimit | net.StreamReset | Closed | OutOfMemory
 
 // Flow-control and stream limits (Section 3.4.2, RFC 9000 4, 18.2).
 const ConnWindow: u64 = 16_777_216
@@ -218,13 +186,13 @@ ConnFlow.New(local_max_data: u64, peer_max_data: u64): ConnFlow {
 
 // Validates and accounts for delta new bytes received across all streams
 // (including RESET_STREAM final sizes, RFC 9000 4.1, 4.5). Fails with
-// TransportError(ErrFlowControlError) if rx_total + delta > rx_credit.max_sent.
+// TransportError(ErrFlowControl, FrameMaxData) if rx_total + delta > rx_credit.max_sent.
 ConnFlow.AccountRecv(mut self, delta: u64): Error!void {
     if delta == 0 {
         return
     }
     if delta > self.rx_credit.max_sent - self.rx_total {
-        fail TransportError(code: ErrFlowControlError)
+        fail TransportError(code: ErrFlowControl, frame: FrameMaxData)
     }
     self.rx_total += delta
     self.rx_credit.Buffered(delta)
@@ -276,127 +244,8 @@ ConnFlow.OnBlockedLost(mut self, limit: u64) {
     }
 }
 
-// Local Q3 frame encoders (RFC 9000 19). Each returns bytes written, or 0 if
-// out is too short.
-Q23WriteStream(out: mut []u8, id: i64, offset: u64, data: []u8, fin: bool): int {
-    var ftype: u64 = 0x0A // STREAM + LEN
-    if offset > 0 {
-        ftype |= 0x04 // OFF
-    }
-    if fin {
-        ftype |= 0x01 // FIN
-    }
-    need := 1 + Q23VarintLen(Cast[u64](id)) + (if offset > 0 { Q23VarintLen(offset) } else { 0 }) + Q23VarintLen(Cast[u64](data.Len())) + data.Len()
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], ftype)
-    pos += Q23WriteVarint(mut out[pos..], Cast[u64](id))
-    if offset > 0 {
-        pos += Q23WriteVarint(mut out[pos..], offset)
-    }
-    pos += Q23WriteVarint(mut out[pos..], Cast[u64](data.Len()))
-    if data.Len() > 0 {
-        (mut out[pos..pos + data.Len()]).CopyFrom(data)
-        pos += data.Len()
-    }
-    return pos
-}
-
-Q23StreamHeaderLen(id: i64, offset: u64, data_len: int): int {
-    return 1 + Q23VarintLen(Cast[u64](id)) + (if offset > 0 { Q23VarintLen(offset) } else { 0 }) + Q23VarintLen(Cast[u64](data_len))
-}
-
-Q23WriteResetStream(out: mut []u8, id: i64, code: u64, final_size: u64): int {
-    need := 1 + Q23VarintLen(Cast[u64](id)) + Q23VarintLen(code) + Q23VarintLen(final_size)
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], 0x04)
-    pos += Q23WriteVarint(mut out[pos..], Cast[u64](id))
-    pos += Q23WriteVarint(mut out[pos..], code)
-    pos += Q23WriteVarint(mut out[pos..], final_size)
-    return pos
-}
-
-Q23WriteStopSending(out: mut []u8, id: i64, code: u64): int {
-    need := 1 + Q23VarintLen(Cast[u64](id)) + Q23VarintLen(code)
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], 0x05)
-    pos += Q23WriteVarint(mut out[pos..], Cast[u64](id))
-    pos += Q23WriteVarint(mut out[pos..], code)
-    return pos
-}
-
-Q23WriteMaxData(out: mut []u8, max: u64): int {
-    need := 1 + Q23VarintLen(max)
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], 0x10)
-    pos += Q23WriteVarint(mut out[pos..], max)
-    return pos
-}
-
-Q23WriteMaxStreamData(out: mut []u8, id: i64, max: u64): int {
-    need := 1 + Q23VarintLen(Cast[u64](id)) + Q23VarintLen(max)
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], 0x11)
-    pos += Q23WriteVarint(mut out[pos..], Cast[u64](id))
-    pos += Q23WriteVarint(mut out[pos..], max)
-    return pos
-}
-
-Q23WriteMaxStreams(out: mut []u8, bidi: bool, max: u64): int {
-    need := 1 + Q23VarintLen(max)
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], if bidi { 0x12 } else { 0x13 })
-    pos += Q23WriteVarint(mut out[pos..], max)
-    return pos
-}
-
-Q23WriteDataBlocked(out: mut []u8, limit: u64): int {
-    need := 1 + Q23VarintLen(limit)
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], 0x14)
-    pos += Q23WriteVarint(mut out[pos..], limit)
-    return pos
-}
-
-Q23WriteStreamDataBlocked(out: mut []u8, id: i64, limit: u64): int {
-    need := 1 + Q23VarintLen(Cast[u64](id)) + Q23VarintLen(limit)
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], 0x15)
-    pos += Q23WriteVarint(mut out[pos..], Cast[u64](id))
-    pos += Q23WriteVarint(mut out[pos..], limit)
-    return pos
-}
-
-Q23WriteStreamsBlocked(out: mut []u8, bidi: bool, limit: u64): int {
-    need := 1 + Q23VarintLen(limit)
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], if bidi { 0x16 } else { 0x17 })
-    pos += Q23WriteVarint(mut out[pos..], limit)
-    return pos
+// StreamHeaderLen returns the byte length of a STREAM frame header with
+// length field included (RFC 9000 19.8). O(1).
+StreamHeaderLen(id: i64, offset: u64, data_len: int): int {
+    return 1 + VarintLen(Cast[u64](id)) + (if offset > 0 { VarintLen(offset) } else { 0 }) + VarintLen(Cast[u64](data_len))
 }

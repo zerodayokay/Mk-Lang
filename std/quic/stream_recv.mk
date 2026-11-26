@@ -242,30 +242,30 @@ StreamRecv.IsTerminal(&self): bool {
 StreamRecv.OnStream(mut self, a: &Alloc, conn_flow: mut ConnFlow, offset: u64, data: []u8, fin: bool): Error!void {
     dlen := Cast[u64](data.Len())
     if dlen > MaxOffset - offset {
-        fail TransportError(code: ErrFrameEncodingError)
+        fail TransportError(code: ErrFrameEncoding, frame: FrameStreamBase)
     }
     end := offset + dlen
     match self.final_size {
         some(fs) {
             if fin && end != fs {
-                fail TransportError(code: ErrFinalSizeError)
+                fail TransportError(code: ErrFinalSize, frame: FrameStreamBase)
             }
             if end > fs {
-                fail TransportError(code: ErrFinalSizeError)
+                fail TransportError(code: ErrFinalSize, frame: FrameStreamBase)
             }
         }
         none {
             if fin && end < self.largest_rcvd {
-                fail TransportError(code: ErrFinalSizeError)
+                fail TransportError(code: ErrFinalSize, frame: FrameStreamBase)
             }
         }
     }
     if end > self.credit.max_sent {
-        fail TransportError(code: ErrFlowControlError)
+        fail TransportError(code: ErrFlowControl, frame: FrameStreamBase)
     }
     new_bytes := if end > self.largest_rcvd { end - self.largest_rcvd } else { 0 }
     if new_bytes > conn_flow.rx_credit.max_sent - conn_flow.rx_total {
-        fail TransportError(code: ErrFlowControlError)
+        fail TransportError(code: ErrFlowControl, frame: FrameStreamBase)
     }
 
     discard := self.stop_sent || self.state == RecvState.DataRecvd || self.state == RecvState.DataRead || self.state == RecvState.ResetRecvd || self.state == RecvState.ResetRead
@@ -333,21 +333,21 @@ StreamRecv.OnStream(mut self, a: &Alloc, conn_flow: mut ConnFlow, offset: u64, d
 // already in DataRecvd or DataRead so buffered complete data stays readable.
 StreamRecv.OnReset(mut self, conn_flow: mut ConnFlow, code: u64, final_size: u64): Error!void {
     if final_size > MaxOffset {
-        fail TransportError(code: ErrFrameEncodingError)
+        fail TransportError(code: ErrFrameEncoding, frame: FrameResetStream)
     }
     if final_size < self.largest_rcvd {
-        fail TransportError(code: ErrFinalSizeError)
+        fail TransportError(code: ErrFinalSize, frame: FrameResetStream)
     }
     match self.final_size {
         some(fs) {
             if final_size != fs {
-                fail TransportError(code: ErrFinalSizeError)
+                fail TransportError(code: ErrFinalSize, frame: FrameResetStream)
             }
         }
         none {}
     }
     if final_size > self.credit.max_sent {
-        fail TransportError(code: ErrFlowControlError)
+        fail TransportError(code: ErrFlowControl, frame: FrameResetStream)
     }
     delta := final_size - self.largest_rcvd
     try conn_flow.AccountRecv(delta)

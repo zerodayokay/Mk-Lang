@@ -263,7 +263,7 @@ Streams.CreateEntry(mut self, a: &Alloc into self, id: i64, is_local: bool, is_b
 Streams.EnsurePeerStream(mut self, a: &Alloc into self, id: i64, is_bidi: bool, seq: u64): Error!bool {
     limit := if is_bidi { self.local_max_streams_bidi } else { self.local_max_streams_uni }
     if seq >= limit {
-        fail TransportError(code: ErrStreamLimitError)
+        fail TransportError(code: ErrStreamLimit, frame: 0)
     }
     next_seq := if is_bidi { self.next_peer_bidi_seq } else { self.next_peer_uni_seq }
     if seq < next_seq {
@@ -377,14 +377,14 @@ Streams.Accept(mut self, uni: bool): ?i64 {
 Streams.OnStream(mut self, a: &Alloc into self, id: i64, offset: u64, data: []u8, fin: bool): Error!void {
     c := self.Classify(id)
     if !c.valid {
-        fail TransportError(code: ErrFrameEncodingError)
+        fail TransportError(code: ErrFrameEncoding, frame: FrameStreamBase)
     }
     if c.is_local && !c.is_bidi {
-        fail TransportError(code: ErrStreamStateError)
+        fail TransportError(code: ErrStreamState, frame: FrameStreamBase)
     }
     if c.is_local {
         if c.seq >= self.next_local_bidi_seq {
-            fail TransportError(code: ErrStreamStateError)
+            fail TransportError(code: ErrStreamState, frame: FrameStreamBase)
         }
         if self.map.Get(&id).IsNone() {
             return
@@ -403,14 +403,14 @@ Streams.OnStream(mut self, a: &Alloc into self, id: i64, offset: u64, data: []u8
 Streams.OnReset(mut self, a: &Alloc into self, id: i64, code: u64, final_size: u64): Error!void {
     c := self.Classify(id)
     if !c.valid {
-        fail TransportError(code: ErrFrameEncodingError)
+        fail TransportError(code: ErrFrameEncoding, frame: FrameResetStream)
     }
     if c.is_local && !c.is_bidi {
-        fail TransportError(code: ErrStreamStateError)
+        fail TransportError(code: ErrStreamState, frame: FrameResetStream)
     }
     if c.is_local {
         if c.seq >= self.next_local_bidi_seq {
-            fail TransportError(code: ErrStreamStateError)
+            fail TransportError(code: ErrStreamState, frame: FrameResetStream)
         }
         if self.map.Get(&id).IsNone() {
             return
@@ -429,15 +429,15 @@ Streams.OnReset(mut self, a: &Alloc into self, id: i64, code: u64, final_size: u
 Streams.OnStop(mut self, a: &Alloc into self, id: i64, code: u64): Error!void {
     c := self.Classify(id)
     if !c.valid {
-        fail TransportError(code: ErrFrameEncodingError)
+        fail TransportError(code: ErrFrameEncoding, frame: FrameStopSending)
     }
     if !c.is_local && !c.is_bidi {
-        fail TransportError(code: ErrStreamStateError)
+        fail TransportError(code: ErrStreamState, frame: FrameStopSending)
     }
     if c.is_local {
         next_seq := if c.is_bidi { self.next_local_bidi_seq } else { self.next_local_uni_seq }
         if c.seq >= next_seq {
-            fail TransportError(code: ErrStreamStateError)
+            fail TransportError(code: ErrStreamState, frame: FrameStopSending)
         }
         if self.map.Get(&id).IsNone() {
             return
@@ -461,15 +461,15 @@ Streams.OnMaxData(mut self, v: u64) {
 Streams.OnMaxStreamData(mut self, a: &Alloc into self, id: i64, v: u64): Error!void {
     c := self.Classify(id)
     if !c.valid {
-        fail TransportError(code: ErrFrameEncodingError)
+        fail TransportError(code: ErrFrameEncoding, frame: FrameMaxStreamData)
     }
     if !c.is_local && !c.is_bidi {
-        fail TransportError(code: ErrStreamStateError)
+        fail TransportError(code: ErrStreamState, frame: FrameMaxStreamData)
     }
     if c.is_local {
         next_seq := if c.is_bidi { self.next_local_bidi_seq } else { self.next_local_uni_seq }
         if c.seq >= next_seq {
-            fail TransportError(code: ErrStreamStateError)
+            fail TransportError(code: ErrStreamState, frame: FrameMaxStreamData)
         }
         if self.map.Get(&id).IsNone() {
             return
@@ -487,7 +487,8 @@ Streams.OnMaxStreamData(mut self, a: &Alloc into self, id: i64, v: u64): Error!v
 // Processes a received MAX_STREAMS frame (RFC 9000 4.6, 19.11).
 Streams.OnMaxStreams(mut self, bidi: bool, v: u64): Error!void {
     if v > MaxStreamCount {
-        fail TransportError(code: ErrFrameEncodingError)
+        ty := if bidi { FrameMaxStreamsBidi } else { FrameMaxStreamsUni }
+        fail TransportError(code: ErrFrameEncoding, frame: ty)
     }
     if bidi {
         if v > self.limits.peer_max_streams_bidi {
@@ -507,14 +508,14 @@ Streams.OnStreamDataBlocked(mut self, a: &Alloc into self, id: i64, limit: u64):
     _ = limit
     c := self.Classify(id)
     if !c.valid {
-        fail TransportError(code: ErrFrameEncodingError)
+        fail TransportError(code: ErrFrameEncoding, frame: FrameStreamDataBlocked)
     }
     if c.is_local && !c.is_bidi {
-        fail TransportError(code: ErrStreamStateError)
+        fail TransportError(code: ErrStreamState, frame: FrameStreamDataBlocked)
     }
     if c.is_local {
         if c.seq >= self.next_local_bidi_seq {
-            fail TransportError(code: ErrStreamStateError)
+            fail TransportError(code: ErrStreamState, frame: FrameStreamDataBlocked)
         }
         return
     }
@@ -574,7 +575,7 @@ Streams.Read(mut self, a: &Alloc, id: i64, buf: mut []u8): Error!?int {
         fail Closed
     }
     if !entry.has_recv {
-        fail TransportError(code: ErrStreamStateError)
+        fail TransportError(code: ErrStreamState, frame: 0)
     }
     res := entry.recv.Read(buf) else e {
         self.MaybeReap(a, id)
@@ -590,7 +591,7 @@ Streams.Write(mut self, a: &Alloc, id: i64, data: []u8, fin: bool): Error!int {
         fail Closed
     }
     if !entry.has_send {
-        fail TransportError(code: ErrStreamStateError)
+        fail TransportError(code: ErrStreamState, frame: 0)
     }
     return try entry.send.Write(a, data, fin)
 }
@@ -618,10 +619,10 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
     if fn_cnt < frames.Len() {
         match self.conn_flow.rx_credit.Owed() {
             some(peek) {
-                need := 1 + Q23VarintLen(peek)
+                need := 1 + VarintLen(peek)
                 if off + need <= limit {
                     v := self.conn_flow.rx_credit.TakeOwed().Must()
-                    w := Q23WriteMaxData(mut out[off..limit], v)
+                    w := WriteMaxData(mut out[off..limit], v) else { 0 }
                     if w > 0 {
                         prev := fn_cnt
                         fn_cnt = self.ctrl.Emit(a, CtrlKind.MaxData(seq: self.conn_flow.rx_credit.tx_seq), frames, fn_cnt)
@@ -637,7 +638,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
 
     // 2. MAX_STREAMS (bidi, uni).
     if fn_cnt < frames.Len() && self.max_streams_bidi_pending {
-        w := Q23WriteMaxStreams(mut out[off..limit], true, self.local_max_streams_bidi)
+        w := WriteMaxStreams(mut out[off..limit], true, self.local_max_streams_bidi) else { 0 }
         if w > 0 {
             self.max_streams_bidi_pending = false
             self.max_streams_bidi_seq += 1
@@ -649,7 +650,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
         }
     }
     if fn_cnt < frames.Len() && self.max_streams_uni_pending {
-        w := Q23WriteMaxStreams(mut out[off..limit], false, self.local_max_streams_uni)
+        w := WriteMaxStreams(mut out[off..limit], false, self.local_max_streams_uni) else { 0 }
         if w > 0 {
             self.max_streams_uni_pending = false
             self.max_streams_uni_seq += 1
@@ -669,7 +670,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
         id := self.active_ids[i]
         entry := self.map.GetMut(&id).Must()
         if entry.has_send && entry.send.reset_pending {
-            w := Q23WriteResetStream(mut out[off..limit], id, entry.send.reset_code, entry.send.reset_final_size)
+            w := WriteResetStream(mut out[off..limit], id, entry.send.reset_code, entry.send.reset_final_size) else { 0 }
             if w > 0 {
                 entry.send.reset_pending = false
                 prev := fn_cnt
@@ -683,7 +684,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
             break
         }
         if entry.has_recv && entry.recv.stop_pending {
-            w := Q23WriteStopSending(mut out[off..limit], id, entry.recv.stop_code)
+            w := WriteStopSending(mut out[off..limit], id, entry.recv.stop_code) else { 0 }
             if w > 0 {
                 entry.recv.stop_pending = false
                 prev := fn_cnt
@@ -699,10 +700,10 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
         if entry.has_recv && entry.recv.CanSendMaxStreamData() {
             match entry.recv.credit.Owed() {
                 some(peek) {
-                    need := 1 + Q23VarintLen(Cast[u64](id)) + Q23VarintLen(peek)
+                    need := 1 + VarintLen(Cast[u64](id)) + VarintLen(peek)
                     if off + need <= limit {
                         v := entry.recv.credit.TakeOwed().Must()
-                        w := Q23WriteMaxStreamData(mut out[off..limit], id, v)
+                        w := WriteMaxStreamData(mut out[off..limit], id, v) else { 0 }
                         if w > 0 {
                             prev := fn_cnt
                             fn_cnt = self.ctrl.Emit(a, CtrlKind.MaxStreamData(id: id, seq: entry.recv.credit.tx_seq), frames, fn_cnt)
@@ -720,7 +721,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
     // 4. STREAMS_BLOCKED.
     if fn_cnt < frames.Len() && self.streams_blocked_bidi_pending {
         lim := self.limits.peer_max_streams_bidi
-        w := Q23WriteStreamsBlocked(mut out[off..limit], true, lim)
+        w := WriteStreamsBlocked(mut out[off..limit], true, lim) else { 0 }
         if w > 0 {
             self.streams_blocked_bidi_pending = false
             prev := fn_cnt
@@ -732,7 +733,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
     }
     if fn_cnt < frames.Len() && self.streams_blocked_uni_pending {
         lim := self.limits.peer_max_streams_uni
-        w := Q23WriteStreamsBlocked(mut out[off..limit], false, lim)
+        w := WriteStreamsBlocked(mut out[off..limit], false, lim) else { 0 }
         if w > 0 {
             self.streams_blocked_uni_pending = false
             prev := fn_cnt
@@ -760,7 +761,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
             for entry.send.lost_ranges.Len() > 0 && fn_cnt < frames.Len() && off < limit {
                 lr := entry.send.lost_ranges[0]
                 avail := Cast[int](lr.hi - lr.lo)
-                hdr := Q23StreamHeaderLen(id, lr.lo, avail)
+                hdr := StreamHeaderLen(id, lr.lo, avail)
                 if off + hdr >= limit {
                     break
                 }
@@ -774,7 +775,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
                 t := if take < 1500 { take } else { 1500 }
                 entry.send.ring.CopyAt(rel, mut scratch[0..t])
                 is_fin := entry.send.fin_set && (lr.lo + Cast[u64](t) == entry.send.write_offset)
-                w := Q23WriteStream(mut out[off..limit], id, lr.lo, scratch[0..t], is_fin)
+                w := WriteStream(mut out[off..limit], id, lr.lo, scratch[0..t], is_fin, true) else { 0 }
                 if w == 0 {
                     break
                 }
@@ -793,7 +794,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
             }
             // Lost empty FIN.
             if entry.send.fin_lost && fn_cnt < frames.Len() && off < limit {
-                w := Q23WriteStream(mut out[off..limit], id, entry.send.write_offset, "".AsBytes(), true)
+                w := WriteStream(mut out[off..limit], id, entry.send.write_offset, "".AsBytes(), true, true) else { 0 }
                 if w > 0 {
                     entry.send.fin_lost = false
                     off += w
@@ -813,7 +814,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
                         if s_avail == 0 {
                             entry.send.NoteBlocked()
                             if entry.send.blocked_pending {
-                                w := Q23WriteStreamDataBlocked(mut out[off..limit], id, entry.send.tx_max_stream_data)
+                                w := WriteStreamDataBlocked(mut out[off..limit], id, entry.send.tx_max_stream_data) else { 0 }
                                 if w > 0 {
                                     entry.send.blocked_pending = false
                                     prev := fn_cnt
@@ -828,7 +829,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
                         }
                     } else {
                         can_send := if unsent < fc_avail { unsent } else { fc_avail }
-                        hdr := Q23StreamHeaderLen(id, entry.send.send_offset, Cast[int](can_send))
+                        hdr := StreamHeaderLen(id, entry.send.send_offset, Cast[int](can_send))
                         if off + hdr <= limit {
                             room := limit - off - hdr
                             var take := if Cast[int](can_send) < room { Cast[int](can_send) } else { room }
@@ -842,7 +843,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
                                     entry.send.ring.CopyAt(rel, mut scratch[0..take])
                                 }
                                 is_fin := need_fin && (entry.send.send_offset + Cast[u64](take) == entry.send.write_offset)
-                                w := Q23WriteStream(mut out[off..limit], id, entry.send.send_offset, scratch[0..take], is_fin)
+                                w := WriteStream(mut out[off..limit], id, entry.send.send_offset, scratch[0..take], is_fin, true) else { 0 }
                                 if w > 0 {
                                     send_off := entry.send.send_offset
                                     entry.send.send_offset += Cast[u64](take)
@@ -869,7 +870,7 @@ Streams.Next(mut self, a: &Alloc, out: mut []u8, max: int, frames: mut []SentFra
     // 6. Connection-level DATA_BLOCKED.
     if fn_cnt < frames.Len() && self.conn_flow.blocked_pending {
         lim := self.conn_flow.tx_max_data
-        w := Q23WriteDataBlocked(mut out[off..limit], lim)
+        w := WriteDataBlocked(mut out[off..limit], lim) else { 0 }
         if w > 0 {
             self.conn_flow.blocked_pending = false
             prev := fn_cnt

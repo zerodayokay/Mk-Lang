@@ -22,7 +22,7 @@ test "RFC 9000 7.5: CRYPTO data past 64 KiB out of order at one level is CRYPTO_
     var hit_err := false
     cs.OnCrypto(h, Space.Initial, 65536, "b".AsBytes()) else e {
         match e {
-            TransportError(code) {
+            TransportError(code, frame: _) {
                 Assert(code == ErrCryptoBufferExceeded)
                 hit_err = true
             }
