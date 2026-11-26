@@ -126,7 +126,8 @@ CreateHiddenHwndSys(arg: *u8) {
     }
 }
 
-CreateHiddenTestHwnd(): uint {
+/// Creates a hidden Win32 window for native swapchain tests. Returns zero on failure.
+export CreateHiddenTestHwnd(): uint {
     if Target.os != Os.Windows {
         return 0
     }
@@ -149,7 +150,8 @@ DestroyHiddenHwndSys(arg: *u8) {
     }
 }
 
-DestroyHiddenTestHwnd(h: uint) {
+/// Releases a window created by CreateHiddenTestHwnd. Does nothing for zero.
+export DestroyHiddenTestHwnd(h: uint) {
     if Target.os != Os.Windows || h == 0 {
         return
     }
@@ -439,7 +441,7 @@ test "dx swapchain: acquire, render, present, resize, hidden, abandon, waitable 
     }
 
     // Resize to 128x96 and present one frame.
-    dev.ResizeSwapchain(sys.io, sc, sc_view, 128, 96, ser - 1).Must()
+    dev.ResizeSwapchain(sys.io, sc, sc_view, 128, 96, mut ser).Must()
     aq_r := dev.AcquireSwapchain(sys.io, sc, sc_view, 128, 96).Must()
     Assert(aq_r.status == 0)
     var rcols: [8]PassColorSpec = [mem.Zeroed[PassColorSpec](); 8]
@@ -466,16 +468,16 @@ test "dx swapchain: acquire, render, present, resize, hidden, abandon, waitable 
     ser += 1
 
     // Minimized 0x0 -> Hidden (status == 2), then restore 64x64 -> Ready.
-    dev.ResizeSwapchain(sys.io, sc, sc_view, 0, 0, ser - 1).Must()
+    dev.ResizeSwapchain(sys.io, sc, sc_view, 0, 0, mut ser).Must()
     aq_hid := dev.AcquireSwapchain(sys.io, sc, sc_view, 0, 0).Must()
     Assert(aq_hid.status == 2)
-    dev.ResizeSwapchain(sys.io, sc, sc_view, 64, 64, ser - 1).Must()
+    dev.ResizeSwapchain(sys.io, sc, sc_view, 64, 64, mut ser).Must()
 
     // Abandon -> Acquire returns Outdated (status == 1) -> Resize recreates -> Ready + Present.
     AbandonSwapchain(sc)
     aq_out := dev.AcquireSwapchain(sys.io, sc, sc_view, 64, 64).Must()
     Assert(aq_out.status == 1)
-    dev.ResizeSwapchain(sys.io, sc, sc_view, 64, 64, ser - 1).Must()
+    dev.ResizeSwapchain(sys.io, sc, sc_view, 64, 64, mut ser).Must()
     aq_ok := dev.AcquireSwapchain(sys.io, sc, sc_view, 64, 64).Must()
     Assert(aq_ok.status == 0)
     var ok_cols: [8]PassColorSpec = [mem.Zeroed[PassColorSpec](); 8]
@@ -582,7 +584,8 @@ test "dx planted bug: SkipPassBarrier fails Strict debug layer on swapchain Pres
     _ = dev.PresentSwapchain(sc, 2) else {}
     (errors: errs, warnings: warns) := dev.MessageCounts()
     Assert(errs > 0 || warns > 0)
-    dev.WaitQueueIdle(sys.io).Must()
+    var next_serial: u64 = 3
+    dev.WaitQueueIdle(sys.io, mut next_serial).Must()
     dev.DestroyView(sc_view)
     dev.DestroySwapchain(sc)
     dev.Close()

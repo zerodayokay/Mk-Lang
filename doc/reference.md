@@ -11541,7 +11541,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.sync` | `RwLock ReadGuard Select Selectable Shared Semaphore Notify Barrier Once` |
 | `std.atomic` | `AtomicInt AtomicBool Atomic Spin SpinGuard Order Relaxed Acquire Release AcqRel SeqCst Fence Unordered Pause` |
 | `std.mmio` | `Load Store Fence Reg`, every call inside an unsafe block |
-| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch Zeroed` |
+| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch Zeroed AsBytes SliceAsBytes` |
 | `std.coll` | `Deque HeapDeque PriorityQueue BTree HeapBTree BTreeIter Bitset` |
 | `std.text` | `Graphemes Clusters Normalize Form FoldCase Width ToUtf16 FromUtf16 WordBounds SentenceBounds Bounds ParagraphBounds BidiLevels Levels Run Direction Mirror LineBreaks Breaks Capped Sink CategoryOf Category ScriptOf Script ScriptExtensions Has Property UnicodeVersion` |
 | `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ShortestDigitsInto ExactDigits Digits DigitMode` |
@@ -12670,6 +12670,8 @@ type AllocTable = core.AllocTable
 mem.OffsetOf[T](field: str): int
 mem.Prefetch[T](p: &T, write: bool)
 mem.Zeroed[T](): T
+mem.AsBytes[T](p: &T): []u8 from p
+mem.SliceAsBytes[T](xs: []T): []u8 from xs
 Fixed.New(buf: mut []u8): Fixed
 Fixed.Alloc(&self): &Alloc from self
 Fixed.Reset(mut self) ends self

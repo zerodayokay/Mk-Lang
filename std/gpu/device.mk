@@ -594,7 +594,7 @@ export Device.WaitIdle(mut self, io: Io): Error!void {
             try s.WaitSerial(last)
         }
         .Dx(d) {
-            d.WaitQueueIdle(io) else e {
+            d.WaitQueueIdle(io, mut st.serials.next) else e {
                 ge := MapDxError(e)
                 RecordDxFailure(st, ge)
                 fail ge
@@ -613,7 +613,7 @@ export Device.WaitIdle(mut self, io: Io): Error!void {
             }
         }
     }
-    st.serials.Complete(last)
+    st.serials.Complete(st.serials.LastSubmitted())
     self.DrainCompleted()
 }
 
@@ -864,10 +864,10 @@ WaitBeforeClose(dev: mut Device, io: Io) {
         last := st.serials.LastSubmitted()
         match mut st.native {
             .Stub(s) { _ = s.WaitSerial(last) else {} }
-            .Dx(d) { _ = d.WaitQueueIdle(io) else {} }
+            .Dx(d) { _ = d.WaitQueueIdle(io, mut st.serials.next) else {} }
             .Vk(v: _) {}
         }
-        st.serials.Complete(last)
+        st.serials.Complete(st.serials.LastSubmitted())
         SyncDxMessages(dev.heap.Alloc(), st)
     }
 }
@@ -878,7 +878,7 @@ WaitBeforeClose(dev: mut Device, io: Io) {
 export Device.Close(self, io: Io): Leaks {
     var dev := self
     _ = dev.FlushPreSubmit() else {}
-    WaitBeforeClose(mut dev, io)
+    WaitBeforeClose(mut dev, io.NoCancel())
     Device(heap, serial: _, state, cell: _) := dev
     a := heap.Alloc()
     st := state.Take(a)

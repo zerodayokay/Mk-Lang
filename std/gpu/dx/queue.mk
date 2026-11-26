@@ -147,7 +147,8 @@ QueueSignalSys(arg: *u8) {
 
 /// Signals a fresh fence serial on the direct queue and waits until it retires
 /// so post-command-list queue operations like DXGI Present have completed.
-export Device.WaitQueueIdle(mut self, io: Io): Error!void {
+/// The signal reserves its serial from the caller's submission sequence.
+export Device.WaitQueueIdle(mut self, io: Io, next_serial: mut u64): Error!void {
     if Target.os != Os.Windows {
         fail Unsupported
     }
@@ -155,13 +156,15 @@ export Device.WaitQueueIdle(mut self, io: Io): Error!void {
         fail DxFail(kind: self.loss_reason, code: 0, call: CallSignal, at: -1)
     }
     if self.present_pending {
-        self.last_submitted += 1
-        ser := self.last_submitted
+        ser := *next_serial
+        Assert(ser > self.last_submitted)
         var sargs := QueueSignalArgs(queue: self.queue, fence: self.fence, serial: ser, hr: 0)
         SysRun(mut sargs, QueueSignalSys)
         if sargs.hr < 0 {
             fail MapHrError(self, sargs.hr, CallSignal)
         }
+        self.last_submitted = ser
+        *next_serial = ser + 1
         self.present_pending = false
     }
     try self.WaitSerial(io, self.last_submitted)

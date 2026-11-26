@@ -359,12 +359,11 @@ Device.ReleaseSwapchainSlot(mut self, slot: u32, gen_: u32): u32 {
 WaitSwapchainClose(io: Io, dev: mut Device) {
     st := dev.state.Mut()
     if !st.lost {
-        last := st.serials.LastSubmitted()
         match mut st.native {
-            .Dx(d) { _ = d.WaitSerial(io, last) else {} }
+            .Dx(d) { _ = d.WaitQueueIdle(io.NoCancel(), mut st.serials.next) else {} }
             _ {}
         }
-        st.serials.Complete(last)
+        st.serials.Complete(st.serials.LastSubmitted())
     }
 }
 
@@ -638,7 +637,6 @@ export Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: in
     sc_nh := st.swapchains.Get(sc.slot).native_handle
     view_slot := st.swapchains.Get(sc.slot).view_slot
     v_nh := st.views.Get(view_slot).native_handle
-    last_sub := st.serials.LastSubmitted()
     match mut st.native {
         .Stub(s: _) {
             se := st.swapchains.GetMut(sc.slot)
@@ -650,7 +648,7 @@ export Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: in
             v.height = if height > 0 { height } else { 1 }
         }
         .Dx(d) {
-            d.ResizeSwapchain(io, sc_nh, v_nh, width, height, last_sub) else e {
+            d.ResizeSwapchain(io, sc_nh, v_nh, width, height, mut st.serials.next) else e {
                 SyncDxMessages(a, st)
                 ge := MapDxError(e)
                 RecordDxFailure(st, ge)

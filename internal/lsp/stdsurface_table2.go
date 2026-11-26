@@ -611,6 +611,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"math.WrapI32":                      {Module: "std.math", Lines: []string{"math.WrapI32(x: f64): i32"}},
 	"math.WrapU32":                      {Module: "std.math", Lines: []string{"math.WrapU32(x: f64): u32"}},
 	"mem.AllocTable":                    {Module: "std.mem", Lines: []string{"type AllocTable = core.AllocTable"}},
+	"mem.AsBytes":                       {Module: "std.mem", Lines: []string{"mem.AsBytes[T](p: &T): []u8 from p"}},
 	"mem.Counting.Alloc":                {Module: "std.mem", Lines: []string{"Counting.Alloc(&self): &Alloc from self"}},
 	"mem.Counting.Bytes":                {Module: "std.mem", Lines: []string{"Counting.Bytes(&self): int"}},
 	"mem.Counting.Live":                 {Module: "std.mem", Lines: []string{"Counting.Live(&self): int"}},
@@ -648,6 +649,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"mem.Pool.Sweep":                    {Module: "std.mem", Lines: []string{"Pool[T].Sweep(mut self, const keep: fn(Handle, &T): bool): int"}},
 	"mem.PoolIter.Next":                 {Module: "std.mem", Lines: []string{"PoolIter[T].Next(mut self): ?(handle: Handle, value: &T) from self.pool"}},
 	"mem.Prefetch":                      {Module: "std.mem", Lines: []string{"mem.Prefetch[T](p: &T, write: bool)"}},
+	"mem.SliceAsBytes":                  {Module: "std.mem", Lines: []string{"mem.SliceAsBytes[T](xs: []T): []u8 from xs"}},
 	"mem.Zeroed":                        {Module: "std.mem", Lines: []string{"mem.Zeroed[T](): T"}},
 	"mmio.Fence":                        {Module: "std.mmio", Lines: []string{"mmio.Fence()"}},
 	"mmio.Load":                         {Module: "std.mmio", Lines: []string{"mmio.Load[T: Plain](p: *T): T"}},
@@ -902,6 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"simd.Vec.WidenLo":                  {Module: "std.simd", Lines: []string{"Vec[T, N].WidenLo[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
 	"simd.Vec.With":                     {Module: "std.simd", Lines: []string{"Vec[T, N].With(self, const i: int, x: T): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires i >= 0 && i < N"}},
 	"simd.Vec.Zero":                     {Module: "std.simd", Lines: []string{"Vec[T, N].Zero(): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
-	"sqlite.Busy":                       {Module: "std.db.sqlite", Lines: []string{"error Busy"}},
-	"sqlite.Db.Close":                   {Module: "std.db.sqlite", Lines: []string{"Db.Close(self)"}},
 }

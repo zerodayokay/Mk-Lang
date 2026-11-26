@@ -515,7 +515,7 @@ ResizeSys(arg: *u8) {
     }
 }
 
-/// Resizes the swapchain at width x height after waiting for last_serial, or
+/// Resizes the swapchain at width x height after waiting for the direct queue, or
 /// recreates it cleanly after an abandoned frame.
 export Device.ResizeSwapchain(
     mut self,
@@ -524,7 +524,7 @@ export Device.ResizeSwapchain(
     view_nh: u64,
     w: int,
     h: int,
-    last_serial: u64,
+    next_serial: mut u64,
 ): Error!void {
     if Target.os != Os.Windows {
         fail Unsupported
@@ -532,8 +532,7 @@ export Device.ResizeSwapchain(
     if self.lost {
         fail DxFail(kind: self.loss_reason, code: 0, call: CallResizeBuffers, at: -1)
     }
-    _ = last_serial
-    try self.WaitQueueIdle(io)
+    try self.WaitQueueIdle(io, next_serial)
     if w == 0 || h == 0 {
         unsafe "sc_nh is live" {
             scp := raw.FromAddr[DxSwapchain](Trunc[uint](sc_nh))
