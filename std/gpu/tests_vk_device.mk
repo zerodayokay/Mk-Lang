@@ -16,7 +16,12 @@ import std.rt
 HasVkAdapter(sys: &System): Error!bool {
     var a := try Arena.New(sys.heap)
     defer a.Free()
-    ads := try Adapters(&a, sys.io, Backend.Vulkan)
+    ads := Adapters(&a, sys.io, Backend.Vulkan) else e {
+        match e {
+            OutOfMemory { fail OutOfMemory }
+            _ { return false }
+        }
+    }
     return ads.Len() > 0
 }
 
