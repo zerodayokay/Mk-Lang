@@ -226,7 +226,7 @@ func TestCImport_NegativesExisting(t *testing.T) {
 	}
 }
 
-// TestCImport_NegativesBesideIncluder (MKH-902): c/api.h's quoted "dep.h"
+// TestCImport_NegativesBesideIncluder: c/api.h's quoted "dep.h"
 // is found in a/inc, but Clang first searches c (the includer's directory),
 // and on the msvc target the directories of every file of the include
 // stack (the root src/m.c's src): both are negatives, and so is a name
@@ -248,7 +248,7 @@ func TestCImport_NegativesBesideIncluder(t *testing.T) {
 	}
 }
 
-// TestCImport_EditedHeaderCached (MKH-901): after a header edit the stored
+// TestCImport_EditedHeaderCached: after a header edit the stored
 // translation misses, and the one saved for the new content hits on the
 // next load, as the old one does again once the header is restored: a
 // key holds one candidate per header content.

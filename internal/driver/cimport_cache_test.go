@@ -2,9 +2,9 @@
 // after a header edit, and must miss when a header appears where Clang
 // would now find it first: beside the includer, in the include stack's
 // directories (msvc), or in a directory the C source's own flags name.
-// What: TestCImport_EditedHeaderHits (MKH-901), TestCImport_BesideIncluder
-// (MKH-902), TestCObj_IncludeStackShadow (MKH-902, the msvc rule),
-// TestCObj_FlagIncludeDirs (MKH-903) and TestCObj_SearchDirsFlags.
+// What: TestCImport_EditedHeaderHits, TestCImport_BesideIncluder,
+// TestCObj_IncludeStackShadow (the msvc rule), TestCObj_FlagIncludeDirs and
+// TestCObj_SearchDirsFlags.
 // How: packages checked or built twice against one cache, a header added
 // or edited between the builds; the flag parser on a job.
 
@@ -39,7 +39,7 @@ func checkHit(t *testing.T, dir, cache string) (bool, string) {
 	return s.w.cimports.hit, v
 }
 
-// TestCImport_EditedHeaderHits (MKH-901): after a header edit the first
+// TestCImport_EditedHeaderHits: after a header edit the first
 // check translates and the second hits; restored, the old content hits
 // at once (a key keeps one candidate per content).
 func TestCImport_EditedHeaderHits(t *testing.T) {
@@ -65,7 +65,7 @@ func TestCImport_EditedHeaderHits(t *testing.T) {
 	}
 }
 
-// TestCImport_BesideIncluder (MKH-902): lib/k.h's "dep.h" is found in
+// TestCImport_BesideIncluder: lib/k.h's "dep.h" is found in
 // a/inc; a dep.h added beside lib/k.h comes first for a quoted include, so
 // the binding, the shim and the C source all read it on the warm build.
 func TestCImport_BesideIncluder(t *testing.T) {
@@ -89,7 +89,7 @@ func TestCImport_BesideIncluder(t *testing.T) {
 	}
 }
 
-// TestCObj_IncludeStackShadow (MKH-902): csrc/k.c includes "sub/a.h",
+// TestCObj_IncludeStackShadow: csrc/k.c includes "sub/a.h",
 // which includes "q.h", found in b/inc. On the msvc target (a C object
 // for Windows) Clang searches the whole include stack's directories
 // first, so a q.h added beside k.c shadows it; on the gnu targets it does
@@ -119,7 +119,7 @@ func TestCObj_IncludeStackShadow(t *testing.T) {
 	}
 }
 
-// TestCObj_FlagIncludeDirs (MKH-903): the C source finds cdep.h through
+// TestCObj_FlagIncludeDirs: the C source finds cdep.h through
 // its own flags' second -I (the separate form); one added to the first
 // (the joined form) shadows it, and the warm build recompiles.
 func TestCObj_FlagIncludeDirs(t *testing.T) {
@@ -162,7 +162,8 @@ func TestCObj_SearchDirsFlags(t *testing.T) {
 	if !ok || !slices.Equal(got, want) {
 		t.Errorf("dirs %q %v, want %q", got, ok, want)
 	}
-	for _, f := range [][]string{{"-include", "x.h"}, {"-isystem-after", abs("s")}, {"-I"}, {"-I=" + abs("s")}, {"-Xclang", "-I" + abs("a")}, {"@flags.rsp"}} {
+	for _, f := range [][]string{{"-include", "x.h"}, {"-isystem-after", abs("s")}, {"-I"}, {"-I-"}, {"-I=" + abs("s")}, {"-imultilib", "m"},
+		{"-index-header-map"}, {"--include-directory=" + abs("a")}, {"-working-directory", abs("w")}, {"-Xclang", "-I" + abs("a")}, {"@flags.rsp"}} {
 		cj.Flags = f
 		if _, ok := cobjSearchDirs(cj); ok {
 			t.Errorf("flags %q are modelled", f)

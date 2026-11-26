@@ -14,9 +14,8 @@
 // existed when it was saved. A candidate holds while every hash matches and
 // every negative is absent; the first that holds names the immutable entry
 // (KindCImport) keyed by Key and its dependencies' hashes, which holds the
-// bindings and the shim. So a header edit adds a candidate instead of
-// leaving a stale entry that misses forever (MKH-901), and the old content
-// stays a hit too.
+// bindings and the shim. So a header edit adds a candidate, and the old
+// content stays a hit too.
 
 package cimport
 
@@ -32,9 +31,8 @@ import (
 	"mk/internal/source"
 )
 
-// formatVersion changes whenever the mapping changes what it writes. v4:
-// candidate lists over content-keyed entries, and negatives beside each
-// includer (MKH-901, MKH-902).
+// formatVersion changes whenever the mapping changes what it writes or what
+// a candidate's negatives cover.
 const formatVersion = "mk.cimport.v4"
 
 // Key is the cache key of r translated by the Clang of identity: every

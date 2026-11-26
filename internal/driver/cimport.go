@@ -737,9 +737,7 @@ func cobjObjKey(base source.Hash, c cimport.Cand) source.Hash {
 // (cimport.Cand, the translation's shape).
 func cobjListKey(base source.Hash) source.Hash {
 	// The domain names the candidates' format and what their negatives
-	// cover: a list written by an older rule is never read. v3: negatives
-	// beside each includer and under the source's own flags' directories
-	// (MKH-902, MKH-903).
+	// cover: a list written by another rule is never read.
 	h := source.NewHasher("mk.driver.cobj.cands.v3")
 	h.Hash(base)
 	return h.Sum()
@@ -803,32 +801,33 @@ func cobjSearchDirs(cj toolchain.CJob) ([]string, bool) {
 	cwd := filepath.Dir(cj.Output)
 	for i := 0; i < len(cj.Flags); i++ {
 		f := cj.Flags[i]
-		if unmodelledSearchFlag(f) {
-			return nil, false
-		}
 		var to *[]string
-		var opt string
-		switch {
-		case strings.HasPrefix(f, "-iquote"):
-			to, opt = &quote, "-iquote"
-		case strings.HasPrefix(f, "-isystem"):
-			to, opt = &sys, "-isystem"
-		case strings.HasPrefix(f, "-idirafter"):
-			to, opt = &after, "-idirafter"
-		case strings.HasPrefix(f, "-I"):
-			to, opt = &inc, "-I"
-		default:
+		var d string
+		for _, o := range []struct {
+			opt string
+			to  *[]string
+		}{{"-iquote", &quote}, {"-isystem", &sys}, {"-idirafter", &after}, {"-I", &inc}} {
+			if strings.HasPrefix(f, o.opt) {
+				to, d = o.to, f[len(o.opt):]
+				break
+			}
+		}
+		if to == nil {
+			if unmodelledSearchFlag(f) {
+				return nil, false
+			}
 			continue
 		}
-		d := strings.TrimPrefix(f, opt)
 		if d == "" { // the separate form, "-I dir"
 			if i++; i == len(cj.Flags) {
 				return nil, false
 			}
 			d = cj.Flags[i]
 		}
-		if strings.HasPrefix(d, "=") || strings.HasPrefix(d, "$SYSROOT") {
-			return nil, false // under the sysroot: not modelled
+		// -isystem-after, -I- and a directory under the sysroot (-I=dir) are
+		// other rules.
+		if strings.HasPrefix(d, "-") || strings.HasPrefix(d, "=") || strings.HasPrefix(d, "$SYSROOT") {
+			return nil, false
 		}
 		if !filepath.IsAbs(d) {
 			d = filepath.Join(cwd, d)
@@ -845,14 +844,14 @@ func cobjSearchDirs(cj toolchain.CJob) ([]string, bool) {
 	return append(out, after...), true
 }
 
-// unmodelledSearchFlag reports whether the clang flag f changes where a
-// header is found in a way cobjSearchDirs does not model: a forced or
-// prefixed include, a framework or overlay, a sysroot for -I=, a response
-// file or a flag passed through to the front end unseen.
+// unmodelledSearchFlag reports whether the clang flag f may change where a
+// header is found in a way cobjSearchDirs does not model: every other
+// -i, -I or --i option (a forced or prefixed include, a sysroot, a
+// multilib, an overlay), a framework, a working directory, a response
+// file, or a flag passed through to the front end unseen.
 func unmodelledSearchFlag(f string) bool {
-	for _, p := range []string{"-include", "-imacros", "-iprefix", "-iwithprefix", "-iwithsysroot", "-isysroot",
-		"-isystem-after", "-iframework", "-ivfsoverlay", "-cxx-isystem", "-iembed-dir", "--embed-dir", "-F", "-I-",
-		"--include", "--sysroot", "-Xclang", "-Xpreprocessor", "-Wp,", "-fmodule", "-fmodules", "@"} {
+	for _, p := range []string{"-i", "-I", "--i", "-F", "--sysroot", "-working-directory", "--embed-dir", "-cxx-isystem",
+		"-Xclang", "-Xpreprocessor", "-Xarch", "-Wp,", "-fmodule", "@"} {
 		if strings.HasPrefix(f, p) {
 			return true
 		}
