@@ -41,7 +41,7 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "  "+q.Help)
 		}
 		fmt.Fprintln(stderr, "  panics --member name: every panic site of a member's modules, located, never capped")
-		fmt.Fprintln(stderr, "  sig --member name: every function and method of a member's modules with its signature, never capped")
+		fmt.Fprintln(stderr, "  sig --member name: every function, method and other item of a member's modules as sig Name answers it, never capped")
 	}
 	var pos []string
 	rest := args
@@ -144,7 +144,7 @@ type memberListing interface {
 }
 
 // queryMember is `mk query panics --member name` and `mk query sig
-// --member name`: every panic site, or every function's signature, of the
+// --member name`: every panic site, or every item's sig answer, of the
 // member's modules, complete, as text or as the listing's version 1 JSON
 // document. Exit 0 with the listing, 1 when the member does not check
 // cleanly (the listing, when there is one, still printed; the diagnostics
