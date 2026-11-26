@@ -1,6 +1,7 @@
 // Why: a bitfield setter of an opaque record must store only bytes that C's
 // own store to the field may write, never a byte of a neighbouring member.
-// What: TestCImport_BitfieldUnitNeighbours.
+// What: TestCImport_BitfieldUnitNeighbours and
+// TestCImport_BitfieldUnitLinux (the GNU layout's binding checks whole).
 // How: C sets each record's neighbours, Mk sets the bitfield, and C reads
 // both back, at dev and release on the host's layout; the bytes each
 // setter may store are pinned by internal/cimport's tests.
@@ -100,5 +101,33 @@ func TestCImport_BitfieldUnitNeighbours(t *testing.T) {
 				t.Errorf("exit %d, stdout %q, stderr %q; want %q", code, out, errOut, want)
 			}
 		})
+	}
+}
+
+// TestCImport_BitfieldUnitLinux: the same header under the GNU layout
+// (x86_64-linux), whose units differ (P's wide is its own 3 bytes, G's a
+// the u16 at byte 1), binds with every accessor checking clean, the whole
+// binding checked.
+func TestCImport_BitfieldUnitLinux(t *testing.T) {
+	tools := needTools(t)
+	t.Setenv("MK_EVIDENCE", "")
+	t.Setenv("MK_SYSROOT_x86_64-linux", t.TempDir())
+	files := bitunitPackage()
+	files["pkg.mk"] = manifest(map[string]string{"name": `"bu"`, "unsafe_modules": `["src"]`,
+		"c_imports": `[pkg.CImport(name: "u", headers: ["u.h"], defines: [], macros: [], vendor: false)]`})
+	delete(files, "app/main.mk")
+	delete(files, "u.c")
+	files["src/a.mk"] = "import c.u\n\nexport F(p: mut u.P, b: mut u.B, r: mut u.R, g: mut u.G) {\n    p.SetWide(p.Wide() + 1)\n" +
+		"    b.SetTop(b.Top() - 1)\n    r.SetB(r.B())\n    g.SetA(g.A())\n}\n"
+	dir := writeTree(t, files)
+	cfg := Config{Root: dir, Target: types.X86_64Linux, Tools: tools, CacheDir: t.TempDir()}
+	cfg.TestHooks.CImportWhole = true
+	s, err := NewSession(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := s.Check(); len(r.Report.Diags) > 0 {
+		view, _ := os.ReadFile(filepath.Join(dir, "gen", "x86_64-linux", "c", "u.mk"))
+		t.Fatalf("check:\n%s\n%s", r.Report.Text(r.Sources), view)
 	}
 }

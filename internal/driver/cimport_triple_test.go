@@ -20,7 +20,8 @@ import (
 // tripleHeader: A and R are the records whose layout differs between the
 // mingw-w64 triple (A 12 bytes, w at byte 8; R 8 bytes, w at byte 4) and
 // the MSVC triple (A 9 bytes, w at byte 5; R 5 bytes, w at byte 1); L is
-// 32 bytes against 16.
+// 32 bytes against 16 (internal/cimport pins it: SysV's L, aligned to 16,
+// is bound as an empty struct, used through pointers).
 const tripleHeader = `struct __attribute__((packed)) A { char c; struct { short s; char t; } in; unsigned w : 20; };
 struct __attribute__((packed)) R { char c; unsigned w : 20; };
 struct L { char c; long double x; };
@@ -45,7 +46,7 @@ long long a_get(struct A *a, int k) {
 void a_set(struct A *a) { a->w = 0x54321; }
 long long r_get(struct R *r, int k) { return k == 0 ? r->c : r->w; }
 void r_set(struct R *r) { r->w = 0x12345; }
-long long sizes(void) { return (long long)(sizeof(struct A) * 10000 + sizeof(struct R) * 100 + sizeof(struct L)); }
+long long sizes(void) { return (long long)(sizeof(struct A) * 100 + sizeof(struct R)); }
 `,
 		"app/main.mk": `import c.u
 import std.mem
@@ -58,7 +59,7 @@ export Main(sys: &System): WriteError!void {
     unsafe "u's functions are plain C; each record is filled through its bytes" {
         raw.Fill(raw.PtrCast[u.A, u8](raw.OfMut(mut a)), 0xa5, SizeOf[u.A]())
         raw.Fill(raw.PtrCast[u.R, u8](raw.OfMut(mut r)), 0xa5, SizeOf[u.R]())
-        try Print(mut out, "sizes {c} {m}\n", (c: u.sizes(), m: SizeOf[u.A]() * 10000 + SizeOf[u.R]() * 100 + SizeOf[u.L]()))
+        try Print(mut out, "sizes {c} {m}\n", (c: u.sizes(), m: SizeOf[u.A]() * 100 + SizeOf[u.R]()))
         a.SetW(0xfffff)
         r.SetW(0xabcde)
         ap := raw.OfMut(mut a)
@@ -76,8 +77,8 @@ export Main(sys: &System): WriteError!void {
 }
 
 // TestCImport_LayoutTripleBytes: what Mk stores in A's and R's w, C reads,
-// their neighbours untouched, and what C stores Mk reads; Mk's sizes of A,
-// R and L are C's. At dev and release, on the host's layout.
+// their neighbours untouched, and what C stores Mk reads; Mk's sizes of A
+// and R are C's. At dev and release, on the host's layout.
 func TestCImport_LayoutTripleBytes(t *testing.T) {
 	tools := needTools(t)
 	dir := writeTree(t, triplePackage())
@@ -101,8 +102,8 @@ func TestCImport_LayoutTripleBytes(t *testing.T) {
 			first, rest, _ := strings.Cut(out, "\n")
 			f := strings.Fields(first)
 			// C's sizes and Mk's agree; on Windows they are MSVC's (A 9, R
-			// 5, L 16), not mingw-w64's (12, 8, 32).
-			sizesOK := len(f) == 3 && f[1] == f[2] && (HostTarget().OS != types.OSWindows || f[1] == "90516")
+			// 5), not mingw-w64's (12, 8).
+			sizesOK := len(f) == 3 && f[1] == f[2] && (HostTarget().OS != types.OSWindows || f[1] == "905")
 			if code != 0 || !sizesOK || rest != want {
 				t.Errorf("exit %d, stdout %q, stderr %q; want sizes C = Mk, then %q", code, out, errOut, want)
 			}
