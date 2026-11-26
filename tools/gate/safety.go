@@ -57,6 +57,8 @@ var untrusted = []untrustedEntry{
 	{"the TLS record and handshake parsers", "std.tls", []string{"FuzzStdTls_Messages", "FuzzStdTls_Records", "FuzzStdTls_Logic", "FuzzStdTls_Messages12", "FuzzStdTls_Records12"}},
 	{"key parsing", "std.crypto", []string{"FuzzSTDCRYPTO_Keys"}},
 	{"image.DecodePng", "std.image", []string{"FuzzStdImage_DecodePng"}},
+	{"gpu.CheckShader (SPIR-V reader)", "std.gpu", []string{"FuzzStdGpu_Spirv"}},
+	{"gpu DXIL container reader", "std.gpu", []string{"FuzzStdGpu_Dxil"}},
 	// Further entry points held to the same bar (their fuzz files say so).
 	{"net.ParseAddr", "std.net", []string{"FuzzStdNet_ParseAddr"}},
 	{"AesGcm.Open, HKDF and HMAC on peer bytes", "std.crypto", []string{"FuzzSTDCRYPTO_TlsPrimitives"}},

@@ -104,7 +104,7 @@ var moduleDirs = struct {
 	modules, targetDirs []string
 	notModule           string
 }{
-	modules: []string{"core", "raw", "fs", "net", "time", "proc", "sync", "atomic", "math", "derive", "rt", "task", "pkg", "coll", "hash", "mem", "json", "http", "regex", "crypto", "compress", "cli", "log", "text", "dyn", "sim", "simd", "mmio", "db", "libc", "free", "db/sqlite", "dyn/erased", "big", "csv", "dl", "encoding", "encoding/cjk", "url", "simd/kernel", "time/tzdata", "x509", "term", "tls", "websocket", "target", "runtime", "vm", "testing", "build", "image", "window"}, // a nested path names the module with dots: db/sqlite is std.db.sqlite, dyn/erased is std.dyn.erased
+	modules: []string{"core", "raw", "fs", "net", "time", "proc", "sync", "atomic", "math", "derive", "rt", "task", "pkg", "coll", "hash", "mem", "json", "http", "regex", "crypto", "compress", "cli", "log", "text", "dyn", "sim", "simd", "mmio", "db", "libc", "free", "db/sqlite", "dyn/erased", "big", "csv", "dl", "encoding", "encoding/cjk", "url", "simd/kernel", "time/tzdata", "x509", "term", "tls", "websocket", "target", "runtime", "vm", "testing", "build", "image", "window", "gpu", "gpu/dx", "gpu/vk"}, // a nested path names the module with dots: db/sqlite is std.db.sqlite, dyn/erased is std.dyn.erased
 	// free/sys is std.sys on x86_64-freestanding, sys/nutshell on
 	// the Nutshell targets, sys/macos on macOS; linux/linux is std.linux
 	// for os "linux", linux/other its empty placeholder elsewhere;

@@ -258,10 +258,51 @@ func generateMk(dxcPath, hlslDir string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+func mkStageExpr(stage string) string {
+	switch stage {
+	case "vs":
+		return "gpu.Stage.Vertex"
+	case "ps":
+		return "gpu.Stage.Fragment"
+	case "cs":
+		return "gpu.Stage.Compute"
+	default:
+		return "gpu.Stage.Vertex"
+	}
+}
+
+func runCheckCompiled(mkPath, tmpDir string, compiled []compiledShader) error {
+	var src bytes.Buffer
+	src.WriteString("import std.encoding\nimport std.compress\nimport std.gpu\n\n")
+	src.WriteString("Dec(a: &Arena, z: str): compress.Error|encoding.Error![]u8 from a {\n")
+	src.WriteString("    raw := try encoding.Base64Decode(a, z, encoding.Base64)\n")
+	src.WriteString("    return try compress.Inflate(a, raw, 4 * 1024 * 1024)\n}\n\n")
+	src.WriteString("export Main(sys: &System): compress.Error|encoding.Error|gpu.Error|OutOfMemory!void {\n")
+	src.WriteString("    var ar := try Arena.New(sys.heap)\n    defer ar.Free()\n")
+	for i, c := range compiled {
+		fmt.Fprintf(&src, "    spv%d := try Dec(&ar, %q)\n", i, c.SpirvZ)
+		fmt.Fprintf(&src, "    dxil%d := try Dec(&ar, %q)\n", i, c.DxilZ)
+		fmt.Fprintf(&src, "    try gpu.CheckShader(gpu.ShaderCode(spirv: spv%d, dxil: dxil%d), %s, %q)\n", i, i, mkStageExpr(c.Spec.Stage), c.Spec.Entry)
+		fmt.Fprintf(&src, "    ar.Reset()\n")
+	}
+	src.WriteString("}\n")
+	checkFile := filepath.Join(tmpDir, "check_shaders.mk")
+	if err := os.WriteFile(checkFile, src.Bytes(), 0o644); err != nil {
+		return err
+	}
+	cmd := exec.Command(mkPath, "run", checkFile)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gpu.CheckShader failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func main() {
 	dxcPath := flag.String("dxc", "", "path to pinned dxc.exe")
 	hlslDir := flag.String("hlsl", "tools/gpushaders/hlsl", "directory containing HLSL sources")
 	outPath := flag.String("out", "std/gpu/tests_shaders.mk", "output Mk file")
+	mkPath := flag.String("mk", "", "optional path to mk binary to run gpu.CheckShader on compiled shaders")
 	flag.Parse()
 
 	if *dxcPath == "" {
@@ -272,6 +313,27 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gpushaders: %v\n", err)
 		os.Exit(1)
+	}
+	if *mkPath != "" {
+		tmpDir, terr := os.MkdirTemp("", "gpushaders-chk-*")
+		if terr != nil {
+			fmt.Fprintf(os.Stderr, "gpushaders: %v\n", terr)
+			os.Exit(1)
+		}
+		defer os.RemoveAll(tmpDir)
+		compiled := make([]compiledShader, 0, len(shaderSpecs))
+		for _, spec := range shaderSpecs {
+			c, cerr := compileEntry(*dxcPath, *hlslDir, tmpDir, spec)
+			if cerr != nil {
+				fmt.Fprintf(os.Stderr, "gpushaders: %v\n", cerr)
+				os.Exit(1)
+			}
+			compiled = append(compiled, c)
+		}
+		if cerr := runCheckCompiled(*mkPath, tmpDir, compiled); cerr != nil {
+			fmt.Fprintf(os.Stderr, "gpushaders: %v\n", cerr)
+			os.Exit(1)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(*outPath), 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "gpushaders: %v\n", err)
