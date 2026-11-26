@@ -92,3 +92,9 @@ Call(n: int): int {
         ok(t) { Close(t) }
     }
 }
+
+Drive(n: int): int {
+    a := Optional(some(Ticket(id: n))) + Optional(none) + Variant(K.A(t: Ticket(id: n)))
+    b := Three(some(Ticket(id: n))) + NoFields(some(Empty())) + Field(S(a: some(Ticket(id: n)), n: 0)) + Range(none)
+    return a + b + Both(Two(a: some(Ticket(id: n)), b: none)) + Call(n)
+}

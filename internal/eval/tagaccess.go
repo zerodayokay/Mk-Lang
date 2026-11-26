@@ -497,6 +497,22 @@ func (m *Machine) tgMoved(f *frame, p mir.Place, src loc) {
 	}
 }
 
+// tgConsumed is StConsume p: like a take (tgMoved), it consumes the whole
+// value, so p's local no longer owns a linear value. p is a struct with no
+// fields: no bytes stop being written.
+func (m *Machine) tgConsumed(f *frame, p mir.Place) {
+	b := f.code.body
+	for i := p.Proj.Start; i < p.Proj.End(); i++ {
+		if b.Projections[i].Kind == mir.ProjDeref {
+			return
+		}
+	}
+	ta := m.tg.rec(f.base)
+	if ta.frame && int(p.Local) < len(ta.locals) {
+		ta.locals[p.Local].owned = false
+	}
+}
+
 // tgArgUndo records, before a fallible call's argument a moves out of a
 // place of the caller's frame, that place's init bits and its local's
 // ownership in the callee's tframe (tgErrorEdge).

@@ -64,3 +64,8 @@ Generic(t: Tok[int]): int {
         Tok() { 7 }
     }
 }
+
+Drive(n: int): int {
+    s := some(S(e: Empty(), n: n))
+    return Optional(some(Empty())) + Optional(none) + Whole(Empty()) + Field(s) + Variant(K.A(e: Empty())) + Ok(n) + Generic(Tok[int]())
+}

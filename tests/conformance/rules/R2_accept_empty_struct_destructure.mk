@@ -24,3 +24,9 @@ Nested(s: S): int {
 Alone(o: Only) {
     Only(e: Empty()) := o
 }
+
+Drive(n: int): int {
+    Close(Empty())
+    Alone(Only(e: Empty()))
+    return Nested(S(e: Empty(), n: n))
+}

@@ -34,7 +34,11 @@ func (m *Machine) stmt(f *frame, st *mir.Statement) {
 		if m.tg != nil {
 			m.tgScopeEnd(f, st.Local)
 		}
-	case mir.StNop, mir.StConsume:
+	case mir.StNop:
+	case mir.StConsume:
+		if m.tg != nil {
+			m.tgConsumed(f, st.Place)
+		}
 	case mir.StAsm:
 		// An asm has no compile-time meaning.
 		refuse(types.RefuseAsm, "")
