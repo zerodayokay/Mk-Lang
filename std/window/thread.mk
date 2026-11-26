@@ -4,7 +4,7 @@
 // stall.
 //
 // What: WindowRec (shared per-window heap record), WinThread (singleton thread
-// state, spin-locked intrusive request queue and HWND_MESSAGE doorbell),
+// state and HWND_MESSAGE doorbell), the shared intrusive request queue,
 // EnsureWindowThread, OpenWindow, EnqueueReq, ReleaseWindowRecRef and
 // FlushWindow/FlushAllWindows.
 //
@@ -21,7 +21,7 @@ import std.runtime
 import std.sys
 import std.time
 
-// Request bitmasks coalesced per WindowRec inside WinThread.req_lock.
+// Request bitmasks coalesced per WindowRec inside WindowRequests.
 const ReqBitOpen: u32 = 1
 const ReqBitSetters: u32 = 2
 const ReqBitHide: u32 = 4
@@ -53,7 +53,6 @@ struct WinThreadState {
     init_err: atomic.Atomic[i64]
     msg_hwnd: atomic.Atomic[uint]
     hinstance: atomic.Atomic[uint]
-    req_lock: atomic.Spin[ReqList]
     bell: Doorbell
 }
 
@@ -62,9 +61,10 @@ var WinThread: WinThreadState = WinThreadState(
     init_err: atomic.Atomic[i64].New(0),
     msg_hwnd: atomic.Atomic[uint].New(0),
     hinstance: atomic.Atomic[uint].New(0),
-    req_lock: atomic.Spin[ReqList].New(ReqList(head: 0, tail: 0)),
     bell: DoorbellNew(),
 )
+
+var WindowRequests: atomic.Spin[ReqList] = atomic.Spin[ReqList].New(ReqList(head: 0, tail: 0))
 
 // Intrusive list head of live windows, touched ONLY by the window thread.
 var ThreadWinHead: atomic.Atomic[uint] = atomic.Atomic[uint].New(0)
@@ -85,7 +85,7 @@ struct WindowRec {
     height: atomic.Atomic[int]
     scale_bits: atomic.Atomic[u32]
     close_requested: atomic.Atomic[u8]
-    hwnd_val: atomic.Atomic[uint]
+    native_handle: atomic.Atomic[uint]
     hinst_val: atomic.Atomic[uint]
     held_keys: [4]atomic.Atomic[u64]
     held_buttons: atomic.Atomic[u8]
@@ -117,6 +117,11 @@ struct WindowRec {
     cursor_shape: Cursor
     cursor_mode: CursorMode
     hcursor: windows.Hcursor
+    unix_visible: bool
+    unix_fullscreen: bool
+    unix_cursor: uint
+    unix_saved: [4]i32
+    unix_pixel_scale: [2]f64
     is_fullscreen: bool
     saved_style: i64
     saved_ex_style: i64
@@ -151,13 +156,13 @@ ReleaseWindowRecRef(addr: uint) {
 
 // EnqueueReq adds bit to rec's pending requests and rings the doorbell on 0->1.
 EnqueueReq(rec_addr: uint, bit: u32) {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         return
     }
     if rec_addr == 0 {
         return
     }
-    var g := WinThread.req_lock.Lock()
+    var g := WindowRequests.Lock()
     list := g.Mut()
     unsafe "rec_addr points to a live WindowRec pinned by refs >= 1" {
         r := raw.FromAddr[WindowRec](rec_addr)
@@ -178,7 +183,11 @@ EnqueueReq(rec_addr: uint, bit: u32) {
         }
     }
     g.Unlock()
-    if WinThread.bell.Ring() {
+    if Target.os == core.Os.Linux || Target.os == core.Os.Macos {
+        UnixWake()
+        return
+    }
+    if Target.os == core.Os.Windows && WinThread.bell.Ring() {
         mh := WinThread.msg_hwnd.Load(atomic.Acquire)
         if mh != 0 {
             unsafe "mh is the live HWND_MESSAGE doorbell window" {
@@ -190,7 +199,7 @@ EnqueueReq(rec_addr: uint, bit: u32) {
 
 // PopReq removes the oldest WindowRec from the request queue, or returns 0.
 PopReq(): (addr: uint, bits: u32) {
-    var g := WinThread.req_lock.Lock()
+    var g := WindowRequests.Lock()
     list := g.Mut()
     if list.head == 0 {
         g.Unlock()
@@ -247,10 +256,11 @@ EnsureWindowThread(io: Io): Error!void {
 
 // OpenWindow allocates a WindowRec, sends ReqBitOpen and waits for creation.
 OpenWindow(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap {
-    if Target.os != core.Os.Windows {
-        fail Unsupported
+    if Target.os == core.Os.Linux || Target.os == core.Os.Macos {
+        try EnsureUnixWindowThread(io)
+    } else {
+        try EnsureWindowThread(io)
     }
-    try EnsureWindowThread(io)
     ring := try RingNew(heap, o.events)
     var ptr: *u8 = raw.Null[u8]()
     unsafe "allocates one WindowRec block from heap" {
@@ -294,7 +304,7 @@ OpenWindow(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap {
             height: atomic.Atomic[int].New(0),
             scale_bits: atomic.Atomic[u32].New(f32(1.0).Bits()),
             close_requested: atomic.Atomic[u8].New(0),
-            hwnd_val: atomic.Atomic[uint].New(0),
+            native_handle: atomic.Atomic[uint].New(0),
             hinst_val: atomic.Atomic[uint].New(0),
             held_keys: [
                 atomic.Atomic[u64].New(0),
@@ -330,6 +340,11 @@ OpenWindow(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap {
             cursor_shape: Cursor.Arrow,
             cursor_mode: CursorMode.Normal,
             hcursor: raw.Null[windows.HiconStruct](),
+            unix_visible: false,
+            unix_fullscreen: false,
+            unix_cursor: 0,
+            unix_saved: [0; 4],
+            unix_pixel_scale: [1.0; 2],
             is_fullscreen: false,
             saved_style: 0,
             saved_ex_style: 0,
@@ -725,7 +740,7 @@ ProcessReqOpen(addr: uint) {
 
         _ = windows.SetWindowLongPtrW(hwnd, windows.GwlpUserdata, Trunc[i64](addr))
         (*r).hwnd = hwnd
-        (*r).hwnd_val.Store(raw.Addr(hwnd), atomic.Release)
+        (*r).native_handle.Store(raw.Addr(hwnd), atomic.Release)
         (*r).hinst_val.Store(raw.Addr(hinst), atomic.Release)
         (*r).hcursor = LoadCursorShape(Cursor.Arrow)
 
@@ -764,7 +779,7 @@ ProcessReqOpen(addr: uint) {
             _ = windows.SetWindowLongPtrW(hwnd, windows.GwlpUserdata, 0)
             _ = windows.DestroyWindow(hwnd)
             (*r).hwnd = raw.Null[windows.HwndStruct]()
-            (*r).hwnd_val.Store(0, atomic.Release)
+            (*r).native_handle.Store(0, atomic.Release)
             ReleaseWindowRecRef(addr)
             return
         }
@@ -854,7 +869,7 @@ ProcessReqDestroy(addr: uint) {
             _ = windows.SetWindowLongPtrW(hwnd, windows.GwlpUserdata, 0)
             _ = windows.DestroyWindow(hwnd)
             (*r).hwnd = raw.Null[windows.HwndStruct]()
-            (*r).hwnd_val.Store(0, atomic.Release)
+            (*r).native_handle.Store(0, atomic.Release)
         }
     }
     ReleaseWindowRecRef(addr)

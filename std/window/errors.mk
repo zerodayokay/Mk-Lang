@@ -7,8 +7,8 @@
 /// Every error std.window returns.
 export open type Error = Unsupported | Closed | Os | OutOfMemory | Canceled
 
-/// This target has no window system std supports.
+/// The target or runtime has no available window backend.
 export error Unsupported
 
-/// The OS refused: its error code.
+/// The OS or GLFW refused the request, with its error code.
 export error Os(code: i64)
