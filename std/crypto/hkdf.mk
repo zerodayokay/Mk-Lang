@@ -102,10 +102,11 @@ const LabelMax: int = 249
 /// label is empty or over 249 bytes, context is over 255 bytes, or out is
 /// longer than 255 times the hash's output (8,160 bytes for SHA-256),
 /// writing nothing on any failure. Constant time in prk; the lengths and
-/// the label are public. O(out): one HMAC over at most HashLen + 515 bytes
-/// per HashLen bytes of out; allocates nothing (the 514-byte HkdfLabel is
-/// on the stack).
-export HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): Error!void {
+/// the label are public. Temporary stack copies of key material are not
+/// wiped. O(out): one HMAC over at most HashLen + 515 bytes per HashLen
+/// bytes of out; allocates nothing (the 514-byte HkdfLabel is on the
+/// stack).
+export HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): BadKey|BadLength!void {
     if !prk.live {
         fail BadKey
     }
@@ -125,7 +126,12 @@ export HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): Err
     info[at] = Trunc[u8](cn)
     (mut info[at + 1..at + 1 + cn]).CopyFrom(context)
     // HkdfExpand checks again what is checked above, so it cannot fail.
-    try HkdfExpand(prk, info[0..at + 1 + cn], out)
+    HkdfExpand(prk, info[0..at + 1 + cn], out) else e {
+        match e {
+            BadKey { fail BadKey }
+            _ { fail BadLength }
+        }
+    }
 }
 
 // Expand256 is HKDF-Expand under the keyed state k; out is at most 255
