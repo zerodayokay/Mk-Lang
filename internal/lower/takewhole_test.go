@@ -112,12 +112,17 @@ linear struct S {
 	e: E
 	n: int
 }
+view struct View {}
+struct WithView { v: View }
 Top(e: E) {
 	E() := e
 }
 Nested(s: S): int {
 	S(e: E(), n) := s
 	return n
+}
+NestedView(v: WithView) {
+	WithView(v: View()) := v
 }
 `)
 	got := l.print("Top")
@@ -127,6 +132,10 @@ Nested(s: S): int {
 	got = l.print("Nested")
 	if x := scrutinee(t, got); !strings.Contains(got, "consume "+x+".0") {
 		t.Errorf("S(e: E(), n) := s does not consume field e:\n%s", got)
+	}
+	got = l.print("NestedView")
+	if x := scrutinee(t, got); !strings.Contains(got, "consume "+x+".0") {
+		t.Errorf("WithView(v: View()) := v does not consume field v:\n%s", got)
 	}
 }
 

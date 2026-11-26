@@ -266,14 +266,9 @@ func (bl *builder) mutPlace(e ast.Expr) mir.Place {
 //
 // A by-value destructure consumes the value, and borrow sees that only as
 // a take, a Move out of the temporary's fields. Each nested linear struct
-// whose fields are all plain takes its own field. When the temporary is
-// not plain and nothing was taken (every bound leaf plain or `_`, as
-// in `HeapText(ptr, used: _, cap, owner) := self` or `File(h: _, pos: _,
-// nosh: _) := self`), the destructure ends with one take of a `_` leaf (plain,
-// or droppable like a `mut []T`) or else a plain binding's leaf into a
-// statement temporary, so the temporary is consumed and its scope end is
-// not E0402. The user's bindings keep their Copy: a Move would give a
-// reference-typed binding H(t) instead of the field's own loans.
+// accounts for its takes separately, then the outer pattern takes a field
+// if it still needs to. The user's bindings keep their Copy: a Move would
+// give a reference-typed binding H(t) instead of the field's own loans.
 func (bl *builder) destructure(s *ast.DestructureStmt) {
 	var t mir.Place
 	if bl.isPlaceExpr(s.Value) {
@@ -286,16 +281,24 @@ func (bl *builder) destructure(s *ast.DestructureStmt) {
 	}
 	dt := &destructTake{}
 	bl.destructureInto(s.Pat, t, s.Var, dt)
-	if dt.took || bl.plain(bl.b.PlaceType(t), s.Value.Span()) {
+	if !dt.took && !bl.plain(bl.b.PlaceType(t), s.Value.Span()) {
+		bl.finishDestructTake(t, dt, s.Span())
+	}
+}
+
+// finishDestructTake ends a non-plain part whose bindings took nothing:
+// take its first wildcard leaf (plain or droppable), else its first plain
+// binding's leaf. A linear struct whose field patterns bind nothing can
+// still have a plain field to take, or be a fieldless struct.
+func (bl *builder) finishDestructTake(t mir.Place, dt *destructTake, at source.Span) {
+	if dt.took {
 		return
 	}
 	if !dt.has {
-		// A fieldless root or a linear root whose nested fields are all
-		// plain and fieldless has no bound leaf to take.
-		if bl.takeWhole(t, s.Span()) {
+		if bl.takeWhole(t, at) {
 			return
 		}
-		source.ICEf(s.Span(), "lower: a destructure of a non-plain value with no plain leaf to take")
+		source.ICEf(at, "lower: a destructure of a non-plain value with no plain leaf to take")
 	}
 	h := bl.newTemp(bl.b.PlaceType(dt.leaf), dt.at)
 	bl.assign(bl.b.Place(h), use(mir.Move(dt.leaf)), dt.at)
@@ -383,15 +386,23 @@ func (bl *builder) bindSub(f *ast.PatField, t mir.Place, k uint32, isVar bool, d
 	case *ast.PathPattern:
 		// A nested struct destructure, (p: Point(x, y), n) := r
 		// (irrefutable): its fields are bound from the same temporary,
-		// t.k.j. A linear struct with plain fields needs its own take.
+		// t.k.j. Takes of a linear struct cannot account for its siblings.
 		if ft == types.NoType || ft == types.Poison {
 			source.ICEf(p.Span(), "lower: a nested destructure of no type")
 		}
 		fp := bl.field(t, k, ft)
-		for j, sf := range p.Fields {
-			bl.bindSub(sf, fp, bl.fieldIndex(ft, sf, uint32(j)), isVar, dt)
+		sub := dt
+		kind := bl.facts(ft, p.Span()).Kind
+		if kind == types.Linear || kind == types.Unique && bl.fieldless(ft) {
+			sub = &destructTake{}
 		}
-		dt.took = bl.takeWhole(fp, p.Span()) || dt.took
+		for j, sf := range p.Fields {
+			bl.bindSub(sf, fp, bl.fieldIndex(ft, sf, uint32(j)), isVar, sub)
+		}
+		if sub != dt {
+			bl.finishDestructTake(fp, sub, p.Span())
+			dt.took = true
+		}
 	default:
 		source.ICEf(p.Span(), "lower: destructure sub-pattern %T", p)
 	}
