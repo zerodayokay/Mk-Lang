@@ -4,13 +4,14 @@
 //
 // What: walker (one task's walk state), the frames scoped, bodyFrame,
 // litFrame and fieldsFrame, the local declaring methods (declare,
-// declareLocal, declareParam, declareSelf, pushTypeParams), recaseLocal and
-// renameFix, literal and closeCaptures, and unusedLocals (E0208).
+// declareLocal, declareParam, declareSelf, pushTypeParams), shadowsConstParam,
+// recaseLocal and renameFix, literal and closeCaptures, and unusedLocals (E0208).
 //
 // How: locals live on one stack, with a frame per body; a new local is
 // compared, folded, with every visible local of this body and the
-// enclosing ones (E0206). A fn literal is lifted to its own item; its
-// captures are collected per frame in source order, then sorted by name.
+// enclosing ones, and exactly with the const generics in scope (E0206). A
+// fn literal is lifted to its own item; its captures are collected per
+// frame in source order, then sorted by name.
 
 package resolve
 
@@ -186,13 +187,17 @@ func (w *walker) release(mark int) { w.locals = w.locals[:mark] }
 
 // declare adds a local to the current body. The comparison
 // with every visible local is folded; an equal one is E0206 at the new
-// declaration, which is still declared so its uses resolve to it.
+// declaration, which is still declared so its uses resolve to it. Every
+// name it declares always binds, an `if x := e` binding included, so each
+// takes the case rule here.
 func (w *walker) declare(id *ast.Ident, kind LocalKind, isVar bool, stmt ast.Stmt) LocalID {
-	return w.declareLocal(id, kind, isVar, stmt, kind == LocalPattern)
+	return w.declareLocal(id, kind, isVar, stmt, false)
 }
 
-// declareLocal is declare; pattern marks a pattern binding, whose case is
-// check's to judge (Local.Pascal) rather than an E0207 (b) here.
+// declareLocal is declare; pattern marks a binding of a refutable pattern
+// (declarePattern), whose case namePattern judges (patternCase). Its E0206
+// over a const generic, or under a name that is not snake_case, offers no
+// rename: renaming it would keep an arm that matches every value.
 func (w *walker) declareLocal(id *ast.Ident, kind LocalKind, isVar bool, stmt ast.Stmt, pattern bool) LocalID {
 	if id == nil || !declarable(id.Name) || len(w.bodies) == 0 {
 		// No body frame: a binding written where no body is, such as an
@@ -214,21 +219,45 @@ func (w *walker) declareLocal(id *ast.Ident, kind LocalKind, isVar bool, stmt as
 			break
 		}
 	}
-	pascal := pattern && !IsSnake(name)
+	constParam := false
+	if shadow == nil {
+		shadow = w.shadowsConstParam(id, name)
+		constParam = shadow != nil
+	}
 	f := w.bodies[len(w.bodies)-1]
 	lid := LocalID(len(f.body.Locals))
-	f.body.Locals = append(f.body.Locals, Local{Name: id.Name, Decl: id.ID(), Kind: kind, Var: isVar, Pascal: pascal})
+	f.body.Locals = append(f.body.Locals, Local{Name: id.Name, Decl: id.ID(), Kind: kind, Var: isVar})
 	f.binds = append(f.binds, stmt)
 	f.at = append(f.at, id.Span())
 	w.locals = append(w.locals, scoped{sym: id.Name, fold: fold, local: lid, body: len(w.bodies) - 1, at: id.Span()})
 	w.fs.setRef(id.ID(), w.localRef(lid))
 	if shadow != nil {
-		w.renameFix(shadow, id, name, lid)
+		if pattern && (constParam || !IsSnake(name)) {
+			shadow.Alt("compare with the value in an `if`, or rename the binding")
+		} else {
+			w.renameFix(shadow, id, name, lid)
+		}
 	}
 	if !pattern && !IsSnake(name) {
 		w.recaseLocal(id, name, lid, shadow != nil, "recase the local and its uses")
 	}
 	return lid
+}
+
+// shadowsConstParam is the E0206 of a local or parameter spelled exactly as
+// a const generic in scope, which it would hide; nil when it is not one. The
+// test is exact: a type parameter `T` and a local `t` stand side by side, as
+// a const generic `N` and a local `n` do.
+func (w *walker) shadowsConstParam(id *ast.Ident, name string) *diag.Diagnostic {
+	for i := len(w.tparams) - 1; i >= 0; i-- {
+		if g := w.tparams[i]; g.konst && g.sym == id.Name {
+			d := dup(id.Span(), g.at, name, "local")
+			d.Message = "`" + name + "` shadows the const parameter declared before it"
+			w.t.diags = append(w.t.diags, d)
+			return d
+		}
+	}
+	return nil
 }
 
 // recaseLocal reports E0207 (b) for a local or parameter. The recase is a
@@ -327,6 +356,9 @@ func (w *walker) declareParam(id *ast.Ident, isVar, isConst bool, typ ast.Type) 
 			w.t.diags = append(w.t.diags, shadow)
 			break
 		}
+	}
+	if shadow == nil {
+		shadow = w.shadowsConstParam(id, name)
 	}
 	lid := LocalID(len(f.body.Locals))
 	f.body.Locals = append(f.body.Locals, Local{Name: id.Name, Decl: id.ID(), Kind: LocalParam, Var: isVar, Const: isConst, Used: true})

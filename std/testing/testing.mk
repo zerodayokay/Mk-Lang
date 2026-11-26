@@ -1,14 +1,16 @@
 // Why: fuzzing and benchmarking should need no new syntax: a test block
 // calls a function, and the driver decides what happens.
 //
-// What: Fuzz, Bench, BenchSys, RunSeeds, the mutation loop (Loop,
-// Mutate, Guided) and the small decimal helpers it reads and writes with.
+// What: Fuzz, Bench, BenchSys, ExpectPanic, RunSeeds, the mutation
+// loop (Loop, Mutate, Guided) and the small decimal helpers it reads
+// and writes with.
 //
-// How: the driver (internal/driver/fuzz.go and bench.go) tells the test
-// child what to do through environment variables; with none set, Fuzz
-// calls nothing and Bench calls f(1) once (BenchSys f(sys, 1)), so a
-// plain test run passes over all three. The protocol (environment
-// variables, read once):
+// How: the driver (internal/driver/fuzz.go, bench.go and testing.go)
+// tells the test child what to do through environment variables; with
+// none set, Fuzz calls nothing, Bench calls f(1) once (BenchSys
+// f(sys, 1)), so a plain test run passes over all three, and
+// ExpectPanic does nothing. The protocol (environment variables, read
+// once):
 //
 //   - MK_TESTING_FUZZ: "run" calls f once per seed of the input file, in
 //     its order, writing "fuzz input <name>" to standard error before each
@@ -33,6 +35,11 @@
 //   - MK_TESTING_BENCH: "<n> <reps>", a decimal n (0: grow n from 1 until
 //     one call of f takes at least 20 ms) and a decimal repetition count;
 //     each repetition writes "mkbench <n> <nanoseconds>" to standard error.
+//   - MK_TESTING_EXPECT: a token of the mk test run, set for plain test
+//     children only; ExpectPanic writes "mkexpectpanic <token> <length>
+//     <want>" to standard error, and the driver (testing.go's
+//     judgeExpectedPanic) passes the child on a panic whose report matches.
+//     The token keeps text a test prints from passing for the line.
 //
 // The loop mutates by bit flips, byte sets, inserts, deletes, splices of
 // another input and dictionary tokens, and is guided by the package's live
@@ -121,6 +128,33 @@ export Bench(f: fn(n: int)) {
     for _ in 0..SpecReps(spec) {
         Report(n, Time(f, n))
     }
+}
+
+/// ExpectPanic makes the test block that calls it pass only if it panics
+/// after the call, and its panic's report ("panic: assert at
+/// main.mk:4:5") contains want after its "panic: "; an empty want matches
+/// every panic. The test then fails if its body returns, and a panic
+/// before the call fails it as any panic does. The last call wins. Under
+/// `mk test` it writes the line "mkexpectpanic <token> <length of want>
+/// <want>" to standard error, with the run's token from
+/// MK_TESTING_EXPECT, and `mk test` judges the child from it and leaves
+/// the line out of the test's output. Anywhere else, `mk test --fuzz` and
+/// `mk bench` included, it does nothing.
+///
+/// Allocates nothing; O(want + the environment).
+export ExpectPanic(want: str) {
+    token := rt.Env("MK_TESTING_EXPECT") else {
+        return
+    }
+    var n: [24]u8 = [0; 24]
+    var w := Put(mut n[..], 0, " ")
+    w = PutInt(mut n[..], w, Trunc[i64](want.Len()))
+    w = Put(mut n[..], w, " ")
+    rt.WriteErr("mkexpectpanic ".AsBytes())
+    rt.WriteErr(token.AsBytes())
+    rt.WriteErr(n[0..w])
+    rt.WriteErr(want.AsBytes())
+    rt.WriteErr("\n".AsBytes())
 }
 
 /// BenchSys is Bench for a benchmark that needs the System, to allocate

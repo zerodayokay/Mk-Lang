@@ -167,8 +167,9 @@ export Start(sp: *u8): never {
     rt.LinkYieldHook() // Spin's hook: std.rt's, over the weak default
     if rt.UsesTasks() {
         sys.ExternFaultHook(InExtern)
-        // Linux's ownership test: a fault on a task
-        // slot or a carrier's system stack is Mk's.
+        // The ownership test: a fault on a task slot or a carrier's
+        // system stack is Mk's (Linux), and goes to the fault filters
+        // whatever its pc (Windows).
         sys.FaultOwnerHook(OnMkStack)
     }
     sys.FaultHook(rt.OnFault)

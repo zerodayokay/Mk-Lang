@@ -352,11 +352,7 @@ type Local struct {
 	Kind  LocalKind
 	Var   bool // var binding, var parameter, or every binding of var (a, b) := e
 	Const bool // const value parameter
-	// Pascal is set on a pattern binding whose name is not snake_case: check
-	// reports it (E0101 "write .Name" for a variant of the scrutinee, else
-	// E0207).
-	Pascal bool
-	Used   bool
+	Used  bool
 }
 
 // LocalKind is how a local was introduced.

@@ -3,6 +3,7 @@
 // What: TestGenExportUsedByImporter, TestGenDeriveEqChecks,
 // TestE0704_GeneratedImplAtGenLine, TestGenCodes (E0903, E0905, E0906),
 // TestGenFailRootOfUnknownNames, TestGenPoisonRootOfUnknownNames,
+// TestGenRootOfPatternNames, TestGenGeneratorOfSameModule,
 // TestGenDeriveEqGolden, TestGenBoolArgument and TestGenFlowDiagWrapped.
 // How: checks small packages with the real std generators and compares
 // diagnostics, and derive.Eq's output with internal/gen's golden.
@@ -184,10 +185,15 @@ func TestGenFailRootOfUnknownNames(t *testing.T) {
 // module it depends on failed to check: the generator's own module, a module
 // the generator imports, a module whose function the generator calls, the
 // module of a type argument or of the fuel const, or a borrow error (stage
-// 7) in the generator's module. That module's first error, of a later
+// 7) in the generator's module; or an error before types (E0206) in the
+// generator's module, its import or a function argument's module, which
+// leaves the generator or the function with no declaration (never an E0301
+// at the line). That module's first error, of a later
 // phase, is reported with the E0201s on the names the output would have
 // declared (in the module, or an importer's `out.Made`), as their root, and
-// each E0201 cites the gen line and names the module. A borrow error, which
+// each E0201 cites the gen line and names the module. An error before
+// types is the root ahead of a later-phase error that sorts first, in its
+// module or another the line reads. A borrow error, which
 // leaves its module clean, is the root only when no module the line reads
 // has another error. A second error of the module waits for the first to
 // be fixed; a poisoned line with no failed module keeps the old note with
@@ -200,6 +206,8 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 	// ends in poison.
 	const reflect = "export Make(g: mut Gen, t: Type) {\n    for m in t.Methods() {\n        _ = m.Result()\n    }\n"
 	const flow = "export Twice() {\n    var n := 1\n    a := mut n\n    b := mut n\n    *a += 1\n    *b += 1\n}\n"
+	// twice declares F twice: E0206 at its line 5, an error before types.
+	const twice = "export F(): int {\n    return 1\n}\n\nF(): int {\n    return 2\n}\n"
 	for _, c := range []struct {
 		name  string
 		files map[string]string
@@ -272,6 +280,26 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 			"out/out.mk": "import g2\nimport gn\n\ninterface Local {\n    Get(&self): [2 * 2]u8\n}\n\ngen gn.Make(Local)\n\ngen g2.Make()\n",
 			"out/use.mk": "export UseMade(): int {\n    return Made2 + 1\n}\n"},
 			[]string{"g2/g2.mk:2:5:E0208", "out/use.mk:2:12:E0201"}, "g2/g2.mk:2:5", "g2", "out/out.mk:10:1"},
+		// An error before types (E0206) leaves its module and its importers
+		// unchecked, so the generator or a function argument has no
+		// declaration: the line is poison, never an E0301. Such an error is
+		// the root ahead of an E0208 or E0301 that sorts first, and the
+		// phase rule leaves those out.
+		{"declaration error in the generator's module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n" + emit + "\n" + twice},
+			[]string{"gn/gn.mk:12:1:E0206", "out/use.mk:2:12:E0201"}, "gn/gn.mk:12:1", "gn", ""},
+		{"declaration error in the generator's import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.F()\n" + emit,
+			"a/a.mk": twice},
+			[]string{"a/a.mk:5:1:E0206", "out/use.mk:2:12:E0201"}, "a/a.mk:5:1", "a", ""},
+		{"declaration error in a function argument's module", map[string]string{"gn/gn.mk": "export Make(g: mut Gen, m: Method) {\n    _ = m\n" + emit,
+			"a/a.mk":     "export G(x: int): int {\n    return x\n}\n" + twice,
+			"out/out.mk": "import a\nimport gn\n\ngen gn.Make(a.G)\n"},
+			[]string{"a/a.mk:8:1:E0206", "out/use.mk:2:12:E0201"}, "a/a.mk:8:1", "a", ""},
+		{"declaration error after an unused import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.F()\n" + emit,
+			"a/a.mk": "import std.math\n\n" + twice},
+			[]string{"a/a.mk:7:1:E0206", "out/use.mk:2:12:E0201"}, "a/a.mk:7:1", "a", ""},
+		{"declaration error in a later import", map[string]string{"gn/gn.mk": "import a\nimport z\n\nexport Make(g: mut Gen) {\n    _ = a.One()\n    _ = z.F()\n" + emit,
+			"a/a.mk": "export One(): int {\n    return true\n}\n", "z/z.mk": twice},
+			[]string{"out/use.mk:2:12:E0201", "z/z.mk:5:1:E0206"}, "z/z.mk:5:1", "z", ""},
 		{"own type", map[string]string{"gn/gn.mk": reflect + emit,
 			"out/out.mk": "import gn\n\ninterface Local {\n    Get(&self): [2 * 2]u8\n}\n\ngen gn.Make(Local)\n"},
 			[]string{"out/use.mk:2:12:E0201"}, "", "", ""},
@@ -315,6 +343,85 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGenRootOfPatternNames: a refutable pattern's name that names no const
+// (E0207) in a module whose gen line emitted nothing may be a const the
+// output would have declared, as an unknown name's E0201 may be: the line's
+// own error (E0903) or the error poisonRoot names (an E0208 in the
+// generator's module, an error before types in its import) is reported with
+// it as its root, whatever its phase, and the E0207 cites the line. A name
+// the module scope holds (a struct), and one beside a line that ran, are
+// E0207s of their own. With the module cache on, the warm report equals the
+// cold one.
+func TestGenRootOfPatternNames(t *testing.T) {
+	const emit = "    made := g.Ident(\"Made\")\n    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n"
+	const pick = "export Pick(x: int): int {\n    return match x {\n        Made { 1 }\n        _ { 0 }\n    }\n}\n"
+	const twice = "export F(): int {\n    return 1\n}\n\nF(): int {\n    return 2\n}\n"
+	const fails = "export Make(g: mut Gen) {\n    g.Fail(\"planted\")\n" + emit
+	for _, c := range []struct {
+		name  string
+		files map[string]string
+		want  []string
+		root  string // the E0207's root, "" for its own
+		note  string // in the E0207's gen note
+	}{
+		{"failed line", map[string]string{"gn/gn.mk": fails},
+			[]string{"out/out.mk:3:1:E0903", "out/use.mk:3:9:E0207"}, "out/out.mk:3:1", "failed and emitted nothing"},
+		{"poisoned line", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n    unused := 1\n" + emit},
+			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:3:9:E0207"}, "gn/gn.mk:2:5", "`gn`, which it depends on"},
+		{"error before types in the generator's import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.F()\n" + emit,
+			"a/a.mk": twice},
+			[]string{"a/a.mk:5:1:E0206", "out/use.mk:3:9:E0207"}, "a/a.mk:5:1", "`a`, which it depends on"},
+		{"a name of the module", map[string]string{"gn/gn.mk": fails, "out/use.mk": "export struct Made {\n    x: int\n}\n\n" + pick},
+			[]string{"out/use.mk:7:9:E0207"}, "", ""},
+		{"a line that ran", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n" + strings.Replace(emit, `"Made"`, `"Other"`, 1)},
+			[]string{"out/use.mk:3:9:E0207"}, "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			files := map[string]string{"pkg.mk": libManifest(), "out/out.mk": "import gn\n\ngen gn.Make()\n", "out/use.mk": pick}
+			for p, text := range c.files {
+				files[p] = text
+			}
+			cfg := Config{Root: writeTree(t, files), CacheDir: t.TempDir()}
+			cold := frontCheck(t, cfg)
+			expectLines(t, cold, c.want...)
+			for i, e := range cold.Report.Diags {
+				d := e.Diag
+				if d.Code != diag.E0207 {
+					continue
+				}
+				g, _ := d.FactValue("gen")
+				gl, cites := d.FactValue("gen_line")
+				if c.root == "" {
+					if e.Root != i+1 || d.Cause != nil || cites {
+						t.Errorf("E0207 root %d, cause %v, gen_line %v; want its own root and no gen line\n%s",
+							e.Root, d.Cause, cites, cold.Report.Text(cold.Sources))
+					}
+					continue
+				}
+				r := cold.Report.Diags[e.Root-1].Diag
+				if got := diag.Location(cold.Sources, r.At); got != c.root || !cites ||
+					diag.Location(cold.Sources, gl.At) != "out/out.mk:3:1" || !strings.Contains(g.Str, c.note) {
+					t.Errorf("E0207's root at %s, gen_line %v, gen note %q; want root %s, the line out/out.mk:3:1 and %q\n%s",
+						got, cites, g.Str, c.root, c.note, cold.Report.Text(cold.Sources))
+				}
+			}
+			if warm := frontCheck(t, cfg); string(jsonOf(t, warm)) != string(jsonOf(t, cold)) {
+				t.Errorf("warm --json %s, cold %s", jsonOf(t, warm), jsonOf(t, cold))
+			}
+		})
+	}
+}
+
+// TestGenGeneratorOfSameModule: a gen line naming a function of its own
+// module is E0908 at the line, the stage rule's, never an E0301 that calls
+// the function not a function (its declaration is not built in stage 4).
+func TestGenGeneratorOfSameModule(t *testing.T) {
+	files := map[string]string{"pkg.mk": libManifest(), "out/gn.mk": "export Make(g: mut Gen) {\n    _ = g\n}\n",
+		"out/out.mk": "gen Make()\n"}
+	cold := frontCheck(t, Config{Root: writeTree(t, files), CacheDir: t.TempDir()})
+	expectLines(t, cold, "out/out.mk:1:1:E0908")
 }
 
 // TestGenDeriveEqGolden (gen derive.Eq output reads like handwritten

@@ -39,7 +39,7 @@ With no path, a command works on the current directory. `mk help` lists the comm
 | Flag | Does |
 |---|---|
 | `--json` | Print diagnostics as the JSON document of [section 3](#3-diagnostics) |
-| `--max-diagnostics n` | Print at most `n` diagnostics of the failing phase, plus every internal error and every later-phase error one of them follows from ([section 3](#3-diagnostics)). 0 means no cap. The default is no cap for JSON, 50 for text |
+| `--max-diagnostics n` | Print at most `n` diagnostics of the failing phase, plus every internal error and every error one of them follows from ([section 3](#3-diagnostics)). 0 means no cap. The default is no cap for JSON, 50 for text |
 | `--target name` | Build for this target, such as `x86_64-linux` or `x86_64-windows`. The default is the host |
 | `--offline` | Never fetch. Dependencies come from the cache or `vendor/`. `MK_OFFLINE=1` does the same |
 | `--locked` | Refuse a dependency version that `pkg.sum` has no line for, and never write `pkg.sum` |
@@ -96,7 +96,7 @@ mk check --all-targets
 
 ### `mk test`
 
-`mk test` builds the package's `test` blocks and runs each one in its own process. It prints one line per test and a total.
+`mk test` builds the package's `test` blocks and runs each one in its own process. It prints one line per test and a total. A test passes when it returns, or, after a call of [`testing.ExpectPanic(want)`](std/testing.md#expected-panics), when it panics with a report that contains `want`.
 
 ```sh
 mk test
@@ -486,7 +486,7 @@ When the package checks clean, a last round drops the empty `()` argument of eac
 | `uses` | Every standard library item the package references, with its sites. Never capped |
 | `perimeter` | Per package of the build: its local names, source and version, and its unsafe code, C and assembly ([the packages guide](packages.md#11-grants-for-unsafe-code)). Never capped |
 | `panics --member name` | Every panic site of a workspace member's modules ([section 5.1](#51-member-wide-panic-sites)). Never capped |
-| `sig --member name` | Every function and method of a workspace member's modules with its signature, generated ones included ([section 5.3](#53-member-wide-signatures)). Never capped |
+| `sig --member name` | Every function, method and other item of a workspace member's modules with what `sig Name` answers for it, generated ones included ([section 5.3](#53-member-wide-signatures)). Never capped |
 
 ### 5.1 Member-wide panic sites
 
@@ -584,18 +584,24 @@ Such a recursion of n functions counts as at most (max + 1) n frames, max being 
 
 ### 5.3 Member-wide signatures
 
-`mk query sig --member <name> [--json] [--root path]` lists every function and method of one workspace member's modules, each with its signature as `sig Name` spells it. The member is named, found and checked as for [section 5.1](#51-member-wide-panic-sites), and the exit status is the same. `sig Name` still takes one name.
+`mk query sig --member <name> [--json] [--root path]` lists every function and method of one workspace member's modules, each with its signature as `sig Name` spells it, then the member's other items, each with its head. Every entry carries its doc lines as `sig Name` answers them, so one process answers what a `sig Name` per item would. The member is named, found and checked as for [section 5.1](#51-member-wide-panic-sites), and the exit status is the same. `sig Name` still takes one name.
 
-The listing is complete: never capped and never paged. It holds functions, methods, impl methods and `extern` functions, and the functions a `gen` line writes, which no declaration in the source shows. It also holds an error's built-in `Format` ([the reference](reference.md#how-errors-print)), located at the error's name. Contract predicates, invariants, `fn` literals and test blocks are not listed. Functions of the standard library and of dependencies are not listed.
+The listing is complete: never capped and never paged. Its `functions` hold functions, methods, impl methods and `extern` functions, and the functions a `gen` line writes, which no declaration in the source shows. They also hold an error's built-in `Format` ([the reference](reference.md#how-errors-print)), located at the error's name. Its `items` hold structs, enums, errors, interfaces, `type` aliases, consts and globals, the types a `gen` line writes included. Contract predicates, invariants, `fn` literals and test blocks are not listed. Items of the standard library and of dependencies are not listed.
 
-The `--json` document, version 1, is one object and a newline (shown wrapped, with one function):
+The `--json` document, version 1, is one object and a newline (shown wrapped, with one function and one item):
 
 ```text
 {"version":1,"query":"sig","member":"eng","complete":true,"missing":[],
  "functions":[{"name":"Collect","module":"src","file":"src/heap.mk","line":11,"col":8,
                "sig":"export Collect(h: mut Heap)","resolved":"export Collect(h: mut Heap)",
                "contracts":[],"exported":true,
-               "impl":"","generated":false,"gen":""}, ...]}
+               "impl":"","generated":false,"gen":"","kind":"func","subject":"Collect",
+               "doc":["/// Takes the heap mutably."],"truncated":0}, ...],
+ "items":[{"name":"Heap","module":"src","file":"src/heap.mk","line":5,"col":15,
+           "sig":"export struct Heap  (module src)","resolved":"export struct Heap  (module src)",
+           "contracts":[],"exported":true,
+           "impl":"","generated":false,"gen":"","kind":"struct","subject":"Heap",
+           "doc":["/// A heap."],"truncated":0}, ...]}
 ```
 
 - `version` is 1. A field added keeps the version, and a field removed or changed in meaning raises it.
@@ -608,9 +614,15 @@ The `--json` document, version 1, is one object and a newline (shown wrapped, wi
   - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart. An alias is spelled as the declaration writes it, by its name and arguments: `Load(i: u64): Value` for `type Value = u64`, also under `&`, `mut`, `[]`, `?`, an array, `E!T` and a generic type's arguments.
   - `resolved` is `sig` with every alias spelled as its type, `Load(i: u64): u64`, and equals `sig` when the signature names no alias.
   - `exported` is true for an exported function. An impl method is never `exported`: its type and its interface decide who can call it.
-  - `generated` is true for a function a `gen` line wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
+  - `generated` is true for a function a `gen` line wrote, and for the built-in `Format` of an error one wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
+  - `kind` is `func` for every function, and for an item its kind as `find` names it: `struct`, `enum`, `error`, `interface`, `alias`, `const` or `global`.
+  - `subject` is a spelling that `sig`, asked in the member, resolves to this entry. `sig` takes a spelling for the first item that has it, in the build's order of the modules, which is not the listing's, so a `name` two modules declare answers for one of them only, and `subject` says which. It is `name` when no item before this one in that order takes it, else the module's last segment and `name` (`more.Point`), else the module's path and `name` (`src.x.more.Point`), and `""` when items before it take all three. It is also `""` for an impl method and an error's built-in `Format`, which `sig` does not answer as listed.
+  - `doc` is the entry's `///` lines, and `truncated` the number of lines cut, exactly as `sig <subject>`'s answer holds them: the answer is cut at its 200-token cap, and `doc` holds the doc lines that survive the cut. `doc` is `[]` for an entry with no doc lines. An impl method, or an entry whose spellings are all taken, gets its own `///` lines by the same rule. An error's built-in `Format`, which no source declares, has `doc` `[]`, as `sig NotFound.Format` has no doc line: the lines above the error's name are the error's.
+- `items` are sorted as `functions` are, and an item's entry has the same fields. Its `sig` is the first line of `sig <subject>`, the item's head with its module, `export struct Heap  (module src)`; its `resolved` equals its `sig`, its `contracts` are `[]` and its `impl` `""`. `generated` is true for an item a `gen` line wrote, and `gen` is that line, as for a function.
 
-Without `--json`, the listing is a header line, then one line per function, `sig  file:line:col`, followed by `(gen file:line:col)` for a generated one, and each contract on a line of its own.
+For an entry whose `subject` is not `""`, `sig <subject>` asked in the member (from its directory, or with `--root` at it) answers, line for line: `sig`; for a function, each contract indented by four spaces, then `module` and the module's path; then `doc`, with `truncated` as its count of lines cut. When a function's contracts alone pass the cap, the answer stops among them: it holds only the lines before the cut, `doc` is `[]`, and `truncated` counts the contract and module lines cut too. The listing is built from the same lines as the answer, and names the member's modules by their own paths wherever it is asked. From a package that depends on the member, `sig` looks a spelling up in that package first, and spells the member's module paths with the name that package gives the member: where `eng` names the member `hp` as `heap`, `sig Heap` from `eng` answers `(module heap.src)` for the entry's `(module src)`.
+
+Without `--json`, the listing is a header line, then one line per function, `sig  file:line:col`, followed by `(gen file:line:col)` for a generated one, and each contract on a line of its own. When the member has other items, a line `N other item(s)` follows, then one line per item, `sig  file:line:col`, with `(gen file:line:col)` as for a function. Doc lines are in the JSON only.
 
 The listing covers the modules of one target, the host's or `--target`'s.
 

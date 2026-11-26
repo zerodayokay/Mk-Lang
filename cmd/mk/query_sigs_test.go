@@ -135,6 +135,7 @@ type sigListDoc struct {
 	Complete  bool             `json:"complete"`
 	Missing   []string         `json:"missing"`
 	Functions []map[string]any `json:"functions"`
+	Items     []map[string]any `json:"items"`
 }
 
 // TestMemberSignatures: from the workspace root, every function
@@ -155,13 +156,42 @@ func TestMemberSignatures(t *testing.T) {
 	if l.Version != 1 || l.Query != "sig" || l.Member != "eng" || !l.Complete || l.Missing == nil || len(l.Missing) != 0 {
 		t.Errorf("header: version %d query %q member %q complete %v missing %v", l.Version, l.Query, l.Member, l.Complete, l.Missing)
 	}
-	fields := []string{"name", "module", "file", "line", "col", "sig", "contracts", "exported", "impl", "generated", "gen"}
-	var got []string
-	for _, e := range l.Functions {
+	fields := []string{"name", "module", "file", "line", "col", "sig", "contracts", "exported", "impl", "generated", "gen",
+		"kind", "subject", "doc", "truncated"}
+	for _, e := range append(slices.Clone(l.Functions), l.Items...) {
 		for _, f := range fields {
 			if _, ok := e[f]; !ok {
 				t.Errorf("entry %v lacks %q", e, f)
 			}
+		}
+	}
+	// The other items, each with its head and doc as `sig Name` answers,
+	// and a type a gen line wrote marked with it.
+	var items []string
+	for _, e := range l.Items {
+		var doc []string
+		for _, d := range e["doc"].([]any) {
+			doc = append(doc, d.(string))
+		}
+		g := ""
+		if e["generated"] == true {
+			g = e["gen"].(string)
+		}
+		items = append(items, strings.Join([]string{e["kind"].(string), e["subject"].(string), e["sig"].(string), strings.Join(doc, "; "), g}, "|"))
+	}
+	wantItems := []string{ // the gen view, src/gen/..., sorts first
+		"struct|ShapeDyn|mut view struct ShapeDyn  (module src)||src/heap.mk:39:1",
+		"struct|Heap|export struct Heap  (module src)|/// A heap.|",
+		"interface|Shape|interface Shape  (module src)||",
+		"struct|Square|struct Square  (module src)||",
+	}
+	if !slices.Equal(items, wantItems) {
+		t.Errorf("items:\n%s\nwant:\n%s", strings.Join(items, "\n"), strings.Join(wantItems, "\n"))
+	}
+	var got []string
+	for _, e := range l.Functions {
+		if e["kind"] != "func" {
+			t.Errorf("function %v: kind %v", e["name"], e["kind"])
 		}
 		var cs []string
 		for _, c := range e["contracts"].([]any) {
@@ -198,6 +228,10 @@ func TestMemberSignatures(t *testing.T) {
 	st, text, errOut := mk("query", "sig", "--member", "eng", "--root", filepath.Join(ws, "eng"), "--target", sigsTarget)
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	if st != 0 || lines[0] != "member eng: 10 function(s)" ||
+		!slices.Contains(lines, "4 other item(s)") || !slices.Contains(lines, "export struct Heap  (module src)  src/heap.mk:5:15") ||
+		!slices.ContainsFunc(lines, func(l string) bool {
+			return strings.HasPrefix(l, "mut view struct ShapeDyn  (module src)  src/gen/"+sigsTarget+"/gen.mk:") && strings.HasSuffix(l, " (gen src/heap.mk:39:1)")
+		}) ||
 		!slices.Contains(lines, "export Collect(h: mut Heap)  src/heap.mk:11:8") ||
 		!slices.Contains(lines, "    requires h.n >= 0") ||
 		!slices.ContainsFunc(lines, func(l string) bool {
@@ -285,7 +319,8 @@ func TestMemberSignaturesUsage(t *testing.T) {
 func TestSigSchemaDocumented(t *testing.T) {
 	sec := toolsSection(t, "Member-wide signatures")
 	for _, n := range []string{"version", "query", "member", "complete", "missing", "functions",
-		"name", "module", "file", "line", "col", "sig", "contracts", "exported", "impl", "generated", "gen"} {
+		"name", "module", "file", "line", "col", "sig", "contracts", "exported", "impl", "generated", "gen",
+		"items", "kind", "subject", "doc", "truncated"} {
 		if !strings.Contains(sec, "`"+n+"`") {
 			t.Errorf("doc/tools.md's section on member-wide signatures does not name `%s`", n)
 		}

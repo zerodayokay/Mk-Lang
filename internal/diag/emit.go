@@ -43,7 +43,7 @@ type Report struct {
 	// Diags are the kept diagnostics in emission order.
 	Diags []Emitted
 	// Omitted is how many diagnostics the cap dropped (internal errors and
-	// causes of a later phase are never dropped).
+	// the causes of a kept diagnostic, of any phase, are never dropped).
 	Omitted int
 }
 
@@ -69,9 +69,9 @@ const DefaultTextCap = 50
 //  4. Resolve each Cause to the 1-based index of the first kept diagnostic
 //     with that code and span; a missing cause makes the diagnostic its own root.
 //  5. Keep the first max diagnostics of the lowest phase (max <= 0 keeps
-//     all), plus every internal error and every cause of a later phase, which
-//     may sort after its consequences; a kept diagnostic whose root was
-//     dropped becomes its own root.
+//     all), plus every internal error and every cause of a kept diagnostic,
+//     of any phase, which may sort after its consequences (keepCapRoots);
+//     a kept diagnostic whose root was dropped becomes its own root.
 //
 // It does not modify the diagnostics. sm resolves paths and positions.
 func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
@@ -120,13 +120,26 @@ func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
 	// Step 5 before step 4's numbering: choose the survivors, then number them.
 	var final []*Diagnostic
 	capped := 0
-	for _, d := range dedup {
+	var over []bool // over the cap, when one is
+	for i, d := range dedup {
 		if d.Phase == lowest {
 			if max > 0 && capped >= max {
-				r.Omitted++
+				if over == nil {
+					over = make([]bool, len(dedup))
+				}
+				over[i] = true
 				continue
 			}
 			capped++
+		}
+	}
+	if over != nil {
+		keepCapRoots(dedup, over)
+	}
+	for i, d := range dedup {
+		if over != nil && over[i] {
+			r.Omitted++
+			continue
 		}
 		final = append(final, d)
 	}
@@ -149,6 +162,36 @@ func Order(ds []*Diagnostic, sm *source.SourceMap, max int) Report {
 		r.Diags[i] = Emitted{Root: root, Diag: d}
 	}
 	return r
+}
+
+// keepCapRoots clears over for each diagnostic of ds a survivor names as its
+// Cause, and theirs in turn: the cap never drops a root its consequences
+// are printed with (a failed module's first error sorting after the hundreds
+// of unknown names an empty gen line leaves).
+func keepCapRoots(ds []*Diagnostic, over []bool) {
+	at := make(map[Cause]int, len(ds))
+	for i, d := range ds {
+		k := Cause{Code: d.Code, At: d.At}
+		if _, ok := at[k]; !ok {
+			at[k] = i // the first, which step 4 resolves a Cause to
+		}
+	}
+	var todo []*Diagnostic
+	for i, d := range ds {
+		if !over[i] && d.Cause != nil {
+			todo = append(todo, d)
+		}
+	}
+	for len(todo) > 0 {
+		d := todo[len(todo)-1]
+		todo = todo[:len(todo)-1]
+		if i, ok := at[*d.Cause]; ok && over[i] {
+			over[i] = false
+			if ds[i].Cause != nil {
+				todo = append(todo, ds[i])
+			}
+		}
+	}
 }
 
 // keepCauses appends to kept, once each, the diagnostics of ds that a kept

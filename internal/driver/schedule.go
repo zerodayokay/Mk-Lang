@@ -359,6 +359,7 @@ func (b *build) resolveModule(m *modNode) {
 	}
 	for _, d := range ds {
 		m.noteGen(d)
+		m.notePatternGen(d)
 	}
 	m.diags = append(m.diags, m.info.Diags...)
 	m.diags = append(m.diags, ds...)
