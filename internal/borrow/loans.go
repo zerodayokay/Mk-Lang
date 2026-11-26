@@ -74,7 +74,7 @@ func (c *checker) borrow(st *state, ctx *stmtCtx, s *mir.Statement, p pathID, ex
 		}
 	}
 	if excl && shared {
-		c.e0507Mut(ctx, p)
+		c.e0507Mut(st, ctx, p)
 		return emptySet
 	}
 	if last == dmShared {
@@ -97,15 +97,21 @@ func (c *checker) borrow(st *state, ctx *stmtCtx, s *mir.Statement, p pathID, ex
 }
 
 // e0507Mut reports E0507 for a mut borrow of path p, which is reached
-// through a shared step, at the statement or call. Only the
-// report pass emits.
-func (c *checker) e0507Mut(ctx *stmtCtx, p pathID) {
+// through a shared step, at the statement or call; st, nil where the caller
+// has none, names a global the path reaches (sharedPlace). Only the report
+// pass emits.
+func (c *checker) e0507Mut(st *state, ctx *stmtCtx, p pathID) {
 	if c.captureBackstop(ctx, p, "mut-borrow") {
 		return // captureBackstop reported it
 	}
 	if c.report {
-		d := c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be borrowed mut", c.placeString(p)).
-			Text("place", c.placeString(p))
+		place, global := c.sharedPlace(st, p)
+		if global != "" {
+			c.globalE0507(ctx, global, place, "borrowed mut")
+			return
+		}
+		d := c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be borrowed mut", place).
+			Text("place", place)
 		c.subSliceAlt(d, p)
 	}
 }
@@ -258,8 +264,12 @@ func (c *checker) destinationFV(st *state, ctx *stmtCtx, dst mir.Place, S setID,
 				return // captureBackstop reported it
 			}
 			if c.report {
-				c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be written", c.placeString(p)).
-					Text("place", c.placeString(p))
+				if place, global := c.sharedPlace(st, p); global != "" {
+					c.globalE0507(ctx, global, place, "assigned")
+				} else {
+					c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be written", place).
+						Text("place", place)
+				}
 			}
 			return
 		}

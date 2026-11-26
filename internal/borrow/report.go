@@ -126,6 +126,78 @@ func (c *checker) placeString(p pathID) string {
 	return s
 }
 
+// sharedPlace spells path p for an E0507. A use of a global is a temporary
+// reference to it, so `Table[7] = 42` is the path (*t)[_] of a temporary t;
+// when p's root is such a temporary, holding only the static loan of one var
+// global, and its first step is the deref through it, p is spelled from the
+// global (`Table[_]`, `P.n`, `Total`), and global names it when p is in the
+// global's own memory (one deref). Any other path is placeString's.
+func (c *checker) sharedPlace(st *state, p pathID) (place, global string) {
+	name, place, ok := c.globalPlace(st, p)
+	if !ok {
+		return c.placeString(p), ""
+	}
+	if c.paths.get(p).derefs != 1 {
+		return place, "" // through a reference the global holds
+	}
+	return place, name
+}
+
+// globalPlace is sharedPlace's spelling from a global: its name and the
+// place, or ok false.
+func (c *checker) globalPlace(st *state, p pathID) (name, place string, ok bool) {
+	pi := c.paths.get(p)
+	if st == nil || c.tab == nil || len(pi.steps) == 0 || pi.steps[0].kind != stDeref {
+		return "", "", false
+	}
+	ri := &c.roots[pi.root]
+	temp := ri.kind == rkTemp || ri.kind == rkSlot && ri.local != mir.NoLocal && int(ri.local) < len(c.body.Locals) && c.body.Locals[ri.local].Kind == mir.LocalTemp
+	if !temp {
+		return "", "", false
+	}
+	item := types.NoItem
+	for _, l := range c.sets.get(c.held(st, pi.root)) {
+		lo := &c.loans[l]
+		if !lo.static || lo.target == noRoot || c.roots[lo.target].kind != rkStatic {
+			return "", "", false
+		}
+		it := c.roots[lo.target].item
+		if it == types.NoItem || item != types.NoItem && it != item {
+			return "", "", false
+		}
+		item = it
+	}
+	if item == types.NoItem {
+		return "", "", false
+	}
+	// The deref reaches the global itself, not memory a reference read out
+	// of it or returned from its method points to.
+	if g, global := c.tab.Items().Get(item).Decl.(*types.GlobalDecl); !global || pi.types[0] != g.Type {
+		return "", "", false
+	}
+	name = c.symbol(c.tab.Items().Get(item).Name)
+	if len(pi.steps) == 1 {
+		return name, name, true
+	}
+	rest, cut := strings.CutPrefix(c.placeString(p), c.rootName(pi.root))
+	if !cut {
+		return "", "", false
+	}
+	return name, name + rest, true
+}
+
+// globalE0507 is E0507 for a write (verb "assigned") or a mut borrow (verb
+// "borrowed mut") of a var global: a global is never either, and changes only
+// through its methods.
+func (c *checker) globalE0507(ctx *stmtCtx, name, place, verb string) *diag.Diagnostic {
+	msg := place + " is a global, which is never " + verb
+	if place != name {
+		msg = place + " is part of the global " + name + ", which is never " + verb
+	}
+	return c.errAt(diag.E0507, ctx.span, "%s", msg).Text("place", place).Text("global", name).
+		Alt("a global changes only through its methods: make it, or the part that changes, an atomic or a Mutex")
+}
+
 // fieldName is the name of field i of type t, or its index.
 func (c *checker) fieldName(t types.TypeID, i uint32) string {
 	if c.tab == nil || t == types.NoType {

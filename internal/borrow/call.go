@@ -185,7 +185,7 @@ func (c *checker) sharedMutReceiver(ctx *stmtCtx, a mir.Arg) {
 		if c.tab.Kind(ty) == types.KRef {
 			after = c.tab.Get(ty).Elem
 		}
-		c.e0507Mut(ctx, c.paths.extend(p, step{kind: stDeref, mode: dmShared}, after))
+		c.e0507Mut(nil, ctx, c.paths.extend(p, step{kind: stDeref, mode: dmShared}, after))
 	}
 }
 

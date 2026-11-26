@@ -962,7 +962,7 @@ func (c *checker) slice(st *state, ctx *stmtCtx, s *mir.Statement) setID {
 			// none for this arm), the slice holds nothing, as borrow's
 			// shared-step row.
 			c.useCheck(st, ctx, c.paths.get(p).root, false)
-			c.e0507Mut(ctx, c.paths.extend(p, step{kind: stDeref, mode: dmShared}, ty))
+			c.e0507Mut(st, ctx, c.paths.extend(p, step{kind: stDeref, mode: dmShared}, ty))
 			return emptySet
 		}
 		c.readPlace(st, ctx, rv.Place, false, colRead)
