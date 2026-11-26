@@ -148,7 +148,7 @@ func TestCImport_NegativesDotDot(t *testing.T) {
 	a, b, c := filepath.Join(root, "a", "inc"), filepath.Join(root, "b", "inc"), filepath.Join(root, "c")
 	api, x := filepath.Join(c, "api.h"), filepath.Join(root, "b", "x.h")
 	writeText(t, api, "#include \"../x.h\"\n")
-	writeFiles(t, x, filepath.Join(a, "README"))
+	writeFiles(t, x, filepath.Join(a, "README"), filepath.Join(b, "README"))
 	sep := string(filepath.Separator)
 	raw := b + sep + ".." + sep + "x.h"
 	got, ok := Negatives([]string{api, raw}, []string{a, b}, nil)
