@@ -45,6 +45,12 @@ type Runner struct {
 	// clients at once stall WSL past a case's timeout.
 	WSLSlots chan struct{}
 
+	// RunSlots, when set, bounds non-WSL child runs in flight: a run takes
+	// a slot before its timeout starts and gives it back after, limiting
+	// concurrent first-run executable scans and CPU contention across
+	// parallel tests.
+	RunSlots chan struct{}
+
 	mu    sync.Mutex
 	built map[string]*builtProgram
 }
@@ -209,9 +215,14 @@ func (r *Runner) runOnce(c ProgramCase, target, exe string) (RunResult, bool, er
 		return RunResult{}, false, err
 	}
 	wsl := argv[0] == "wsl.exe"
-	if r.WSLSlots != nil && wsl {
-		r.WSLSlots <- struct{}{}
-		defer func() { <-r.WSLSlots }()
+	if wsl {
+		if r.WSLSlots != nil {
+			r.WSLSlots <- struct{}{}
+			defer func() { <-r.WSLSlots }()
+		}
+	} else if r.RunSlots != nil {
+		r.RunSlots <- struct{}{}
+		defer func() { <-r.RunSlots }()
 	}
 	limit := c.Timeout
 	if wsl {

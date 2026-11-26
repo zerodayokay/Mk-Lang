@@ -168,11 +168,17 @@ func needWSLRun(t *testing.T, target string, strict bool) {
 // kept inside this one too. It is a semaphore, never reassigned.
 var testWSLSlots = make(chan struct{}, 1)
 
+// testRunSlots bounds non-WSL child runs in flight for every runner of this
+// test binary, so parallel program tests do not contend for cores or
+// synchronous first-run executable scans all at once.
+var testRunSlots = make(chan struct{}, 4)
+
 // testRunner is a runner for root with tools, its own cache and executable
-// directories, and testWSLSlots.
+// directories, testWSLSlots and testRunSlots.
 func testRunner(t *testing.T, root string, tools *toolchain.Tools) *Runner {
 	r := NewRunner(root, driver.Config{Tools: tools, CacheDir: t.TempDir()}, t.TempDir())
 	r.WSLSlots = testWSLSlots
+	r.RunSlots = testRunSlots
 	return r
 }
 
@@ -205,6 +211,7 @@ func sharedRunner(t *testing.T, root string, tools *toolchain.Tools) *Runner {
 		}
 		programsShared = NewRunner(root, driver.Config{Tools: tools, CacheDir: cache}, exes)
 		programsShared.WSLSlots = testWSLSlots
+		programsShared.RunSlots = testRunSlots
 	})
 	if programsErr != nil {
 		t.Fatal(programsErr)

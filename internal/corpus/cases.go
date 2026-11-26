@@ -26,8 +26,10 @@ import (
 // ProgramsDir is the programs suite, repository-relative.
 const ProgramsDir = "tests/programs"
 
-// DefaultCaseTimeout is a case's timeout when it states none.
-const DefaultCaseTimeout = 10 * time.Second
+// DefaultCaseTimeout is a case's timeout when it states none. Thirty seconds
+// leaves headroom for synchronous first-run executable scans on Windows even
+// when builds run alongside it.
+const DefaultCaseTimeout = 30 * time.Second
 
 // The profiles and targets a case may name, in their default order.
 var (
@@ -48,7 +50,7 @@ type ProgramCase struct {
 	Stdout   string   // path of the expected stdout bytes, or "" for empty
 	Stderr   string   // path of the expected stderr bytes, or "" for empty
 	Exit     int
-	Timeout  time.Duration // default 10 s
+	Timeout  time.Duration // default 30 s
 	At       string        // "tests/programs/wc.cases:3", the case line, for messages
 }
 
