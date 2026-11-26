@@ -87,3 +87,20 @@ AltDiscarded(s: S): int {
         }
     }
 }
+
+enum V {
+    A(r: Res, o: ?Res)
+    B
+}
+
+SameVariantDiscarded(v: V): int {
+    return match v { // <- E0402
+        .A(r: Res(id: 1), o: some(_)) | .A(r: Res(id: 2), o: some(_)) { 0 }
+        .A(r, o) {
+            r.Close()
+            Take(o)
+            1
+        }
+        .B { 2 }
+    }
+}

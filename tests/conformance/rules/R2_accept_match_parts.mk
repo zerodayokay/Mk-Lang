@@ -96,3 +96,19 @@ PayloadAlternatives(o: ?Res): i32 {
         none { 1 }
     }
 }
+
+SameVariant(k: K): i32 {
+    return match k {
+        .A(r: Res(id: 1)) | .A(r: Res(id: 2)) { 0 }
+        .A(r: Res(id)) { id }
+        .B(n: _) { 1 }
+    }
+}
+
+SameSome(o: ?Res): i32 {
+    return match o {
+        some(Res(id: 1)) | some(Res(id: 2)) { 0 }
+        some(Res(id)) { id }
+        none { 1 }
+    }
+}
