@@ -426,6 +426,10 @@ func (c *checker) statement(st *state, ctx *stmtCtx, s *mir.Statement) {
 		c.asm(st, ctx, &c.body.Asms[s.Asm])
 	case mir.StScopeEnd:
 		c.scopeEnd(st, ctx, s.Local)
+	case mir.StConsume:
+		// A move of Place whose value goes nowhere: a whole local is
+		// moved, a part of a temporary taken (operand).
+		c.operand(st, ctx, mir.Move(s.Place))
 	case mir.StJoin, mir.StNop:
 		// StJoin is a use of s (liveness); its transfer changes nothing:
 		// the scope's loans end at s's scope end.

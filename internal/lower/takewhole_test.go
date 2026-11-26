@@ -1,8 +1,10 @@
 // Why: a by-value match that takes a linear struct of plain fields apart
 // copies its bindings, so lower adds one move out of it for the loan
 // checker to see the struct consumed; that move should copy a scalar, not
-// an array, and alternatives of the same shape must make it too.
-// What: TestTakeWholeScalarField, TestTakeAltsSameShape and scrutinee.
+// an array, and alternatives of the same shape must make it too. A struct
+// with no fields has nothing to move, so StConsume ends it.
+// What: TestTakeWholeScalarField, TestTakeAltsSameShape, TestTakeWholeNoFields,
+// TestDestructureNoFields and scrutinee.
 // How: the printed MIR of small matches, read for the move.
 
 package lower
@@ -49,6 +51,63 @@ Use(o: ?T): int {
 	x := scrutinee(t, got)
 	if n := strings.Count(got, "= move ("+x+" as some).0.0"); n != 2 {
 		t.Errorf("want a take in the alternative's arm and in some(T(id)), got %d:\n%s", n, got)
+	}
+}
+
+func TestTakeWholeNoFields(t *testing.T) {
+	l := lowerSrc(t, `linear struct E {}
+Use(o: ?E): int {
+	return match o {
+		some(E()) { 1 }
+		none { 0 }
+	}
+}
+Top(e: E): int {
+	return match e {
+		E() { 2 }
+	}
+}
+Skip(o: ?E): int {
+	return match &o {
+		some(E()) { 1 }
+		none { 0 }
+	}
+}
+`)
+	got := l.print("Use")
+	if x := scrutinee(t, got); !strings.Contains(got, "consume ("+x+" as some).0") {
+		t.Errorf("some(E()) does not consume the payload:\n%s", got)
+	}
+	got = l.print("Top")
+	if x := scrutinee(t, got); !strings.Contains(got, "consume "+x+"\n") {
+		t.Errorf("E() does not consume the temporary:\n%s", got)
+	}
+	if got = l.print("Skip"); strings.Contains(got, "consume") {
+		t.Errorf("a shared match consumes:\n%s", got)
+	}
+}
+
+func TestDestructureNoFields(t *testing.T) {
+	l := lowerSrc(t, `linear struct E {}
+linear struct S {
+	e: E
+	n: int
+}
+Top(e: E) {
+	E() := e
+}
+Nested(s: S): int {
+	S(e: E(), n) := s
+	return n
+}
+`)
+	got := l.print("Top")
+	if x := scrutinee(t, got); !strings.Contains(got, "consume "+x+"\n") {
+		t.Errorf("E() := e does not consume the temporary:\n%s", got)
+	}
+	got = l.print("Nested")
+	if x := scrutinee(t, got); !strings.Contains(got, "consume "+x+".0") {
+		t.Errorf("S(e: E(), n) := s does not consume field e:\n%s", got)
 	}
 }
 

@@ -318,6 +318,8 @@ func (v *validator) stmt(st *Statement, holders []int) {
 			v.fail("M9", "join of _%d, which is not a scope local", st.Local)
 		}
 	case StNop:
+	case StConsume:
+		v.place(st.Place)
 	case StAsm:
 		v.asm(st, v.curStmt)
 	default:

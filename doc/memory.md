@@ -273,6 +273,24 @@ Drop(p: Pair) {
 }
 ```
 
+- A linear struct with no fields has nothing to bind. A struct pattern that names it takes it apart, in a destructure or in an arm:
+
+```mk
+// verdict: ok
+linear struct Token {}
+
+Spend(t: Token) {
+    Token() := t
+}
+
+SpendSome(o: ?Token) {
+    match o {
+        some(Token()) {}
+        none {}
+    }
+}
+```
+
 - Leaving a statement by `try` or `else` while a linear temporary of it is still live is E0402.
 
 **Fallible calls consume only on success.** A function returning `E!T` that takes a non-plain argument by value consumes it only when it succeeds. On the error edge of `try` or `else`, the caller still owns the argument and must still consume it, for example in an `onerr`:

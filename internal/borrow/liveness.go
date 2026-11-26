@@ -191,6 +191,8 @@ func (c *checker) stmtUses(st *mir.Statement, buf []uint32) ([]uint32, rootID) {
 		return buf, noRoot
 	case mir.StJoin:
 		return c.fieldUses(mir.LocalPlace(st.Local), append(buf, uint32(st.Local))), noRoot
+	case mir.StConsume:
+		return c.operandUses(mir.Move(st.Place), buf), noRoot
 	case mir.StAsm:
 		// Inline asm: each In is a use; each Out place is written. An asm may
 		// write several whole locals and the table has one def, so the

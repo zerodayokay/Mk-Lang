@@ -594,12 +594,17 @@ func (bl *builder) takeAltFields(flat []ast.Pattern, at func(*ast.PatField, int)
 // while p is not (a linear struct of plain fields, as `Ticket(id)`): its
 // bindings copy, so nothing is taken out of p, and borrow sees a part
 // consumed only as a take. One field, a scalar where there is one, moves
-// into a statement temporary, as a destructure that takes nothing does.
+// into a statement temporary, as a destructure that takes nothing does. A
+// struct with no fields has nothing to move: StConsume ends p itself.
 func (bl *builder) takeWhole(p mir.Place, at source.Span) {
 	t := bl.b.PlaceType(p)
 	st := bl.tab.Get(t)
 	d, ok := bl.cfg.Items.Get(st.Item).Decl.(*types.StructDecl)
-	if st.Kind != types.KNamed || !ok || len(d.Fields) == 0 || bl.plain(t, at) {
+	if st.Kind != types.KNamed || !ok || bl.plain(t, at) {
+		return
+	}
+	if len(d.Fields) == 0 {
+		bl.emit(mir.Statement{Kind: mir.StConsume, Place: p, Span: bl.span(at)})
 		return
 	}
 	k, ft := -1, types.NoType

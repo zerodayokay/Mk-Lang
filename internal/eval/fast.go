@@ -152,7 +152,7 @@ func (e *Evaluator) flatOp(cd *compiled, op *mir.Operand) (fop, bool) {
 // flatStmt builds the flat form of a statement, iSlow when it has none.
 func (e *Evaluator) flatStmt(cd *compiled, st *mir.Statement) instr {
 	switch st.Kind {
-	case mir.StNop, mir.StScopeEnd:
+	case mir.StNop, mir.StScopeEnd, mir.StConsume:
 		return instr{kind: iNop}
 	case mir.StAssign:
 	default:

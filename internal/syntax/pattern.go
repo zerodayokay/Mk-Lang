@@ -448,7 +448,9 @@ func (p *parser) recordPatOf(x ast.Expr) *ast.RecordPat {
 	if p.coverRests[id] {
 		rp.Rest = true
 	}
-	if len(rp.Fields) == 0 {
+	// A struct with no fields is taken apart by `T() := e`, which names
+	// every field; any other pattern binds at least one.
+	if len(rp.Fields) == 0 && (rp.Path == nil || rp.Rest) {
 		p.syntaxErr(sp, "nothing to bind")
 	}
 	p.adopt(rp, &rp.Base, sp)

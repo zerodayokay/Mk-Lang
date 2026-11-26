@@ -289,10 +289,19 @@ func (bl *builder) destructure(s *ast.DestructureStmt) {
 		return
 	}
 	if !dt.has {
-		// Every leaf of an accepted pattern is a binding or `_` (the parser
-		// rejects a pattern with nothing to bind), and every `_` leaf is a
-		// candidate, so one always exists.
-		source.ICEf(s.Span(), "lower: a destructure of a non-plain value with no plain leaf to take")
+		// Every leaf of an accepted pattern is a binding, `_` or a struct
+		// with no fields, and every `_` leaf is a candidate. With none,
+		// each leaf is such a struct, which StConsume ended, or the
+		// pattern names no field: `T() := e` on a struct with no fields,
+		// which ends t.
+		switch {
+		case dt.consumed:
+		case len(s.Pat.Fields) == 0 && !s.Pat.Elems:
+			bl.emit(mir.Statement{Kind: mir.StConsume, Place: t, Span: bl.span(s.Span())})
+		default:
+			source.ICEf(s.Span(), "lower: a destructure of a non-plain value with no plain leaf to take")
+		}
+		return
 	}
 	h := bl.newTemp(bl.b.PlaceType(dt.leaf), dt.at)
 	bl.assign(bl.b.Place(h), use(mir.Move(dt.leaf)), dt.at)
@@ -303,6 +312,7 @@ func (bl *builder) destructure(s *ast.DestructureStmt) {
 // leaf, else the first plain binding.
 type destructTake struct {
 	took     bool
+	consumed bool // a StConsume ended a struct with no fields
 	has      bool
 	wildcard bool
 	leaf     mir.Place
@@ -387,6 +397,12 @@ func (bl *builder) bindSub(f *ast.PatField, t mir.Place, k uint32, isVar bool, d
 		fp := bl.field(t, k, ft)
 		for j, sf := range p.Fields {
 			bl.bindSub(sf, fp, bl.fieldIndex(ft, sf, uint32(j)), isVar, dt)
+		}
+		if len(p.Fields) == 0 && !bl.plain(ft, p.Span()) {
+			// A struct with no fields, `(e: Empty(), n) := r`: nothing
+			// is taken out of it, so StConsume ends it.
+			bl.emit(mir.Statement{Kind: mir.StConsume, Place: fp, Span: bl.span(p.Span())})
+			dt.consumed = true
 		}
 	default:
 		source.ICEf(p.Span(), "lower: destructure sub-pattern %T", p)
