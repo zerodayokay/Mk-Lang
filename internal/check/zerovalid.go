@@ -367,8 +367,11 @@ func (c *Checker) integerArg(env *Env, t types.TypeID, atomic bool) bool {
 // zero-valid `T` (code 0 is success). Not: references and `fn` values
 // (never null), `str` and slices (an empty one holds a non-null pointer),
 // error-set values (codes start at 1), `never`, interfaces, open type
-// parameters, a struct with an invariant, and anything that is not Plain
-// (`Box`, `Cell`, `Mutex`, `Arena`, linear and unique types). A type
+// parameters, a struct with an invariant, anything linear (`Box`), and a
+// unique type zeroIdentity does not admit (`Mutex`, `Arena`, view structs).
+// An atomic word or a `Cell` of a zero-valid T is zero-valid, and so is
+// anything unique only through such parts, since zero bytes make a fresh
+// value, never a copy (MKH-492: a global array of atomics). A type
 // parameter narrowed by `if T is X` is X.
 //
 // Every type item the answer depends on is recorded in rec: its shape (the
@@ -402,7 +405,7 @@ func (c *Checker) zeroValid(env *Env, t types.TypeID, rec recorder, seen map[typ
 			rec.signature(it.Key)
 		}
 	}
-	if c.FactsIn(env, t).Kind != types.Plain {
+	if k := c.FactsIn(env, t).Kind; k != types.Plain && (k == types.Linear || !c.zeroIdentity(ty)) {
 		return false
 	}
 	switch ty.Kind {
@@ -443,6 +446,49 @@ func (c *Checker) zeroValid(env *Env, t types.TypeID, rec recorder, seen map[typ
 			}
 			return false
 		}
+	}
+	return false
+}
+
+// zeroIdentity reports whether ty, a unique type, may still be zero-valid:
+// it is unique only by the identity of the words it holds, and a value of
+// zero bytes is a fresh one, never a copy. That is `raw.Atomic[T]` and
+// `Cell[T]` (a word of T), and an array, record, struct or enum that is
+// unique only through its parts (zeroValid judges each). Not: a mut
+// reference or optional (judged before or refused here), a view struct, a
+// type with an `unsafe impl` Send or Share (its author's invariant), and
+// the other compiler-known handles (Mutex, Chan, SpinCore, Arena, Scope,
+// Alloc, Heap, Io, System), whose zero bytes are no value the language
+// promises.
+func (c *Checker) zeroIdentity(ty *types.Type) bool {
+	switch ty.Kind {
+	case types.KArray, types.KRecord:
+		return true
+	case types.KNamed:
+	default:
+		return false
+	}
+	k := &c.known
+	if ty.Item == types.NoItem {
+		return false
+	}
+	if ty.Item == k.Atomic || ty.Item == k.Cell {
+		return true
+	}
+	for _, h := range []types.ItemID{k.Mutex, k.Chan, k.SpinCore, k.Arena, k.Scope, k.Alloc, k.Heap, k.Io, k.System} {
+		if h != types.NoItem && ty.Item == h {
+			return false
+		}
+	}
+	it := c.cfg.Items.Get(ty.Item)
+	if send, share := c.assertions(it); send != types.NoItem || share != types.NoItem {
+		return false
+	}
+	switch d := it.Decl.(type) {
+	case *types.StructDecl:
+		return !d.Linear && !d.View
+	case *types.EnumDecl:
+		return true
 	}
 	return false
 }

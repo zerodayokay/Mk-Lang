@@ -182,6 +182,28 @@ $ mk run zeroed.mk
 640 0 false
 ```
 
+An atomic word or a `Cell` of a zero-valid `T` is zero-valid too, and so is a struct or array unique only through them: zero bytes make fresh words, never copies. That is how a global table of atomics starts, which `[e; n]` cannot build, since it copies `e` and an atomic is not Plain (E0408).
+
+```mk
+// verdict: ok
+import std.atomic
+import std.mem
+
+var Claims: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()
+
+export Main(sys: &System): WriteError!void {
+    Claims[7].Store(42, atomic.Release)
+    a := Claims[7].Load(atomic.Acquire)
+    b := Claims[8].Load(atomic.Acquire)
+    try sys.Print("{a} {b}\n", (a, b))
+}
+```
+
+```text
+$ mk run claims.mk
+42 0
+```
+
 ## Examples
 
 Each program below runs as written with `mk run`.
@@ -1086,7 +1108,8 @@ export Zeroed[T](): T
 A T whose bytes are all zero: every integer and float 0, every bool
 false, every raw pointer null, every optional none. T must be zero-valid
 and not an error union (E0701 otherwise): a C import's struct of any
-size, or an array or struct of such parts. O(size of T); allocates
-nothing.
+size, an atomic word or Cell of a zero-valid T, or an array or struct
+of such parts, so it starts a global table of atomics. O(size of T);
+allocates nothing.
 
 <!-- api:end -->
