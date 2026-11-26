@@ -134,8 +134,8 @@ The cache is a content-addressed store. It lives in `MK_CACHE` if set, else in o
 | Function check result | Compiler build ID, the function's token hash, the hashes in its read set |
 | Const value, generator output | The bodies entered, the consts, layouts and target facts read, and the fuel |
 | Object pack | Compiler build ID, target, profile, CPU, the PGO profile's hash in release, the sorted instance keys of the pack |
-| C bindings | Clang's identity, the target, defines, sysroot, search paths and the hash of every header read; a hit also needs every path earlier on the search path that would shadow a header read to be absent |
-| C object (shim, C source, assembly source) | Clang's identity, the command line, the source and the hash of every header the compile read, with the same check of the paths that would shadow them |
+| C bindings | Clang's identity, the target, defines, sysroot and search paths name a list of up to four candidates, one per header content; a candidate holds while every header read has its hash and every path that would shadow one is absent: the same name earlier on the search path, or beside any file of the unit (a quoted include searches beside its includer first, and on the msvc target beside the whole include stack) |
+| C object (shim, C source, assembly source) | Clang's identity, the command line and the source name the same kind of list, with the search path including the directories of the source's own `-I`, `-iquote`, `-isystem` and `-idirafter` flags; a flag that changes the search otherwise leaves the object uncached |
 
 Instances are grouped into object packs by owning module, split by size, so a body edit recompiles one pack. Entries are written to a temporary name and renamed, so concurrent `mk` processes and a crash never leave a torn entry. File size and modification time are a hint to skip rehashing, never part of a key. A module that read only the pointer size shares its interface across 64-bit targets.
 
