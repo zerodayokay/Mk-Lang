@@ -737,7 +737,7 @@ func (r *run) methodSignature(m *eval.Machine, c *eval.Call) *types.EvalError {
 	}
 	ts = append(ts, tok{kind: ast.TokRParen})
 	if s.Result != types.Void || s.Errors != types.EmptyErrors {
-		r.valueResult(s.Result, s.Errors, "the method `"+r.sym(s.Name)+"`")
+		r.valueResult(s.Result, s.Errors, func() string { return "the method `" + r.sym(s.Name) + "`" })
 		ts = append(ts, tok{kind: ast.TokColon})
 		ts = append(ts, r.typeToks(r.c.Types.ReturnType(s.Result, s.Errors))...)
 	}
@@ -757,11 +757,11 @@ func (r *run) methodSignature(m *eval.Machine, c *eval.Call) *types.EvalError {
 // argument's E!T) has no spelling: a written E!T result is one that fails,
 // so the text would read back as another type. The first one fails the
 // run (spellFailed).
-func (r *run) valueResult(result types.TypeID, errs types.ErrorSetID, what string) {
+func (r *run) valueResult(result types.TypeID, errs types.ErrorSetID, what func() string) {
 	if r.unspelled != nil || errs != types.EmptyErrors || r.c.Types.Get(result).Kind != types.KErrorUnion {
 		return
 	}
-	r.unspelled = fail("gen: %s has no spelling in generated code: its result `%s` is an error union held as a value, which cannot fail, and a written E!T result is one that fails", what, r.c.Types.TypeString(result, nil))
+	r.unspelled = fail("gen: %s has no spelling in generated code: its result `%s` is an error union held as a value, which cannot fail, and a written E!T result is one that fails", what(), r.c.Types.TypeString(result, nil))
 }
 
 // spellFailed is the run's failure for a type spelled since the last call
@@ -915,7 +915,9 @@ func (r *run) fnToks(fn *types.FnType) []tok {
 	}
 	ts = append(ts, tok{kind: ast.TokRParen})
 	if fn.Result != types.Void || fn.Errors != types.EmptyErrors {
-		r.valueResult(fn.Result, fn.Errors, "the fn type `"+r.c.Types.TypeString(r.c.Types.Fn(*fn), nil)+"`")
+		r.valueResult(fn.Result, fn.Errors, func() string {
+			return "the fn type `" + r.c.Types.TypeString(r.c.Types.Fn(*fn), nil) + "`"
+		})
 		ts = append(ts, tok{kind: ast.TokColon})
 		ts = append(ts, r.typeToks(r.c.Types.ReturnType(fn.Result, fn.Errors))...)
 	}

@@ -79,3 +79,14 @@ func TestValueResultUnspelled(t *testing.T) {
 		t.Fatalf("failing method:\n%s", out.Text())
 	}
 }
+
+func TestFnToksDoesNotInternSpelledType(t *testing.T) {
+	w := newWorld(t)
+	r := &run{c: w.context(1)}
+	fn := &types.FnType{Result: types.I32}
+	before := w.tab.Len()
+	r.fnToks(fn)
+	if w.tab.Len() != before {
+		t.Fatal("spelling an ordinary function type interned a type to build an unused diagnostic")
+	}
+}
