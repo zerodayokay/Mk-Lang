@@ -269,7 +269,7 @@ var cr2CtAbsent = map[string][]string{
 	"mk.std.crypto.AesOrtho":              {"kernel-pgo", "masked-pgo"}, // AesSchedule, AesSubWord
 	"mk.std.crypto.AesSbox":               {"masked-pgo"},               // AesSchedule, AesSubWord, AesGcm:Ctr
 	"mk.std.crypto.AesShiftRows":          {"masked-pgo"},               // AesGcm:Ctr
-	"mk.std.crypto.AesSubWord":            {"*"},
+	"mk.std.crypto.AesSubWord":            {"kernel", "masked"},
 	"mk.std.crypto.Be32":                  {"*"},
 	"mk.std.crypto.Be64":                  {"kernel", "masked", "masked-pgo"},
 	"mk.std.crypto.GcmJ0":                 {"*"},

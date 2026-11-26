@@ -10,6 +10,7 @@ package std
 import (
 	"debug/dwarf"
 	"debug/elf"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -157,8 +158,26 @@ var ctAbsent = map[string][]string{
 // inlined only into a public function (ctPublic), which the test does not
 // read. A function unrecorded names that a read function does hold fails
 // too, so the table stays exact. So an absence for any other reason fails.
+//
+// A function absent or unrecorded names for a build must not be held out
+// of line there either: no reading of that build covers the body, and its
+// allowance is the count of another build, so the body could gain jumps up
+// to that count unread. It fails until its jumps are read and the build
+// comes off the list.
 func ctRequirePresent(t *testing.T, table, build string, allow map[string]int, seen map[string]bool, absent, unrecorded map[string][]string, into ctInlinedInto, read func(string) bool) {
 	t.Helper()
+	problems, notes := ctPresence(table, build, allow, seen, absent, unrecorded, into, read)
+	for _, n := range notes {
+		t.Log(n)
+	}
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
+
+// ctPresence is ctRequirePresent's rule: the problems it finds, sorted, and
+// a note for each absent function on where its copies are.
+func ctPresence(table, build string, allow map[string]int, seen map[string]bool, absent, unrecorded map[string][]string, into ctInlinedInto, read func(string) bool) (problems, notes []string) {
 	held := map[string]bool{}
 	for fn := range seen {
 		held[cr2CtInstance.ReplaceAllString(fn, "")] = true
@@ -166,17 +185,17 @@ func ctRequirePresent(t *testing.T, table, build string, allow map[string]int, s
 	inBuild := func(m map[string][]string, fn string) bool {
 		return slices.Contains(m[fn], build) || slices.Contains(m[fn], "*")
 	}
-	var missing []string
 	for fn := range allow {
 		switch {
+		case held[fn] && inBuild(unrecorded, fn):
+			problems = append(problems, fmt.Sprintf("%s: listed as unrecorded in the %s build, but the build holds it out of line", fn, build))
+		case held[fn] && inBuild(absent, fn):
+			problems = append(problems, fmt.Sprintf("%s: listed absent from the %s build, but the build holds it out of line: read its jumps there and take the build off its absent list", fn, build))
 		case held[fn]:
-			if inBuild(unrecorded, fn) {
-				t.Errorf("%s: listed as unrecorded in the %s build, but the build holds it out of line", fn, build)
-			}
 		case inBuild(unrecorded, fn):
-			for c := range into[fn] {
+			for _, c := range slices.Sorted(maps.Keys(into[fn])) {
 				if seen[c] && read(c) {
-					t.Errorf("%s: listed as unrecorded in the %s build, but %s, which the test reads, holds it inlined: drop it from the table", fn, build, c)
+					problems = append(problems, fmt.Sprintf("%s: listed as unrecorded in the %s build, but %s, which the test reads, holds it inlined: drop it from the table", fn, build, c))
 				}
 			}
 		case inBuild(absent, fn):
@@ -188,18 +207,17 @@ func ctRequirePresent(t *testing.T, table, build string, allow map[string]int, s
 			}
 			sort.Strings(readers)
 			if len(readers) == 0 {
-				t.Errorf("%s: listed absent from the %s build, but no function the test reads holds it inlined (inlined into %v): find where it went", fn, build, slices.Sorted(maps.Keys(into[fn])))
+				problems = append(problems, fmt.Sprintf("%s: listed absent from the %s build, but no function the test reads holds it inlined (inlined into %v): find where it went", fn, build, slices.Sorted(maps.Keys(into[fn]))))
 				continue
 			}
-			t.Logf("%s: not in the %s build, inlined into %s", fn, build, strings.Join(readers, ", "))
+			notes = append(notes, fmt.Sprintf("%s: not in the %s build, inlined into %s", fn, build, strings.Join(readers, ", ")))
 		default:
-			missing = append(missing, fn)
+			problems = append(problems, fmt.Sprintf("%s is in %s but not in the %s build, so its reading covers no body here: find where it went, and if it is inlined into a checked caller list it as absent for this build", fn, table, build))
 		}
 	}
-	sort.Strings(missing)
-	for _, fn := range missing {
-		t.Errorf("%s is in %s but not in the %s build, so its reading covers no body here: find where it went, and if it is inlined into a checked caller list it as absent for this build", fn, table, build)
-	}
+	sort.Strings(problems)
+	sort.Strings(notes)
+	return problems, notes
 }
 
 // ctInlinedInto maps a function, by name with its instance hash stripped,
@@ -690,6 +708,32 @@ func TestSTDCRYPTO_ConstantTimeClassifier(t *testing.T) {
 	other3, counts3 := ctClassify(ctParse(dis3))
 	if c := counts3["mk.std.crypto.Tag"]; c[0] != 0 || len(other3["mk.std.crypto.Tag"]) != 1 {
 		t.Fatalf("got counts %v, other %q; want no check and the je as other: the scan stops at the jmp", c, other3["mk.std.crypto.Tag"])
+	}
+}
+
+// TestSTDCRYPTO_PresenceRule plants each case of ctPresence: a listed
+// function held out of line passes, and fails when the absent or the
+// unrecorded list names its build; an absent one passes when a function the
+// test reads holds it inlined and fails when only an unread one does; an
+// unrecorded one fails when a read function holds it; and a listed function
+// missing from the build, which no list names, fails.
+func TestSTDCRYPTO_PresenceRule(t *testing.T) {
+	allow := map[string]int{"held": 0, "heldAbsent": 0, "heldUnrecorded": 0, "inlined": 0, "inlinedUnread": 0, "unrecorded": 0, "unrecordedRead": 0, "gone": 0}
+	seen := map[string]bool{"held": true, "heldAbsent": true, "heldUnrecorded": true, "reader": true, "public": true}
+	absent := map[string][]string{"heldAbsent": {"b"}, "heldUnrecorded": {"*"}, "inlined": {"b"}, "inlinedUnread": {"*"}, "unrecorded": {"b"}, "unrecordedRead": {"b"}}
+	unrecorded := map[string][]string{"heldUnrecorded": {"b"}, "unrecorded": {"b"}, "unrecordedRead": {"*"}}
+	into := ctInlinedInto{"inlined": {"reader": true}, "inlinedUnread": {"public": true}, "unrecordedRead": {"reader": true}}
+	read := func(fn string) bool { return fn != "public" }
+	problems, notes := ctPresence("allow", "b", allow, seen, absent, unrecorded, into, read)
+	var got []string
+	for _, p := range problems {
+		got = append(got, strings.TrimSuffix(strings.Fields(p)[0], ":"))
+	}
+	if want := []string{"gone", "heldAbsent", "heldUnrecorded", "inlinedUnread", "unrecordedRead"}; !slices.Equal(got, want) {
+		t.Errorf("problems for %v, want %v:\n%s", got, want, strings.Join(problems, "\n"))
+	}
+	if len(notes) != 1 || !strings.HasPrefix(notes[0], "inlined: ") {
+		t.Errorf("notes %q, want the one for inlined", notes)
 	}
 }
 
