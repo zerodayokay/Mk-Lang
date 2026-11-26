@@ -188,8 +188,10 @@ func TestImportHintNotInLibrary(t *testing.T) {
 
 // TestImportHintNotForOtherTables: an allocator whose table is not a
 // constant in the caller (the heap's, set at run time) gives the caller's
-// pack no hint, and neither does a table of the program's own, whose
-// entries are in the caller's pack already.
+// pack no hint, and a table of the program's own gives one only for its
+// entries that another pack defines. Packs are cut by instance name
+// (iface.PackCutAfter), so which of NoTable's entries share Main's pack
+// follows their names' hashes: the hint must name exactly the others.
 func TestImportHintNotForOtherTables(t *testing.T) {
 	tools := needTools(t)
 	app := "import std.mem\n\n" +
@@ -205,12 +207,26 @@ func TestImportHintNotForOtherTables(t *testing.T) {
 		"}\n"
 	dir := writeTree(t, hintFiles(app))
 	cfg := Config{Root: dir, Target: pkTarget(), Profile: types.Release, Tools: tools, CacheDir: filepath.Join(t.TempDir(), "cache")}
-	_, ll := hintPackLL(t, cfg, filepath.Join(t.TempDir(), "app.exe"), "mk.app.Main")
+	lls, ll := hintPackLL(t, cfg, filepath.Join(t.TempDir(), "app.exe"), "mk.app.Main")
 	if !strings.Contains(ll, "mk.app.NoAlloc") {
 		t.Fatalf("Main's pack does not hold NoTable's entries:\n%s", ll)
 	}
-	if strings.Contains(ll, "mk.importhint") {
-		t.Errorf("Main's pack has an import hint: %v", hintCalls(ll))
+	var want []string
+	for _, e := range []string{"mk.app.NoAlloc", "mk.app.NoFree", "mk.app.NoResize"} {
+		if defines(ll, e) {
+			continue
+		}
+		elsewhere := false
+		for _, other := range lls {
+			elsewhere = elsewhere || defines(other, e)
+		}
+		if !elsewhere {
+			t.Fatalf("no pack defines %s", e)
+		}
+		want = append(want, e)
+	}
+	if got := slices.Sorted(slices.Values(hintCalls(ll))); !slices.Equal(got, want) {
+		t.Errorf("Main's pack hints %v, want %v: NoTable's entries that another pack defines, never the heap's", got, want)
 	}
 }
 
