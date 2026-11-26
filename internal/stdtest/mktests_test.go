@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -291,6 +292,41 @@ func stdTestTargets() []types.Target {
 	return ts
 }
 
+const (
+	// stdTestCacheMaxRootLen keeps "<root>\mkst-<10 digits>" strictly under 85 bytes.
+	stdTestCacheMaxRootLen = 68
+	stdTestStaleCacheAge   = 24 * time.Hour
+)
+
+var (
+	stdTestSweepMu   sync.Mutex
+	stdTestSweptRoot = map[string]bool{}
+)
+
+// sweepStaleStdTestCaches removes mkst-* directories under root older than
+// stdTestStaleCacheAge (left behind by a killed process) without racing live tests.
+func sweepStaleStdTestCaches(root string, cutoff time.Time) {
+	stdTestSweepMu.Lock()
+	if stdTestSweptRoot[root] {
+		stdTestSweepMu.Unlock()
+		return
+	}
+	stdTestSweptRoot[root] = true
+	stdTestSweepMu.Unlock()
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "mkst-") {
+			continue
+		}
+		if info, err := e.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.RemoveAll(filepath.Join(root, e.Name()))
+		}
+	}
+}
+
 // stdTestCacheDir returns a temporary cache directory whose path does not grow
 // with TEMP on Windows. Starting 64 copies of an executable at once fails
 // there with ERROR_NOT_ENOUGH_MEMORY once the image path reaches ~190 bytes,
@@ -304,20 +340,40 @@ func stdTestCacheDir(t *testing.T) string {
 	if uc, err := os.UserCacheDir(); err == nil && uc != "" {
 		roots = append(roots, uc)
 	}
-	if sd := os.Getenv("SystemDrive"); sd != "" {
+	if sd := strings.TrimRight(os.Getenv("SystemDrive"), `\/`); sd != "" {
 		roots = append(roots, sd+string(filepath.Separator))
 	}
 	if vol := filepath.VolumeName(os.TempDir()); vol != "" {
 		roots = append(roots, vol+string(filepath.Separator))
 	}
-	for _, maxLen := range []int{75, 1 << 20} {
+	return stdTestCacheDirFrom(t, roots)
+}
+
+func stdTestCacheDirFrom(t *testing.T, rawRoots []string) string {
+	t.Helper()
+	seen := map[string]bool{}
+	var roots []string
+	for _, r := range rawRoots {
+		if r == "" {
+			continue
+		}
+		key := strings.ToLower(filepath.Clean(r))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		roots = append(roots, r)
+	}
+	cutoff := time.Now().Add(-stdTestStaleCacheAge)
+	for _, maxLen := range []int{stdTestCacheMaxRootLen, 1 << 20} {
 		for _, r := range roots {
 			if len(r) > maxLen {
 				continue
 			}
+			sweepStaleStdTestCaches(r, cutoff)
 			dir, err := os.MkdirTemp(r, "mkst-")
 			if err == nil {
-				t.Cleanup(func() { os.RemoveAll(dir) })
+				t.Cleanup(func() { _ = os.RemoveAll(dir) })
 				return dir
 			}
 		}
@@ -325,8 +381,106 @@ func stdTestCacheDir(t *testing.T) string {
 	return t.TempDir()
 }
 
+// TestStdTestCacheDir checks stdTestCacheDir's path bound, fallback order,
+// uniqueness, and t.Cleanup removal.
+func TestStdTestCacheDir(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows cache-root selection is Windows-only")
+	}
+	base := t.TempDir()
+	longRoot := filepath.Join(base, strings.Repeat("x", max(1, 72-len(base)-1)))
+	if err := os.Mkdir(longRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shortBase := base
+	if len(filepath.Join(shortBase, "s")) > stdTestCacheMaxRootLen {
+		shortBase = stdTestCacheDir(t)
+	}
+	shortRoot := filepath.Join(shortBase, "s")
+	if err := os.Mkdir(shortRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if len(shortRoot) > stdTestCacheMaxRootLen {
+		t.Skipf("no <= %d-byte root available (%q is %d bytes)", stdTestCacheMaxRootLen, shortRoot, len(shortRoot))
+	}
+	missingRoot := filepath.Join(base, "missing")
+
+	var created []string
+	t.Run("prefers_short_and_cleans_up", func(t *testing.T) {
+		d1 := stdTestCacheDirFrom(t, []string{missingRoot, longRoot, shortRoot, shortRoot})
+		d2 := stdTestCacheDirFrom(t, []string{missingRoot, longRoot, shortRoot})
+		if d1 == d2 {
+			t.Fatalf("duplicate cache dir %q", d1)
+		}
+		for _, d := range []string{d1, d2} {
+			if filepath.Dir(d) != shortRoot {
+				t.Fatalf("picked %q, want under %q (skipping %d-byte %q)", d, shortRoot, len(longRoot), longRoot)
+			}
+			if len(d) >= 85 {
+				t.Fatalf("cache dir %q is %d bytes, want < 85", d, len(d))
+			}
+			created = append(created, d)
+		}
+	})
+	for _, d := range created {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Fatalf("cache dir %q survived t.Cleanup: %v", d, err)
+		}
+	}
+
+	t.Run("all_roots_unwritable_falls_back_to_temp", func(t *testing.T) {
+		d := stdTestCacheDirFrom(t, []string{missingRoot})
+		if info, err := os.Stat(d); err != nil || !info.IsDir() {
+			t.Fatalf("fallback %q is not an existing directory: %v", d, err)
+		}
+	})
+
+	t.Run("respects_short_LocalAppData_under_long_TEMP", func(t *testing.T) {
+		long := filepath.Join(base, strings.Repeat("t", max(1, 160-len(base)-1)))
+		if err := os.Mkdir(long, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GOTMPDIR", "")
+		t.Setenv("TEMP", long)
+		t.Setenv("TMP", long)
+		t.Setenv("LocalAppData", shortRoot)
+		d := stdTestCacheDir(t)
+		if filepath.Dir(d) != shortRoot || len(d) >= 85 {
+			t.Fatalf("stdTestCacheDir = %q (len %d), want under %q and < 85 bytes", d, len(d), shortRoot)
+		}
+	})
+
+	t.Run("sweeps_only_stale_mkst_dirs", func(t *testing.T) {
+		sweepRoot := filepath.Join(base, "sweep")
+		if err := os.Mkdir(sweepRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stale := filepath.Join(sweepRoot, "mkst-old")
+		live := filepath.Join(sweepRoot, "mkst-live")
+		other := filepath.Join(sweepRoot, "keep-me")
+		for _, p := range []string{stale, live, other} {
+			if err := os.Mkdir(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		oldTime := time.Now().Add(-48 * time.Hour)
+		if err := os.Chtimes(stale, oldTime, oldTime); err != nil {
+			t.Fatal(err)
+		}
+		_ = stdTestCacheDirFrom(t, []string{sweepRoot})
+		if _, err := os.Stat(stale); !os.IsNotExist(err) {
+			t.Fatalf("stale dir %q was not swept: %v", stale, err)
+		}
+		for _, p := range []string{live, other} {
+			if _, err := os.Stat(p); err != nil {
+				t.Fatalf("non-stale dir %q disappeared: %v", p, err)
+			}
+		}
+	})
+}
+
 // TestStdMkProcLongTemp runs std.proc's 64-worker Supervise block under a
-// TEMP past 120 bytes: stdTestCacheDir keeps mk-test.exe at a short path that
+// TEMP past 150 bytes: stdTestCacheDir keeps mk-test.exe at a short path that
 // does not grow with TEMP.
 func TestStdMkProcLongTemp(t *testing.T) {
 	if runtime.GOOS != "windows" {
@@ -334,12 +488,13 @@ func TestStdMkProcLongTemp(t *testing.T) {
 	}
 	root := stdRoot(t)
 	long := t.TempDir()
-	if n := 124 - len(long) - 1; n > 0 {
+	if n := 160 - len(long) - 1; n > 0 {
 		long = filepath.Join(long, strings.Repeat("p", n))
 		if err := os.Mkdir(long, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	t.Setenv("GOTMPDIR", "")
 	t.Setenv("TEMP", long)
 	t.Setenv("TMP", long)
 	for _, prof := range []types.Profile{types.TestProfile, types.Release} {
