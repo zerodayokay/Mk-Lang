@@ -4,11 +4,9 @@
 // CloseRequested, Held, SetTitle, SetSize, SetFullscreen, SetCursor,
 // SetCursorMode, Show).
 // How: Cell[uint] holds the WindowRec address so Window stays Send and not
-// Share; native operations delegate to the dedicated Win32 window thread on
-// Windows and fail Unsupported on other targets.
+// Share; native operations delegate to the platform window thread on supported targets.
 
 import std.atomic
-import std.core
 import std.raw
 
 /// A window. Linear: end it with Close. Send, not Share: one task reads its
@@ -19,12 +17,12 @@ export linear view struct Window {
 }
 
 /// Opens a window on std's window thread (started by the first call).
-/// Errors: Unsupported off Windows, Os(code), OutOfMemory, Canceled
+/// Errors: Unsupported without window support, Os(code), OutOfMemory, Canceled
 /// (repeatable: a window made meanwhile is destroyed by the thread).
 /// Suspends until the thread answers. Allocates the event ring
 /// (events × 32 bytes) and the shared record from heap.
 export Open(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     return try OpenWindow(heap, io, o)
@@ -35,7 +33,7 @@ export Open(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap {
 /// never fails. O(1).
 export Window.Close(self) {
     Window(heap: _, rec: cell) := self
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         return
     }
     addr := cell.Load()
@@ -57,7 +55,7 @@ export Window.Close(self) {
 /// The next queued event, or none. O(1); allocates nothing.
 export Window.Poll(&self): ?Event {
     addr := self.rec.Load()
-    if addr == 0 || Target.os != core.Os.Windows {
+    if addr == 0 || !WindowSupported() {
         return none
     }
     unsafe "addr points to a live WindowRec pinned by Window's ref" {
@@ -75,7 +73,7 @@ export Window.Poll(&self): ?Event {
 /// Waits for the next event. Errors: Closed, Canceled (repeatable: nothing
 /// taken). Suspends on a Waker.
 export Window.Next(&self, io: Io): Error!Event {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     for {
@@ -95,7 +93,7 @@ export Window.Next(&self, io: Io): Error!Event {
 
 /// Waits until an event is queued, taking none. Errors: Closed, Canceled.
 export Window.Wait(&self, io: Io): Error!void {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     for {
@@ -116,7 +114,7 @@ export Window.Wait(&self, io: Io): Error!void {
 /// The client size the thread last saw, in physical pixels. O(1).
 export Window.Size(&self): (width: int, height: int) {
     addr := self.rec.Load()
-    if addr == 0 || Target.os != core.Os.Windows {
+    if addr == 0 || !WindowSupported() {
         return (width: 0, height: 0)
     }
     unsafe "addr points to a live WindowRec pinned by Window's ref" {
@@ -128,7 +126,7 @@ export Window.Size(&self): (width: int, height: int) {
 /// Physical pixels per logical pixel: 1.0 at 96 dpi. O(1).
 export Window.Scale(&self): f32 {
     addr := self.rec.Load()
-    if addr == 0 || Target.os != core.Os.Windows {
+    if addr == 0 || !WindowSupported() {
         return 1.0
     }
     unsafe "addr points to a live WindowRec pinned by Window's ref" {
@@ -140,7 +138,7 @@ export Window.Scale(&self): f32 {
 /// Whether a close was requested and not yet seen as an event. O(1).
 export Window.CloseRequested(&self): bool {
     addr := self.rec.Load()
-    if addr == 0 || Target.os != core.Os.Windows {
+    if addr == 0 || !WindowSupported() {
         return false
     }
     unsafe "addr points to a live WindowRec pinned by Window's ref" {
@@ -153,7 +151,7 @@ export Window.CloseRequested(&self): bool {
 /// the state to resynchronise from after Dropped. O(1): nine atomic loads.
 export Window.Held(&self): InputState {
     addr := self.rec.Load()
-    if addr == 0 || Target.os != core.Os.Windows {
+    if addr == 0 || !WindowSupported() {
         return InputState.New()
     }
     unsafe "addr points to a live WindowRec pinned by Window's ref" {
@@ -170,7 +168,7 @@ export Window.Held(&self): InputState {
 /// Sets the title; the thread applies the newest value. Errors: Closed.
 /// Never waits; copies title into the shared record (at most 255 bytes).
 export Window.SetTitle(&self, title: str): Error!void {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     addr := self.rec.Load()
@@ -185,7 +183,7 @@ export Window.SetTitle(&self, title: str): Error!void {
 
 /// Sets the client size in physical pixels. Errors: Closed. Never waits.
 export Window.SetSize(&self, width: int, height: int): Error!void {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     addr := self.rec.Load()
@@ -200,7 +198,7 @@ export Window.SetSize(&self, width: int, height: int): Error!void {
 
 /// Enters or leaves borderless fullscreen. Errors: Closed. Never waits.
 export Window.SetFullscreen(&self, f: Fullscreen): Error!void {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     addr := self.rec.Load()
@@ -215,7 +213,7 @@ export Window.SetFullscreen(&self, f: Fullscreen): Error!void {
 
 /// Sets the cursor shape. Errors: Closed. Never waits.
 export Window.SetCursor(&self, c: Cursor): Error!void {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     addr := self.rec.Load()
@@ -230,7 +228,7 @@ export Window.SetCursor(&self, c: Cursor): Error!void {
 
 /// Shows or hides the cursor over the client area. Errors: Closed.
 export Window.SetCursorMode(&self, m: CursorMode): Error!void {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     addr := self.rec.Load()
@@ -245,7 +243,7 @@ export Window.SetCursorMode(&self, m: CursorMode): Error!void {
 
 /// Shows or hides the window. Errors: Closed. Never waits.
 export Window.Show(&self, visible: bool): Error!void {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     addr := self.rec.Load()

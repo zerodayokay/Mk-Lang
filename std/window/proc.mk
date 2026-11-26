@@ -203,7 +203,7 @@ AppWndProc(hwnd: windows.Hwnd, msg: u32, wp: windows.Wparam, lp: windows.Lparam)
             return 0
         }
         if msg == Trunc[u32](windows.WmDestroy) {
-            (*r).hwnd_val.Store(0, atomic.Release)
+            (*r).native_handle.Store(0, atomic.Release)
             return 0
         }
         if msg == Trunc[u32](windows.WmSize) {

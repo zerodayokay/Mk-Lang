@@ -653,3 +653,17 @@ Timespec(p: *u8, ns: i64) {
     Put64(p, 0, Trunc[u64](ns / 1_000_000_000))
     Put64(p, 8, Trunc[u64](ns % 1_000_000_000))
 }
+
+/// Waits as PollWait does. Directed main-thread wakes are macOS-only.
+/// O(1) besides the wait; allocates nothing.
+export PollWaitMain(timeout_ns: i64, out: mut []*Op): int {
+    return PollWait(timeout_ns, out)
+}
+
+/// Directed main-thread wakes are macOS-only. Returns false. O(1).
+export PollTakeMainWake(): bool {
+    return false
+}
+
+/// Directed main-thread wakes are macOS-only. O(1); does nothing.
+export PollWakeMain() {}

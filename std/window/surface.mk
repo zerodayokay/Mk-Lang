@@ -7,7 +7,6 @@
 // both Window.Close and the last Surface.Close have run.
 
 import std.atomic
-import std.core
 import std.raw
 
 /// A claim on a window's native window: it is not destroyed while a
@@ -20,7 +19,7 @@ export linear struct Surface {
 
 /// Claims the native window. Errors: Closed. O(1): one atomic increment.
 export Window.Surface(&self): Error!Surface {
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         fail Unsupported
     }
     addr := self.rec.Load()
@@ -38,13 +37,16 @@ export Window.Surface(&self): Error!Surface {
 /// The OS's handles, valid while s lives. O(1).
 export Surface.Native(&self): Native {
     addr := self.rec
-    if addr == 0 || Target.os != core.Os.Windows {
+    if addr == 0 || !WindowSupported() {
         return Native.Win32(hwnd: 0, hinstance: 0)
     }
     unsafe "addr points to a live WindowRec pinned by Surface's ref" {
         r := raw.FromAddr[WindowRec](addr)
+        if UnixWindowTarget() {
+            return Native.Unix(handle: (*r).native_handle.Load(atomic.Acquire))
+        }
         return Native.Win32(
-            hwnd: (*r).hwnd_val.Load(atomic.Acquire),
+            hwnd: (*r).native_handle.Load(atomic.Acquire),
             hinstance: (*r).hinst_val.Load(atomic.Acquire),
         )
     }
@@ -53,7 +55,7 @@ export Surface.Native(&self): Native {
 /// The client size the window thread last saw. O(1).
 export Surface.Size(&self): (width: int, height: int) {
     addr := self.rec
-    if addr == 0 || Target.os != core.Os.Windows {
+    if addr == 0 || !WindowSupported() {
         return (width: 0, height: 0)
     }
     unsafe "addr points to a live WindowRec pinned by Surface's ref" {
@@ -66,7 +68,7 @@ export Surface.Size(&self): (width: int, height: int) {
 /// window. Never fails. O(1).
 export Surface.Close(self) {
     Surface(rec: addr) := self
-    if Target.os != core.Os.Windows {
+    if !WindowSupported() {
         return
     }
     if addr == 0 {
