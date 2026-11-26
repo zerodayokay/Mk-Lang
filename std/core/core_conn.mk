@@ -3,8 +3,9 @@
 // here lets the modules above std.core erase values with safe calls only.
 //
 // What: ErasedBox (Of, Fill, Ref, Take, Is), a boxed Send + Share value with
-// its type erased, and ErasedCall (Of, State, Fn), a function and the shared
-// state it is called with.
+// its type erased, ErasedCall (Of, State, Fn), a function and the shared
+// state it is called with, and TypedCall, an ErasedCall that keeps its
+// function's type.
 //
 // How: an erased value keeps its type's key (std.dyn.erased.Key, a
 // compile-time constant distinct for distinct types) and is given back only
@@ -133,6 +134,19 @@ export SealedBox.With[T: Send + Share, A](&self, a: A, f: fn(&T, A): void) {
     }
 }
 
+/// Calls f with a shared reference to the boxed value, flow source h (which
+/// f may store into *out), argument a and mutable destination out. Returns
+/// void so no loan of self or a escapes. Panics (code 8) when T mismatches.
+/// O(1).
+export SealedBox.WithInto[T: Send + Share, H, A, R](&self, h: H into out, a: A, out: mut R, f: fn(&T, h: H into out, a: A, out: mut R): void) {
+    if self.key != erased.Key[T]() {
+        ErasedMismatch()
+    }
+    unsafe "Fill stored the address of a live T that this SealedBox owns, and the key says the type is T; f may only store h into *out so no loan of self escapes" {
+        f(&*raw.PtrCast[u8, T](self.ptr), h, a, out)
+    }
+}
+
 /// Consumes the SealedBox and calls f with the recovered Box and argument a.
 /// Because f's type declares no `into` flow and returns void, f can neither
 /// store any non-static loan into the boxed value nor carry a loan out of it.
@@ -210,6 +224,24 @@ export ErasedCall.Fn[T: Share, F: Plain + Send + Share](&self): F from self {
     unsafe "Of stored the bits of an F (its fields but anchor are std.core's, so no other module made it), and the key says the type is F, whose alignment Of checked is uint's, so &self.code is aligned for it: a copy of them back" {
         return raw.Read(raw.PtrCast[uint, F](raw.Of(&self.code)))
     }
+}
+
+/// An ErasedCall that keeps its function's type F in its own type, so a
+/// function that takes a TypedCall of one F refuses, at compile time, a
+/// call made from a function of another type (an ErasedCall of it would
+/// panic only when recovered). F names the state's type too, as its
+/// first parameter's. Plain, Send and Share, as ErasedCall is.
+export struct TypedCall[F: Plain + Send + Share] {
+    /// The erased call, made by ErasedCall.Of from the state's type and F;
+    /// it holds the loans Of gave it.
+    export call: ErasedCall
+    f: [0]F
+}
+
+/// The call of f on state, as ErasedCall.Of[T, F] makes it, typed by F.
+/// Panics as ErasedCall.Of does. O(1); allocates nothing.
+export TypedCall[F].Of[T: Share](state: &T, f: F): TypedCall[F] from state, f {
+    return TypedCall[F](call: ErasedCall.Of[T, F](state, f), f: [])
 }
 
 const NoBytes: [0]u8 = []

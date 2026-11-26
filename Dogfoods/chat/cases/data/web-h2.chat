@@ -1,0 +1,11 @@
+# Receive the first chat event before the next room message is sent.
+talk: NICK tom
+talk: JOIN #general
+watch: !events /rooms/general/events?count=2&nick=watcher
+watch: !read
+watch: !read
+talk: MSG #general first event
+watch: !read
+watch: !read
+talk: MSG #general second event
+watch: !eof

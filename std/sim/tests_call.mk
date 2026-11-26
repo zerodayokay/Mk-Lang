@@ -11,6 +11,7 @@
 import std.core
 import std.raw
 import std.rt
+import std.task
 import std.time
 
 // CallRan is set by CallMark if any entry ran a job.
@@ -69,10 +70,11 @@ CallAll(io: Io, sim: bool, tape: bool): bool {
         unsafe "a is in this frame until IoCall returns" {
             r = core.IoCall(io, raw.OfMut(mut a))
         }
-        if sim && (FsOp(Trunc[u32](op)) || Trunc[u32](op) == core.IoOpListen || Trunc[u32](op) == core.IoOpShutdown) {
+        if sim && (FsOp(Trunc[u32](op)) || Trunc[u32](op) == core.IoOpListen || Trunc[u32](op) == core.IoOpShutdown ||
+            Trunc[u32](op) == core.IoOpUdpConnect || Trunc[u32](op) == core.IoOpTryRecvFrom) {
             // Answered by the Sim's file system (fscall.mk, SIM-Call-Fs),
-            // or its network's listen (rt.ListenWith, SD8-Listen-Sim) and
-            // shutdown (rt.SockShutdown, the shutdown blocks below).
+            // or its network's listen (rt.ListenWith, SD8-Listen-Sim),
+            // shutdown (rt.SockShutdown), UdpConnect and TryRecvFrom.
             continue
         }
         want := if sim && Trunc[u32](op) == core.IoOpWall { core.SysErr.None } else { core.SysErr.Unsupported }
@@ -660,4 +662,80 @@ test "under a Sim, File.Truncate shortens and lengthens a file (zeros past the o
     Assert(rt.FileTruncate(io2, rh, 1).err == core.SysErr.Denied)
     rt.Abandon(rh)
     s.Free()
+}
+
+RunUdpCallOps(io: Io, a_port: u16, b_port: u16): int {
+    var ip: [16]u8 = [0; 16]
+    ip[0] = 127
+    ip[3] = 1
+    la := core.IoAddr(ip: ip, port: a_port, v6: false, zone: 0)
+    lb := core.IoAddr(ip: ip, port: b_port, v6: false, zone: 0)
+    ra := core.IoUdp(io, la)
+    if ra.err != core.SysErr.None {
+        return -1
+    }
+    ha := Trunc[uint](ra.value)
+    pa := core.IoAddr(ip: ip, port: Trunc[u16](ra.os), v6: false, zone: 0)
+    rb := core.IoUdp(io, lb)
+    if rb.err != core.SysErr.None {
+        rt.Abandon(ha)
+        return -2
+    }
+    hb := Trunc[uint](rb.value)
+    pb := core.IoAddr(ip: ip, port: Trunc[u16](rb.os), v6: false, zone: 0)
+
+    rc := task.NativeUdpConnect(io, ha, pb)
+    if rc.err != core.SysErr.None {
+        rt.Abandon(ha)
+        rt.Abandon(hb)
+        return -3
+    }
+    var rbuf: [16]u8 = [0; 16]
+    var from := core.IoAddr(ip: [0; 16], port: 0, v6: false, zone: 0)
+    // Empty TryRecvFrom -> value -1, err None.
+    rt0 := task.NativeTryRecvFrom(io, ha, mut rbuf[..], mut from)
+    if rt0.err != core.SysErr.None || rt0.value != -1 {
+        rt.Abandon(ha)
+        rt.Abandon(hb)
+        return -4
+    }
+    var pkt: [3]u8 = [11, 22, 33]
+    _ = core.IoSendTo(io, hb, pkt[..], pa)
+    var got := -1
+    for _ in 0..200 {
+        rt1 := task.NativeTryRecvFrom(io, ha, mut rbuf[..], mut from)
+        if rt1.err == core.SysErr.None && rt1.value == 3 {
+            got = int(rbuf[0]) + int(rbuf[1]) + int(rbuf[2])
+            break
+        }
+        io.Sleep(core.DurationOf(100_000)) else {
+            break
+        }
+    }
+    rt.Abandon(ha)
+    rt.Abandon(hb)
+    return got
+}
+
+test "SIM-Call-UdpOps ops 42 (UdpConnect) and 43 (TryRecvFrom) work under a Sim and replay via Recorder and Replayer" (sys: &System) {
+    // Under Sim: UdpConnect filters and TryRecvFrom drains once queued.
+    var s := try Sim.New(sys.arena, 29)
+    sio := s.Io()
+    Assert(RunUdpCallOps(sio, 0, 0) == 66)
+    s.Free()
+
+    // Under Recorder + Replayer over native Io: identical replay.
+    var rec := try Recorder.New(sys.io)
+    n_rec := RunUdpCallOps(rec.Io(), 0, 0)
+    Assert(n_rec == 66)
+    log := rec.Log(sys.arena) else {
+        rec.Free()
+        Assert(false)
+        return
+    }
+    rec.Free()
+    var rp := try Replayer.New(log)
+    n_rep := RunUdpCallOps(rp.Io(), 0, 0)
+    Assert(n_rep == 66 && rp.Done() && !rp.Diverged())
+    rp.Free()
 }

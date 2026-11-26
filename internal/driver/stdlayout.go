@@ -49,7 +49,7 @@ func isStdInternal(path string) bool { return slices.Contains(stdInternal, path)
 // not-implemented, with its row named in the message.
 var section17Modules = []string{"std.atomic", "std.big", "std.build", "std.cli", "std.coll", "std.compress", "std.crypto",
 	"std.csv", "std.db.sqlite", "std.derive", "std.dl", "std.dyn", "std.encoding", "std.encoding.cjk", "std.fs", "std.hash", "std.http",
-	"std.json", "std.linux", "std.log", "std.math", "std.mem", "std.net", "std.proc", "std.regex", "std.runtime", "std.sim", "std.sync",
+	"std.json", "std.linux", "std.log", "std.math", "std.mem", "std.net", "std.proc", "std.quic", "std.regex", "std.runtime", "std.sim", "std.sync",
 	"std.term", "std.testing", "std.text", "std.time", "std.time.tzdata", "std.tls", "std.url", "std.vm", "std.websocket", "std.x509"}
 
 // stdLayout is the fixed part of std's module table:

@@ -27,7 +27,7 @@ import std.sys
 /// nothing.
 export ListenUnix(io: Io, path: str): Error!Listener {
     h := try Check(rt.UnixListen(io, path.AsBytes(), 0))
-    return Listener(h: Trunc[uint](h), bound: 0, kind: StreamUnix, no_delay: false)
+    return Listener(h: Trunc[uint](h), bound: 0, local: ZeroAddr, kind: StreamUnix, no_delay: false)
 }
 
 /// Connects to the Unix-domain listener at path. While its backlog is full
@@ -86,7 +86,7 @@ export open enum Passed {
 export Passed.Adopt(p: rt.Passed): Passed {
     if p.kind == rt.PassListener {
         k := if p.family == sys.Unix { StreamUnix } else { StreamTcp }
-        return Passed.Listener(l: Listener(h: p.h, bound: p.port, kind: k, no_delay: false))
+        return Passed.Listener(l: Listener(h: p.h, bound: p.port, local: ZeroAddr, kind: k, no_delay: false))
     }
     if p.kind == rt.PassStream {
         if p.family == sys.Unix {

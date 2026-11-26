@@ -223,7 +223,7 @@ StashDrop() {
     var h: uint = 0
     var p := 0
     if TakeStash(0, mut h, mut p) {
-        Listener(h: h, bound: p, kind: StreamTcp, no_delay: false).Close()
+        Listener(h: h, bound: p, local: ZeroAddr, kind: StreamTcp, no_delay: false).Close()
     }
 }
 
@@ -246,7 +246,7 @@ test "a Listen that loses the inherited listener to a concurrent Listen of anoth
     // A real listener stands in for the one the parent passed down.
     parent := TnListen(io)
     port := parent.Port()
-    Listener(h, bound: _, kind: _, no_delay: _) := parent
+    Listener(h, ..) := parent
     // B, a Listen of an admin port, has won IoInherited and not yet
     // stashed what it got.
     InheritBegin()
@@ -291,7 +291,7 @@ test "Listen and ListenWith in a cancelled scope are Canceled and leave a stashe
     StashClear()
     parent := TnListen(io)
     port := parent.Port()
-    Listener(h, bound: _, kind: _, no_delay: _) := parent
+    Listener(h, ..) := parent
     // An earlier Listen of another port stashed the parent's listener.
     Stash(Cast[u64](h), Cast[u64](port))
     var b: [32]u8 = [0; 32]
@@ -307,7 +307,7 @@ test "Listen and ListenWith in a cancelled scope are Canceled and leave a stashe
     var p := 0
     held := TakeStash(port, mut kept, mut p)
     if held {
-        Listener(h: kept, bound: p, kind: StreamTcp, no_delay: false).Close()
+        Listener(h: kept, bound: p, local: ZeroAddr, kind: StreamTcp, no_delay: false).Close()
     }
     var out := sys.Stdout()
     _ = Print(mut out, "NET3-ASYNC-4: Listen {plain}, ListenWith {with}, stash still held {held}\n", (plain, with, held)) else {}

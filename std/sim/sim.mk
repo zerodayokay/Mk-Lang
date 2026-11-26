@@ -60,6 +60,40 @@ export enum Fault {
     Refused
 }
 
+/// What the simulated network does: datagrams are dropped and duplicated
+/// at parts per million, each drawn from the seed; latency is uniform in
+/// lo..hi; rate is bytes per second through each receiving port (0 for
+/// unlimited); stream_buffer bounds each stream end's unread bytes (0 for
+/// unbounded), so a send waits while the peer does not read. Start from
+/// DefaultNetFaults.
+export struct NetFaults {
+    /// Datagram drop probability in parts per million (0..1_000_000).
+    export drop: u32
+    /// Datagram duplication probability in parts per million (0..1_000_000).
+    export duplicate: u32
+    /// Minimum simulated delivery latency.
+    export latency_lo: time.Duration
+    /// Maximum simulated delivery latency.
+    export latency_hi: time.Duration
+    /// Bandwidth cap in bytes per second per receiving UDP port (0 unlimited).
+    export rate: i64
+    /// Maximum unread bytes per stream end (0 unbounded).
+    export stream_buffer: int
+    sealed: u8
+}
+
+/// Today's model: no loss, no duplication, 20 to 500 us, unlimited,
+/// unbounded.
+export const DefaultNetFaults: NetFaults = NetFaults(
+    drop: 0,
+    duplicate: 0,
+    latency_lo: core.DurationOf(LatLo),
+    latency_hi: core.DurationOf(LatHi),
+    rate: 0,
+    stream_buffer: 0,
+    sealed: 0,
+)
+
 /// A simulated world behind an Io: a seeded scheduler, a simulated clock,
 /// an in-memory disk and network, and one terminal. Every choice is drawn
 /// from one seed, so one seed gives one run. A Sim is linear: end it with
@@ -266,6 +300,8 @@ linear struct World {
     // or core.IoTermNoEcho).
     term: End
     tmode: u8
+    net_faults: NetFaults
+    blackholes: Vec[int]
     user: Arena
 }
 
@@ -469,7 +505,8 @@ export Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim from a {
             ends: Vec[End].Empty(), ports: Vec[Port].Empty(), dgrams: Vec[Dgram].Empty(), slot: 0, token: 0,
             closing: 0, tasks: Vec[TRec].Empty(), holder: 0, run: 0, hooked: false, low: -1, events: 0,
             pend: Vec[uint].Empty(), ranks: 0, sseed: 0, cps: [0; 2], cpend: 0, steps: 0, handoff: false, bseq: 0, mwait: 0, mains: Vec[MainRec].Empty(), dlk: 0, mturn: false,
-            joins: Vec[JoinRec].Empty(), dls: Vec[SimDl].Empty(), kids: Vec[Kid].Empty(), ptys: Vec[SimPty].Empty(), term: FreshEnd(0), tmode: 0, user: user))
+            joins: Vec[JoinRec].Empty(), dls: Vec[SimDl].Empty(), kids: Vec[Kid].Empty(), ptys: Vec[SimPty].Empty(), term: FreshEnd(0), tmode: 0,
+            net_faults: DefaultNetFaults, blackholes: Vec[int].Empty(), user: user))
         SchedInit(mut *w, seed)
     }
     t := NewToken()
@@ -597,6 +634,34 @@ export Sim.FailNext(mut self, op: Op, f: Fault) {
         }
     }
     w.fault[OpIndex(op)] = code
+    UnlockSlot(self.slot)
+}
+
+/// Applies `f` to every datagram and stream send from now on. O(1); allocates
+/// nothing.
+export Sim.SetNetFaults(mut self, f: NetFaults) {
+    LockSlot(self.slot)
+    w := self.World()
+    w.net_faults = f
+    UnlockSlot(self.slot)
+}
+
+/// Drops every datagram sent to `port` while `on` is true. O(blackholed
+/// ports); grows the blackhole list on the process heap if needed.
+export Sim.Blackhole(mut self, port: int, on: bool) {
+    LockSlot(self.slot)
+    w := self.World()
+    SetBlackhole(w, port, on)
+    UnlockSlot(self.slot)
+}
+
+/// Moves the port a UDP socket sends from, as a NAT rebinding does: the peer
+/// sees datagrams from a new address and replies reach it there. No-op when
+/// `port` is not bound. O(ports); allocates nothing.
+export Sim.Rebind(mut self, port: int) {
+    LockSlot(self.slot)
+    w := self.World()
+    NetRebind(w, port)
     UnlockSlot(self.slot)
 }
 

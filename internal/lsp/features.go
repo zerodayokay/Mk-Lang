@@ -493,13 +493,7 @@ func (s *Server) defs(c cursor) []Location {
 		}
 		return types[d.Name] && d.Owner == ""
 	}
-	// The root's, then std's (List[T]'s Items is in std.core's impl of
-	// Slice[T]).
-	implHits := s.search(r, ownedBy)
-	if len(implHits) == 0 || !hasChild(implHits, c.name) {
-		implHits = append(implHits, s.searchStd("", ownedBy)...)
-	}
-	for _, h := range implHits {
+	for _, h := range s.search(r, ownedBy) {
 		for _, ch := range h.decl.Children {
 			if ch.Name == c.name {
 				owned = append(owned, s.location(hit{f: h.f, decl: ch}))
@@ -513,16 +507,17 @@ func (s *Server) defs(c cursor) []Location {
 	if len(owned) > 0 {
 		return owned
 	}
-	// A member the last check resolves (a std type's, an alias's).
+	// A member the last check resolves takes precedence over declarations
+	// with the same type and member names elsewhere in std.
 	for _, sub := range s.subjects(r, c) {
 		if l, ok := s.lookupDef(r, sub, ""); ok {
 			return []Location{l}
 		}
 	}
-	// A std type's member: the method `T.M`, or a field or variant of T.
+	// A std type's member or impl method, such as List[T].Items.
 	var inStd []hit
 	for _, h := range s.searchStd("", func(d decl) bool {
-		return d.Name == c.name && types[d.Owner] || types[d.Name] && d.Owner == ""
+		return d.Name == c.name && types[d.Owner] || ownedBy(d)
 	}) {
 		if h.decl.Name == c.name {
 			inStd = append(inStd, h)

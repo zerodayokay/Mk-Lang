@@ -28,10 +28,16 @@ hello, world
 | `fetch --deny CLASSES` | Refuse loopback, private, link-local, ipv4 or ipv6 addresses |
 | `fetch --cacert ROOTS.pem https://...` | Verify the server against a root file; `--handshake` checks the TLS connection alone |
 | `fetch --parallel URL...` | Run every transfer at once on one client |
+| `fetch --http2 URL...` | Offer HTTP/2 over TLS and accept HTTP/1.1 when the server selects it |
+| `fetch --http2-prior-knowledge URL...` | Use HTTP/2 directly on cleartext URLs |
+| `fetch --http2-window BYTES ...` | Set the per-stream HTTP/2 receive window |
+| `fetch --http3`, `fetch --http3-only` | Try HTTP/3 first on HTTPS URLs, or require it |
+| `fetch --drive URL...` | Service idle connections and use HTTP/3 when advertised by Alt-Svc |
 | `fetch --ws-send TEXT ws://...` | Send WebSocket messages in order and print each reply |
 | `fetch url [--base URL] [--set PART=VALUE] URL` | Parse a URL and print its parts |
 | `fetch cert CHAIN.pem [--cacert ROOTS.pem] [--host NAME]` | Print and verify a certificate chain |
 | `fetch --seed N [--fault NAME]` | Run the session under `std.sim`, with a fault injected |
+| `fetch --seed N --udp-loss PPM` | Drop simulated datagrams at a rate in parts per million |
 
 Exit statuses follow curl's where curl has one (`fetch --help` lists them): 2 a bad command line, 3 a bad URL, 7 a refused or denied connection, 18 a body cut short, 22 an error status under `-f`, 28 a timeout, 35 a failed handshake, 47 too many redirects, 60 a certificate that does not verify, 63 a body past `--fetch-limit`, and others.
 
@@ -51,6 +57,8 @@ One route per `route METHOD PATH` line (`*` matches any method, and a `GET` rout
 
 The origin listens on four loopback ports: `{origin}` and `{origin2}` over plain TCP, so a redirect can change origin, and, with `--tls-chain` and `--tls-key`, `{tls}` and `{tls2}` over TLS 1.3. No port reaches the output.
 
+`--origin-h2` serves the cleartext ports with prior knowledge HTTP/2 support and the TLS ports with HTTP/2 ALPN. `--origin-h3` also binds UDP on both TLS ports. The multiplexed origins support ordinary HTTP routes, including delayed responses, ranges, and echo. Use the default origin for WebSocket or deliberately truncated HTTP/1.1 bodies.
+
 ## Design
 
 - One `http.Client` serves every transfer; `--parallel` runs them in tasks, and each transfer's output is kept until all end, so it prints in command-line order.
@@ -66,6 +74,7 @@ The origin listens on four loopback ports: `{origin}` and `{origin2}` over plain
 - `--max-memory` cannot be combined with `--parallel`, since an `&Alloc` stays in its task.
 - A body that is not UTF-8 is not written to standard output; `-o FILE` saves it.
 - `--deny` takes address classes, not single addresses: `ClientLimits.allow` is a plain `fn` with no state, so the classes live in one global `AtomicInt`.
+- `--http3-only` accepts HTTPS URLs and disables TCP retry. Use `--http3` when following redirects with `-L` or checking the TCP TLS handshake with `--handshake`.
 
 ## Tests
 
@@ -130,13 +139,21 @@ Crc32State.Bytes(mut self, data: []u8)
 Crc32State.Sum(self): u32
 // std.http
 error BodyNotReplayable
-http.ReadRequest(a: &Arena into a, io: Io, r: mut Reader, limit: int): http.Error!Request from a
+http.ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): http.Error!Request from a
 Request.Header(&self, name: str): ?str from self
 Client.New(h: &Heap, l: ClientLimits): Client from h, l
-Client.Do(&self, a: &Arena into a, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
+Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
 Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
-Client.DoStreaming(&self, a: &Arena into a, io: Io, req: &ClientRequest, body: mut Reader, len: ?i64): http.Error!Exchange from a, self
+Client.DoStreaming(&self, a: &Arena, io: Io, req: &ClientRequest, body: mut Reader, len: ?i64): http.Error!Exchange from a, self
+Client.Drive(&self, io: Io): Canceled!void
+Client.WaitDriving(&self, io: Io): Canceled!bool
+Client.Stop(&self)
 Client.Close(self)
+http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
+Response.Status(mut self, code: int)
+Response.Header(mut self, name: str, value: str): OutOfMemory!void
+Response.Body(mut self, data: []u8): OutOfMemory!void
+Exchange.Version(&self): HttpVersion
 Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
 Exchange.Close(self, io: Io): http.Error!void
 Exchange.Abandon(self)
@@ -146,15 +163,19 @@ struct ClientLimits {
 struct Header {
 struct Request {
 struct Reply {
+// std.quic
+quic.Connector(c: &Config): net.MuxDialer from c
+quic.Acceptor(c: &Config): net.MuxServer from c
 // std.crypto
 crypto.ParsePrivateKey(der: []u8): crypto.Error!PrivateKey
 // std.compress
 compress.Gzip(a: &Arena, data: []u8): OutOfMemory![]u8 from a
 compress.Zlib(a: &Arena, data: []u8): OutOfMemory![]u8 from a
 // std.sim
-Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim
+Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim from a
 Sim.Io(&self): Io
 Sim.FailNext(mut self, op: Op, f: Fault)
+Sim.SetNetFaults(mut self, f: NetFaults)
 Sim.Free(self)
 enum Op {
 enum Fault {

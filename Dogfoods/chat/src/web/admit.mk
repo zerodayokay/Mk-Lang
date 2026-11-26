@@ -53,10 +53,8 @@ Refuse(b: &Bridge, hb: &hub.Hub, io: Io) {
 
 /// Serves the web front end on `addr` until the scope is cancelled; a
 /// failure to serve is logged and kept in `failed`.
-export Serve(sys: &System, addr: str, f: &Front, failed: mut ?http.Error) {
-    var o := http.DefaultServerOptions
-    o.connections = f.hb.cfg.max_clients
-    http.ServeWith(sys, addr, &o, f, Handle) else e {
+export Serve(sys: &System, addr: str, o: &http.ServerOptions, f: &Front, failed: mut ?http.Error) {
+    http.ServeWith(sys, addr, o, f, Handle) else e {
         match e {
             Canceled {}
             _ {

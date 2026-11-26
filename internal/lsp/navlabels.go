@@ -352,18 +352,6 @@ func (s *Server) recordFieldDefs(c cursor) []Location {
 	return nil
 }
 
-// hasChild reports whether any hit declares a child named name.
-func hasChild(hs []hit, name string) bool {
-	for _, h := range hs {
-		for _, ch := range h.decl.Children {
-			if ch.Name == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // isFieldLabel reports whether ct[i] is a field label `x:` in a call's or a
 // record's parentheses, not a parameter being declared: then it names the
 // field, even where a local of that name is in scope (`BtHit(i: i)`).

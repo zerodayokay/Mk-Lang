@@ -43,7 +43,8 @@ NotFlushed(): Flushed {
 /// a reply produced over time, such as a long listing or server events.
 /// O(bytes sent); allocates nothing.
 ///
-/// The first Flush sends the head, with Transfer-Encoding: chunked in place
+/// On HTTP/2 and HTTP/3 this sends HEADERS followed by DATA on the request's
+/// stream. On HTTP/1.1 the first Flush sends the head, with Transfer-Encoding: chunked in place
 /// of the handler's framing fields, and the body so far as a chunk. Each
 /// later Flush sends what was added since as another chunk: the bytes of a
 /// Body set after the last Flush, whole, and what the Writer appended
@@ -68,7 +69,30 @@ export Response.Flush(mut self, io: Io, link: &Link): Error!void {
         try CancelCheck(io)
         fail WriteError
     }
-    g := CellLock(link.cell, io)
+    try self.AdvertiseH3(link.h3_port)
+    if target := link.h3 {
+        scope sending := io.Scope() {
+            sending.CancelAfter(link.pace)
+            self.SendH3(io, target, false) else e {
+                self.fl.failed = true
+                try CancelCheck(io)
+                fail e
+            }
+        }
+        return
+    }
+    if target := link.h2 {
+        self.FlushH2(io, target) else e {
+            self.fl.failed = true
+            try CancelCheck(io)
+            fail e
+        }
+        return
+    }
+    cell := link.cell else {
+        return
+    }
+    g := CellLock(cell, io)
     if conn := &*g.Ref() {
         var wb: [4096]u8 = [0; 4096]
         p := Paced(conn: conn, limit: link.pace)
@@ -81,6 +105,54 @@ export Response.Flush(mut self, io: Io, link: &Link): Error!void {
         }
     }
     g.Unlock()
+}
+
+// FlushH2 sends what Flush sends over an HTTP/2 stream target: the head the
+// first time, then any unsent body bytes since the last flush. Fails with
+// Status(code) for non-final status or WriteError/net.Error on transport failure.
+Response.FlushH2(mut self, io: Io, target: H2FlushTarget): Error!void {
+    if !self.fl.head {
+        code := self.code
+        if code < 200 || code > 999 {
+            fail Status(code: code)
+        }
+        bodyless := code == 204 || code == 304 || self.head
+        hs := try BuildH2OutHeaders(self.arena, &*self, true, 0)
+        target.conn.Respond(io, target.stream, code, hs, bodyless) else e {
+            match e {
+                Canceled { fail Canceled }
+                _ { fail WriteError }
+            }
+        }
+        self.fl.head = true
+        self.fl.mode = if bodyless { FlushNoBody } else { FlushChunked }
+    }
+    if self.fl.mode == FlushNoBody {
+        self.fl.dsent = self.data.buf.Len()
+        self.fl.tsent = self.text.Str().AsBytes().Len()
+        return
+    }
+    dn := self.data.buf.Len()
+    if self.fl.dsent < dn {
+        target.conn.Write(io, target.stream, self.data.buf[self.fl.dsent..dn], false) else e {
+            match e {
+                Canceled { fail Canceled }
+                _ { fail WriteError }
+            }
+        }
+        self.fl.dsent = dn
+    }
+    tb := self.text.Str().AsBytes()
+    tn := tb.Len()
+    if self.fl.tsent < tn {
+        target.conn.Write(io, target.stream, tb[self.fl.tsent..tn], false) else e {
+            match e {
+                Canceled { fail Canceled }
+                _ { fail WriteError }
+            }
+        }
+        self.fl.tsent = tn
+    }
 }
 
 // FlushTo sends to w what Flush sends: the head the first time, then the

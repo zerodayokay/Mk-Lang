@@ -1,0 +1,30 @@
+talk! connected
+talk< MOTD Welcome to chat.
+talk< OK welcome
+talk> NICK tom
+talk< OK nick tom
+talk> JOIN #general
+talk< OK join #general members=1 topic=
+watch> !events /rooms/general/events?count=2&nick=watcher
+watch! connected
+watch< HTTP/2 200
+watch< content-type: text/event-stream
+watch< cache-control: no-cache
+watch< 
+watch< : watcher joined #general
+watch< 
+talk> MSG #general first event
+talk< * watcher joined #general
+talk< OK msg 1
+watch< data: <#general> tom: first event
+watch< 
+talk> MSG #general second event
+talk< OK msg 1
+watch< data: <#general> tom: second event
+watch< 
+watch! closed by the server
+talk> QUIT
+talk< * watcher left #general (connection closed)
+talk< OK bye
+-- server: history=2
+-- endings: quit=1 eof=1 dropped=0 kicked=0 closing=0 broken=0 canceled=0

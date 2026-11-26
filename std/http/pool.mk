@@ -191,6 +191,40 @@ Client.Claim(&self, io: Io, key: Origin, reuse: bool): Claim {
     return Claim(slot: -1, reused: false)
 }
 
+// ClaimIdle takes the slot of an idle connection of key's origin, not idle
+// past the limit, and returns its index, or -1 with no slot taken. With
+// HTTP/2 on, such a connection is one whose server chose http/1.1 by ALPN,
+// so it is used before a new connection is dialled. O(MaxSlots) claims,
+// each uncontended; allocates nothing.
+Client.ClaimIdle(&self, io: Io, key: Origin): int {
+    n := if self.limits.idle_connections < MaxSlots { self.limits.idle_connections } else { MaxSlots }
+    if key.n < 0 {
+        return -1
+    }
+    now := time.Now(io)
+    for i in 0..n {
+        s := SlotAt(&self.slots, i)
+        if !s.busy.Cas(0, 1) {
+            continue
+        }
+        g := s.st.Lock(io.NoCancel()) else {
+            Panic("http.Client: a NoCancel lock was cancelled")
+        }
+        st := g.Ref()
+        var fresh := false
+        if t := st.since {
+            fresh = now.Since(t).Nanos() < self.limits.idle.Nanos()
+        }
+        mine := fresh && st.conn.IsSome() && OriginEq(&st.key, &key)
+        g.Unlock()
+        if mine {
+            return i
+        }
+        s.busy.Store(0)
+    }
+    return -1
+}
+
 // Release ends a request's hold on slot s. When keep, the connection stays
 // for reuse, idle from now; otherwise it is taken out for the caller to
 // close (none when the slot holds none).
