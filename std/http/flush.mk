@@ -43,7 +43,8 @@ NotFlushed(): Flushed {
 /// a reply produced over time, such as a long listing or server events.
 /// O(bytes sent); allocates nothing.
 ///
-/// The first Flush sends the head, with Transfer-Encoding: chunked in place
+/// On HTTP/2 and HTTP/3 this sends HEADERS followed by DATA on the request's
+/// stream. On HTTP/1.1 the first Flush sends the head, with Transfer-Encoding: chunked in place
 /// of the handler's framing fields, and the body so far as a chunk. Each
 /// later Flush sends what was added since as another chunk: the bytes of a
 /// Body set after the last Flush, whole, and what the Writer appended

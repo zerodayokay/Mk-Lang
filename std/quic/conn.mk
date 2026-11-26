@@ -128,6 +128,8 @@ linear struct Engine {
 
     acks: AckSet
     rec: Recovery
+    ack_frames: HeapList[SentFrame]
+    lost_frames: HeapList[SentFrame]
     streams: Streams
     crypto: CryptoStreams
     post_hs_buf: HeapList[u8]
@@ -269,6 +271,8 @@ Engine.New(
         amp_tx_bytes: 0,
         acks: AckSet.New(),
         rec: rec,
+        ack_frames: HeapList[SentFrame].New(a),
+        lost_frames: HeapList[SentFrame].New(a),
         streams: streams,
         crypto: cs,
         post_hs_buf: HeapList[u8].New(a),
@@ -335,6 +339,8 @@ Engine.Free(self) {
         amp_tx_bytes: _,
         acks: _,
         rec,
+        ack_frames,
+        lost_frames,
         streams,
         crypto,
         post_hs_buf,
@@ -368,6 +374,8 @@ Engine.Free(self) {
     keys.Wipe()
     cids.Free(a)
     rec.Free(a)
+    ack_frames.Free(a)
+    lost_frames.Free(a)
     streams.Free(a)
     crypto.Free(a)
     post_hs_buf.Free(a)

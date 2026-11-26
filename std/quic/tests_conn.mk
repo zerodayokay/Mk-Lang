@@ -302,3 +302,25 @@ test "net.Mux over QUIC: loopback handshake, bidirectional Open/Accept/Read/Writ
     }
     Assert(failed.Load() == 0)
 }
+
+test "a grouped acknowledgment delivers every frame from a normal send burst" (sys: &System) {
+    h := sys.heap
+    a := h.Alloc()
+    now := time.Now(sys.io)
+    cid := CidFromSlice(b"abcdefgh")
+    peer := try net.ParseAddr("127.0.0.1:443")
+    cfg := DefaultConfig.ToEngineCfg()
+    no_cid: ?Cid = none
+    no_key: ?&[32]u8 = none
+    var e := try Engine.New(h, sys.io, false, &cfg, &cid, &cid, &cid, no_cid, no_cid, peer, true, 0, "h3", no_key, 0, 0)
+    defer e.Free()
+    for _ in 0..100 {
+        pn := e.rec.NextPn(Space.App)
+        idx := e.AllocCtrl(ConnCtrlKind.HandshakeDone)
+        frames := [SentFrame(kind: SentKind.Control(index: idx))]
+        try e.rec.OnSent(a, Space.App, pn, 80, true, true, frames[..], now)
+    }
+    range := [AckRange(lo: 0, hi: 99)]
+    try ApplyAck(mut e, Space.App, range[..], time.Nanos(0), 99, now)
+    Assert(e.ctrl_free.Len() == 100)
+}

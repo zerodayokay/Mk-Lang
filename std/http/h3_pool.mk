@@ -15,6 +15,8 @@ struct H3Conn {
     session: Box[h3.Session]
 }
 
+// The Mux is immutable behind its owned pointer and may be borrowed by
+// any task holding a connection reference. Reclamation follows the pool.
 unsafe impl Send for H3Conn {}
 unsafe impl Share for H3Conn {}
 
@@ -141,13 +143,18 @@ Client.H3Running(&self): bool {
 
 DriveH3(client: &Client, conn: &H3Conn, io: Io, idx: int) {
     var code := h3.H3NoError
+    sess := conn.session.Ref()
+    idle := client.limits.idle.Nanos()
+    quic_idle := H3Mux(conn.mux).Limits().idle.Nanos()
+    ping := quic_idle / 2
+    interval := if ping > 0 && (idle <= 0 || ping < idle) { ping } else if idle > 0 { idle } else { time.Seconds(90).Nanos() }
     for {
         var retry := false
         var alive := false
+        var quiet := false
         scope reading := io.Scope() {
-            idle := client.limits.idle
-            reading.CancelAfter(if idle.Nanos() > 0 { idle } else { time.Seconds(90) })
-            conn.session.Ref().Serve(io) else e {
+            reading.CancelAfter(time.Nanos(interval))
+            sess.Serve(io) else e {
                 match e {
                     Canceled { retry = reading.Expired() }
                     h3.Violation(code: c, stream: _) { code = c }
@@ -159,16 +166,25 @@ DriveH3(client: &Client, conn: &H3Conn, io: Io, idx: int) {
             nc := io.NoCancel()
             g := client.H3State().Must().pool.Lock(nc).Must()
             s := &(*g.Ref())[idx]
-            alive = !s.retired && (s.requests > 0 || client.limits.idle.Nanos() <= 0)
-            if !alive && !s.retired {
-                if last := s.last {
-                    alive = time.Now(nc).Since(last).Nanos() < client.limits.idle.Nanos()
-                }
+            if !s.retired {
+                age := if last := s.last { time.Now(nc).Since(last).Nanos() } else { i64(0) }
+                alive = s.requests > 0 || idle <= 0 || age < idle
+                quiet = ping > 0 && age >= ping
             }
             g.Unlock()
         }
         if !alive {
             break
+        }
+        if quiet {
+            var failed := false
+            scope keepalive := io.Scope() {
+                keepalive.CancelAfter(time.Nanos(interval))
+                sess.KeepAlive(io) else { failed = true }
+            }
+            if failed {
+                break
+            }
         }
     }
     closed := client.H3PutBack(io, idx, true, true)

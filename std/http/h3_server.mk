@@ -9,6 +9,10 @@ import std.http.h3
 import std.net
 import std.sync
 
+RunH3Session(sess: &h3.Session, io: Io, ready: &sync.Notify) {
+    sess.ServeReady(io, ready) else {}
+}
+
 RunH3Listener(l: &net.MuxListener, io: Io) {
     l.Run(io) else {}
 }
@@ -38,8 +42,13 @@ ServeH3[C: Share, T: Send](m: net.Mux, h: &Heap, rh: &Heap into ch, io: Io, o: &
     budget := sync.Semaphore.New(if o.body_bytes > 0 { o.body_bytes } else { 1 })
     var last: i64 = 0
     var close_code := h3.H3NoError
+    // One reader owns transport admission and services control/QPACK
+    // even when all request handlers or body budget permits are occupied.
+    ready := sync.Notify.New()
     scope requests := io.Scope() {
         defer requests.Cancel()
+        requests.go RunH3Session(sess, io, &ready)
+        ready.Wait(io) else {}
         for {
             active.Acquire(io, 1) else { break }
             ex := h3.Exchange.Accept(sess, io) else e {

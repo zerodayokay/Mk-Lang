@@ -38,6 +38,7 @@ var untrusted = []untrustedEntry{
 	{"url.Parse and the URL setters", "std.url", []string{"FuzzStdUrl_Parse", "FuzzStdUrl_Set", "FuzzStdUrl_ParseQuery", "FuzzStdUrl_DomainToAscii"}},
 	{"the HTTP request parser", "std.http", []string{"FuzzHttp_ReadRequest", "FuzzStdHttp_ServeWith"}},
 	{"the HTTP response parser", "std.http", []string{"FuzzStdHttp_ClientReply"}},
+	{"the HTTP Alt-Svc parser", "std.http", []string{"FuzzStdHttp_AltSvc"}},
 	{"WebSocket frames", "std.websocket", []string{"FuzzStdWs_Frames", "FuzzStdWs_Request", "FuzzStdWs_Reply"}},
 	{"Unzlib and the zlib stream", "std.compress", []string{"FuzzCompress_Unzlib", "FuzzCompress_ZlibStream"}},
 	{"the zstd decoder", "std.compress", []string{"FuzzCompress_Zstd", "FuzzCompress_ZstdWrap"}},

@@ -282,10 +282,11 @@ Exchange.DecodeQpackBytes(&self, io: Io, a_qdec: &Alloc, block: mut hf.FieldBloc
             g.Unlock()
             fail fe
         }
-        if st.closed {
+        if st.closed || st.reader_done {
             g.Unlock()
             fail Closed
         }
+        epoch := self.sess.qpack_epoch.Load()
         res := st.qdec.Decode(a_qdec, block, sid, payload) else e {
             g.Unlock()
             match e {
@@ -314,11 +315,15 @@ Exchange.DecodeQpackBytes(&self, io: Io, a_qdec: &Alloc, block: mut hf.FieldBloc
                 return (too_large: true, stream_code: 0)
             }
             hf.QOutcome.Blocked {
-                try self.sess.Poll(io)
                 if is_serving {
-                    try self.sess.qpack_ev.Wait(io)
+                    if core.SyncWait(io, &self.sess.qpack_epoch, epoch) {
+                        fail Canceled
+                    }
                 } else {
-                    try self.sess.WaitStep(io, false)
+                    try self.sess.PollStreams(io, !self.sess.is_server)
+                    if self.sess.qpack_epoch.Load() == epoch {
+                        try self.sess.WaitStep(io, false)
+                    }
                 }
                 block.Reset()
             }
@@ -486,7 +491,7 @@ export Exchange.Accept(s: &Session, io: Io): Error!Exchange from s {
             g.Unlock()
             fail fe
         }
-        if st.closed {
+        if st.closed || st.reader_done {
             g.Unlock()
             fail Closed
         }
@@ -565,7 +570,7 @@ Exchange.HeadInner(&self, a: &Arena, io: Io, es: mut ExState): Error!(ok: bool, 
 /// TooLarge, Violation, StreamReset, or net.Error. O(headers); allocates
 /// returned strings and FieldViews on a.
 export Exchange.Head(&self, a: &Arena, io: Io): Error!(status: int, headers: []hf.FieldView, content_length: ?i64) from a {
-    try self.sess.Poll(io)
+    try self.sess.PollStreams(io, !self.sess.is_server)
     var g := try self.st.Lock(io)
     r := self.HeadInner(a, io, mut *g.Mut()) else e {
         g.Unlock()
@@ -638,7 +643,7 @@ Exchange.RequestHeadInner(&self, io: Io, es: mut ExState, block: mut hf.FieldBlo
 /// (H3-36), the stream stays open so the server may answer 431. Errors:
 /// TooLarge, Violation, or net.Error. O(headers); grows block as needed.
 export Exchange.RequestHead(&self, io: Io, block: mut hf.FieldBlock): Error!void {
-    try self.sess.Poll(io)
+    try self.sess.PollStreams(io, !self.sess.is_server)
     var g := try self.st.Lock(io)
     r := self.RequestHeadInner(io, mut *g.Mut(), block) else e {
         g.Unlock()

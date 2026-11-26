@@ -12,6 +12,7 @@
 import std.core
 import std.http.fields
 import std.net
+import std.raw
 import std.rt
 import std.sync
 
@@ -130,6 +131,7 @@ linear view struct SessionInner {
     fatal_err: ?Violation
     closed: bool
     serving: bool
+    reader_done: bool
     has_qdec_out: bool
     qdec: fields.QDecoder
     qenc: fields.QEncoder
@@ -163,17 +165,17 @@ export linear mut view struct Session {
     qdec_wr_mu: Mutex[?net.MuxStream]
     state_mu: Mutex[SessionInner]
     accept_ev: sync.Notify
-    qpack_ev: sync.Notify
+    qpack_epoch: raw.Atomic[u32]
 }
 
 /// Releases all owned MuxStreams and buffers of self. O(open streams);
 /// allocates nothing.
 impl Free for Session {
     Free(self, a: &Alloc) {
-        Session(m, heap, poll_mu, ctrl_wr_mu, qdec_wr_mu, state_mu, accept_ev, qpack_ev, ..) := self
+        Session(m, heap, poll_mu, ctrl_wr_mu, qdec_wr_mu, state_mu, accept_ev, qpack_epoch, ..) := self
         _ = heap
         _ = accept_ev
-        _ = qpack_ev
+        _ = qpack_epoch
         poll_mu.Into().Free(a, m)
         ReleaseOptStream(m, ctrl_wr_mu.Into())
         ReleaseOptStream(m, qdec_wr_mu.Into())
@@ -211,7 +213,7 @@ Session.RecordFatal(&self, io: Io, code: u64): Violation {
     }
     g.Unlock()
     self.accept_ev.NotifyAll()
-    self.qpack_ev.NotifyAll()
+    self.WakeQpack(io)
     return v
 }
 
@@ -297,6 +299,7 @@ NewSession(h: &Heap, io: Io, m: &net.Mux, header_bytes: int, is_server: bool, qp
         fatal_err: none,
         closed: false,
         serving: false,
+        reader_done: false,
         has_qdec_out: qc > 0,
         qdec: qdec,
         qenc: fields.QEncoder.New(),
@@ -313,7 +316,7 @@ NewSession(h: &Heap, io: Io, m: &net.Mux, header_bytes: int, is_server: bool, qp
         qdec_wr_mu: Mutex[?net.MuxStream].New(qdec_out),
         state_mu: Mutex[SessionInner].New(inner),
         accept_ev: sync.Notify.New(),
-        qpack_ev: sync.Notify.New(),
+        qpack_epoch: raw.Atomic[u32].New(0),
     )
     return Box[Session].New(a, sess) else e {
         sess.Free(a)
@@ -411,6 +414,22 @@ export Session.SendGoaway(&self, io: Io, id: i64): Error!void {
     } else {
         fail Closed
     }
+}
+
+/// Sends an empty reserved frame on the control stream to keep the
+/// transport active (RFC 9114 7.2.8). Errors: Closed or net.Error.
+/// O(1) besides the write; allocates nothing.
+export Session.KeepAlive(&self, io: Io): Error!void {
+    try self.CheckFatal(io)
+    cw := try self.ctrl_wr_mu.Lock(io)
+    defer cw.Unlock()
+    if ctrl := &*cw.Ref() {
+        var buf: [16]u8 = [0; 16]
+        n := WriteFrameHeader(mut buf[..], GreaseId(0), 0)
+        self.m.Write(io, ctrl, buf[0..n], false) else e { fail NormMuxErr(e) }
+        return
+    }
+    fail Closed
 }
 
 /// Marks the session closed and releases its resources on a. Does not close
@@ -661,7 +680,7 @@ Session.DrainQpackEnc(&self, io: Io, qs: mut UniBufStream): Error!void {
             qs.len = rem
         }
         if woke {
-            self.qpack_ev.NotifyAll()
+            self.WakeQpack(io)
         }
     }
 }
@@ -816,6 +835,13 @@ Session.DispatchUniStream(&self, io: Io, ps: mut PollState, s: net.MuxStream, st
 /// without waiting. O(bytes available); allocates only when uni-stream
 /// buffers are created or grow.
 export Session.Poll(&self, io: Io): Error!void {
+    try self.PollStreams(io, true)
+}
+
+// Only Accept (or a dedicated Session.Serve) should remove bidirectional
+// streams from the transport. Request tasks can otherwise move a stream
+// into accept_q as Accept starts waiting for transport readiness.
+Session.PollStreams(&self, io: Io, accept_bidi: bool): Error!void {
     try self.CheckFatal(io)
     var pg := try self.poll_mu.Lock(io)
     defer pg.Unlock()
@@ -824,7 +850,7 @@ export Session.Poll(&self, io: Io): Error!void {
     a := self.heap.Alloc()
 
     // 1. Accept any newly opened peer bidirectional streams.
-    for {
+    for accept_bidi {
         bs := (self.m.Accept(io, false, false) else e {
             fail NormMuxErr(e)
         }) else {
@@ -945,6 +971,21 @@ Session.WaitStep(&self, io: Io, incoming: bool): Error!void {
     }
 }
 
+// Updating the generation before waking preserves inserts that land
+// after Decode registers but before a blocked stream starts waiting.
+Session.WakeQpack(&self, io: Io) {
+    _ = self.qpack_epoch.Add(1)
+    core.SyncWake(io, &self.qpack_epoch, true)
+}
+
+Session.StopServing(&self, io: Io) {
+    var g := self.state_mu.Lock(io.NoCancel()).Must()
+    g.Mut().reader_done = true
+    g.Unlock()
+    self.accept_ev.NotifyOne()
+    self.WakeQpack(io)
+}
+
 // SetServing updates st.serving under state_mu.
 Session.SetServing(&self, val: bool) {
     var g := self.state_mu.Lock(core.IoMasked(rt.NativeIo())).Must()
@@ -956,8 +997,24 @@ Session.SetServing(&self, val: bool) {
 /// streams on server) until the connection closes, fails, or io is cancelled
 /// (RFC 9114 6.2). O(bytes received); allocates only for stream buffers.
 export Session.Serve(&self, io: Io): Error!void {
+    try self.ServeLoop(io, none)
+}
+
+/// Runs the dedicated server reader and signals ready before its first
+/// read. Wakes Accept and blocked QPACK decoders when the reader exits.
+/// Errors: Canceled, a protocol violation or net.Error. O(bytes received);
+/// allocates only when stream buffers grow.
+export Session.ServeReady(&self, io: Io, ready: &sync.Notify): Error!void {
+    defer self.StopServing(io)
+    try self.ServeLoop(io, some(ready))
+}
+
+Session.ServeLoop(&self, io: Io, ready: ?&sync.Notify): Error!void {
     self.SetServing(true)
     defer self.SetServing(false)
+    if r := ready {
+        r.NotifyOne()
+    }
     for {
         try self.Poll(io)
         try self.WaitStep(io, true)
