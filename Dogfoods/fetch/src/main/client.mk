@@ -47,6 +47,9 @@ Client(sys: &System, o: &Options): int *o into sys {
     if o.h3_only && (o.follow || o.handshake || o.ws_kinds.Len() > 0) {
         return Fatal(sys, 2, "--http3-only cannot be combined with redirects, a TLS handshake check, or WebSocket")
     }
+    if o.udp_loss.IsSome() && o.seed.IsNone() {
+        return Fatal(sys, 2, "--udp-loss needs --seed")
+    }
     if seed := o.seed {
         return Simulated(sys, o, seed)
     }
@@ -58,6 +61,11 @@ Client(sys: &System, o: &Options): int *o into sys {
 Simulated(sys: &System, o: &Options, seed: u64): int *o into sys {
     var sm := sim.Sim.New(sys.arena, seed) else {
         return Fatal(sys, 1, "out of memory")
+    }
+    if loss := o.udp_loss {
+        var faults := sim.DefaultNetFaults
+        faults.drop = loss
+        sm.SetNetFaults(faults)
     }
     for f in o.faults.Items() {
         match f {
@@ -114,17 +122,25 @@ Session(sys: &System, io: Io, o: &Options): int *o into sys {
     }
     c := http.Client.New(sys.heap, limits)
     defer c.Close()
+    if path := o.origin {
+        return WithOrigin(sys, io, o, &c, &client_cfg, mut jar, path)
+    }
+    return DrivenTransfers(sys, io, o, &c, &client_cfg, mut jar, &NoAddrs)
+}
+
+DrivenTransfers(sys: &System, io: Io, o: &Options, c: &http.Client, cfg: &tls.Config, jar: mut cookie.Jar, addrs: &origin.Addrs): int *sys into jar {
+    if !o.h3 && !o.h3_only && !o.drive {
+        return Transfers(sys, io, o, c, cfg, jar, addrs)
+    }
     var result := 0
     scope background := io.Scope() {
-        if limits.h3.IsSome() {
-            background.go Drive(&c, io)
-            ready := c.WaitDriving(io) else { false }
-            if !ready {
-                c.Stop()
-                return Fatal(sys, 28, "connection driver did not start")
-            }
+        background.go Drive(c, io)
+        ready := c.WaitDriving(io) else { false }
+        if !ready {
+            c.Stop()
+            return Fatal(sys, 28, "connection driver did not start")
         }
-        result = TransferSession(sys, io, o, &c, &client_cfg, mut jar)
+        result = Transfers(sys, io, o, c, cfg, jar, addrs)
         c.Stop()
     }
     return result
@@ -132,13 +148,6 @@ Session(sys: &System, io: Io, o: &Options): int *o into sys {
 
 Drive(c: &http.Client, io: Io) {
     c.Drive(io) else {}
-}
-
-TransferSession(sys: &System, io: Io, o: &Options, c: &http.Client, cfg: &tls.Config, jar: mut cookie.Jar): int *sys into jar {
-    if path := o.origin {
-        return WithOrigin(sys, io, o, c, cfg, jar, path)
-    }
-    return Transfers(sys, io, o, c, cfg, jar, &NoAddrs)
 }
 
 // WithOrigin starts the scripted loopback origins of --origin in tasks,
@@ -208,7 +217,7 @@ WithOrigin(sys: &System, io: Io, o: &Options, c: &http.Client, cfg: &tls.Config,
                 srv.go origin.ServeAccepted(&l4, sys.heap, io, &script, &addrs, tls.Acceptor(&server_cfg))
             }
         }
-        code = Transfers(sys, io, o, c, cfg, jar, &addrs)
+        code = DrivenTransfers(sys, io, o, c, cfg, jar, &addrs)
         srv.Cancel()
     }
     return code

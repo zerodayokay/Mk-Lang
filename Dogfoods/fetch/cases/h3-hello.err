@@ -1,0 +1,2 @@
+> GET /hello
+< HTTP/3 200

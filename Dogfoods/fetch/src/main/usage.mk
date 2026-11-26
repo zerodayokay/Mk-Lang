@@ -72,6 +72,7 @@ const UsageLines: []str = [
     "      --tls-chain FILE     the PEM chain the {tls} origins present",
     "      --tls-key FILE       its PEM private key (PKCS#8, P-256 or Ed25519)",
     "      --seed N             run under the simulator with seed N",
+    "      --udp-loss PPM       under --seed, drop datagrams at the given rate",
     "      --fault NAME         under --seed: connect-refused, read-reset,",
     "                           accept-denied",
     "",

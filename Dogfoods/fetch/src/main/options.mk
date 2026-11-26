@@ -54,6 +54,7 @@ struct Options {
     tls_chain: ?str
     tls_key: ?str
     seed: ?u64
+    udp_loss: ?u32
     faults: List[str]
     // the WebSocket steps in order, each a kind (b't' text, b'b' binary,
     // b'p' ping) and its text
@@ -74,7 +75,7 @@ error NoUrl
 type OptionError = Usage | MissingValue | BadValue | NoUrl | OutOfMemory
 
 // the options that take a value, long and short spellings
-const ValueOptions: []str = ["-o", "--output", "-H", "--header", "-X", "--request", "-d", "--data", "--data-file", "-u", "--user", "--query", "--max-redirs", "--max-time", "--retry", "--retry-delay", "--fetch-limit", "--max-memory", "--decode", "--deny", "-b", "--cookies", "-c", "--cookie-jar", "--cacert", "--alpn", "--http2-window", "--time-cond", "--origin", "--tls-chain", "--tls-key", "--seed", "--fault", "--ws-send", "--ws-binary", "--ws-ping", "--ws-max", "--ws-protocol"]
+const ValueOptions: []str = ["-o", "--output", "-H", "--header", "-X", "--request", "-d", "--data", "--data-file", "-u", "--user", "--query", "--max-redirs", "--max-time", "--retry", "--retry-delay", "--fetch-limit", "--max-memory", "--decode", "--deny", "-b", "--cookies", "-c", "--cookie-jar", "--cacert", "--alpn", "--http2-window", "--time-cond", "--origin", "--tls-chain", "--tls-key", "--seed", "--udp-loss", "--fault", "--ws-send", "--ws-binary", "--ws-ping", "--ws-max", "--ws-protocol"]
 
 NewOptions(a: &Arena): Options {
     return Options(
@@ -122,6 +123,7 @@ NewOptions(a: &Arena): Options {
         tls_chain: none,
         tls_key: none,
         seed: none,
+        udp_loss: none,
         faults: List[str].New(a),
         ws_kinds: List[u8].New(a),
         ws_texts: List[str].New(a),
@@ -255,6 +257,13 @@ Set(o: mut Options, name: str, value: str into o, at: int): OptionError!void {
         "--tls-chain" { o.tls_chain = some(value) }
         "--tls-key" { o.tls_key = some(value) }
         "--seed" { o.seed = some(Cast[u64](try Count(value, at))) }
+        "--udp-loss" {
+            n := try Count(value, at)
+            if n > 1000000 {
+                fail BadValue(arg: at)
+            }
+            o.udp_loss = some(Cast[u32](n))
+        }
         "--fault" {
             if !Faults.Has(&value) {
                 fail BadValue(arg: at)
