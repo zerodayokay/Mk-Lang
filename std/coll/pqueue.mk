@@ -19,7 +19,8 @@ import std.raw
 
 /// A priority queue in an arena: Pop and Peek give the least element by
 /// T's Ord. Push and Pop are O(log n), Peek O(1). Equal elements come out
-/// in no stated order.
+/// in no stated order. Its storage is freed with the arena, its elements
+/// unconsumed, so it holds no linear value: Push of one is E0701.
 export view struct PriorityQueue[T: Ord] {
     ptr: *T
     n: int
@@ -35,7 +36,8 @@ export PriorityQueue[T].New(a: &Arena): PriorityQueue[T] {
 /// Adds x. Fails with OutOfMemory when the queue is full and the arena
 /// cannot grow it; the queue grows before it takes x, so x is consumed
 /// only on success. O(log n) compares, amortized; a growth allocates from
-/// the arena and leaves the old array to it.
+/// the arena and leaves the old array to it. T may not be linear (E0701 at
+/// the call).
 export PriorityQueue[T].Push(mut self, x: T into self): OutOfMemory!void {
     if self.n == self.cap {
         c := NextCap(self.cap, self.n + 1)

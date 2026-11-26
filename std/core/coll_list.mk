@@ -14,7 +14,9 @@ import std.raw
 /// A growable array in an arena. A growth makes the capacity the largest of
 /// 4, twice the old capacity and what is needed. It grows in place when the
 /// buffer is the arena's last block; otherwise it takes a new buffer and
-/// leaves the old one to the arena.
+/// leaves the old one to the arena. The arena frees the elements unconsumed,
+/// so a List holds no linear value: Push and Insert of one are E0701. A
+/// HeapList holds one.
 export view struct List[T] {
     ptr: *T
     n: int
@@ -48,7 +50,8 @@ export List[T].New(a: &Arena): List[T] {
 }
 
 /// Appends x. OutOfMemory when the arena cannot grow the buffer, and then the
-/// caller still owns x. Amortized O(1); growth allocates from the arena.
+/// caller still owns x. T may not be linear (E0701 at the call, which names
+/// HeapList). Amortized O(1); growth allocates from the arena.
 export List[T].Push(mut self, x: T into self): OutOfMemory!void {
     if self.n == self.cap {
         try self.Grow(self.n + 1)
@@ -72,8 +75,9 @@ export List[T].Len(&self): int {
     return self.n
 }
 
-/// Empties the list and keeps its capacity. A list that still holds linear
-/// elements panics (code 8) rather than drop them. O(1).
+/// Empties the list and keeps its capacity. O(1). A list holds no linear
+/// element, since Push and Insert refuse one; were it to hold one, Clear
+/// would panic (code 8) rather than drop it.
 export List[T].Clear(mut self) {
     if self.n > 0 && raw.IsLinear[T]() {
         raw.Fail(8, "List.Clear would drop a linear value")
@@ -82,9 +86,10 @@ export List[T].Clear(mut self) {
 }
 
 /// Keeps the first n elements and drops the rest, keeping the capacity; n at
-/// or above Len() changes nothing. Panics (code 2) when n < 0, and (code 8)
-/// when it would drop a linear element, as Clear does. O(1); allocates
-/// nothing.
+/// or above Len() changes nothing. Panics (code 2) when n < 0. O(1);
+/// allocates nothing. A list holds no linear element, since Push and Insert
+/// refuse one; were it to hold one, a Truncate that would drop it would
+/// panic (code 8), as Clear would.
 export List[T].Truncate(mut self, n: int) {
     if n < 0 {
         raw.Fail(2, "List.Truncate: negative length")
@@ -151,8 +156,8 @@ export List[T].Extend(mut self, xs: []T): OutOfMemory!void *xs into self {
 
 /// Inserts x before element i (i == Len() appends). Panics (code 2) unless
 /// 0 <= i <= Len(), before any growth. OutOfMemory when the buffer cannot
-/// grow, and then the caller still owns x. O(Len() - i); growth allocates from
-/// the arena.
+/// grow, and then the caller still owns x. T may not be linear (E0701 at the
+/// call, as for Push). O(Len() - i); growth allocates from the arena.
 export List[T].Insert(mut self, i: int, x: T into self): OutOfMemory!void {
     if i < 0 || i > self.n {
         raw.Fail(2, "List.Insert: index out of range")

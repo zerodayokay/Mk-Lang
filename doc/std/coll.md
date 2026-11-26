@@ -70,12 +70,11 @@ Calls that overwrite an entry of a `HeapBTree` free what they displace with the 
 
 ## Linear elements
 
-No call drops a linear value without saying so. Where a call would drop a key or a value and cannot free it, the element type must not be linear. A call that breaks this is E0701 at the call:
+No call drops a linear value without saying so. Where a call would drop a key or a value and cannot free it, or would store it where its arena frees it, the element type must not be linear. A call that breaks this is E0701 at the call:
 
 - `HeapDeque.Free` and `HeapBTree.Free` need elements that are not linear or are `Free`. The diagnostic names `FreeEach` and `FreeEmpty`.
 - `HeapBTree.Set` needs the same of `K` and `V`, and `HeapBTree.Replace` of `K`. Use `Replace` to get the old value back instead.
-- An arena `BTree`'s `Set` drops the given key and the old value, so neither `K` nor `V` may be linear.
-- Its `Replace` drops the given key, so `K` may not be linear.
+- An arena container frees what it holds with its arena, unconsumed, so it holds no linear value: `Deque.Push`, `Deque.PushFront`, `PriorityQueue.Push` and the arena `BTree`'s `Set` and `Replace` refuse a linear element, key or value. The diagnostic names `HeapDeque` or `HeapBTree`, which hold one.
 - `Remove` by key, on either tree, drops the stored key, so `K` may not be linear.
 
 ```mk
@@ -324,6 +323,8 @@ An ordered map in an arena: Get, Set and Remove in O(log n), and
 iteration in key order. K needs Ord. Its nodes live in the arena and
 are freed with it; a node emptied by Remove is reused by a later Set,
 so a tree that keeps changing does not grow the arena without bound.
+The arena frees the entries unconsumed, so the tree holds no linear key
+or value: every call that stores one is E0701. A HeapBTree holds them.
 
 ### `BTree.Get`
 
@@ -417,10 +418,11 @@ export BTree[K, V].Replace(mut self, k: K into self, v: V into self): OutOfMemor
 
 Stores v under k and returns the old value, or none when k was absent.
 A present key keeps the stored key and drops the given k, so K may not
-be linear (E0701 at the call); V may be anything, since its old value
-comes back. Fails with OutOfMemory as Set does, and then k and v are
-not consumed. O(log n) nodes and O(B log n) compares; allocates at most
-one node per level, and nothing for a present key.
+be linear (E0701 at the call); nor may V, since the arena would free the
+stored v unconsumed (E0701, naming HeapBTree). Fails with OutOfMemory as
+Set does, and then k and v are not consumed. O(log n) nodes and
+O(B log n) compares; allocates at most one node per level, and nothing
+for a present key.
 
 ### `BTree.Set`
 
@@ -432,7 +434,7 @@ export BTree[K, V].Set(mut self, k: K into self, v: V into self): OutOfMemory!vo
 
 Stores v under k. A present key keeps the stored key and gets v; the
 given key and the old value are dropped, so neither K nor V may be
-linear (E0701 at the call, which names Replace). Fails with
+linear (E0701 at the call, which names HeapBTree). Fails with
 OutOfMemory when a node split needs a node the arena cannot give; the
 nodes are allocated before anything moves, so k and v are then not
 consumed. O(log n) nodes and O(B log n) compares, where B, from 6 to
@@ -530,7 +532,9 @@ export view struct Deque[T]
 
 A double-ended queue in an arena: push and pop at either end, and
 index from the front, each O(1) (a push amortized). Its storage lives
-in the arena and is freed with it.
+in the arena and is freed with it, its elements unconsumed, so it holds
+no linear value: Push and PushFront of one are E0701. A HeapDeque holds
+one.
 
 ### `Deque.Get`
 
@@ -603,7 +607,7 @@ Appends x at the back. Fails with OutOfMemory when the deque is full
 and the arena cannot double its capacity; the deque grows before it
 takes x, so x is consumed only on success. Amortized O(1); a growth
 allocates twice the capacity from the arena and leaves the old buffer
-to it.
+to it. T may not be linear (E0701 at the call, which names HeapDeque).
 
 ### `Deque.PushFront`
 
@@ -613,7 +617,7 @@ export Deque[T].PushFront(mut self, x: T into self): OutOfMemory!void
 
 - Errors: OutOfMemory
 
-Prepends x at the front, as Push. Amortized O(1).
+Prepends x at the front, as Push; T may not be linear. Amortized O(1).
 
 ### `HeapBTree`
 
@@ -865,7 +869,8 @@ export view struct PriorityQueue[T: Ord]
 
 A priority queue in an arena: Pop and Peek give the least element by
 T's Ord. Push and Pop are O(log n), Peek O(1). Equal elements come out
-in no stated order.
+in no stated order. Its storage is freed with the arena, its elements
+unconsumed, so it holds no linear value: Push of one is E0701.
 
 ### `PriorityQueue.Len`
 
@@ -917,6 +922,7 @@ export PriorityQueue[T].Push(mut self, x: T into self): OutOfMemory!void
 Adds x. Fails with OutOfMemory when the queue is full and the arena
 cannot grow it; the queue grows before it takes x, so x is consumed
 only on success. O(log n) compares, amortized; a growth allocates from
-the arena and leaves the old array to it.
+the arena and leaves the old array to it. T may not be linear (E0701 at
+the call).
 
 <!-- api:end -->

@@ -200,7 +200,9 @@ export Pool[T].New(a: &Arena): Pool[T] {
 /// one, else in a new slot at the end. Fails with OutOfMemory when the
 /// arena cannot grow the pool or the pool holds 2^32 - 1 slots; then
 /// nothing changed and the caller keeps x. Amortized O(1); a growth
-/// doubles the buffer in the arena, which keeps the old one.
+/// doubles the buffer in the arena, which keeps the old one. T may not be
+/// linear (E0701 at the call; in a generic function the bounds must say so,
+/// as T: Plain does): the arena frees the pool's values unconsumed.
 export Pool[T].Add(mut self, x: T into self): OutOfMemory!Handle {
     if i := self.vacant.Pop() {
         s := PoolSlot(self.slots, int(i))

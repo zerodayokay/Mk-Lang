@@ -1919,7 +1919,7 @@ The library's types have these kinds:
 
 | Library types | Kind | Release | Crosses tasks by value | Shared across tasks by `&` |
 |---|---|---|---|---|
-| `List Map Set Text` | Unique | None. The arena ends them | No: they hold `&Arena` | No |
+| `List Map Set Text` | Unique | None. The arena ends them, so they hold no linear value (E0701 at a call that would store one) | No: they hold `&Arena` | No |
 | `Arena` | Linear | `Free()`, or `Reset()` to reuse | No | No |
 | `Heap` | Reached by `&Heap` | Never | | Yes |
 | `HeapList HeapMap TextMap HeapText Box Shared` | Linear | `Free(a)`; `Shared` lives on the heap and takes `&Heap` | If contents are | If contents are |

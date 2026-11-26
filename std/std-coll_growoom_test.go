@@ -188,13 +188,19 @@ HeapPut(t: mut coll.HeapBTree[int, Tok], a: &Alloc, k: int, x: Tok): int {
     return 0
 }
 
+// Tik is Tok's plain twin for the arena containers, which hold no linear
+// value.
+struct Tik {
+    id: int
+}
+
 // ArenaPut is HeapPut for the arena tree.
-ArenaPut(t: mut coll.BTree[int, Tok], k: int, x: Tok): int {
+ArenaPut(t: mut coll.BTree[int, Tik], k: int, x: Tik): int {
     o := t.Replace(k, x) else {
-        return TokId(x) + 1
+        return x.id + 1
     }
     if v := o {
-        _ = TokId(v)
+        _ = v.id
         return -1
     }
     return 0
@@ -266,22 +272,22 @@ ArenaRun(w: mut Writer, a: &Alloc, fail_at: int): WriteError!int {
         var oom := 0
         var bad := 0
         var back := 0
-        var dq := coll.Deque[Tok].New(&ar)
+        var dq := coll.Deque[Tik].New(&ar)
         var pq := coll.PriorityQueue[int].New(&ar)
-        var bt := coll.BTree[int, Tok].New(&ar)
+        var bt := coll.BTree[int, Tik].New(&ar)
         for i in 0..3000 {
             n := dq.Len()
-            t := Tok(id: i)
+            t := Tik(id: i)
             dq.Push(t) else {
                 oom += 1
-                back += TokId(t) + 1
+                back += t.id + 1
                 if dq.Len() != n {
                     bad += 1
                 }
-                u := Tok(id: i)
+                u := Tik(id: i)
                 dq.Push(u) else {
                     bad += 1
-                    _ = TokId(u)
+                    _ = u.id
                 }
             }
             pn := pq.Len()
@@ -296,7 +302,7 @@ ArenaRun(w: mut Writer, a: &Alloc, fail_at: int): WriteError!int {
             }
             k := i * 7919 % 5000
             bn := bt.Len()
-            r := ArenaPut(mut bt, k, Tok(id: i))
+            r := ArenaPut(mut bt, k, Tik(id: i))
             if r < 0 {
                 bad += 1
             } else if r > 0 {
@@ -305,7 +311,7 @@ ArenaRun(w: mut Writer, a: &Alloc, fail_at: int): WriteError!int {
                 if bt.Len() != bn || bt.Get(&k).IsSome() {
                     bad += 1
                 }
-                if ArenaPut(mut bt, k, Tok(id: i)) != 0 {
+                if ArenaPut(mut bt, k, Tik(id: i)) != 0 {
                     bad += 1
                 }
             }
@@ -321,14 +327,14 @@ ArenaRun(w: mut Writer, a: &Alloc, fail_at: int): WriteError!int {
         }
         var d: u64 = 14695981039346656037
         for x := dq.PopFront() {
-            d = Fnv(d, TokId(x))
+            d = Fnv(d, x.id)
         }
         for x := pq.Pop() {
             d = Fnv(d, x)
         }
         for k in 0..5000 {
             if v := bt.Remove(&k) {
-                d = Fnv(Fnv(d, k), TokId(v))
+                d = Fnv(Fnv(d, k), v.id)
             }
         }
         ar.Free()
