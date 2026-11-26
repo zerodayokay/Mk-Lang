@@ -3,8 +3,8 @@
 // faults, fails or calls back into Mk, a callee C calls first, a struct
 // returned through a hidden pointer, an unwind stopped inside the stub and
 // std's own lists must each behave as documented.
-// What: TestFFI_LazyInit, TestFFI_LazyUnwindEpilogue, TestFFI_LazyPresentForms
-// and TestFFI_LazyStdSearch, with lazyInitDLLs.
+// What: TestFFI_LazyInit, TestFFI_LazyUnwindEpilogue, TestFFI_LazyPresentForms,
+// TestFFI_LazyStdSearch and TestFFI_LazyClobber, with lazyInitDLLs.
 // How: small C DLLs built with the discovered clang, lld-link and llvm-lib
 // (no C runtime); the programs print what they saw, and the tests compare
 // stdout, stderr and the exit status.
@@ -15,6 +15,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -366,27 +367,99 @@ func TestFFI_LazyPresentForms(t *testing.T) {
 	}
 }
 
-// TestFFI_LazyStdSearch: a name of std's crypt32.lazy.def that the program
-// declares itself binds lazily, from System32 only: a crypt32.dll beside
-// the executable, whose initializer fails, is never loaded, so dl.Present
-// is true (System32's crypt32 loads).
+// TestFFI_LazyStdSearch: a name a std <dll>.lazy.def lists binds lazily for
+// the whole program, a Mk extern of the program's own included, and loads
+// from System32 only: with std's list mkstdlazy.lazy.def (a std copy) and
+// mkstdlazy.dll beside the executable, in the current directory and on
+// PATH, dl.Present is false, and the import table names no mkstdlazy.dll.
+// (crypt32.dll itself cannot show this: the loader maps it from
+// \KnownDlls, where a KnownDLL's dependencies are, whatever the flags.)
 func TestFFI_LazyStdSearch(t *testing.T) {
 	needWindows(t)
 	tools := needTools(t)
+	std := copyStd(t, map[string]string{"sys/windows/mkstdlazy.lazy.def": "MkStdLazy\n"}, nil)
+	elsewhere := t.TempDir()
+	dll := lazyDLL(t, tools, elsewhere, "mkstdlazy.dll", "__declspec(dllexport) int MkStdLazy(void) { return 7; }\n", false)
 	root := t.TempDir()
-	planted := lazyDLL(t, tools, t.TempDir(), "crypt32.dll", "int __stdcall DllMain(void *h, unsigned reason, void *r) { return reason == 1 ? 0 : 1; }\n__declspec(dllexport) int CertCloseStore(void *s, unsigned f) { return 7; }\n", true)
 	lazyWrite(t, filepath.Join(root, "pkg.mk"), lazyManifest())
-	lazyWrite(t, filepath.Join(root, "app", "main.mk"), "import std.dl\n\nextern CertCloseStore(store: uint, flags: u32): i32\n\nexport Main(sys: &System): WriteError!void {\n    p := dl.Present(sys.io, CertCloseStore)\n    try sys.Print(\"{p}\\n\", (p))\n}\n")
-	exe := mustBuild(t, root, types.X86_64Windows, types.Dev)
-	b, err := os.ReadFile(planted)
+	lazyWrite(t, filepath.Join(root, "app", "main.mk"), "import std.dl\n\nextern MkStdLazy(): i32\n\nexport Main(sys: &System): WriteError!void {\n    p := dl.Present(sys.io, MkStdLazy)\n    try sys.Print(\"{p}\\n\", (p))\n}\n")
+	s, err := NewSession(Config{Root: root, StdDir: std, Target: types.X86_64Windows, Profile: types.Dev, Tools: tools, CacheDir: t.TempDir(), Jobs: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lazyWrite(t, filepath.Join(filepath.Dir(exe), "crypt32.dll"), string(b))
-	if got := runOut(t, exe); got != "true\n" {
-		t.Errorf("printed %q: the crypt32.dll beside the executable was loaded", got)
+	r, paths, err := s.Build(filepath.Join(t.TempDir(), "ffi.exe"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if ds := dlls(t, exe); strings.Contains(strings.ToLower(strings.Join(ds, " ")), "crypt32") {
-		t.Errorf("the import table names crypt32: %q", ds)
+	if len(r.Report.Diags) > 0 || len(paths) != 1 {
+		t.Fatalf("build:\n%s", r.Report.Text(r.Sources))
+	}
+	exe := paths[0]
+	b, err := os.ReadFile(dll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lazyWrite(t, filepath.Join(filepath.Dir(exe), "mkstdlazy.dll"), string(b))
+	out, errOut, code := lazyRun(t, exe, elsewhere, "PATH="+elsewhere+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if code != 0 || out != "false\n" {
+		t.Errorf("exit %d, printed %q, stderr %q: a std list's DLL loaded from outside System32", code, out, errOut)
+	}
+	if ds := dlls(t, exe); slices.ContainsFunc(ds, func(d string) bool { return strings.EqualFold(d, "mkstdlazy.dll") }) {
+		t.Errorf("the import table names mkstdlazy.dll: %q", ds)
+	}
+}
+
+// lazyClobInit is an initializer that zeroes every volatile register an
+// argument can travel in (rcx, rdx, r8, r9, xmm0 to xmm5) and r10, r11, so
+// a first call whose stub did not keep them sees zeros.
+const lazyClobInit = `int __stdcall DllMain(void *h, unsigned reason, void *r) {
+	if (reason == 1) __asm__ volatile("xorps %%xmm0, %%xmm0\n\txorps %%xmm1, %%xmm1\n\txorps %%xmm2, %%xmm2\n\txorps %%xmm3, %%xmm3\n\txorps %%xmm4, %%xmm4\n\txorps %%xmm5, %%xmm5\n\txorl %%ecx, %%ecx\n\txorl %%edx, %%edx\n\txorl %%r8d, %%r8d\n\txorl %%r9d, %%r9d\n\txorl %%r10d, %%r10d\n\txorl %%r11d, %%r11d"
+		::: "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "rcx", "rdx", "r8", "r9", "r10", "r11", "memory");
+	return 1;
+}
+`
+
+// TestFFI_LazyClobber: the first call of a lazy DLL whose initializer
+// zeroes the argument registers still gets its arguments: four doubles
+// (xmm0 to xmm3), four integers (rcx, rdx, r8, r9) and variadic doubles
+// (in xmm and duplicated in the integer registers), each function the
+// first its DLL is asked for. Dev and release.
+func TestFFI_LazyClobber(t *testing.T) {
+	needWindows(t)
+	tools := needTools(t)
+	root := t.TempDir()
+	w := types.X86_64Windows.Name
+	var links []string
+	for name, fn := range map[string]string{
+		"mkclobf": "__declspec(dllexport) double MkClobF(double a, double b, double c, double d) { return a + 2*b + 3*c + 4*d; }\nint _fltused;\n",
+		"mkclobi": "__declspec(dllexport) long long MkClobI(long long a, long long b, long long c, long long d) { return a + 10*b + 100*c + 1000*d; }\n",
+		"mkclobv": "int _fltused;\n__declspec(dllexport) double MkClobV(int n, ...) {\n\t__builtin_va_list ap; __builtin_va_start(ap, n);\n\tdouble s = 0; for (int i = 1; i <= n; i++) s += i * __builtin_va_arg(ap, double);\n\t__builtin_va_end(ap); return s;\n}\n",
+	} {
+		lazyDLL(t, tools, root, name+".dll", lazyClobInit+fn, true)
+		links = append(links, linkLit(name+".dll", "lazy", name+".dll", w))
+	}
+	slices.Sort(links)
+	lazyWrite(t, filepath.Join(root, "pkg.mk"), lazyManifest(links...))
+	lazyWrite(t, filepath.Join(root, "app", "main.mk"), `extern MkClobF(a: f64, b: f64, c: f64, d: f64): f64
+extern MkClobI(a: i64, b: i64, c: i64, d: i64): i64
+extern MkClobV(n: i32, ...): f64
+
+export Main(sys: &System): WriteError!void {
+    var f: f64 = 0.0
+    var i: i64 = 0
+    var v: f64 = 0.0
+    unsafe "the test DLLs' functions, each the first call of its DLL" {
+        f = MkClobF(1.5, 2.5, 3.5, 4.5)
+        i = MkClobI(1, 2, 3, 4)
+        v = MkClobV(3, 1.5, 2.25, 3.0)
+    }
+    try sys.Print("{f} {i} {v}\n", (f, i, v))
+}
+`)
+	for _, prof := range []types.Profile{types.Dev, types.Release} {
+		exe := mustBuild(t, root, types.X86_64Windows, prof)
+		if got := runOut(t, exe); got != "35 4321 15\n" {
+			t.Errorf("%v: printed %q, want 35 4321 15", prof, got)
+		}
 	}
 }
