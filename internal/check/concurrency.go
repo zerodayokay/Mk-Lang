@@ -439,7 +439,7 @@ func (u *unit) unsafeOnly(it types.ItemID) string {
 // unsafeDoors names the runtime doors only unsafe code may call or name:
 // every exported function and method of std.vm and
 // std.linux, runtime.AddFaultFilter, runtime.ForeignIo and
-// runtime.ForeignContext, mem.Custom, and
+// runtime.ForeignContext, mem.Custom, window.CreateUnixVulkanSurface, and
 // std.core's Alloc.Bytes and Alloc.FreeBytes; else "". A call from the
 // item's own module is not caught: std.vm's code and test blocks are std's,
 // in unsafe_modules, and audited there.
@@ -471,6 +471,8 @@ func (u *unit) unsafeDoors(it types.ItemID) string {
 		return "runtime." + name
 	case mod.Path == "std.mem" && owner == "" && name == "Custom":
 		return "mem.Custom"
+	case mod.Path == "std.window" && owner == "" && name == "CreateUnixVulkanSurface":
+		return "window.CreateUnixVulkanSurface"
 	case mod.Path == "std.core" && owner == "Alloc" && (name == "Bytes" || name == "FreeBytes"):
 		return "Alloc." + name
 	}

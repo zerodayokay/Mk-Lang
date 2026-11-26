@@ -31,11 +31,13 @@ CreateGlfwSurface(gipa: vulkan.PfnVkGetInstanceProcAddr, inst: vulkan.VkInstance
         fail SurfaceLost
     }
     loader := LoadInstanceProcAddr(gipa, raw.Null[vulkan.VkInstanceT](), "vkGetInstanceProcAddr\x00")
-    (code, surface) := window.CreateUnixVulkanSurface(rt.NativeIo(), window_handle, raw.Addr(inst), loader) else { fail Unsupported }
-    if code != vulkan.VkSuccess {
-        fail MapVkError(code, CallCreateSwapchain)
+    unsafe "the caller's Surface keeps the GLFW window live, and inst and its loader remain live until the owner returns" {
+        (code, surface) := window.CreateUnixVulkanSurface(rt.NativeIo(), window_handle, raw.Addr(inst), loader) else { fail Unsupported }
+        if code != vulkan.VkSuccess {
+            fail MapVkError(code, CallCreateSwapchain)
+        }
+        return Cast[u64](surface)
     }
-    return Cast[u64](surface)
 }
 
 CreateWin32Surface(gipa: vulkan.PfnVkGetInstanceProcAddr, inst: vulkan.VkInstance, hinstance: uint, hwnd: uint): Error!u64 {

@@ -20,11 +20,13 @@ var UnixVulkanLock: Mutex[bool] = Mutex[bool].New(false)
 var UnixVulkanJob: atomic.Atomic[uint] = atomic.Atomic[uint].New(0)
 var UnixVulkanDone: atomic.Atomic[u32] = atomic.Atomic[u32].New(0)
 
-/// Creates a Vulkan surface for a GLFW handle from a live Surface. An
-/// integration supplies a live VkInstance address and its Vulkan 1.3
-/// loader's vkGetInstanceProcAddr address. The caller owns the resulting
-/// VkSurfaceKHR on success. Returns Unsupported outside native Unix or
-/// if the loader differs, and otherwise returns GLFW's VkResult and handle.
+/// Creates a Vulkan surface on the Unix window owner. Call in `unsafe`.
+/// Keep the `Surface` that owns the GLFW handle and the `VkInstance` live
+/// until the call returns. Supply the `vkGetInstanceProcAddr` address from
+/// the Vulkan 1.3 loader that created the instance. On success, the caller
+/// owns the resulting `VkSurfaceKHR`. Returns `Unsupported` outside native
+/// Unix or if the loader differs, and otherwise returns GLFW's `VkResult`
+/// and handle.
 /// O(1) besides the owner wait and native call. Allocates nothing.
 export CreateUnixVulkanSurface(io: Io, handle: uint, instance: uint, loader: uint): Unsupported!(code: i32, surface: uint) {
     if !UnixWindowTarget() || !core.IsNative(io) || handle == 0 || instance == 0 || loader == 0 || UnixThread.init_state.Load(atomic.Acquire) != ThreadReady {
