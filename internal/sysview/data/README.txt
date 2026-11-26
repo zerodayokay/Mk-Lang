@@ -8,3 +8,7 @@ They are generated, never edited:
 
 The Windows views hold declarations generated from the Windows SDK's
 headers (the version is in views.txt and in `mk sdk views`).
+
+The Linux c.posix views hold declarations from per-target glibc headers
+and versioned link entries from the corresponding libc.so.6. See
+tools/sysview/posix-inputs.md for the pinned Debian packages and commands.

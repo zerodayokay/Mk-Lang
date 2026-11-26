@@ -28,6 +28,7 @@ type jnode struct {
 	ID                  string            `json:"id"`
 	Kind                string            `json:"kind"`
 	Name                string            `json:"name"`
+	MangledName         string            `json:"mangledName"`
 	IsImplicit          bool              `json:"isImplicit"`
 	IsInvalid           bool              `json:"isInvalid"`
 	TagUsed             string            `json:"tagUsed"`
@@ -206,6 +207,8 @@ type unit struct {
 	enumVals map[string]int64 // EnumConstantDecl ID to its integer value
 	total    int              // top-level nodes read
 
+	redirects map[string]string // C function name to explicit assembler symbol
+
 	file string // the location state: the last file and line Clang wrote
 	line int
 }
@@ -377,6 +380,13 @@ func (u *unit) top(n *jnode, imp int) {
 				i++
 			case "CompoundStmt":
 				d.hasBody = true
+			case "AsmLabelAttr":
+				if !n.IsInvalid && !d.static && n.MangledName != "" && n.MangledName != n.Name {
+					if u.redirects == nil {
+						u.redirects = map[string]string{}
+					}
+					u.redirects[n.Name] = n.MangledName
+				}
 			}
 		}
 		if n.IsInvalid {

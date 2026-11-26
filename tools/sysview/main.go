@@ -2,8 +2,7 @@
 // maintainer, never by a user's build, and a regenerated view must be
 // reviewable and its drift from the committed one visible.
 //
-// What: the sysview command: go run ./tools/sysview -sdk <dir> [-vulkan
-// <dir>] [-out <dir>] [-check]. It generates every system view whose input
+// What: the sysview command. It generates every system view whose input
 // it is given and writes <out>/<target>/<view>.mksv and views.txt; -check
 // writes nothing and fails when a committed archive's identity differs.
 //
@@ -28,12 +27,15 @@ import (
 func main() {
 	sdk := flag.String("sdk", "", `the Windows Kits\10 directory, or one Include\<version> directory`)
 	vulkan := flag.String("vulkan", "", "Vulkan-Headers' include directory")
+	glibcX64 := flag.String("glibc-x86_64", "", "extracted Debian glibc sysroot for x86_64-linux")
+	glibcArm64 := flag.String("glibc-aarch64", "", "extracted Debian glibc sysroot for aarch64-linux")
 	out := flag.String("out", filepath.Join("internal", "sysview", "data"), "the directory the archives go to, one directory per target")
 	check := flag.Bool("check", false, "write nothing; fail when a committed archive differs from the generated one")
 	flag.Parse()
 	t0 := time.Now()
 	res, err := driver.GenerateSystemViews(driver.SysGenOptions{WindowsSDK: *sdk, Vulkan: *vulkan,
-		Log: func(f string, a ...any) { fmt.Fprintf(os.Stderr, "sysview: "+f+"\n", a...) }})
+		Glibc: map[string]string{"x86_64-linux": *glibcX64, "aarch64-linux": *glibcArm64},
+		Log:   func(f string, a ...any) { fmt.Fprintf(os.Stderr, "sysview: "+f+"\n", a...) }})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sysview: %v\n", err)
 		os.Exit(1)
