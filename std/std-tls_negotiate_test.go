@@ -57,7 +57,8 @@ export Main(sys: &System): WriteError|OutOfMemory!void {
 `
 
 // tlsNegoClient dials a server and negotiates: arguments are the address,
-// the root's PEM file and the offer. It prints "ok chosen=<i> n=<bytes
+// the root's PEM file, the offer and the lowest version ("12" turns on
+// the TLS 1.2 client, "13" does not). It prints "ok chosen=<i> n=<bytes
 // echoed>" or "err <the error>".
 const tlsNegoClient = tlsNegoImports + tlsNegoCommon + `
 Run(sys: &System, a: &Arena into a): x509.Error|tls.Error|fs.Error!str from a {
@@ -67,6 +68,9 @@ Run(sys: &System, a: &Arena into a): x509.Error|tls.Error|fs.Error!str from a {
     pool := x509.Pool.New(all[..])
     var cfg := tls.DefaultConfig
     cfg.roots = some(&pool)
+    if sys.args[4] == "12" {
+        cfg.min_version = tls.Version.Tls12
+    }
     offer := try Names(a, try a.Dup(sys.args[3]))
     sec := tls.Connector(&cfg)
     stream := try net.Dial(io, sys.args[1])
@@ -163,9 +167,10 @@ func tlsNegoExe(t *testing.T, role, mode string) string {
 }
 
 // TestStdTls_GoPeerNegotiate runs Negotiate offering h2 then http/1.1
-// against Go's server with each NextProtos: the chosen index must name
-// the protocol Go negotiated, and none in common is Go's
-// no_application_protocol alert.
+// against Go's server with each NextProtos, over TLS 1.3, through a
+// HelloRetryRequest, and over TLS 1.2 (client12.mk's path): the chosen
+// index must name the protocol Go negotiated at the version it
+// negotiated, and none in common is Go's no_application_protocol alert.
 func TestStdTls_GoPeerNegotiate(t *testing.T) {
 	pki := tlsPeerPKI(t)
 	cases := []struct {
@@ -175,6 +180,8 @@ func TestStdTls_GoPeerNegotiate(t *testing.T) {
 		want   string // the driver's line
 		alpn   string // Go's NegotiatedProtocol
 		goErr  string // a substring of Go's handshake error
+		tls12  bool   // Go's server at TLS 1.2 only, the client allowing it
+		curves []tls.CurveID
 	}{
 		{name: "server takes h2", offer: "h2,http/1.1", protos: []string{"h2"}, want: "ok chosen=0 n=5", alpn: "h2"},
 		{name: "server takes http/1.1", offer: "h2,http/1.1", protos: []string{"http/1.1"}, want: "ok chosen=1 n=5", alpn: "http/1.1"},
@@ -182,17 +189,27 @@ func TestStdTls_GoPeerNegotiate(t *testing.T) {
 		{name: "server without ALPN", offer: "h2,http/1.1", want: "ok chosen=-1 n=5"},
 		{name: "no protocol in common", offer: "h2,http/1.1", protos: []string{"x-other"}, want: "err SecureFailed(why: Handshake)", goErr: "unsupported application protocols"},
 		{name: "empty offer", offer: "-", protos: []string{"h2"}, want: "ok chosen=-1 n=5"},
+		{name: "after a HelloRetryRequest", offer: "h2,http/1.1", protos: []string{"http/1.1"}, curves: []tls.CurveID{tls.CurveP256}, want: "ok chosen=1 n=5", alpn: "http/1.1"},
+		{name: "tls 1.2 server takes h2", offer: "h2,http/1.1", protos: []string{"h2"}, tls12: true, want: "ok chosen=0 n=5", alpn: "h2"},
+		{name: "tls 1.2 server prefers http/1.1", offer: "h2,http/1.1", protos: []string{"http/1.1", "h2"}, tls12: true, want: "ok chosen=1 n=5", alpn: "http/1.1"},
+		{name: "tls 1.2 server without ALPN", offer: "h2,http/1.1", tls12: true, want: "ok chosen=-1 n=5"},
+		{name: "tls 1.2 no protocol in common", offer: "h2,http/1.1", protos: []string{"x-other"}, tls12: true, want: "err SecureFailed(why: Handshake)", goErr: "unsupported application protocols"},
 	}
 	for _, mode := range tlsModes {
 		for _, c := range cases {
 			t.Run(mode+"/"+c.name, func(t *testing.T) {
-				cfg := &tls.Config{Certificates: []tls.Certificate{pki.leaves["p256"]}, MinVersion: tls.VersionTLS13, NextProtos: c.protos}
+				cfg := &tls.Config{Certificates: []tls.Certificate{pki.leaves["p256"]}, MinVersion: tls.VersionTLS13, NextProtos: c.protos, CurvePreferences: c.curves}
+				version, min := uint16(tls.VersionTLS13), "13"
+				if c.tls12 {
+					cfg.MinVersion, cfg.MaxVersion = tls.VersionTLS12, tls.VersionTLS12
+					version, min = tls.VersionTLS12, "12"
+				}
 				addr, done := tlsGoServer(t, cfg)
 				roots := filepath.Join(t.TempDir(), "root.pem")
 				if err := os.WriteFile(roots, []byte(pki.rootPEM), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				r := runNative(t, tlsNegoExe(t, "client", mode), "", addr, roots, c.offer)
+				r := runNative(t, tlsNegoExe(t, "client", mode), "", addr, roots, c.offer, min)
 				if got := strings.TrimSpace(r.stdout); got != c.want {
 					t.Errorf("got %q (%s), want %q", got, r.stderr, c.want)
 				}
@@ -209,6 +226,12 @@ func TestStdTls_GoPeerNegotiate(t *testing.T) {
 					}
 					if s.state.NegotiatedProtocol != c.alpn {
 						t.Errorf("Go negotiated %q, want %q", s.state.NegotiatedProtocol, c.alpn)
+					}
+					if s.state.Version != version {
+						t.Errorf("Go negotiated version %#x, want %#x", s.state.Version, version)
+					}
+					if c.curves != nil && !s.state.HelloRetryRequest {
+						t.Errorf("Go sent no HelloRetryRequest")
 					}
 				case <-time.After(30 * time.Second):
 					t.Errorf("Go's server did not finish")
