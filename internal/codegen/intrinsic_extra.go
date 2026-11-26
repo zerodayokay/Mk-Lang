@@ -65,6 +65,8 @@ var extraSigs = map[string]string{
 	"std.mem.OffsetOf":     "[T](str): int",
 	"std.mem.Prefetch":     "[T](&T, bool)",
 	"std.mem.Zeroed":       "[T](): T",
+	"std.mem.AsBytes":      "[T](&T): []u8 from p",
+	"std.mem.SliceAsBytes": "[T]([]T): []u8 from xs",
 	"std.runtime.Cold":     "()",
 	"std.runtime.Cycles":   "(): u64",
 	"std.runtime.Likely":   "(bool): bool",
@@ -92,11 +94,13 @@ var extraLowerings = map[string]targetLowering{
 	"std.math.SubBorrow": func(fg *fnGen, t *mir.Terminator, a []value) {
 		fg.carryOp(t, a, "std.math.SubBorrow", "usub.with.overflow", "diff", "borrow")
 	},
-	"std.mem.OffsetOf":   (*fnGen).offsetOf,
-	"std.mem.Prefetch":   (*fnGen).prefetch,
-	"std.mem.Zeroed":     (*fnGen).zeroed,
-	"std.runtime.Cold":   func(fg *fnGen, t *mir.Terminator, _ []value) { fg.targetDone(t) },
-	"std.runtime.Cycles": (*fnGen).cycles,
+	"std.mem.OffsetOf":     (*fnGen).offsetOf,
+	"std.mem.Prefetch":     (*fnGen).prefetch,
+	"std.mem.Zeroed":       (*fnGen).zeroed,
+	"std.mem.AsBytes":      (*fnGen).asBytes,
+	"std.mem.SliceAsBytes": (*fnGen).sliceAsBytes,
+	"std.runtime.Cold":     func(fg *fnGen, t *mir.Terminator, _ []value) { fg.targetDone(t) },
+	"std.runtime.Cycles":   (*fnGen).cycles,
 	"std.runtime.Likely": func(fg *fnGen, t *mir.Terminator, a []value) {
 		fg.expectBool(t, a, 1, "std.runtime.Likely")
 	},
@@ -338,6 +342,32 @@ func (fg *fnGen) zeroed(t *mir.Terminator, _ []value) {
 		d, _ := fg.placeAddr(t.Dest)
 		fg.memset(d, 0, size)
 	}
+	fg.targetDone(t)
+}
+
+// asBytes is AsBytes[T](p: &T): []u8 from p: the slice {p, SizeOf[T]()}.
+func (fg *fnGen) asBytes(t *mir.Terminator, args []value) {
+	p := fg.scalarArg(t, "std.mem.AsBytes", args, 0)
+	size, _ := fg.g.sizeAlign(fg.g.tt.Get(p.t).Elem)
+	m := fg.g.m
+	d, _ := fg.placeAddr(t.Dest)
+	fg.cur.Store(p.v, d.v, alignAt(d.align, 0))
+	fg.cur.Store(m.ConstInt(m.I(64), size), fg.gep(d.v, 8), alignAt(d.align, 8))
+	fg.targetDone(t)
+}
+
+// sliceAsBytes is SliceAsBytes[T](xs: []T): []u8 from xs: the slice {xs.ptr, xs.len * SizeOf[T]()}.
+func (fg *fnGen) sliceAsBytes(t *mir.Terminator, args []value) {
+	g, m := fg.g, fg.g.m
+	ptr, i64 := m.Ptr(), m.I(64)
+	a := fg.addrOf(args[0])
+	p := fg.cur.Load(ptr, a.v, alignAt(a.align, 0), m.Metadata().NonNull(), m.Metadata().NoUndef())
+	n := fg.cur.Load(i64, fg.gep(a.v, 8), alignAt(a.align, 8), m.Metadata().NoUndef())
+	elemSize, _ := g.sizeAlign(g.tt.Get(args[0].t).Elem)
+	bytes := fg.cur.Bin(llvm.Mul, n, m.ConstInt(i64, elemSize), 0)
+	d, _ := fg.placeAddr(t.Dest)
+	fg.cur.Store(p, d.v, alignAt(d.align, 0))
+	fg.cur.Store(bytes, fg.gep(d.v, 8), alignAt(d.align, 8))
 	fg.targetDone(t)
 }
 

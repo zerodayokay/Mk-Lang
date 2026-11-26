@@ -4,15 +4,17 @@
 // does; none of these can be written in safe Mk.
 //
 // What: OffsetOf, a field's offset as a compile-time value, Prefetch, a
-// read or write prefetch hint, and Zeroed, a value of a zero-valid type
-// whose bytes are all zero.
+// read or write prefetch hint, Zeroed, a value of a zero-valid type
+// whose bytes are all zero, and AsBytes / SliceAsBytes, read-only byte views
+// of unpadded plain values and slices.
 //
 // How: each is bodiless, so check marks it an intrinsic: codegen lowers it
 // by its stable key and the evaluator runs it
 // (internal/eval/intrinsic_machine.go). Each is safe and allocates nothing;
 // Zeroed's T must be zero-valid and not an error union, implicit bounds
 // check judges (E0701), so no all-zero value of it can break a rule of the
-// language.
+// language; AsBytes and SliceAsBytes require an unpadded plain T with no
+// references, raw pointers or interior mutability (E0701).
 
 /// The byte offset of the field named field in T's layout, as a
 /// compile-time value; a field T lacks is E0901. It allocates nothing.
@@ -27,3 +29,12 @@ export Prefetch[T](p: &T, write: bool)
 /// size, or an array or struct of such parts. O(size of T); allocates
 /// nothing.
 export Zeroed[T](): T
+/// A read-only byte view of p. T must be bool, char, a number, void, an
+/// array of such types, or an unpadded plain struct (or record) with no
+/// references, raw pointers or interior mutability (E0701 otherwise).
+/// O(1); allocates nothing.
+export AsBytes[T](p: &T): []u8 from p
+/// A read-only byte view of xs's elements in order. T must satisfy the same
+/// layout and plainness rules as AsBytes (E0701 otherwise). O(1); allocates
+/// nothing.
+export SliceAsBytes[T](xs: []T): []u8 from xs

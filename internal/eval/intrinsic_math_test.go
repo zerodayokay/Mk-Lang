@@ -163,7 +163,8 @@ func TestEvalCastSat(t *testing.T) {
 func TestEvalKeys(t *testing.T) {
 	for _, key := range []string{"std.math.AddOverflow", "std.math.SubOverflow", "std.math.MulOverflow", "std.math.WrapI32",
 		"std.math.WrapU32", "std.math.CastSat", "std.math.CastSatF32", "std.math.MulWide", "std.math.DivWide", "std.math.AddCarry",
-		"std.math.SubBorrow", "std.mem.OffsetOf", "std.mem.Prefetch", "std.mem.Zeroed", "std.atomic.Pause", "std.raw.AtomicCopy", "std.raw.AtomicFill"} {
+		"std.math.SubBorrow", "std.mem.OffsetOf", "std.mem.Prefetch", "std.mem.Zeroed", "std.mem.AsBytes", "std.mem.SliceAsBytes",
+		"std.atomic.Pause", "std.raw.AtomicCopy", "std.raw.AtomicFill"} {
 		if _, ok := intrinsics[key]; !ok {
 			t.Errorf("eval has no intrinsic %s", key)
 		}

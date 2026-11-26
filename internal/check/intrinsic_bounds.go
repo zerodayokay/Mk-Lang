@@ -23,6 +23,7 @@ import (
 const (
 	boundFnType     = "`fn` type, as FnFromAddr's F"
 	boundAtomicElem = "element of 1, 2, 4 or 8 bytes, aligned to its size, that is plain"
+	boundByteView   = "unpadded plain bytes (bool, char, numbers, arrays, or unpadded plain structs with no references or interior mutability)"
 )
 
 // rawItem reports whether it is std.raw's top-level function named one of
@@ -96,6 +97,105 @@ func (c *Checker) memOffsetOf(it types.ItemID) bool {
 	}
 	mod := c.cfg.Items.Module(item.Module)
 	return mod != nil && mod.Std && mod.Path == "std.mem"
+}
+
+// memAsBytes reports whether it is std.mem's AsBytes or SliceAsBytes.
+func (c *Checker) memAsBytes(it types.ItemID) bool {
+	if it == types.NoItem {
+		return false
+	}
+	item := c.cfg.Items.Get(it)
+	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType {
+		return false
+	}
+	n := c.cfg.Interner.Str(item.Name)
+	if n != "AsBytes" && n != "SliceAsBytes" {
+		return false
+	}
+	mod := c.cfg.Items.Module(item.Module)
+	return mod != nil && mod.Std && mod.Path == "std.mem"
+}
+
+// byteViewArg reports whether t (narrowed in env) is safe to view as raw
+// bytes: bool, char, numbers, void, arrays of such, or unpadded plain structs
+// or records with no references, raw pointers, or interior mutability.
+func (c *Checker) byteViewArg(env *Env, t types.TypeID, rec recorder, seen map[types.TypeID]bool) (bool, string) {
+	tab := c.cfg.Types
+	n := narrowed(tab, env, t)
+	ty := tab.Get(n)
+	switch ty.Kind {
+	case types.KPoison, types.KInt, types.KIntPtr, types.KFloat, types.KBool, types.KChar, types.KVoid:
+		return true, ""
+	case types.KParam, types.KSelf, types.KInfer:
+		return false, "type parameter is not known"
+	case types.KNever, types.KStr, types.KRef, types.KMut, types.KRawPtr, types.KSlice, types.KMutSlice,
+		types.KFn, types.KOptional, types.KErrorUnion, types.KErrorSet, types.KNone:
+		return false, "must be bool, char, a number, an array, or an unpadded plain struct with no references"
+	}
+	if !c.closed(n) {
+		return false, "type parameter is not known"
+	}
+	if seen[n] {
+		return true, ""
+	}
+	seen[n] = true
+	c.shapeReads(env, n, rec)
+	if ty.Kind == types.KNamed {
+		it := c.cfg.Items.Get(ty.Item)
+		switch it.Decl.(type) {
+		case *types.StructDecl, *types.EnumDecl:
+			rec.fields(it.Key, true)
+			rec.signature(it.Key)
+		}
+	}
+	if c.sizeOnCycle(n) {
+		return false, "has a recursive by-value layout"
+	}
+	f := c.FactsIn(env, n)
+	if f.Kind != types.Plain || f.Carrier || !f.Freeze {
+		return false, "must be plain, freeze-safe, and hold no references"
+	}
+	switch ty.Kind {
+	case types.KArray:
+		return c.byteViewArg(env, ty.Elem, rec, seen)
+	case types.KRecord:
+		lay := c.Layout(n)
+		var sum uint64
+		for _, fd := range ty.Fields {
+			ok, why := c.byteViewArg(env, fd.Type, rec, seen)
+			if !ok {
+				return false, why
+			}
+			sum += c.Shape(fd.Type).Size
+		}
+		if sum != lay.Shape.Size {
+			return false, "has padding bytes"
+		}
+		return true, ""
+	case types.KNamed:
+		sd, ok := c.cfg.Items.Get(ty.Item).Decl.(*types.StructDecl)
+		if !ok {
+			return false, "enums cannot be viewed as bytes"
+		}
+		lay := c.Layout(n)
+		if lay.Shape.Opaque {
+			return false, "opaque layout cannot be viewed as bytes"
+		}
+		var sum uint64
+		for _, fd := range sd.Fields {
+			ft := c.subst(fd.Type, ty.Args, types.NoType)
+			ok, why := c.byteViewArg(env, ft, rec, seen)
+			if !ok {
+				return false, why
+			}
+			sum += c.Shape(ft).Size
+		}
+		if sum != lay.Shape.Size {
+			return false, "has padding bytes"
+		}
+		return true, ""
+	}
+	return false, "must be bool, char, a number, an array, or an unpadded plain struct with no references"
 }
 
 // offsetOfCall: `mem.OffsetOf[T]("f")` is a compile-time offset wherever
