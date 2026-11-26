@@ -25,6 +25,7 @@ func TestE0802_AssignedFallible(t *testing.T) {
 		{"typed local from a call", pre + "G(): int {\n\tvar v: E!int = F()\n\tv = F()\n\treturn v else { 0 }\n}\n", ""},
 		{"typed local from a local", pre + "G(): int {\n\tvar v: E!int = F()\n\tw: E!int = F()\n\tv = w\n\treturn v else { 0 }\n}\n", ""},
 		{"whole struct holding one", pre + "G(s: mut S, o: S) {\n\t*s = o\n}\n", ""},
+		{"a fn literal's capture", pre + "Do(const f: fn()) {\n\tf()\n}\n\nG(): int {\n\tvar v: E!int = F()\n\ta := v else { 0 }\n\tDo(fn() { v = F() })\n\treturn a + (v else { 0 })\n}\n", "E0802@18:16"},
 		{"handled value into a field", pre + "G(s: mut S, n: mut int) {\n\t*n = F() else { 0 }\n\ts.r = s.r\n}\n", "E0802@13:8"},
 	})
 }

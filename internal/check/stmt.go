@@ -429,12 +429,17 @@ func compoundKind(op ast.TokenKind) (intOnly, shift bool) {
 
 // isBinding reports whether e, already typed, is a local or a global
 // (parentheses allowed): a local is the one place a stored E!T may be
-// assigned to, and a global is never assigned (borrow's E0507).
+// assigned to, and a global is never assigned (borrow's E0507). A fn
+// literal's capture is not one: the literal writes the enclosing binding
+// through its environment, where nothing sees whether the value it held
+// was handled.
 func (u *unit) isBinding(e ast.Expr) bool {
 	switch e := e.(type) {
 	case *ast.Ident:
-		switch u.b.use(e.ID()).Kind {
-		case UseLocal, UseGlobal:
+		switch use := u.b.use(e.ID()); use.Kind {
+		case UseLocal:
+			return int(use.Local) >= len(u.b.Locals) || u.b.Locals[use.Local].Capture == 0
+		case UseGlobal:
 			return true
 		}
 	case *ast.ParenExpr:
