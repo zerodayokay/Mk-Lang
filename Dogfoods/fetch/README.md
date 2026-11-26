@@ -37,6 +37,7 @@ hello, world
 | `fetch url [--base URL] [--set PART=VALUE] URL` | Parse a URL and print its parts |
 | `fetch cert CHAIN.pem [--cacert ROOTS.pem] [--host NAME]` | Print and verify a certificate chain |
 | `fetch --seed N [--fault NAME]` | Run the session under `std.sim`, with a fault injected |
+| `fetch --seed N --udp-loss PPM` | Drop simulated datagrams at a rate in parts per million |
 
 Exit statuses follow curl's where curl has one (`fetch --help` lists them): 2 a bad command line, 3 a bad URL, 7 a refused or denied connection, 18 a body cut short, 22 an error status under `-f`, 28 a timeout, 35 a failed handshake, 47 too many redirects, 60 a certificate that does not verify, 63 a body past `--fetch-limit`, and others.
 
@@ -148,7 +149,7 @@ Client.Drive(&self, io: Io): Canceled!void
 Client.WaitDriving(&self, io: Io): Canceled!bool
 Client.Stop(&self)
 Client.Close(self)
-http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
 Response.Status(mut self, code: int)
 Response.Header(mut self, name: str, value: str): OutOfMemory!void
 Response.Body(mut self, data: []u8): OutOfMemory!void
@@ -174,6 +175,7 @@ compress.Zlib(a: &Arena, data: []u8): OutOfMemory![]u8 from a
 Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim
 Sim.Io(&self): Io
 Sim.FailNext(mut self, op: Op, f: Fault)
+Sim.SetNetFaults(mut self, f: NetFaults)
 Sim.Free(self)
 enum Op {
 enum Fault {
