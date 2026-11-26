@@ -133,9 +133,10 @@ func foreignViews(t *testing.T, linux bool) func(target, name string) ([]byte, b
 
 // TestSDKImport_ForeignViewNotShared: in a build for Linux, sdk: true
 // shares nothing with a view read from Windows' declarations (c.vulkan
-// with no Linux archive, and the c.windows it requires), whose long is not
-// Linux's: lib.labs stays the Linux binding's, i64. A view generated for
-// Linux is shared as on Windows: lib's VkThing is vulkan.VkThing.
+// with no Linux archive, and the c.windows it requires; c.windows imported
+// directly), whose long is not Linux's: lib.labs stays the Linux binding's,
+// i64. A view generated for Linux is shared as on Windows: lib's VkThing is
+// vulkan.VkThing.
 func TestSDKImport_ForeignViewNotShared(t *testing.T) {
 	tools := needTools(t)
 	clearSysroots(t)
@@ -143,14 +144,14 @@ func TestSDKImport_ForeignViewNotShared(t *testing.T) {
 		"stdlib.h": "#pragma once\nlong labs(long n);\n",
 		"vulkan.h": "#pragma once\nstruct VkThing { int x; };\n",
 	})
-	files := func(body string) map[string]string {
-		main := "import c.lib\nimport c.vulkan\n\n" + body
+	files := func(view, body string) map[string]string {
+		main := "import c.lib\nimport c." + view + "\n\n" + body
 		f := sysPkg(main, map[string]string{"c_imports": `[pkg.CImport(name: "lib", headers: ["lib.h"], defines: [], macros: [], vendor: false, include_dirs: [], sdk: true)]`})
 		f["lib.h"] = "#include <stdlib.h>\n#include <vulkan.h>\nint LibThing(struct VkThing *t);\n"
 		return f
 	}
-	check := func(linux bool, body string) Result {
-		_, r := sysSession(t, writeTree(t, files(body)), types.X86_64Linux, func(c *Config) {
+	check := func(linux bool, view, body string) Result {
+		_, r := sysSession(t, writeTree(t, files(view, body)), types.X86_64Linux, func(c *Config) {
 			c.Tools = tools
 			c.TestHooks.SysViews = foreignViews(t, linux)
 			c.TestHooks.HostSDK = func(string) ([]string, string) { return []string{host}, "a test's SDK" }
@@ -163,7 +164,10 @@ func TestSDKImport_ForeignViewNotShared(t *testing.T) {
 	}
 	tail := "export Main(sys: &System): WriteError!void {\n    v := vulkan.VkThing(x: 1)\n    try sys.Print(\"{a} {x}\\n\", (a: Abs(-5), x: v.x))\n}\n"
 	// No Linux vulkan: the Windows declarations are checked, never shared.
-	clean(t, check(false, labs+thing("lib")+tail))
+	clean(t, check(false, "vulkan", labs+thing("lib")+tail))
 	// A Linux vulkan: its declarations are the binding's; labs is not one.
-	clean(t, check(true, labs+thing("vulkan")+tail))
+	clean(t, check(true, "vulkan", labs+thing("vulkan")+tail))
+	// c.windows itself in a build for Linux: the same.
+	win := "export Main(sys: &System): WriteError!void {\n    var d: windows.Dword = 1\n    try sys.Print(\"{a} {d}\\n\", (a: Abs(-5), d))\n}\n"
+	clean(t, check(false, "windows", labs+thing("lib")+win))
 }
