@@ -583,9 +583,10 @@ export ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8
 ```
 
 Returns the 64-byte ChaCha20 block of key, counter and nonce (RFC 8439
-2.3): the keystream from byte 64 * counter (2.4), whose first bytes are QUIC's ChaCha20 header protection mask (RFC 9001
-5.4.4, with the counter the little-endian first four bytes of the
-sample). A building block for protocols, not a mode of encryption: use
+2.3): the keystream from byte 64 * counter (2.4). Its first five bytes
+are QUIC's ChaCha20 header protection mask (RFC 9001 5.4.4, with the
+counter the little-endian first four bytes of the sample and the nonce
+the other twelve). A building block for protocols, not a mode of encryption: use
 ChaCha20Poly1305 to encrypt. Cannot fail. Constant time in key, counter
 and nonce. O(1); allocates nothing.
 

@@ -64,13 +64,15 @@ export Aes.Wipe(mut self) {
 
 // AesBlock is AES(K, b) for the round keys rk (FIPS 197's w, for the
 // kernel) and sk (bitsliced, for AesEncrypt4) of nr rounds. The portable
-// path encrypts b beside three zero blocks.
+// path encrypts b beside three zero blocks; their output, E(K, 0), is
+// AES-GCM's hash key H, so it is wiped.
 AesBlock(rk: []u8, sk: []u8, nr: int, b: &[16]u8): [16]u8 {
     var e: [64]u8 = [0; 64]
     if !kernel.AesEncryptBlocks(rk[0..16 * (nr + 1)], b[..], mut e[0..16]) {
         var s: [64]u8 = [0; 64]
         (mut s[0..16]).CopyFrom(b[..])
         AesEncrypt4(sk, nr, s[..], mut e[..])
+        Wipe(mut e[16..64])
     }
     var r: [16]u8 = [0; 16]
     (mut r[..]).CopyFrom(e[0..16])
@@ -78,9 +80,10 @@ AesBlock(rk: []u8, sk: []u8, nr: int, b: &[16]u8): [16]u8 {
 }
 
 /// Returns the 64-byte ChaCha20 block of key, counter and nonce (RFC 8439
-/// 2.3): the keystream from byte 64 * counter (2.4), whose first bytes are QUIC's ChaCha20 header protection mask (RFC 9001
-/// 5.4.4, with the counter the little-endian first four bytes of the
-/// sample). A building block for protocols, not a mode of encryption: use
+/// 2.3): the keystream from byte 64 * counter (2.4). Its first five bytes
+/// are QUIC's ChaCha20 header protection mask (RFC 9001 5.4.4, with the
+/// counter the little-endian first four bytes of the sample and the nonce
+/// the other twelve). A building block for protocols, not a mode of encryption: use
 /// ChaCha20Poly1305 to encrypt. Cannot fail. Constant time in key, counter
 /// and nonce. O(1); allocates nothing.
 export ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8 {
