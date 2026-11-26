@@ -11434,7 +11434,7 @@ This table lists the importable modules and the names each one exports. The [lib
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
 
-The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target` and `std.simd.kernel` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
+The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel` and `std.http.fields` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
 
 Every public item of std has a stability level, which says how it may change from one release to the next. The [library guide](std/README.md#9-stability) lists the modules and items that are not Stable and what each level allows before and after 1.0.
 

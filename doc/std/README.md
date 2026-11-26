@@ -328,7 +328,7 @@ Each name links the module's page. Run `mk doc --std std.<module>` for one modul
 | [`std.websocket`](websocket.md) | WebSocket client and server |
 | [`std.x509`](x509.md) | Certificate parsing and verification. Experimental |
 
-The modules `std.core`, `std.rt`, `std.sys`, `std.task`, `std.target` and `std.simd.kernel` are the library's own internals. A program cannot import them (E0202); what they export that you need is in the prelude or in `std.runtime`. `std.pkg` holds the types a `pkg.mk` manifest is written in, reached through the manifest's `pkg` name ([packages](../packages.md)).
+The modules `std.core`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel` and `std.http.fields` are the library's own internals. A program cannot import them (E0202); what they export that you need is in the prelude or in `std.runtime`. `std.pkg` holds the types a `pkg.mk` manifest is written in, reached through the manifest's `pkg` name ([packages](../packages.md)).
 
 ### Reading an API section
 
