@@ -468,13 +468,25 @@ export Main(sys: &System): WriteError!void {
 
 // TestFFI_LazyRace: eight tasks on eight carriers (MK_CARRIERS=8) wait for
 // each other, then each makes the first calls of two functions of one
-// unloaded DLL at once; every result is right, run after run, and some
-// runs make them on more than one thread (the tasks' thread ids differ).
+// unloaded DLL at once, while its initializer runs for milliseconds; every
+// result is right (no function runs before the initializer finished), run
+// after run, and some runs make them on more than one thread (the tasks'
+// thread ids differ).
 func TestFFI_LazyRace(t *testing.T) {
 	needWindows(t)
 	tools := needTools(t)
 	root := t.TempDir()
-	lazyDLL(t, tools, root, "mkrace.dll", "__declspec(dllexport) int RaceA(int x) { return x + 1; }\n__declspec(dllexport) int RaceB(int x) { return x * 2; }\n", false)
+	// The initializer spins (milliseconds) before it marks the DLL ready,
+	// so racing first calls wait in the loader; a function called before
+	// its DLL's initializer finished answers wrong.
+	lazyDLL(t, tools, root, "mkrace.dll", `static volatile int ready;
+int __stdcall DllMain(void *h, unsigned reason, void *r) {
+	if (reason == 1) { for (volatile long long i = 0; i < 5000000; i++) {} ready = 1; }
+	return 1;
+}
+__declspec(dllexport) int RaceA(int x) { return ready ? x + 1 : -1000; }
+__declspec(dllexport) int RaceB(int x) { return ready ? x * 2 : -1000; }
+`, true)
 	lazyWrite(t, filepath.Join(root, "pkg.mk"), lazyManifest(linkLit("mkrace.dll", "lazy", "mkrace.dll", types.X86_64Windows.Name)))
 	lazyWrite(t, filepath.Join(root, "app", "main.mk"), `import std.atomic
 
