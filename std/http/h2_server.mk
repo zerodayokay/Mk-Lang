@@ -267,7 +267,7 @@ HandleH2Request[C: Share, T: Send](wctx: &H2WorkerCtx[C, T], rh: &Heap into ch, 
     res.head = is_head
     res.version = HttpVersion.Http2
     res.secure = wctx.secure
-    link := Link(version: HttpVersion.Http2, cell: none, h2: some(H2FlushTarget(conn: wctx.conn, stream: s)), io: io, rest: "".AsBytes(), pace: wctx.o.request_header)
+    link := Link(version: HttpVersion.Http2, cell: none, h3: none, h3_port: wctx.o.h3_port, h2: some(H2FlushTarget(conn: wctx.conn, stream: s)), io: io, rest: "".AsBytes(), pace: wctx.o.request_header)
     var failed := false
     CallHandler(wctx.c, rh, ch, wctx.plain, wctx.relay, a, io, &req, mut res, &link) else err {
         match err {
@@ -285,6 +285,7 @@ HandleH2Request[C: Share, T: Send](wctx: &H2WorkerCtx[C, T], rh: &Heap into ch, 
             }
         }
     }
+    res.AdvertiseH3(wctx.o.h3_port) else { failed = true }
     SendH2Response(a, io, wctx.conn, s, mut res, is_head, failed)
     wctx.conn.Done(s, head, body)
 }

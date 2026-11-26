@@ -119,14 +119,36 @@ export ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, 
 AcceptLoop[C: Share, T: Send](io: Io, h: &Heap, rh: &Heap into ch, l: &net.Listener, o: &ServerOptions, c: &C, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T]): Error!void {
     permits := if o.connections < 1 { 1 } else { o.connections }
     sem := sync.Semaphore.New(permits)
+    if h3_server := o.h3 {
+        a := try Arena.New(h)
+        defer a.Free()
+        addr := try a.Fmt("{addr}", (addr: l.Addr()))
+        mux := try h3_server.Listen(h, io, addr, "h3")
+        defer mux.Close()
+        var opts := *o
+        opts.h3_port = if o.alt_svc { mux.Port() } else { 0 }
+        scope listeners := io.Scope() {
+            defer listeners.Cancel()
+            listeners.go RunH3Listener(&mux, io)
+            listeners.go AcceptH3(&mux, h, rh, io, &opts, &sem, c, ch, plain, relay)
+            try AcceptTcp(io, h, rh, l, &opts, &sem, c, ch, plain, relay, true)
+        }
+        return
+    }
+    try AcceptTcp(io, h, rh, l, o, &sem, c, ch, plain, relay, false)
+}
+
+AcceptTcp[C: Share, T: Send](io: Io, h: &Heap, rh: &Heap into ch, l: &net.Listener, o: &ServerOptions, sem: &sync.Semaphore, c: &C, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T], mixed: bool): Error!void {
     var delay := 0
     scope s := io.Scope() {
         for {
-            sem.Acquire(io, 1) else {
-                return
+            if !mixed {
+                sem.Acquire(io, 1) else { return }
             }
             st := l.Accept(io) else e {
-                sem.Release(1)
+                if !mixed {
+                    sem.Release(1)
+                }
                 match e {
                     Canceled {
                         return
@@ -147,7 +169,13 @@ AcceptLoop[C: Share, T: Send](io: Io, h: &Heap, rh: &Heap into ch, l: &net.Liste
                 }
             }
             delay = 0
-            s.go ServeRelayConn(st.Conn(), h, io, o, &sem, c, rh, ch, plain, relay)
+            if mixed {
+                sem.Acquire(io, 1) else {
+                    st.Close()
+                    return
+                }
+            }
+            s.go ServeRelayConn(st.Conn(), h, io, o, sem, c, rh, ch, plain, relay)
         }
     }
 }
@@ -654,7 +682,7 @@ ServeConnLoop[C: Share, T: Send](conn: &Mutex[?net.Conn], heap: &Heap, io: Io, o
         res.close = h.close
         res.version = req_ver
         res.secure = secure
-        link := Link(version: req_ver, cell: some(conn), h2: none, io: io, rest: rb[s..e], pace: o.request_header)
+        link := Link(version: req_ver, cell: some(conn), h2: none, h3: none, h3_port: o.h3_port, io: io, rest: rb[s..e], pace: o.request_header)
         if h.minor == 0 && !h.close {
             // An HTTP/1.0 client keeps the connection only when the reply
             // says so (RFC 9112 9.3, appendix C.2.2).
@@ -707,6 +735,7 @@ ServeConnLoop[C: Share, T: Send](conn: &Mutex[?net.Conn], heap: &Heap, io: Io, o
             // connection.
             res.Clear(500)
         }
+        res.AdvertiseH3(o.h3_port) else { return }
         if !res.close {
             // A handler's Connection: close ends the connection after this
             // reply (RFC 9112 9.6): no later request on it is served.

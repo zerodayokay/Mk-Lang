@@ -56,12 +56,17 @@ export linear mut view struct Client {
     mux_dial: Mutex[int]
     drive_wake: sync.Notify
     drive_stop: raw.Atomic[u32]
+    drive_active: raw.Atomic[u32]
+    drive_ready: sync.Notify
+    h3_pool: Mutex[[16]H3Slot]
+    h3_wake: sync.Notify
+    alt_cache: Mutex[[64]AltOrigin]
 }
 
 /// A client with the limits l and an empty pool. O(16): the pool has 16 slots;
 /// allocates nothing: the pool's table is inside the client.
 export Client.New(h: &Heap, l: ClientLimits): Client from h, l {
-    return Client(heap: h, limits: l, slots: NewSlots(), mux: NewMuxSlots(), mux_dial: Mutex[int].New(0), drive_wake: sync.Notify.New(), drive_stop: raw.Atomic[u32].New(0))
+    return Client(heap: h, limits: l, slots: NewSlots(), mux: NewMuxSlots(), mux_dial: Mutex[int].New(0), drive_wake: sync.Notify.New(), drive_stop: raw.Atomic[u32].New(0), drive_active: raw.Atomic[u32].New(0), drive_ready: sync.Notify.New(), h3_pool: Mutex[[16]H3Slot].New(NewH3Slots()), h3_wake: sync.Notify.New(), alt_cache: Mutex[[64]AltOrigin].New([NoAltOrigin; 64]))
 }
 
 /// Releases the client: every idle connection is closed without speaking
@@ -69,9 +74,14 @@ export Client.New(h: &Heap, l: ClientLimits): Client from h, l {
 /// Exchange borrows the client, so none can be open here. Never blocks or
 /// fails. O(idle connections); allocates nothing.
 export Client.Close(self) {
-    Client(heap, limits: _, slots, mux, mux_dial: _, drive_wake: _, drive_stop: _) := self
+    Client(heap, limits: _, slots, mux, mux_dial: _, drive_wake: _, drive_stop: _, drive_active: _, drive_ready: _, h3_pool, h3_wake: _, alt_cache) := self
     FreeSlots(slots)
     FreeMuxSlots(heap.Alloc(), mux)
+    _ = alt_cache.Into()
+    h3_slots := h3_pool.Into()
+    for sl in &h3_slots[..] {
+        DropH3(heap.Alloc(), sl.conn)
+    }
 }
 
 /// Sends req and reads the reply's head, following redirects, and returns
@@ -286,9 +296,6 @@ Client.Send(&self, a: &Arena, io: Io, method: str, u: &url.Url, headers: []Heade
     if !https && scheme != "http" {
         fail BadUrl
     }
-    if https && self.limits.secure.IsNone() {
-        fail NoSecureTransport
-    }
     if !IsToken(method) {
         fail BadUrl
     }
@@ -304,10 +311,24 @@ Client.Send(&self, a: &Arena, io: Io, method: str, u: &url.Url, headers: []Heade
     port := if p := u.Port() { int(p) } else if https { 443 } else { 80 }
     key := OriginOf(scheme, host, port)
     use_h2 := (https && self.limits.h2) || (!https && self.limits.h2c && !proxied)
-    if use_h2 {
-        return try self.SendH2(a, io, method, u, headers, body, strip, st, key, host, port, https)
+    if https && !proxied && self.H3Running() && self.limits.h3.IsSome() {
+        if h3 := try self.SendH3(a, io, method, u, headers, body, strip, st, key, host, port) {
+            self.RememberAltSvc(io, host, key, &h3)
+            return h3
+        }
     }
-    return try self.SendH1(a, io, method, u, headers, body, strip, st, key, host, port, https, -1)
+    if https && self.limits.secure.IsNone() {
+        fail NoSecureTransport
+    }
+    ex := if use_h2 {
+        try self.SendH2(a, io, method, u, headers, body, strip, st, key, host, port, https)
+    } else {
+        try self.SendH1(a, io, method, u, headers, body, strip, st, key, host, port, https, -1)
+    }
+    if https && !proxied {
+        self.RememberAltSvc(io, host, key, &ex)
+    }
+    return ex
 }
 
 // SendH1 is Send over HTTP/1.1. pre is a slot ClaimIdle took for key's

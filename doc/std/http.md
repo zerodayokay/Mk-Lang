@@ -32,6 +32,7 @@ import std.http
 | Upload a body from a `Reader` | `Client.DoStreaming` |
 | Use `https` | `ClientLimits.secure` set to `some(tls.Connector(&cfg))` |
 | Make requests over HTTP/2 | `ClientLimits.h2` (with `secure`) or `h2c`, and `Client.Drive` in a task |
+| Make requests over HTTP/3 | `ClientLimits.h3` and a running `Client.Drive` |
 | Serve with the defaults | `Serve` |
 | Serve with limits, keep-alive and TLS | `ServeWith` with `ServerOptions` |
 | Serve a listener you made, from a task | `ServeOn`, or `ServeChan` to send values to other tasks |
@@ -150,6 +151,42 @@ Run(h: &Heap, a: &Arena, io: Io): http.Error|url.Error!int {
 }
 ```
 
+### HTTP/3 clients
+
+Set `ClientLimits.h3 = some(quic.Connector(&q))` to opt into HTTP/3
+over QUIC. Set `q.tls` to the configuration that verifies your HTTPS
+origins. For TCP fallback, set `ClientLimits.secure` to a TLS connector
+with the same trust roots and verification policy. Leaving `secure` unset
+with `h3_direct` set makes an HTTPS request fail with `NoSecureTransport`
+if HTTP/3 is unavailable.
+
+Start `Client.Drive` in a task and await `Client.WaitDriving(io)` before
+making requests. It returns true once Drive is running and false after
+`Stop`. With no Drive running, requests use the configured TCP transport.
+At shutdown, call `Stop`, let its scope finish, and call `Close`.
+
+With `h3_direct`, an HTTPS origin can use QUIC on its origin port before
+sending an advertisement. Otherwise, the client learns HTTP/3 from
+authenticated HTTPS responses' `Alt-Svc` fields. It keeps up to eight
+same-host alternatives per origin and remembers up to 64 origins. The
+route expires after `ma` seconds (24 hours by default), reduced by the
+response's `Age`. A fresh advertisement replaces earlier routes.
+`clear` and HTTP/3 status 421 remove those routes. Pooled connections
+can outlive an advertisement's freshness.
+
+The client checks the alternative's UDP address with `allow` and verifies
+the certificate for the requested origin. The authority, TLS server
+name and application URL use that origin even when the UDP port differs.
+A proxy configuration disables HTTP/3. A failed QUIC connect falls back
+to TCP and suppresses new HTTP/3 attempts for that origin for five minutes.
+`h3_connect` bounds QUIC setup and defaults to three seconds.
+
+Concurrent requests share the origin's HTTP/3 connection and use separate
+streams. `Exchange.Version()` returns `Http3`. Closing an unfinished
+response resets its stream. A request sent over QUIC is retried only when
+the peer explicitly rejects it or a GOAWAY identifies it as unprocessed,
+and when its body is still replayable.
+
 `Fetch`, the plain function, is the smallest client: one request over a new connection with `Connection: close`, the whole reply in memory, no pool, no redirects and no `https`.
 
 ## The server
@@ -162,6 +199,24 @@ A handler fills in the `Response` it is given; the server sends it when the hand
 - `Response.Writer` appends UTF-8 text to the body. `Response.Body` sets bytes of any kind.
 - A handler that fails with `Status(code)` sends that status, the fields it set and an empty body. Any other error, or a code outside 200 to 999, sends 500 and ends the connection.
 - The server writes the framing itself: a `Content-Length` that matches the body, or chunks when the handler set `Transfer-Encoding: chunked`. A handler's `Connection: close` ends the connection after the reply.
+
+### HTTP/3 servers
+
+Set `ServerOptions.h3 = some(quic.Acceptor(&q))` with `q.tls` holding a
+server identity. `ServeWith`, `ServeOn` and `ServeChan` bind a UDP listener
+on the TCP listener's address and port and negotiate the `h3` ALPN.
+TCP and QUIC share `connections`. Set `ServerOptions.secure` for TLS on
+the TCP listener, and enable `h2` if desired. HTTP/1 and HTTP/2 replies
+advertise the bound UDP port unless a handler supplies its own `Alt-Svc`
+or `ServerOptions.alt_svc` is false.
+
+Handlers receive the same `Request` and `Response` types. `Response.Version()`
+and `Link.Version()` return `Http3`, `Response.Secure()` returns true,
+and `Link.Takeover` returns none. `Response.Flush` can write a response in
+parts. The server buffers each request body up to `body_bytes` before
+calling the handler. Set `quic.Config.streams` to control advertised QUIC
+stream credit and `ServerOptions.h2_streams` to bound active HTTP handlers
+per connection.
 
 `Serve` keeps connections alive between requests, reads pipelined requests in order, reads chunked request bodies whole under its `limit`, and answers `Expect: 100-continue`. It has no time limits, no cap on connections and no TLS. `limit` bounds each request's head and body together: past it the reply is 413, and a head over 32 KiB is 431. `ServeWith` adds the time limits, the cap and TLS with a `ServerOptions`, and reads chunked bodies whole under `body_bytes`. Start from `DefaultServerOptions`:
 
@@ -685,6 +740,16 @@ export Client.New(h: &Heap, l: ClientLimits): Client from h, l
 
 A client with the limits l and an empty pool. O(16): the pool has 16 slots;
 allocates nothing: the pool's table is inside the client.
+
+### `Client.WaitDriving`
+
+```mk
+// verdict: parse
+export Client.WaitDriving(&self, io: Io): Canceled!bool
+```
+
+Waits for `Client.Drive` to start. Returns false if `Client.Stop` has ended
+the drive lifecycle. The wait is cancellable and allocates nothing.
 
 ### `Client.Stop`
 
@@ -1457,7 +1522,7 @@ Fields:
   With none, the server speaks plain TCP.
 - `h2: bool`: With secure, accept h2 by ALPN.
 - `h2c: bool`: Without secure, serve a connection starting with the HTTP/2 preface as HTTP/2.
-- `h2_streams: int`: SETTINGS_MAX_CONCURRENT_STREAMS for h2 (and QUIC max streams for h3).
+- `h2_streams: int`: SETTINGS_MAX_CONCURRENT_STREAMS for h2 and active handlers per h3 connection.
 - `h3: ?net.MuxServer`: Made by quic.Acceptor; ServeWith and ServeOn also bind UDP when set.
 - `alt_svc: bool`: With h3, add Alt-Svc header to h1 and h2 replies that set none.
 
