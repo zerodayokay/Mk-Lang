@@ -9,6 +9,9 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Adler32State.Bytes":         {Module: "std.compress", Lines: []string{"Adler32State.Bytes(mut self, data: []u8)"}},
 	"Adler32State.New":           {Module: "std.compress", Lines: []string{"Adler32State.New(): Adler32State"}},
 	"Adler32State.Sum":           {Module: "std.compress", Lines: []string{"Adler32State.Sum(self): u32"}},
+	"Aes.Encrypt":                {Module: "std.crypto", Lines: []string{"Aes.Encrypt(&self, block: &[16]u8): crypto.Error![16]u8"}},
+	"Aes.New":                    {Module: "std.crypto", Lines: []string{"Aes.New(key: []u8): crypto.Error!Aes"}},
+	"Aes.Wipe":                   {Module: "std.crypto", Lines: []string{"Aes.Wipe(mut self)"}},
 	"AesGcm.New":                 {Module: "std.crypto", Lines: []string{"AesGcm.New(key: []u8): crypto.Error!AesGcm"}},
 	"AesGcm.Open":                {Module: "std.crypto", Lines: []string{"AesGcm.Open(&self, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!int"}},
 	"AesGcm.Seal":                {Module: "std.crypto", Lines: []string{"AesGcm.Seal(&self, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!int"}},
@@ -901,7 +904,4 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Writer.Bytes":               {Module: "", Lines: []string{"Writer.Bytes(mut self, b: []u8): WriteError!void"}},
 	"Writer.Flush":               {Module: "", Lines: []string{"Writer.Flush(mut self): WriteError!void"}},
 	"Writer.Str":                 {Module: "", Lines: []string{"Writer.Str(mut self, s: str): WriteError!void"}},
-	"Xx64State.Bytes":            {Module: "std.hash", Lines: []string{"Xx64State.Bytes(mut self, data: []u8)"}},
-	"Xx64State.New":              {Module: "std.hash", Lines: []string{"Xx64State.New(seed: u64): Xx64State"}},
-	"Xx64State.Sum":              {Module: "std.hash", Lines: []string{"Xx64State.Sum(self): u64"}},
 }

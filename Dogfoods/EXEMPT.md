@@ -117,6 +117,11 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 - `crypto.Argon2id(h: &Heap, c: Argon2Cost, password: []u8, salt: []u8, secret: []u8, ad: []u8, out: mut []u8): crypto.BadLength|crypto.BadCost|OutOfMemory!void` (both): no dogfood calls it. Covered instead: std/crypto/tests_argon2.mk's RFC 9106 blocks.
 - `crypto.Argon2idVerify(h: &Heap, c: Argon2Cost, password: []u8, salt: []u8, secret: []u8, ad: []u8, tag: []u8): crypto.BadLength|crypto.BadCost|OutOfMemory!bool` (both): no dogfood calls it. Covered instead: std/crypto/tests_argon2.mk's blocks.
 - `struct Argon2Cost {` (both): no dogfood calls it. Covered instead: std/crypto/tests_argon2.mk's blocks.
+- `crypto.ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8` (both): a QUIC building block (header protection), which no dogfood reaches until the HTTP/3 dogfood runs over std.quic. Covered instead: std/crypto/tests_block.mk's RFC 8439 2.3.2 and RFC 9001 A.5 blocks.
+- `crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.Error!void` (both): a QUIC building block (packet key derivation), which no dogfood reaches until the HTTP/3 dogfood runs over std.quic. Covered instead: std/crypto/tests_block.mk's RFC 9001 A.1 and A.5 blocks and its length blocks.
+- `Aes.New(key: []u8): crypto.Error!Aes` (both): a QUIC building block (header protection), which no dogfood reaches until the HTTP/3 dogfood runs over std.quic. Covered instead: std/crypto/tests_block.mk's FIPS 197 and RFC 9001 A.2 and A.3 blocks.
+- `Aes.Encrypt(&self, block: &[16]u8): crypto.Error![16]u8` (both): a QUIC building block (header protection), which no dogfood reaches until the HTTP/3 dogfood runs over std.quic. Covered instead: std/crypto/tests_block.mk's FIPS 197 and RFC 9001 A.2 and A.3 blocks.
+- `Aes.Wipe(mut self)` (both): a QUIC building block (header protection), which no dogfood reaches until the HTTP/3 dogfood runs over std.quic. Covered instead: std/crypto/tests_block.mk's Wipe block.
 
 ## std.compress
 
