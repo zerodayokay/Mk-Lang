@@ -136,9 +136,10 @@ func (d *DepHasher) Save() {
 	}
 }
 
-// negatives are the paths that would shadow a dependency: for a file
-// found as dirs[k]/rel, each dirs[j]/rel with j < k.
-func negatives(deps, dirs []string) []string {
+// Negatives are the paths that would shadow a dependency: for a file
+// found as dirs[k]/rel, each dirs[j]/rel with j < k. A C object's cache
+// entry (internal/driver) keeps them as a translation's does.
+func Negatives(deps, dirs []string) []string {
 	var out []string
 	// A path the unit read is no negative: #include_next reads a header
 	// under a later directory after the one under an earlier (Clang's
@@ -218,7 +219,7 @@ func Save(st *cache.Store, key source.Hash, res *Result) {
 	if st == nil {
 		return
 	}
-	e := entry{Modules: res.Modules, Shim: res.Shim, Stats: res.Stats, Neg: negatives(res.Deps, res.SearchDirs)}
+	e := entry{Modules: res.Modules, Shim: res.Shim, Stats: res.Stats, Neg: Negatives(res.Deps, res.SearchDirs)}
 	dh := NewDepHasher(st)
 	defer dh.Save()
 	for _, d := range res.Deps {

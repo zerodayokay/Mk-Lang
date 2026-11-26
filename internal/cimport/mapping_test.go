@@ -175,7 +175,7 @@ func TestCTypeParse(t *testing.T) {
 func TestCImport_Negatives(t *testing.T) {
 	root, res, sys := filepath.FromSlash("/p"), filepath.FromSlash("/r/include"), filepath.FromSlash("/s")
 	deps := []string{filepath.Join(root, "a.h"), filepath.Join(res, "stdint.h"), filepath.Join(sys, "stdint.h"), filepath.Join(sys, "w.h")}
-	got := negatives(deps, []string{root, res, sys})
+	got := Negatives(deps, []string{root, res, sys})
 	want := []string{filepath.Join(root, "stdint.h"), filepath.Join(root, "w.h"), filepath.Join(res, "w.h")}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
