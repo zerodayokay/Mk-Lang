@@ -97,9 +97,8 @@ func (c *checker) borrow(st *state, ctx *stmtCtx, s *mir.Statement, p pathID, ex
 }
 
 // e0507Mut reports E0507 for a mut borrow of path p, which is reached
-// through a shared step, at the statement or call; st, nil where the caller
-// has none, names a global the path reaches (sharedPlace). Only the report
-// pass emits.
+// through a shared step, at the statement or call; st names a global the
+// path reaches (sharedPlace). Only the report pass emits.
 func (c *checker) e0507Mut(st *state, ctx *stmtCtx, p pathID) {
 	if c.captureBackstop(ctx, p, "mut-borrow") {
 		return // captureBackstop reported it

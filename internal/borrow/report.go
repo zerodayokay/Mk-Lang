@@ -130,8 +130,9 @@ func (c *checker) placeString(p pathID) string {
 // reference to it, so `Table[7] = 42` is the path (*t)[_] of a temporary t;
 // when p's root is such a temporary, holding only the static loan of one var
 // global, and its first step is the deref through it, p is spelled from the
-// global (`Table[_]`, `P.n`, `Total`), and global names it when p is in the
-// global's own memory (one deref). Any other path is placeString's.
+// global (`Table[_]`, `P.n`, `Total`, `Table[0..2][_]` through a shared
+// slice of it), and global names it when p is in the global's own memory
+// (one deref). Any other path is placeString's.
 func (c *checker) sharedPlace(st *state, p pathID) (place, global string) {
 	name, place, ok := c.globalPlace(st, p)
 	if !ok {
@@ -173,18 +174,51 @@ func (c *checker) globalPlace(st *state, p pathID) (name, place string, ok bool)
 	// The deref reaches the global itself, not memory a reference read out
 	// of it or returned from its method points to. An extern var is no Mk
 	// var: it is written through its address in unsafe, not its methods.
-	if g, global := c.tab.Items().Get(item).Decl.(*types.GlobalDecl); !global || g.Extern || pi.types[0] != g.Type {
+	g, global := c.tab.Items().Get(item).Decl.(*types.GlobalDecl)
+	if !global || g.Extern {
 		return "", "", false
 	}
 	name = c.symbol(c.tab.Items().Get(item).Name)
+	head := name
+	if pi.types[0] != g.Type {
+		// A shared slice of the global (`Table[0..2]`) reaches the global's
+		// own memory when the global holds no reference: then nothing its
+		// static loan reaches is memory it points to. The slice is spelled
+		// as written.
+		if c.tab.Kind(pi.rootType) != types.KSlice || c.w.carrier(g.Type) {
+			return "", "", false
+		}
+		head = c.tempText(pi.root)
+		if head == "" {
+			head = name + "[..]"
+		}
+	}
 	if len(pi.steps) == 1 {
-		return name, name, true
+		return name, head, true
 	}
 	rest, cut := strings.CutPrefix(c.placeString(p), c.rootName(pi.root))
 	if !cut {
 		return "", "", false
 	}
-	return name, name + rest, true
+	return name, head + rest, true
+}
+
+// tempText is the one-line source text a temporary root was made from, or
+// "".
+func (c *checker) tempText(r rootID) string {
+	ri := &c.roots[r]
+	if c.env.File == nil || ri.local == mir.NoLocal || int(ri.local) >= len(c.body.Locals) {
+		return ""
+	}
+	sp := c.body.Span(c.body.Locals[ri.local].Span)
+	f := c.env.File(sp.File)
+	if f == nil || sp.End > f.Len() || sp.End <= sp.Start {
+		return ""
+	}
+	if text := f.Slice(sp); !strings.Contains(text, "\n") {
+		return text
+	}
+	return ""
 }
 
 // globalE0507 is E0507 for a write (verb "assigned") or a mut borrow (verb

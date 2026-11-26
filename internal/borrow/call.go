@@ -172,7 +172,7 @@ func (c *checker) variantsOf(t types.TypeID) []variantFact {
 // method arrives as a mut T or mut []T (a borrow, a reborrow or a move of
 // one), so a []T or &T here can only be that call. Its elements are
 // reached through the value's shared step.
-func (c *checker) sharedMutReceiver(ctx *stmtCtx, a mir.Arg) {
+func (c *checker) sharedMutReceiver(st *state, ctx *stmtCtx, a mir.Arg) {
 	o := a.Operand
 	if o.Kind != mir.OpCopy && o.Kind != mir.OpMove {
 		return
@@ -185,7 +185,7 @@ func (c *checker) sharedMutReceiver(ctx *stmtCtx, a mir.Arg) {
 		if c.tab.Kind(ty) == types.KRef {
 			after = c.tab.Get(ty).Elem
 		}
-		c.e0507Mut(nil, ctx, c.paths.extend(p, step{kind: stDeref, mode: dmShared}, after))
+		c.e0507Mut(st, ctx, c.paths.extend(p, step{kind: stDeref, mode: dmShared}, after))
 	}
 }
 
@@ -229,7 +229,7 @@ func (c *checker) call(st *state, ctx *stmtCtx, t *mir.Terminator) []out {
 			ctx.slots = c.sets.add(ctx.slots, uint32(sl.root))
 		}
 		if i == 0 && fv != nil && fv.recvMut {
-			c.sharedMutReceiver(ctx, a)
+			c.sharedMutReceiver(st, ctx, a)
 		}
 	}
 	for i, a := range args {
