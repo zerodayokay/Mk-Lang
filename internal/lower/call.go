@@ -330,7 +330,9 @@ func (bl *builder) emitCallAt(x *ast.CallExpr, c Call, edge *errEdge, spawn mir.
 	args = append(args, envArgs...)
 	union := bl.typeOf(x)
 	ret := union
-	if t := bl.tab.Get(ret); t.Kind == types.KErrorUnion {
+	if t := bl.tab.Get(ret); t.Kind == types.KErrorUnion && c.Errors != types.EmptyErrors {
+		// A callee that cannot fail returns an E!T (a result type
+		// parameter bound to one) whole, as a value.
 		ret = t.Elem
 	}
 	if spawn != mir.NoLocal {
@@ -1074,6 +1076,20 @@ func (bl *builder) builtin(x *ast.CallExpr, c Call) mir.Rvalue {
 			source.ICEf(at, "lower: Must on a value that is not a call")
 		}
 		ic := bl.in.Call(inner.ID())
+		if ic.Errors == types.EmptyErrors {
+			// A callee that cannot fail returning an E!T value (a result
+			// type parameter bound to one): its discriminant picks ok's
+			// payload or the panic with the error, as elseUnion's does.
+			p := bl.optTaken(inner)
+			e := bl.newTemp(bl.tab.ErrorSetType(bl.tab.Get(bl.b.PlaceType(p)).Errors), at)
+			ok, pb := bl.newBlock(), bl.newBlock()
+			bl.unionSwitch(p, ok, pb, at)
+			bl.cur = pb
+			bl.assign(bl.b.Place(e), use(bl.valueOf(bl.errPayload(p), true, at)), at)
+			bl.term(mir.Terminator{Kind: mir.TermPanic, Panic: types.PanicMust, HasMsg: true, Msg: bl.valueOfTemp(e, at)}, at)
+			bl.cur = ok
+			return use(bl.valueOf(bl.okPayload(p), true, at))
+		}
 		et := bl.tab.ErrorSetType(ic.Errors)
 		e := bl.newTemp(et, at)
 		save := bl.cur

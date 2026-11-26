@@ -304,6 +304,16 @@ func (m *Module) implSignatures(it *types.Item) {
 				Text("expected", m.ifaceSigText(ifaceIt, exp)).Text("found", m.methodSigText(mi, &fd.Sig)))
 			continue
 		}
+		if im.Errors == types.EmptyErrors && fd.Sig.Errors != types.EmptyErrors {
+			// A result type parameter bound to an error union (Src[E!int]'s
+			// Get(&self): T) is a value the method returns: the interface
+			// method cannot fail, so a call through a bound, which handles
+			// no error, would drop this method's.
+			m.Diags = append(m.Diags, diag.New(diag.E0707, mi.Span, "`"+c.cfg.Interner.Str(ifaceIt.Name)+"`'s `"+c.cfg.Interner.Str(im.Name)+
+				"` cannot fail, and this method can: an error union its result's type parameter stands for is a value the method returns, never an error it fails with").
+				Text("expected", m.ifaceSigText(ifaceIt, exp)+" (cannot fail)").Text("found", m.methodSigText(mi, &fd.Sig)))
+			continue
+		}
 		m.implFlows = append(m.implFlows, implFlowJob{it: mi, impl: &fd.Sig, iface: im})
 	}
 	for _, mid := range d.Methods {

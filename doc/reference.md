@@ -5554,6 +5554,41 @@ Twice(n: int): Negative!int {
 }
 ```
 
+A function can fail only when its signature names an error set. A generic whose result is its type parameter, called with an `E!T` for it, cannot fail: it returns the `E!T` as a value, which the caller handles with `try`, `else` or `match` as any other. So does an interface method whose result is the interface's type parameter, and an `impl` that fails there is E0707.
+
+```mk
+// verdict: ok
+error Negative
+
+Root(n: int): Negative!int {
+    if n < 0 {
+        fail Negative
+    }
+    return n * 2
+}
+
+Copy[T: Plain](x: &T): T {
+    return *x
+}
+
+export Main(sys: &System): WriteError!void {
+    var a: Negative!int = Root(4)
+    var b: Negative!int = Root(-4)
+    for r in [&a, &b] {
+        v := Copy(r) else e { // Copy cannot fail: else handles the E!T it returns
+            try sys.Print("{e}\n", (e: e))
+            continue
+        }
+        try sys.Print("{v}\n", (v: v))
+    }
+}
+```
+
+```text
+8
+Negative
+```
+
 ### `fail`
 
 `fail e` returns the error `e` from the function. `e` is an error value: a constructed error, or a value of an error set, such as one bound by `else`.
@@ -6646,7 +6681,7 @@ Total(s: &Shape): f64 { // <- E0301
 
 ### `impl`
 
-`impl I for T { ... }` makes `T` implement `I`. It holds one method for each method of `I`, with the same signature.
+`impl I for T { ... }` makes `T` implement `I`. It holds one method for each method of `I`, with the same signature. A method of `I` that names no error set cannot fail in any impl: where its result is a type parameter of `I` and the impl's argument is an `E!T`, as `Get(&self): T` in an `impl Source[E!int]`, the method returns the `E!T` as a value, and a method that fails is E0707.
 
 ```mk
 // verdict: ok
@@ -7356,7 +7391,7 @@ Start(): int {
 | E0704 | impl-conflict | A duplicate, orphan or blanket `impl`, or an `impl` of `Plain` or `Fields[B]` ([`impl`](#impl)) |
 | E0705 | not-const | A const argument that is not constant, a misused `const` `fn` parameter ([const parameters](#const-parameters)) |
 | E0706 | requires-failed | A compile-time `requires` that is false or not restated ([requirements](#compile-time-requirements)) |
-| E0707 | impl-signature | An `impl` method missing, extra or with another signature ([`impl`](#impl)) |
+| E0707 | impl-signature | An `impl` method missing, extra or with another signature, or one that fails where its interface method names no error set ([`impl`](#impl)) |
 | E0708 | instantiation-limit | Instantiation without end ([runaway instantiation](#runaway-instantiation)) |
 | E0709 | const-arithmetic | Arithmetic in a const argument inside a generic ([const arguments](#const-arguments-in-a-generic)) |
 | E0711 | cannot-infer | A type argument nothing fixes, or a generic value without its arguments ([generic functions](#generic-functions), [values](#generic-functions-as-values)) |
