@@ -299,7 +299,7 @@ func (w *world) finishLibrary(ctx context.Context, tools *toolchain.Tools, st *c
 		var lerr error
 		j.timed("link", func() { lerr = tools.Link(ctx, job) })
 		if lerr != nil {
-			return "", plan.linkErrWith(lerr, work)
+			return "", w.sysViewLinkHints(plan.linkErrWith(lerr, work), lerr, work)
 		}
 	}
 	header := filepath.Join(work, j.name+".h")

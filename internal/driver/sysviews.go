@@ -198,6 +198,10 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 	if d != nil {
 		return []*diag.Diagnostic{d}
 	}
+	var ds []*diag.Diagnostic
+	if w.cfg.AllTargets {
+		ds = p.sysViewAllTargets(names, mods) // sysviews_targets.go
+	}
 	sv.mods = map[string]*modNode{}
 	sv.funcs = map[string]string{}
 	var added []*modNode
@@ -226,7 +230,7 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 			w.noteSitePath(f.src.ID, m.tree.sitePath(f.rel))
 		}
 	}
-	return nil
+	return ds
 }
 
 // extracted is one view's module as the cache stores it.
