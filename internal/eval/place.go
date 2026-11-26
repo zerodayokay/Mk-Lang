@@ -412,8 +412,10 @@ func (m *Machine) writeOp(f *frame, op *mir.Operand, dst loc) {
 		}
 		// `x = x` moves the value into its own place: the place is written
 		// again, so it stays written and owned (no false VUninit after
-		// `h = h`).
-		if dst.a != src.a || dst.off != src.off || dst.zeroLocal != src.zeroLocal {
+		// `h = h`). Equal offsets do not identify byte-free projections.
+		samePlace := dst.a == src.a && dst.off == src.off &&
+			(src.ti.size != 0 || src.zeroLocal != 0 && src.zeroLocal == dst.zeroLocal)
+		if !samePlace {
 			m.tgMoved(f, op.Place, src)
 		}
 		return

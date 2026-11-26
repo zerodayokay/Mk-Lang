@@ -156,6 +156,46 @@ func TestSB_EmptyLinearLocal(t *testing.T) {
 	}
 }
 
+func TestSB_ZeroByteFieldTake(t *testing.T) {
+	w := newWorld(t)
+	marker, mt := w.structType("lib", "Marker")
+	token, tt := w.structType("lib", "Token", mt)
+	pair, pt := w.structType("lib", "Pair", tt, tt)
+	w.layoutLocked(tt).Shape.Kind = types.Linear
+	w.layoutLocked(pt).Shape.Kind = types.Linear
+	for _, tc := range []struct {
+		name   string
+		second uint32
+	}{
+		{name: "Both", second: 1},
+		{name: "SameFieldTwice", second: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := w.fn("lib", "Run"+tc.name, types.Void)
+			x := w.body(f, types.Void)
+			m, a, b, p, d := x.local(mt), x.local(tt), x.local(tt), x.local(pt), x.local(mt)
+			x.assign(0, lp(m), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: marker})
+			for _, z := range []mir.LocalID{a, b} {
+				x.assign(0, lp(z), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: token, Ops: x.b.AddOperands(cp(m))})
+			}
+			x.assign(0, lp(p), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: pair, Ops: x.b.AddOperands(mir.Move(lp(a)), mir.Move(lp(b)))})
+			for _, i := range []uint32{0, tc.second} {
+				field := x.b.Place(p, mir.Projection{Kind: mir.ProjField, A: i, Type: tt}, mir.Projection{Kind: mir.ProjField, Type: mt})
+				x.assign(0, lp(d), use(mir.Move(field)))
+			}
+			end := x.scopeEnd(0, p)
+			x.ret(0)
+			x.done()
+			got := w.tcall(w.evaluator(0), f, nil)
+			if tc.second == 1 {
+				wantClean(t, got)
+			} else if v := wantViolation(t, got, VLinear); v.At != spanOf(x, end) {
+				t.Errorf("violation at %v, want the pair's scope end %v", v.At, spanOf(x, end))
+			}
+		})
+	}
+}
+
 func TestSB_EmptyLinearErrorEdge(t *testing.T) {
 	w := newWorld(t)
 	token, tt := w.structType("lib", "Token")
