@@ -3,8 +3,8 @@
 // binding modes, pattern tests) is large enough for a file of its own.
 //
 // What: matchStmt, matchUnion and matchCall (match F(x) with ok and err
-// arms); test, rangeTest and subTests for pattern tests; bindPat for
-// bindings; arms for the sequential fallback.
+// arms), unionArms for their two sides; test, rangeTest and subTests for
+// pattern tests; bindPat for bindings; arms for the sequential fallback.
 //
 // How: arms are compiled by the decision tree of decision.go or, past its
 // size guard, by sequential testing: the first matching arm in source order,
@@ -79,39 +79,20 @@ func (bl *builder) matchStmt(s *ast.MatchStmt) {
 // does for a call. It was an ICE ("pattern *ast.OkPattern in a match").
 func (bl *builder) matchUnion(s *ast.MatchStmt, p mir.Place, mode BindMode) {
 	at := s.Span()
-	var oks, errs []*ast.Arm
-	for _, a := range s.Arms {
-		switch bl.in.Pattern(a.Pat.ID()).Kind {
-		case POk:
-			oks = append(oks, a)
-		case PErr:
-			errs = append(errs, a)
-		default:
-			oks = append(oks, a)
-			errs = append(errs, a)
-		}
-	}
-	inner := func(a *ast.Arm) ast.Pattern {
-		switch q := a.Pat.(type) {
-		case *ast.OkPattern:
-			return q.Pat
-		case *ast.ErrPattern:
-			return q.Pat
-		}
-		return a.Pat
-	}
+	oks, okPat := bl.unionArms(s.Arms, POk)
+	errs, errPat := bl.unionArms(s.Arms, PErr)
 	okB, errB, join := bl.newBlock(), bl.newBlock(), bl.newBlock()
 	bl.unionSwitch(p, okB, errB, at)
 	reached := false
 	bl.cur = okB
 	if len(oks) > 0 {
-		reached = bl.arms(oks, bl.okPayload(p), mode, join, inner) || reached
+		reached = bl.arms(oks, bl.okPayload(p), mode, join, okPat) || reached
 	} else {
 		bl.term(mir.Terminator{Kind: mir.TermUnreachable}, at)
 	}
 	bl.cur = errB
 	if len(errs) > 0 {
-		reached = bl.arms(errs, bl.errPayload(p), mode, join, inner) || reached
+		reached = bl.arms(errs, bl.errPayload(p), mode, join, errPat) || reached
 	} else {
 		bl.term(mir.Terminator{Kind: mir.TermUnreachable}, at)
 	}
@@ -220,6 +201,21 @@ func (bl *builder) test(q ast.Pattern, p mir.Place, fail mir.BlockID) {
 		bl.test(q.(*ast.SomePattern).Pat, bl.somePayload(p), fail)
 	case PNone:
 		pass([]mir.SwitchCase{{Value: 0}}, bl.discr(p, at))
+	case POk:
+		// A nested ok(q) on an E!T place (an ok payload, a field, a some
+		// payload of one): discriminant 0, then q on the payload.
+		pass([]mir.SwitchCase{{Value: 0}}, bl.discr(p, at))
+		if sub := q.(*ast.OkPattern).Pat; sub != nil {
+			bl.test(sub, bl.okPayload(p), fail)
+		}
+	case PErr:
+		// Any discriminant but 0 is an error (unionSwitch).
+		ok := bl.newBlock()
+		bl.switchOn(bl.discr(p, at), []mir.SwitchCase{{Value: 0, Target: fail}}, ok, at)
+		bl.cur = ok
+		if sub := q.(*ast.ErrPattern).Pat; sub != nil {
+			bl.test(sub, bl.errPayload(p), fail)
+		}
 	case PStruct:
 		for _, f := range patFields(q) {
 			if f.Pat != nil {
@@ -477,6 +473,14 @@ func (bl *builder) bindPat(q ast.Pattern, p mir.Place, mode BindMode) {
 		}
 	case PSome:
 		bl.bindPat(q.(*ast.SomePattern).Pat, bl.somePayload(p), mode)
+	case POk:
+		if sub := q.(*ast.OkPattern).Pat; sub != nil {
+			bl.bindPat(sub, bl.okPayload(p), mode)
+		}
+	case PErr:
+		if sub := q.(*ast.ErrPattern).Pat; sub != nil {
+			bl.bindPat(sub, bl.errPayload(p), mode)
+		}
 	case PStruct:
 		for _, f := range patFields(q) {
 			fp := bl.structField(p, f)
@@ -508,41 +512,73 @@ func (bl *builder) matchCall(s *ast.MatchStmt, call *ast.CallExpr, c Call) {
 	e := bl.newTemp(bl.tab.ErrorSetType(c.Errors), call.Span())
 	eb := bl.newBlock()
 	dest := bl.emitCall(call, c, &errEdge{kind: mir.EdgeMatch, block: eb, err: e}, mir.NoLocal)
-	var oks, errs []*ast.Arm
-	for _, a := range s.Arms {
-		switch bl.in.Pattern(a.Pat.ID()).Kind {
-		case POk:
-			oks = append(oks, a)
-		case PErr:
-			errs = append(errs, a)
-		default:
-			oks = append(oks, a)
-			errs = append(errs, a)
-		}
-	}
-	inner := func(a *ast.Arm) ast.Pattern {
-		switch q := a.Pat.(type) {
-		case *ast.OkPattern:
-			return q.Pat
-		case *ast.ErrPattern:
-			return q.Pat
-		}
-		return a.Pat
-	}
+	oks, okPat := bl.unionArms(s.Arms, POk)
+	errs, errPat := bl.unionArms(s.Arms, PErr)
 	join := bl.newBlock()
 	reached := false
 	if bl.open() && len(oks) > 0 {
-		reached = bl.arms(oks, dest, ByValue, join, inner) || reached
+		reached = bl.arms(oks, dest, ByValue, join, okPat) || reached
 	} else if bl.open() {
 		bl.term(mir.Terminator{Kind: mir.TermUnreachable}, s.Span())
 	}
 	bl.cur = eb
 	if len(errs) > 0 {
-		reached = bl.arms(errs, bl.b.Place(e), ByValue, join, inner) || reached
+		reached = bl.arms(errs, bl.b.Place(e), ByValue, join, errPat) || reached
 	} else {
 		bl.term(mir.Terminator{Kind: mir.TermUnreachable}, s.Span())
 	}
 	bl.continueAt(join, reached)
+}
+
+// unionArms are the arms of a match on an E!T that the given side (POk or
+// PErr) can reach, and each one's pattern on that side's payload: an
+// ok(q) or err(q) arm's q, any other arm whole on both sides. A top-level
+// alternative keeps the alternatives of its side, ok(q) and err(q) taken
+// apart as one arm is, in an alternative pattern of the original's node
+// (alternatives bind nothing, and only its kind and span are read).
+func (bl *builder) unionArms(arms []*ast.Arm, side PatKind) ([]*ast.Arm, func(*ast.Arm) ast.Pattern) {
+	other := PErr
+	if side == PErr {
+		other = POk
+	}
+	of := func(q ast.Pattern) (ast.Pattern, bool) {
+		switch k := bl.in.Pattern(q.ID()).Kind; {
+		case k == other:
+			return nil, false
+		case k == side:
+			switch q := q.(type) {
+			case *ast.OkPattern:
+				return q.Pat, true
+			case *ast.ErrPattern:
+				return q.Pat, true
+			}
+		}
+		return q, true
+	}
+	var out []*ast.Arm
+	pats := map[*ast.Arm]ast.Pattern{}
+	for _, a := range arms {
+		alt, ok := a.Pat.(*ast.AltPattern)
+		if !ok {
+			if q, ok := of(a.Pat); ok {
+				out, pats[a] = append(out, a), q
+			}
+			continue
+		}
+		var keep []ast.Pattern
+		for _, x := range alt.Alts {
+			if q, ok := of(x); ok {
+				keep = append(keep, q)
+			}
+		}
+		switch {
+		case len(keep) == 1:
+			out, pats[a] = append(out, a), keep[0]
+		case len(keep) > 1:
+			out, pats[a] = append(out, a), &ast.AltPattern{Base: alt.Base, Alts: keep}
+		}
+	}
+	return out, func(a *ast.Arm) ast.Pattern { return pats[a] }
 }
 
 // payloadIndex is the field a variant or error sub-pattern names: check's
