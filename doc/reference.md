@@ -4389,7 +4389,7 @@ export Main(sys: &System): WriteError!void {
 - A destructure names every field, or ends with `..` to skip the rest (E0305). Only the outermost pattern may end with `..`: a nested struct pattern names every field, with `_` for those you skip.
 - A struct with no fields is taken apart by `T() := e`, which names every field: it is how a [`linear`](#linear-and-view-structs) struct with no fields is consumed. Any other pattern that names nothing, `()`, `[]` or `T(..)`, is E0101.
 - A field skipped by `..` must be plain (E0408), because skipping it would drop it.
-- Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct.
+- Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct. Each nested struct pattern consumes the linear struct it names, including when its bindings copy plain fields.
 - `var` before the pattern makes every binding `var`.
 - A pattern that can fail, such as a literal, is E0306. Use `match`.
 - Only a record, a struct or an array pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.

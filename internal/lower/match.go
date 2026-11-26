@@ -632,22 +632,23 @@ func (bl *builder) takeAltFields(flat []ast.Pattern, at func(*ast.PatField, int)
 // consumed only as a take. One field, a scalar where there is one, moves
 // into a statement temporary, as a destructure that takes nothing does. A
 // struct with no fields has nothing to move: StConsume ends p itself.
-func (bl *builder) takeWhole(p mir.Place, at source.Span) {
+// The result reports whether a take was emitted.
+func (bl *builder) takeWhole(p mir.Place, at source.Span) bool {
 	t := bl.b.PlaceType(p)
 	st := bl.tab.Get(t)
 	d, ok := bl.cfg.Items.Get(st.Item).Decl.(*types.StructDecl)
 	if st.Kind != types.KNamed || !ok || bl.plain(t, at) {
-		return
+		return false
 	}
 	if bl.fieldless(t) {
 		bl.emit(mir.Statement{Kind: mir.StConsume, Place: p, Span: bl.span(at)})
-		return
+		return true
 	}
 	k, ft := -1, types.NoType
 	for i, f := range d.Fields {
 		ty := bl.substArgs(f.Type, st.Args)
 		if !bl.plain(ty, at) {
-			return
+			return false
 		}
 		if k < 0 || !scalarKind(bl.tab.Kind(ft)) && scalarKind(bl.tab.Kind(ty)) {
 			k, ft = i, ty
@@ -655,6 +656,7 @@ func (bl *builder) takeWhole(p mir.Place, at source.Span) {
 	}
 	h := bl.newTemp(ft, at)
 	bl.assign(bl.b.Place(h), use(mir.Move(bl.field(p, uint32(k), ft))), at)
+	return true
 }
 
 // fieldless reports whether t is a struct with no fields, the one type a
