@@ -47,6 +47,24 @@ test "plain" (sys: &System) {
     testing.Fuzz(Quiet)
     sys.Print("after\n") else {}
 }
+
+Partial(sys: &System, data: []u8) {
+    n := data.Len()
+    if n == 3 {
+        sys.Print("stdout") else {}
+    } else if n == 5 {
+        sys.PrintErr("stderr") else {}
+    } else if n == 7 {
+        var out := sys.Stdout()
+        out.Str("flushed") else {}
+        out.Flush() else {}
+    }
+}
+
+test "partial" (sys: &System) {
+    sys.Print("before") else {}
+    testing.FuzzSys(sys, Partial)
+}
 `
 
 func TestFuzzOutputOrder(t *testing.T) {
@@ -58,6 +76,10 @@ func TestFuzzOutputOrder(t *testing.T) {
 		"testdata/fuzz/second/two": "hello",
 		"testdata/fuzz/plain/one":  "abc",
 		"testdata/fuzz/plain/two":  "hello",
+		"testdata/fuzz/partial/a":  "abc",
+		"testdata/fuzz/partial/b":  "hello",
+		"testdata/fuzz/partial/c":  "1234567",
+		"testdata/fuzz/partial/d":  "",
 	})
 	lines := func(out string, n int) []string {
 		ls := strings.Split(out, "\n")
@@ -73,6 +95,7 @@ func TestFuzzOutputOrder(t *testing.T) {
 		{"both", "main both pass", []string{"fuzz input one", "len 3", "err 3", "fuzz input two", "len 5", "err 5"}},
 		{"second", "main second panic", []string{"fuzz input one", "len 3", "fuzz input two", "len 5", "panic: assert at main.mk:12:5"}},
 		{"plain", "main plain pass", []string{"before", "fuzz input one", "fuzz input two", "after"}},
+		{"partial", "main partial pass", []string{"before", "fuzz input a", "stdout", "fuzz input b", "stderr", "fuzz input c", "flushed", "fuzz input d"}},
 	} {
 		rep := mkTest(t, Config{Root: root}, TestOptions{Run: c.test})
 		if got := results(rep); got != c.result {

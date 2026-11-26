@@ -152,6 +152,7 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 			return
 		}
 		defer os.RemoveAll(filepath.Dir(in))
+		defer fuzzInputLines(out, opt.expectToken)
 		env = childEnv(env, via, TestingFuzzEnv+"=run", TestingInputEnv+"="+hostPath(argv, in))
 	}
 	if opt.coverDir != "" { // cover.go: this child's counts file
@@ -161,6 +162,31 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 		return
 	}
 	runChild(out, argv, env, i, s.cfg.TestTimeout)
+}
+
+// fuzzInputLines displays tagged seed markers at the start of a line in
+// the joined stdout and stderr stream. Only the child's private token
+// marks a seed; ordinary output of "fuzz input" is left intact.
+func fuzzInputLines(tc *TestCase, token string) {
+	text := tc.Output
+	mark := "mkfuzzinput " + token + " "
+	at := strings.Index(text, mark)
+	if token == "" || at < 0 {
+		return
+	}
+	var out strings.Builder
+	out.Grow(len(text))
+	for at >= 0 {
+		out.WriteString(text[:at])
+		if at > 0 && text[at-1] != '\n' {
+			out.WriteByte('\n')
+		}
+		out.WriteString("fuzz input ")
+		text = text[at+len(mark):]
+		at = strings.Index(text, mark)
+	}
+	out.WriteString(text)
+	tc.Output = out.String()
 }
 
 // hostPath is p as the child sees it: through a runner prefix (wsl.exe)

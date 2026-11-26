@@ -13,10 +13,10 @@
 // once):
 //
 //   - MK_TESTING_FUZZ: "run" calls f once per seed of the input file, in
-//     its order, writing "fuzz input <name>" to standard error before each
-//     call, after the bytes sys's streams hold, so a failing input is named
-//     in the test's output and each input's output follows it; "loop" runs
-//     the mutation loop below.
+//     its order, writing "mkfuzzinput <token> <name>" to standard error
+//     before each call, after the bytes sys's streams hold; the driver
+//     displays it on its own line as "fuzz input <name>". "loop" runs the
+//     mutation loop below.
 //   - MK_TESTING_INPUT: the input file, records of a kind byte ('s' a seed,
 //     'd' a dictionary token), a u32 little-endian name length, the name,
 //     a u32 little-endian data length and the data. The driver writes it
@@ -40,7 +40,8 @@
 //     children only; ExpectPanic writes "mkexpectpanic <token> <length>
 //     <want>" to standard error, and the driver (testing.go's
 //     judgeExpectedPanic) passes the child on a panic whose report matches.
-//     The token keeps text a test prints from passing for the line.
+//     RunSeeds uses the same token for its input markers; the token keeps
+//     text a test prints from passing for a protocol marker.
 //
 // The loop mutates by bit flips, byte sets, inserts, deletes, splices of
 // another input and dictionary tokens, and is guided by the package's live
@@ -343,17 +344,30 @@ DataAt(b: []u8, i: int): int {
 // standard output and standard error (sys.Print, sys.PrintErr), so the
 // output holds each input's line, then what the target printed for it; the
 // buffers are written out once more after the last call. An empty buffer
-// costs a lock and no write.
+// costs a lock and no write. The driver sees the joined output and can
+// put each tagged marker on its own line even after an explicit flush.
 RunSeeds(b: []u8, s: ?&System, f: ?fn([]u8), g: ?fn(sys: &System, data: []u8)) {
     p := rt.Proc()
     io := rt.NativeIo()
+    var mark: [64]u8 = [0; 64]
+    var n := 0
+    if token := rt.Env("MK_TESTING_EXPECT") {
+        if token.Len() > 0 && token.Len() <= mark.Len() - "mkfuzzinput  ".Len() {
+            n = Put(mut mark[..], 0, "mkfuzzinput ")
+            n = Put(mut mark[..], n, token)
+            n = Put(mut mark[..], n, " ")
+        }
+    }
+    if n == 0 {
+        n = Put(mut mark[..], 0, "fuzz input ")
+    }
     var i := 0
     for i < b.Len() {
         d := DataAt(b, i)
         end := RecordEnd(b, i)
         if b[i] == b's' {
             _ = core.StdWrite(p, 0, io, "".AsBytes())
-            _ = core.StdWrite(p, 1, io, "fuzz input ".AsBytes())
+            _ = core.StdWrite(p, 1, io, mark[..n])
             _ = core.StdWrite(p, 1, io, b[i + 5..d - 4])
             _ = core.StdWrite(p, 1, io, "\n".AsBytes())
             Call(s, f, g, b[d..end])
