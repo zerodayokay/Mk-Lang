@@ -45,8 +45,13 @@ const (
 )
 
 // stdPageTargets are the modules rendered for a target other than
-// x86_64-linux, because they exist only there.
-var stdPageTargets = map[string]string{"std.free": "x86_64-freestanding"}
+// x86_64-linux: std.free exists only there, and std.gpu and std.window
+// import system views mk carries for x86_64-windows alone.
+var stdPageTargets = map[string]string{
+	"std.free":   "x86_64-freestanding",
+	"std.gpu":    "x86_64-windows",
+	"std.window": "x86_64-windows",
+}
 
 // stdPagesUnrendered are the modules whose page the test cannot render,
 // with why.

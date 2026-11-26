@@ -89,16 +89,161 @@ export Main(sys: &System): image.Error!void {
 
 ## API
 
-- `open enum Pixels { Gray8 Rgb8 Rgba8 }`
-- `struct Image { width: int height: int pixels: Pixels data: []u8 }`
-- `struct DecodeLimits { max_width: int max_height: int max_bytes: int }`
-- `const DefaultDecodeLimits: DecodeLimits`
-- `EncodePng(a: &Arena, img: Image): Error![]u8 from a`
-- `DecodePng(a: &Arena, bytes: []u8, limits: DecodeLimits): Error!Image from a`
-- `struct Difference { max: int over: int isolated: int pixels: int }`
-- `Compare(a: &Image, b: &Image, tolerance: int): Error!Difference`
-- `open type Error = Invalid | Unsupported | TooLarge | OutOfMemory`
-- `error Invalid(why: Why)`
-- `error Unsupported`
-- `error TooLarge`
-- `open enum Why { BadSignature BadCrc BadChunk BadHeader BadZlib BadFilter Truncated BadImage SizeMismatch }`
+<!-- api:begin -->
+Stability: Provisional.
+
+### `Compare`
+
+```
+export Compare(a: &Image, b: &Image, tolerance: int): Error!Difference
+```
+
+- Errors: Error (OutOfMemory, Invalid(why: Why), TooLarge, Unsupported)
+
+Compares a and b channel by channel. Errors: Invalid(SizeMismatch).
+O(pixels); allocates nothing.
+
+### `DecodeLimits`
+
+```
+export struct DecodeLimits
+```
+
+What DecodePng accepts. Start from DefaultDecodeLimits.
+
+Fields:
+
+- `max_width: int`
+- `max_height: int`
+- `max_bytes: int`: Decoded bytes at most; also bounds the inflate output.
+
+### `DecodePng`
+
+```
+export DecodePng(a: &Arena, bytes: []u8, limits: DecodeLimits): Error!Image from a
+```
+
+- Flows: The result borrows from a.
+- Errors: Error (OutOfMemory, Invalid(why: Why), TooLarge, Unsupported)
+
+Decodes a non-interlaced 8-bit Gray, RGB or RGBA PNG. Never panics on its
+input. Errors: Invalid(why), Unsupported, TooLarge, OutOfMemory. O(bytes);
+allocates the image in a, bounded by limits.max_bytes.
+
+### `DefaultDecodeLimits`
+
+```
+export const DefaultDecodeLimits: DecodeLimits
+```
+
+16,384 by 16,384, 256 MiB.
+
+### `Difference`
+
+```
+export struct Difference
+```
+
+How two images differ.
+
+Fields:
+
+- `max: int`: The largest channel difference.
+- `over: int`: Pixels with a channel over tolerance.
+- `isolated: int`: Pixels over tolerance none of whose 4-neighbours is within it.
+- `pixels: int`
+
+### `EncodePng`
+
+```
+export EncodePng(a: &Arena, img: Image): Error![]u8 from a
+```
+
+- Flows: The result borrows from a.
+- Errors: Error (OutOfMemory, Invalid(why: Why), TooLarge, Unsupported)
+
+Encodes img as a PNG. Errors: Invalid(BadImage), OutOfMemory. O(bytes);
+allocates the file in a.
+
+### `Error`
+
+```
+export open type Error = Invalid | Unsupported | TooLarge | OutOfMemory
+```
+
+Every error std.image returns.
+
+### `Image`
+
+```
+export struct Image
+```
+
+Pixels in memory: rows top first, tightly packed.
+
+Fields:
+
+- `width: int`
+- `height: int`
+- `pixels: Pixels`
+- `data: []u8`
+
+### `Invalid`
+
+```
+export error Invalid(why: Why)
+```
+
+The input is malformed, for the reason given.
+
+### `Pixels`
+
+```
+export open enum Pixels
+```
+
+How pixels are stored.
+
+Variants:
+
+- `Gray8`
+- `Rgb8`
+- `Rgba8`
+
+### `TooLarge`
+
+```
+export error TooLarge
+```
+
+The image passes the limits.
+
+### `Unsupported`
+
+```
+export error Unsupported
+```
+
+A valid PNG outside the supported subset.
+
+### `Why`
+
+```
+export open enum Why
+```
+
+Why an image was refused.
+
+Variants:
+
+- `BadSignature`
+- `BadCrc`
+- `BadChunk`
+- `BadHeader`
+- `BadZlib`
+- `BadFilter`
+- `Truncated`
+- `BadImage`
+- `SizeMismatch`
+
+<!-- api:end -->
