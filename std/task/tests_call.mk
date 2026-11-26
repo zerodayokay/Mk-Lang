@@ -292,8 +292,9 @@ test "RT8-Call-CopyCancel a deadline ends a CopyFile in its call with Canceled, 
     // Gated: the copy is in its call on a pool thread and cannot end
     // before the 5 ms deadline reaches its cancel word, however late a
     // busy machine delivers it; then it ends Canceled and makes no dst
-    // (both targets read the word before their first step).
+    // (each target's CopyFile reads the word before it opens anything).
     gio := CaGateIo()
+    CaGated.saw.Store(0)
     var g := core.IoResult(value: 0, err: core.SysErr.None, os: 0)
     t0 := BenchNow()
     scope s := gio.Scope() {
@@ -311,7 +312,10 @@ test "RT8-Call-CopyCancel a deadline ends a CopyFile in its call with Canceled, 
     // Ungated, the whole native path: a deadline delivered within the
     // copy's time ends it Canceled with a prefix in dst (none on Windows,
     // which deletes it); one that a busy machine delivers after the copy
-    // ended finds it whole. Nothing in between.
+    // ended finds it whole. Nothing in between. A Canceled copy's prefix
+    // may be all of src: Linux reads the word again after its last chunk.
+    // Under MK_TIMING (a quiet machine) the deadline must win.
+    timing := sys.Env("MK_TIMING") else { "" }
     var r := core.IoResult(value: 0, err: core.SysErr.None, os: 0)
     t1 := BenchNow()
     scope s1 := io.Scope() {
@@ -320,8 +324,11 @@ test "RT8-Call-CopyCancel a deadline ends a CopyFile in its call with Canceled, 
     }
     Assert(BenchNow() - t1 < DlBound)
     st := rt.StatEx(io, CaBytes(dst), false, mut w)
+    if timing == "1" {
+        Assert(r.err == core.SysErr.Canceled)
+    }
     if r.err == core.SysErr.Canceled {
-        Assert(st.err == core.SysErr.NotFound || (st.err == core.SysErr.None && w.b < CaBig))
+        Assert(st.err == core.SysErr.NotFound || (st.err == core.SysErr.None && w.b <= CaBig))
     } else {
         Assert(r.err == core.SysErr.None && r.value == CaBig)
         Assert(st.err == core.SysErr.None && w.b == CaBig)
