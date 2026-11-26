@@ -44,6 +44,9 @@ import (
 // own pkg.CImport named like a view coexists with the view.
 const sysViewPrefix = "c.sys."
 
+// sysViewSourcePrefix starts the diagnostic paths of generated view files.
+const sysViewSourcePrefix = "sysview/"
+
 // sysViews are one session's system views.
 type sysViews struct {
 	dir string // the cache directory
@@ -221,7 +224,7 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 	for _, em := range mods {
 		row, _ := sysview.Named(em.Name)
 		at := w.sysViewArchive(row, target)
-		prefix := "sysview/" + at + "/"
+		prefix := sysViewSourcePrefix + at + "/"
 		file := em.Name + ".mk"
 		t := &srcTree{mem: map[string]string{file: em.Text}, prefix: prefix, sitePrefix: prefix}
 		m := moduleFrom(t, "", []string{file})
