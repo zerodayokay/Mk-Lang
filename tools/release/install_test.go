@@ -14,6 +14,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -98,8 +99,14 @@ func (s *scriptServer) publish(t *testing.T, version, host string, latest bool) 
 	}, host == release.HostWindows); err != nil {
 		t.Fatal(err)
 	}
+	s.publishArchive(t, version, host, latest, b.Bytes())
+	return b.Bytes()
+}
+
+func (s *scriptServer) publishArchive(t *testing.T, version, host string, latest bool, archive []byte) {
+	t.Helper()
 	name := release.ArchiveName(version, host)
-	h := sha256.Sum256(b.Bytes())
+	h := sha256.Sum256(archive)
 	// Every other host's line, at a newer version, and a pre-release line,
 	// which the scripts skip or rank below the release.
 	list := release.Sums{name: hex.EncodeToString(h[:]), release.ArchiveName(version+"-rc1", host): strings.Repeat("1", 64)}
@@ -118,11 +125,10 @@ func (s *scriptServer) publish(t *testing.T, version, host string, latest bool) 
 		if d == "/latest/download/" && !latest {
 			continue
 		}
-		s.set(d+name, b.Bytes())
+		s.set(d+name, archive)
 		s.set(d+release.SumsFile, sums)
 		s.set(d+release.SigFile, sig)
 	}
-	return b.Bytes()
 }
 
 // testKeyEnv makes the scripts trust the test key, which they take only
@@ -439,6 +445,78 @@ func TestInstallPs1PathString(t *testing.T) {
 	}
 }
 
+// TestInstallPs1Extraction covers a release with a deep ZIP entry and a
+// correctly signed payload that cannot be extracted. The latter reaches
+// extraction only after both verification steps.
+func TestInstallPs1Extraction(t *testing.T) {
+	ps := powershell(t)
+	s := &scriptServer{files: map[string][]byte{}}
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	entry := "llvm/include/" + strings.Repeat("components/", 12) + "header.h"
+	var archive bytes.Buffer
+	if err := release.WriteArchive(&archive, release.TopDir("0.3.0", release.HostWindows), []release.Entry{
+		{Name: "bin/mk.exe", Data: []byte("mk"), Exec: true},
+		{Name: entry, Data: []byte("header")},
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	s.publishArchive(t, "0.3.0", release.HostWindows, false, archive.Bytes())
+	s.publishArchive(t, "0.4.0", release.HostWindows, false, []byte("not a ZIP file"))
+	var badName bytes.Buffer
+	zw := zip.NewWriter(&badName)
+	if _, err := zw.Create(release.TopDir("0.5.0", release.HostWindows) + "/header."); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.publishArchive(t, "0.5.0", release.HostWindows, false, badName.Bytes())
+
+	dir := t.TempDir()
+	in := release.Install{Root: filepath.Join(dir, "mkroot")}
+	run := func(version string) (string, error) {
+		cmd := exec.Command(ps, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath(t, "install.ps1"),
+			"-Releases", srv.URL, "-Root", in.Root, "-NoModifyPath", "-Version", version)
+		cmd.Env = scratchEnv(dir)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	t.Run("deep entry", func(t *testing.T) {
+		if out, err := run("0.3.0"); err != nil || !strings.Contains(out, "current is mk 0.3.0") {
+			t.Fatalf("long extraction path: %v\n%s", err, out)
+		}
+		if b, err := os.ReadFile(filepath.Join(in.CurrentLink(), filepath.FromSlash(entry))); err != nil || string(b) != "header" {
+			t.Fatalf("installed header: %q %v", b, err)
+		}
+	})
+	for _, tt := range []struct{ name, version, want string }{
+		{"invalid ZIP", "0.4.0", "OpenRead"},
+		{"ambiguous filename", "0.5.0", "unsafe archive entry"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before, _ := in.Current()
+			out, err := run(tt.version)
+			if _, ok := err.(*exec.ExitError); !ok || !strings.Contains(out, "SHA256SUMS is signed") ||
+				!strings.Contains(out, tt.want) {
+				t.Errorf("signed ZIP: want a failing extraction process with %q, got %v\n%s", tt.want, err, out)
+			}
+			if cur, _ := in.Current(); cur != before {
+				t.Errorf("failed extraction changed current from %q to %q", before, cur)
+			}
+			installed, err := os.ReadDir(filepath.Join(in.Root, "toolchains"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range installed {
+				if d.Name() != before {
+					t.Errorf("failed extraction left %q", d.Name())
+				}
+			}
+		})
+	}
+}
+
 // TestInstallPs1Hardening: a version that
 // is not a version token is refused before any request; a redirect to
 // plain http elsewhere is refused; a redirect on the loopback server is
@@ -476,7 +554,7 @@ func TestInstallPs1Hardening(t *testing.T) {
 	// GitHub's newest address redirects; the script follows on loopback.
 	s.redirect("/latest/download/"+release.SumsFile, "/download/v0.4.0/"+release.SumsFile)
 	s.redirect("/latest/download/"+release.SigFile, "/download/v0.4.0/"+release.SigFile)
-	if out, err := run(dir, "-Root", root); err != nil || !strings.Contains(out, "0.4.0") {
+	if out, err := run(dir, "-Root", root); err != nil || !strings.Contains(out, "current is mk 0.4.0") {
 		t.Fatalf("a loopback redirect: %v\n%s", err, out)
 	}
 	// A redirect to plain http elsewhere is refused, and nothing changes.

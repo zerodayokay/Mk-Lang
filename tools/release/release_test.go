@@ -396,14 +396,21 @@ func TestKeygen(t *testing.T) {
 	if st := run([]string{"keygen", "-out", out}, &stdout, &stderr); st != 2 {
 		t.Error("keygen overwrote a key file")
 	}
-	repo, _ := filepath.Abs(filepath.Join("..", ".."))
-	inRepo := filepath.Join(repo, "tools", "release", "never-written.key")
-	if st := run([]string{"keygen", "-out", inRepo}, &stdout, &stderr); st != 2 {
-		t.Error("keygen wrote into the repository")
+	repo := filepath.Join(t.TempDir(), "repository")
+	nested := filepath.Join(repo, "nested")
+	for _, dir := range []string{filepath.Join(repo, ".git"), nested} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := os.Stat(inRepo); err == nil {
-		os.Remove(inRepo)
-		t.Error("a key file was left in the repository")
+	inRepo := filepath.Join(nested, "never-written.key")
+	stderr.Reset()
+	if st := run([]string{"keygen", "-out", inRepo}, &stdout, &stderr); st != 2 ||
+		!strings.Contains(stderr.String(), "git work tree") {
+		t.Errorf("keygen inside a repository: exit %d, want a git work tree refusal: %s", st, stderr.String())
+	}
+	if _, err := os.Stat(inRepo); !os.IsNotExist(err) {
+		t.Errorf("repository key should be absent: %v", err)
 	}
 }
 
