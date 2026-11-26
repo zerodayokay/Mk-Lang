@@ -1,17 +1,23 @@
 // Why: std.hash's secret paths (HMAC keys, messages) must not branch on
 // secret data, on the portable or the instruction paths, with or without PGO.
 // What: TestSTDHASH_ConstantTimeDisassembly and its tables h2CtAllow,
-// h2CtByBuild, h2CtMust and h2CtAbsent.
+// h2CtByBuild, h2CtBack, h2CtMust and h2CtAbsent; h2CtProfile, the PGO
+// legs' training run in a fixed environment (h2CtTrain), which
+// TestSTDHASH_PgoTrainingIgnoresEnvironment checks.
 // How: four x86_64-linux builds of one probe, every conditional jump of
 // every std.hash function classified by ctClassify against the tables.
 
 package std
 
 import (
+	"encoding/binary"
+	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -52,22 +58,22 @@ export Main(sys: &System): WriteError!void {
 }
 `
 
-// h2CtAllow is the reading (2026-11-12, mk and std of the tree, LLVM
-// 21.1.8, the four builds of TestSTDHASH_ConstantTimeDisassembly): for
-// each function, the most "other" jumps any build has, every one read in
-// llvm-objdump's listing as a test of a length, a loop bound or a CPU
-// feature, never of the message, the key or the state.
+// h2CtAllow is the reading (mk and std of the tree, LLVM 21.1.8, the four
+// builds of TestSTDHASH_ConstantTimeDisassembly, PGO from h2CtTrain's
+// profile): for each function, the most "other" jumps any build has, every
+// one read in llvm-objdump's listing as a test of a length, a loop bound, a
+// CPU feature, an error tag or a printed value, never of the message, the
+// key or the state.
 var h2CtAllow = map[string]int{
-	// Main: the small state methods (Sha384State's, New) inlined here add
-	// no jump. All 19 are the probe's own Print, compiled in line: the error
-	// tag each write returns (eight values, five separators by
-	// Writer.Bytes), and the first two separators' in-line writes: the
-	// buffer's free space (cap - len, jle), on the slow path its length zero
-	// (je, BytesSlow or the sink's call) and that call's error tag. Under
-	// PGO, 15: every separator by Writer.Bytes, the fifteen writes' tags.
-	// The buffer's fill moves only with the text already printed, which the
-	// probe writes out; none reads the key, the message or the state.
-	"mk.main.Main":          19,
+	// Main: the small inlined SHA state methods add no branches.
+	// Without PGO, Print's writer path is inlined, with write error tags,
+	// number formatting, remaining capacity and empty-buffer tests. With
+	// PGO, the 15 write error tags and the eight separators' inlined
+	// Writer.Bytes pairs (31); kernel-pgo also inlines Sha384State's Bytes
+	// twice (Sha512State's), adding the buffered length's two tests, the
+	// rest's length, the kernel's answer and CopyBytes' zero length (36).
+	// The buffer's fill moves only with the text already printed.
+	"mk.main.Main":          44,
 	"mk.std.crypto.Hmac256": 1, // the key length above 64 (cmpq $0x41) and the data length zero; no build reads more than 1
 	"mk.std.hash.Sha1":      0, // PGO builds only: the one-shot out of line
 	// Sha1Blocks: the SHA-1 kernel's guard,
@@ -77,19 +83,25 @@ var h2CtAllow = map[string]int{
 	// Bytes: the length zero (jle / jg), the buffered length zero, the
 	// buffer not yet full (cmpq $0x40), no whole block in the rest (andq
 	// $-0x40), the rest's length (subq; jbe). The same five in each state.
+	// Sha256State's under kernel-pgo, 7: the buffered length, the whole
+	// blocks, the rest's length, CopyBytes' zero length, and the SHA-256
+	// kernel's guard inlined (simd.Cpu()'s cache test and the sha bit, then
+	// the second call's cache test).
 	"mk.std.hash.Sha1State:Bytes":   5,
 	"mk.std.hash.Sha1State:New":     0,
 	"mk.std.hash.Sha1State:Sum":     1, // the buffered length zero (the copy's skip)
 	"mk.std.hash.Sha256":            0,
-	"mk.std.hash.Sha256State:Bytes": 5,
+	"mk.std.hash.Sha256State:Bytes": 7,
 	"mk.std.hash.Sha256State:New":   0,
-	"mk.std.hash.Sha256State:Sum":   1, // the buffered length zero
+	"mk.std.hash.Sha256State:Sum":   4, // the buffered length zero; kernel-pgo: the SHA-256 kernel's guard inlined (the cache test and the sha bit, the cache test)
 	// Sha256Compress (the portable loop, once std-crypto's Sha256Blocks):
 	// the kernel's guard, inlined once here: simd.Cpu()'s cache not
 	// yet filled (testq %rax; je to the detect call), the sha bit
 	// (testl $0x100000; jne to ShaNi), the second Cpu() call's cache test
 	// (for sha2) before the portable loop; then the loop's entry (cmpq
-	// $0x40). Masked: the second cache test and the entry only.
+	// $0x40). Masked: the second cache test and the entry only. Under
+	// kernel-pgo the guard is the kernel's Sha256Blocks, out of line, and
+	// this tests its answer only.
 	"mk.std.hash.Sha256Compress":    4,
 	"mk.std.hash.Sha384":            0,
 	"mk.std.hash.Sha384State:Bytes": 0, // a call of Sha512State:Bytes
@@ -100,30 +112,57 @@ var h2CtAllow = map[string]int{
 	// once here: simd.Cpu()'s cache not yet filled (testq %rax; je to the
 	// detect call), the avx2 and bmi2 bits (notl; testl $0x163f; jne to the
 	// portable loop), then the loop's entry: fewer than 128 bytes (cmpq
-	// $0x80). Read 2026-11-15 on the four builds.
+	// $0x80). Under kernel-pgo the guard
+	// is the kernel's Sha512Blocks, out of line, and this tests its answer
+	// only.
 	"mk.std.hash.Sha512Blocks":      3,
-	"mk.std.hash.Sha512State:Bytes": 5, // as Sha256State's, on 128-byte blocks
-	"mk.std.hash.Sha512State:Sum":   2, // the buffered length zero; PGO: the buffered length above 111 (the second padding block)
+	"mk.std.hash.Sha512State:Bytes": 5, // as Sha256State's, on 128-byte blocks; kernel-pgo: the inlined Sha512Blocks' kernel answer in place of the buffer-full test
+	"mk.std.hash.Sha512State:Sum":   4, // the buffered length zero; PGO: the buffered length above 111 (the second padding block); kernel-pgo: the SHA-512 kernel's guard inlined (the cache test, the avx2 and bmi2 bits)
 	"mk.std.simd.kernel.ShaNi":      1, // the block count zero (andq of the length with -64; je)
 	"mk.std.simd.kernel.Sha1Ni":     1, // SHA-1's: the block count zero, as ShaNi's
 	// Sha512Avx2 (SHA-512's kernel): the block count zero (andq
 	// of the length with -128; je) and the round group counter (cmpq $0x8;
 	// jae: the last two groups of eight rounds compute no schedule words).
 	"mk.std.simd.kernel.Sha512Avx2": 2,
+	// The kernels' guards, out of line under kernel-pgo: simd.Cpu()'s
+	// cache test and the sha bit, then the cache test before sha2; and
+	// the cache test and the avx2 and bmi2 bits.
+	"mk.std.simd.kernel.Sha256Blocks": 3,
+	"mk.std.simd.kernel.Sha512Blocks": 2,
 }
 
 // h2CtByBuild is this test's per-build counts (ctByBuild): each function
-// whose four builds read different counts, at the count each build had
-// (2026-11-18, the test's -v log; SHA-1's and SHA-512's Bytes under PGO
-// gain their whole-block count test, len & -64 or -128 <= 0, read), every
-// one at or below the reading above.
+// whose four builds read different counts, at the count each build has
+// (the test's -v log; SHA-1's and SHA-512's Bytes under PGO gain their
+// whole-block count test, len & -64 or -128 <= 0, read), every one at or
+// below the reading above.
 var h2CtByBuild = ctByBuild{
-	"mk.main.Main":                  {"kernel-pgo": 15, "masked-pgo": 15},
+	"mk.main.Main":                  {"kernel-pgo": 36, "masked-pgo": 31},
 	"mk.std.hash.Sha1State:Bytes":   {"kernel-pgo": 4, "masked-pgo": 4},
-	"mk.std.hash.Sha256Compress":    {"masked": 2, "masked-pgo": 2},
-	"mk.std.hash.Sha256State:Bytes": {"kernel-pgo": 4, "masked-pgo": 4},
-	"mk.std.hash.Sha512State:Bytes": {"kernel-pgo": 4, "masked-pgo": 4},
-	"mk.std.hash.Sha512State:Sum":   {"kernel": 1, "masked": 1},
+	"mk.std.hash.Sha256Compress":    {"kernel-pgo": 1, "masked": 2, "masked-pgo": 2},
+	"mk.std.hash.Sha256State:Bytes": {"kernel": 5, "masked": 5, "masked-pgo": 4},
+	"mk.std.hash.Sha256State:Sum":   {"kernel": 1, "masked": 1, "masked-pgo": 1},
+	"mk.std.hash.Sha512Blocks":      {"kernel-pgo": 1},
+	"mk.std.hash.Sha512State:Bytes": {"masked-pgo": 4},
+	"mk.std.hash.Sha512State:Sum":   {"kernel": 1, "masked": 1, "masked-pgo": 2},
+}
+
+// h2CtBack is this test's ctBackTable: exact per-build counts of
+// non-induction back edges (ctClassifyBack [2]), each read as public (lengths,
+// fixed round counts, CPU feature flags, or Writer.Bytes buffer capacity).
+var h2CtBack = ctBackTable{
+	"mk.main.Main":                  {"kernel": 2, "kernel-pgo": 5, "masked": 2},                  // Writer.Bytes buffer capacity; kernel-pgo adds inlined Sha512State:Bytes/Sha512Blocks length/round loops
+	"mk.std.hash.Sha1Blocks":        {"kernel": 1, "masked": 1},                                   // simd.Cpu().Has("sha") feature test
+	"mk.std.hash.Sha1State:Bytes":   {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // self.n < 64 / i < n on public lengths
+	"mk.std.hash.Sha256Compress":    {"kernel": 2, "kernel-pgo": 3, "masked": 1, "masked-pgo": 1}, // block loop (n - i >= 64), fixed 8 round groups, and Sha256Blocks CPU feature test
+	"mk.std.hash.Sha256State:Bytes": {"kernel": 1, "kernel-pgo": 4, "masked": 1, "masked-pgo": 1}, // public lengths; kernel-pgo adds inlined Sha256Compress length and round loops
+	"mk.std.hash.Sha256State:Sum":   {"kernel-pgo": 2},                                            // inlined Sha256Compress length and round loops
+	"mk.std.hash.Sha512Blocks":      {"kernel": 2, "kernel-pgo": 3, "masked": 2, "masked-pgo": 1}, // Sha512Blocks CPU feature test, 128-byte block loop, and fixed 10 round groups
+	"mk.std.hash.Sha512State:Bytes": {"kernel": 1, "kernel-pgo": 4, "masked": 1, "masked-pgo": 1}, // public lengths; kernel-pgo adds inlined Sha512Blocks length and round loops
+	"mk.std.hash.Sha512State:Sum":   {"kernel-pgo": 2},                                            // inlined Sha512Blocks length and round loops
+	"mk.std.simd.kernel.Sha1Ni":     {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // block loop i < n on public length
+	"mk.std.simd.kernel.Sha512Avx2": {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // fixed 10 round groups or block loop i < n on public length
+	"mk.std.simd.kernel.ShaNi":      {"kernel": 1, "kernel-pgo": 1},                               // block loop i < n on public length
 }
 
 // h2CtMust are the functions every build must hold out of line, so the
@@ -149,22 +188,23 @@ var h2CtAbsent = map[string][]string{
 	"mk.std.hash.Sha384State:Sum":   {"*"},
 	"mk.std.hash.Sha512":            {"*"},
 	"mk.std.simd.kernel.ShaNi":      {"masked", "masked-pgo"},
+
+	"mk.std.simd.kernel.Sha256Blocks": {"kernel", "masked", "masked-pgo"},
+	"mk.std.simd.kernel.Sha512Blocks": {"kernel", "masked", "masked-pgo"},
 }
 
-// h2CtChecked reports whether fn is on the probe's secret path.
+// h2CtChecked reports whether fn is on the probe's secret path: the
+// probe's functions (ctProbeFn), Hmac256, std.hash's and the kernel's.
 func h2CtChecked(fn string) bool {
-	return fn == "mk.main.Main" || fn == "mk.std.crypto.Hmac256" ||
+	return ctProbeFn(fn) || fn == "mk.std.crypto.Hmac256" ||
 		strings.HasPrefix(fn, "mk.std.hash.") || strings.HasPrefix(fn, "mk.std.simd.kernel.")
 }
 
 // h2CtProfile builds the probe natively with --pgo-gen over stdDir, runs
-// it, and merges its profile.
+// it once (h2CtTrain), and merges its profile.
 func h2CtProfile(t *testing.T, root, stdDir string) string {
 	t.Helper()
-	gen := filepath.Join(root, "gen")
-	if runtime.GOOS == "windows" {
-		gen += ".exe"
-	}
+	gen := h2CtTrainExe(t)
 	if out, st := mkCmd(t, root, stdDir, "build", "--release", "--pgo-gen", "-o", gen, "main.mk"); st != 0 {
 		t.Fatalf("mk build --pgo-gen: exit %d\n%s", st, out)
 	}
@@ -172,9 +212,7 @@ func h2CtProfile(t *testing.T, root, stdDir string) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(gen, "a", "b", "c")
-	cmd.Env = append(os.Environ(), "MK_PROFILE_DIR="+dir)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := h2CtTrain(gen, root).CombinedOutput(); err != nil {
 		t.Fatalf("%s: %v\n%s", gen, err, out)
 	}
 	profs, _ := filepath.Glob(filepath.Join(dir, "*.mkprof"))
@@ -186,6 +224,120 @@ func h2CtProfile(t *testing.T, root, stdDir string) string {
 		t.Fatalf("mk profile merge: exit %d\n%s", st, out)
 	}
 	return merged
+}
+
+// h2CtTrainLen is the length in bytes of the training executable's path.
+const h2CtTrainLen = 200
+
+// h2CtTrainExe is the path h2CtProfile builds the instrumented probe at: in
+// a directory of its own under the temporary directory, whose name pads the
+// path to h2CtTrainLen bytes. The runtime reads its own path at exit to name
+// the profile, a few counters per byte, so without the pad a longer
+// temporary directory moves the counts; the test's directory, which holds
+// the test's name, would leave no room for the pad under a long one.
+func h2CtTrainExe(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp(os.Getenv("GOTMPDIR"), "mkct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	name := "gen"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	pad := h2CtTrainLen - len(root) - len(name) - 2
+	if pad < 1 {
+		t.Fatalf("%s is too long for a training path of %d bytes", root, h2CtTrainLen)
+	}
+	dir := filepath.Join(root, strings.Repeat("p", pad))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, name)
+}
+
+// h2CtTrain is the training run of the instrumented probe gen: a fixed
+// program name and the arguments "a b c", the working directory root, and
+// MK_PROFILE_DIR=prof (relative to root) as the whole environment, to which
+// exec adds SYSTEMROOT on Windows. The runtime decodes the environment block
+// and the command line at start, so an inherited environment would be most
+// of the probe's entry counts and would move the hot threshold, LLVM's
+// profile summary and the PGO builds the tests read with the runner's
+// shell. What still reaches the profile from the runner is the number of
+// separators in gen's path and the digits of the process id.
+func h2CtTrain(gen, root string) *exec.Cmd {
+	cmd := exec.Command(gen, "a", "b", "c")
+	cmd.Args[0] = "gen"
+	cmd.Dir = root
+	cmd.Env = []string{"MK_PROFILE_DIR=prof"}
+	return cmd
+}
+
+// TestSTDHASH_PgoTrainingIgnoresEnvironment: two trainings of the probe,
+// the second under a parent environment 4,000 characters larger, give every
+// function the same entry count (Counts[0]), and so the same hot threshold
+// for the PGO builds the constant-time tests read. Counters inside a
+// function may still differ with the digits of the process id.
+func TestSTDHASH_PgoTrainingIgnoresEnvironment(t *testing.T) {
+	if cryptoObjdump() == "" {
+		t.Skip("needs llvm-objdump (LLVM 21)")
+	}
+	entries := func() map[string]uint64 {
+		root := t.TempDir()
+		stdDir := copyStd(t, root, nil)
+		if err := os.WriteFile(filepath.Join(root, "main.mk"), []byte(h2CtProbe), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return h2CtEntries(t, h2CtProfile(t, root, stdDir))
+	}
+	first := entries()
+	t.Setenv("MK_TEST_TRAINING_PADDING", strings.Repeat("x", 4000))
+	second := entries()
+	if len(first) == 0 || len(first) != len(second) {
+		t.Fatalf("%d records, then %d", len(first), len(second))
+	}
+	for _, k := range slices.Sorted(maps.Keys(first)) {
+		if first[k] != second[k] {
+			t.Errorf("%s: entry count %d, then %d under the larger environment", k, first[k], second[k])
+		}
+	}
+}
+
+// h2CtEntries reads a version-1 .mkprof (internal/pgo's format: the magic,
+// a u64 record count, then per record a u32 key length, the key, a 16-byte
+// checksum, a u32 counter count and the u64 counters, little-endian) and
+// returns each record's entry count by key and checksum.
+func h2CtEntries(t *testing.T, path string) map[string]uint64 {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) < 16 || string(b[:8]) != "MKPROF\x00\x01" {
+		t.Fatalf("%s: not a version-1 profile", path)
+	}
+	out := map[string]uint64{}
+	at := 16
+	take := func(n int) []byte {
+		if at+n > len(b) {
+			t.Fatalf("%s: truncated at byte %d", path, at)
+		}
+		at += n
+		return b[at-n : at]
+	}
+	for range binary.LittleEndian.Uint64(b[8:16]) {
+		key := string(take(int(binary.LittleEndian.Uint32(take(4)))))
+		sum := take(16)
+		n := int(binary.LittleEndian.Uint32(take(4)))
+		counts := take(8 * n)
+		var entry uint64
+		if n > 0 {
+			entry = binary.LittleEndian.Uint64(counts)
+		}
+		out[fmt.Sprintf("%s %x", key, sum)] = entry
+	}
+	return out
 }
 
 // TestSTDHASH_ConstantTimeDisassembly: the constant-time check of
@@ -222,7 +374,7 @@ func TestSTDHASH_ConstantTimeDisassembly(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			t.Parallel()
 			ins, into := h2CtBuild(t, objdump, b.forces, b.pgo)
-			other, counts := ctClassify(ins)
+			other, back, counts := ctClassifyBack(ins)
 			seen := map[string]bool{}
 			for _, x := range ins {
 				seen[x.fn] = true
@@ -240,7 +392,7 @@ func TestSTDHASH_ConstantTimeDisassembly(t *testing.T) {
 				}
 			}
 			ctRequirePresent(t, "h2CtAllow", b.name, h2CtAllow, seen, h2CtAbsent, h2CtUnrecorded, into, h2CtChecked)
-			var names []string
+			var names, read []string
 			for fn := range seen {
 				if h2CtChecked(fn) {
 					names = append(names, fn)
@@ -258,8 +410,10 @@ func TestSTDHASH_ConstantTimeDisassembly(t *testing.T) {
 					t.Errorf("%s (%s build) has %d conditional jumps that neither guard a panic nor close a loop, %d allowed; read each (is it a secret?) and record the reading:\n    %s",
 						fn, b.name, n, allowed, strings.Join(other[fn], "\n    "))
 				}
-				t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], len(other[fn]), allowed)
+				read = append(read, fn)
+				t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction, %d allowed), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], h2CtBack[cr2CtInstance.ReplaceAllString(fn, "")][b.name], len(other[fn]), allowed)
 			}
+			ctBackCheck(t, "h2CtBack", h2CtBack, b.name, back, read)
 		})
 	}
 }
