@@ -548,4 +548,12 @@ test "vk submit waits for every acquired swapchain" (sys: &System) {
         Assert(!sc.pending_submit_wait)
         Assert(sc.acq[sc.pending_wait_acq_idx].waited_by == 1)
     }
+
+    // The empty submit waited for acquire without touching the image layout.
+    last := chains[chains.Len() - 1]
+    si := Cast[int](last)
+    img := d.state.Ref().swapchains[si].handed_image
+    Assert(d.state.Ref().swapchains[si].images[int(img)].tracked_layout == vulkan.VkImageLayoutUndefined)
+    _ = try d.SwapchainPresent(last, img, 2, 3)
+    Assert(d.state.Ref().swapchains[si].images[int(img)].tracked_layout == vulkan.VkImageLayoutPresentSrcKhr)
 }

@@ -644,6 +644,7 @@ struct VkPresentCallArg {
     st_ptr: uint
     sc_idx: int
     img_idx: u32
+    prep_cmd: u64
     no_sub_serial: u64
     present_serial: u64
     out_suboptimal: bool
@@ -655,70 +656,75 @@ RunPresentSys(arg: *u8) {
         a := raw.PtrCast[u8, VkPresentCallArg](arg)
         st := raw.FromAddr[VkDeviceState]((*a).st_ptr)
         sc := mut (*st).swapchains[(*a).sc_idx]
-        dev := HandleFrom[vulkan.VkDeviceT]((*st).device)
         q := HandleFrom[vulkan.VkQueueT]((*st).queue)
         img := mut sc.images[int((*a).img_idx)]
 
-        // If no Submit ran since Acquire, submit a minimal UNDEFINED -> PRESENT_SRC_KHR transition waiting on acq_sem.
-        if sc.pending_submit_wait {
-            alloc := (*st).mem_blocks.Len()
-            _ = alloc
-            var cpci := mem.Zeroed[vulkan.VkCommandPoolCreateInfo]()
-            cpci.s_type = vulkan.VkStructureTypeCommandPoolCreateInfo
-            cpci.flags = Cast[u32](vulkan.VkCommandPoolCreateTransientBit)
-            cpci.queue_family_index = (*st).queue_family
-            var pool: vulkan.VkCommandPool = raw.Null[vulkan.VkCommandPoolT]()
-            if (*st).dev_d.vk_create_command_pool.Must()(dev, raw.Of(&cpci), raw.Null[vulkan.VkAllocationCallbacks](), raw.OfMut(mut pool)) == vulkan.VkSuccess {
-                var cbai := mem.Zeroed[vulkan.VkCommandBufferAllocateInfo]()
-                cbai.s_type = vulkan.VkStructureTypeCommandBufferAllocateInfo
-                cbai.command_pool = pool
-                cbai.level = vulkan.VkCommandBufferLevelPrimary
-                cbai.command_buffer_count = 1
-                var cmd: vulkan.VkCommandBuffer = raw.Null[vulkan.VkCommandBufferT]()
-                if (*st).dev_d.vk_allocate_command_buffers.Must()(dev, raw.Of(&cbai), raw.OfMut(mut cmd)) == vulkan.VkSuccess {
-                    var bi := mem.Zeroed[vulkan.VkCommandBufferBeginInfo]()
-                    bi.s_type = vulkan.VkStructureTypeCommandBufferBeginInfo
-                    bi.flags = Cast[u32](vulkan.VkCommandBufferUsageOneTimeSubmitBit)
-                    _ = (*st).dev_d.vk_begin_command_buffer.Must()(cmd, raw.Of(&bi))
-                    EmitSingleImageBarrier(
-                        &*st, cmd, HandleFrom[vulkan.VkImageT](img.vk_image), Cast[u32](vulkan.VkImageAspectColorBit),
-                        0, 1, 0, 1,
-                        vulkan.VkImageLayoutUndefined, vulkan.VkImageLayoutPresentSrcKhr,
-                        vulkan.VkPipelineStage2ColorAttachmentOutputBit, 0,
-                        vulkan.VkPipelineStage2None, 0,
-                    )
-                    _ = (*st).dev_d.vk_end_command_buffer.Must()(cmd)
-                    var wait_i := vulkan.VkSemaphoreSubmitInfo(
-                        s_type: vulkan.VkStructureTypeSemaphoreSubmitInfo, p_next: raw.Null[void](),
-                        semaphore: HandleFrom[vulkan.VkSemaphoreT](sc.pending_wait_sem), value: 0,
-                        stage_mask: vulkan.VkPipelineStage2ColorAttachmentOutputBit | vulkan.VkPipelineStage2CopyBit, device_index: 0,
-                    )
-                    var cb_i := vulkan.VkCommandBufferSubmitInfo(s_type: vulkan.VkStructureTypeCommandBufferSubmitInfo, p_next: raw.Null[void](), command_buffer: cmd, device_mask: 0)
-                    var sig_i := vulkan.VkSemaphoreSubmitInfo(
-                        s_type: vulkan.VkStructureTypeSemaphoreSubmitInfo, p_next: raw.Null[void](),
-                        semaphore: HandleFrom[vulkan.VkSemaphoreT]((*st).timeline_sem), value: (*a).no_sub_serial,
-                        stage_mask: vulkan.VkPipelineStage2AllCommandsBit, device_index: 0,
-                    )
-                    var si := mem.Zeroed[vulkan.VkSubmitInfo2]()
-                    si.s_type = vulkan.VkStructureTypeSubmitInfo2
-                    si.wait_semaphore_info_count = 1
-                    si.p_wait_semaphore_infos = raw.Of(&wait_i)
-                    si.command_buffer_info_count = 1
-                    si.p_command_buffer_infos = raw.Of(&cb_i)
-                    si.signal_semaphore_info_count = 1
-                    si.p_signal_semaphore_infos = raw.Of(&sig_i)
-                    if (*st).dev_d.vk_queue_submit2.Must()(q, 1, raw.Of(&si), raw.Null[vulkan.VkFenceT]()) == vulkan.VkSuccess {
-                        (*st).queued_serial = (*a).no_sub_serial
-                    }
-                    _ = (*st).dev_d.vk_queue_wait_idle.Must()(q)
+        // A submit for other work may have waited on the acquire semaphore
+        // without transitioning this image.
+        prep_cmd := (*a).prep_cmd
+        if sc.pending_submit_wait || prep_cmd != 0 {
+            cmd := HandleFrom[vulkan.VkCommandBufferT](prep_cmd)
+            if prep_cmd != 0 {
+                var bi := mem.Zeroed[vulkan.VkCommandBufferBeginInfo]()
+                bi.s_type = vulkan.VkStructureTypeCommandBufferBeginInfo
+                bi.flags = Cast[u32](vulkan.VkCommandBufferUsageOneTimeSubmitBit)
+                br := (*st).dev_d.vk_begin_command_buffer.Must()(cmd, raw.Of(&bi))
+                if br != vulkan.VkSuccess {
+                    if IsDeviceLostResult(br) { (*st).lost = true }
+                    (*a).out_err = some(MapVkError(br, CallQueueSubmit))
+                    return
                 }
-                (*st).dev_d.vk_destroy_command_pool.Must()(dev, pool, raw.Null[vulkan.VkAllocationCallbacks]())
+                EmitSingleImageBarrier(
+                    &*st, cmd, HandleFrom[vulkan.VkImageT](img.vk_image), Cast[u32](vulkan.VkImageAspectColorBit),
+                    0, 1, 0, 1,
+                    img.tracked_layout, vulkan.VkImageLayoutPresentSrcKhr,
+                    vulkan.VkPipelineStage2ColorAttachmentOutputBit, 0,
+                    vulkan.VkPipelineStage2None, 0,
+                )
+                er := (*st).dev_d.vk_end_command_buffer.Must()(cmd)
+                if er != vulkan.VkSuccess {
+                    if IsDeviceLostResult(er) { (*st).lost = true }
+                    (*a).out_err = some(MapVkError(er, CallQueueSubmit))
+                    return
+                }
             }
-            acqi := sc.pending_wait_acq_idx
-            sc.acq[acqi].waited_by = (*a).no_sub_serial
-            sc.acq[acqi].signaled_unused = false
-            sc.pending_submit_wait = false
-            sc.pending_wait_sem = 0
+            wait_i := vulkan.VkSemaphoreSubmitInfo(
+                s_type: vulkan.VkStructureTypeSemaphoreSubmitInfo, p_next: raw.Null[void](),
+                semaphore: HandleFrom[vulkan.VkSemaphoreT](sc.pending_wait_sem), value: 0,
+                stage_mask: vulkan.VkPipelineStage2ColorAttachmentOutputBit | vulkan.VkPipelineStage2CopyBit, device_index: 0,
+            )
+            cb_i := vulkan.VkCommandBufferSubmitInfo(s_type: vulkan.VkStructureTypeCommandBufferSubmitInfo, p_next: raw.Null[void](), command_buffer: cmd, device_mask: 0)
+            sig_i := vulkan.VkSemaphoreSubmitInfo(
+                s_type: vulkan.VkStructureTypeSemaphoreSubmitInfo, p_next: raw.Null[void](),
+                semaphore: HandleFrom[vulkan.VkSemaphoreT]((*st).timeline_sem), value: (*a).no_sub_serial,
+                stage_mask: vulkan.VkPipelineStage2AllCommandsBit, device_index: 0,
+            )
+            var si := mem.Zeroed[vulkan.VkSubmitInfo2]()
+            si.s_type = vulkan.VkStructureTypeSubmitInfo2
+            if sc.pending_submit_wait {
+                si.wait_semaphore_info_count = 1
+                si.p_wait_semaphore_infos = raw.Of(&wait_i)
+            }
+            if prep_cmd != 0 {
+                si.command_buffer_info_count = 1
+                si.p_command_buffer_infos = raw.Of(&cb_i)
+            }
+            si.signal_semaphore_info_count = 1
+            si.p_signal_semaphore_infos = raw.Of(&sig_i)
+            sr := (*st).dev_d.vk_queue_submit2.Must()(q, 1, raw.Of(&si), raw.Null[vulkan.VkFenceT]())
+            if sr != vulkan.VkSuccess {
+                if IsDeviceLostResult(sr) { (*st).lost = true }
+                (*a).out_err = some(MapVkError(sr, CallQueueSubmit))
+                return
+            }
+            (*st).queued_serial = (*a).no_sub_serial
+            if sc.pending_submit_wait {
+                acqi := sc.pending_wait_acq_idx
+                sc.acq[acqi].waited_by = (*a).no_sub_serial
+                sc.acq[acqi].signaled_unused = false
+                sc.pending_submit_wait = false
+                sc.pending_wait_sem = 0
+            }
             img.tracked_layout = vulkan.VkImageLayoutPresentSrcKhr
         }
 
@@ -795,10 +801,21 @@ export Device.SwapchainPresent(mut self, sc_id: u64, img_idx: u32, no_sub_serial
     if sc_idx <= 0 || sc_idx >= st.swapchains.Len() || !st.swapchains[sc_idx].alive {
         fail SurfaceLost
     }
+    sc := &st.swapchains[sc_idx]
+    if !sc.handed_out || sc.handed_image != img_idx {
+        fail SurfaceLost
+    }
+    var prep_slot := -1
+    var prep_cmd: u64 = 0
+    if sc.images[int(img_idx)].tracked_layout != vulkan.VkImageLayoutPresentSrcKhr {
+        prep_slot = try AcquireCmdSlot(self.heap.Alloc(), st)
+        prep_cmd = st.cmd_slots[prep_slot].buf
+    }
     var arg := VkPresentCallArg(
         st_ptr: raw.Addr(raw.Of(&*st)),
         sc_idx: sc_idx,
         img_idx: img_idx,
+        prep_cmd: prep_cmd,
         no_sub_serial: no_sub_serial,
         present_serial: present_serial,
         out_suboptimal: false,
@@ -806,6 +823,13 @@ export Device.SwapchainPresent(mut self, sc_id: u64, img_idx: u32, no_sub_serial
     )
     unsafe "arg is stack-pinned across MkSystemRun" {
         task.MkSystemRun(RunPresentSys, raw.PtrCast[VkPresentCallArg, u8](raw.OfMut(mut arg)))
+    }
+    if prep_slot >= 0 {
+        if st.queued_serial >= no_sub_serial {
+            st.cmd_slots[prep_slot].serial = no_sub_serial
+        } else {
+            st.cmd_slots[prep_slot].in_use = false
+        }
     }
     match arg.out_err {
         some(e) { fail e }
