@@ -13,7 +13,11 @@
 // decodes one Huffman string, compared here with hfHuffDecodeRef, and its
 // re-encoding with hfHuffEncodeRef.
 //
-//	go test ./std -run '^$' -fuzz FuzzStdHttpFields_Hpack -fuzztime 5m -parallel 2
+//	go test ./std -run '^$' -fuzz FuzzStdHttpFields_Hpack -fuzztime 5m -parallel 2 -fuzzminimizetime 100x
+//
+// Each execution is a round trip to the driver, so go test's default
+// minimisation (60 s a new input) would take most of a run on a cold fuzz
+// cache; the gate passes -fuzzminimizetime 100x for both targets.
 //
 // Its fuzz targets read untrusted input; tools/gate/safety.go lists each untrusted-input target.
 
