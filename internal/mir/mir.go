@@ -402,6 +402,10 @@ const (
 	// noreturn asm is the last statement of its block, whose terminator is
 	// TermUnreachable (M13).
 	StAsm
+	// StConsume ends the value at Place, of a struct with no fields that a
+	// by-value pattern takes apart: borrow sees a move of Place with no
+	// destination. It does nothing at run time.
+	StConsume
 )
 
 // Statement is one MIR statement.

@@ -2,7 +2,8 @@
 // root; copying whole states on every edge would make large bodies
 // quadratic.
 //
-// What: initBits, entry (init, held, moved, changed, on, fv, sh, stored),
+// What: initBits, entry (init, held, moved, changed, on, fv, sh, stored,
+// cover),
 // state with get, set, clone, freeze and equal, joinEntry, joinSh,
 // joinStored, joinInto and takenToMoved.
 //
@@ -12,8 +13,10 @@
 
 package borrow
 
-// initBits is a subset of {U, I, M, T}: unassigned, initialized, moved,
-// taken. Never read raw: initOf maps the zero value to {U}.
+// initBits is a subset of {U, I, M, T, N}: unassigned, initialized, moved,
+// taken, narrowed (a temporary that holds its value, none of it linear on
+// this path: a switch edge selected plain variants). Never read raw: initOf
+// maps the zero value to {U}.
 type initBits uint8
 
 const (
@@ -21,6 +24,7 @@ const (
 	initI
 	initM
 	initT
+	initN
 )
 
 // entry is one root's state. The zero entry means "unassigned, holds
@@ -55,6 +59,10 @@ type entry struct {
 	// as its own value. An ends call on a view or allocator root that is
 	// not moved drops stored and keeps the rest, the root's provenance.
 	stored setID
+	// cover is the paths of a linear temporary that hold nothing linear on
+	// this path, taken or narrowed (cover.go); a join keeps the paths every
+	// predecessor covers.
+	cover setID
 }
 
 // initOf is the one reader of entry.init.
@@ -216,6 +224,7 @@ func joinEntry(ss *setStore, a, b entry) entry {
 		fv:      ss.joinFV(a.fv, b.fv),
 		sh:      joinSh(ss, a, b),
 		stored:  joinStored(ss, a, b),
+		cover:   ss.meet(a.cover, b.cover),
 	}
 }
 

@@ -35,6 +35,10 @@ func (m *Machine) stmt(f *frame, st *mir.Statement) {
 			m.tgScopeEnd(f, st.Local)
 		}
 	case mir.StNop:
+	case mir.StConsume:
+		if m.tg != nil {
+			m.tgConsumed(f, st.Place)
+		}
 	case mir.StAsm:
 		// An asm has no compile-time meaning.
 		refuse(types.RefuseAsm, "")
@@ -436,6 +440,9 @@ func (m *Machine) term(f *frame, t *mir.Terminator) {
 		x := m.scalar(f, &t.On)
 		mk := mask(m.operandTI(f, &t.On).width)
 		b := f.code.body
+		if m.tg != nil {
+			m.tgNarrow(f, t.On, x&mk)
+		}
 		for _, cs := range b.Cases[t.Cases.Start:t.Cases.End()] {
 			if cs.Value&mk == x&mk {
 				f.block, f.stmt = cs.Target, 0

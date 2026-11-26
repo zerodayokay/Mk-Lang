@@ -262,6 +262,8 @@ func (p *Printer) stmt(b *Body, st *Statement) string {
 		return "nop"
 	case StAsm:
 		return p.asm(b, st)
+	case StConsume:
+		return "consume " + p.PlaceString(b, st.Place)
 	}
 	return "?"
 }

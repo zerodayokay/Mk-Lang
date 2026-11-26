@@ -582,8 +582,8 @@ func (fg *fnGen) stmt(s *mir.Statement) {
 	switch s.Kind {
 	case mir.StAssign:
 		fg.assign(s.Place, &s.Rvalue)
-	case mir.StScopeEnd, mir.StNop:
-		// no lifetime markers
+	case mir.StScopeEnd, mir.StNop, mir.StConsume:
+		// no lifetime markers; a consume moves nothing at run time
 	case mir.StJoin:
 		fg.join(s)
 	case mir.StAsm:

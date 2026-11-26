@@ -457,6 +457,8 @@ func TestRecordPatCover(t *testing.T) {
 		{name: "var array", src: "F(xs: [2]int) {\n    var [a, b] := xs\n}\n", tree: []string{"DestructureStmt var reinterpreted\n        RecordPat elems"}},
 		{name: "array element not a name", src: "F(xs: [2]int) {\n    [a, b.c] := xs\n}\n", codes: "E0101", msg: "an array destructure binds one name per element"},
 		{name: "empty array", src: "F(xs: [0]int) {\n    [] := xs\n}\n", codes: "E0101", msg: "nothing to bind"},
+		{name: "no fields", src: "F(e: Empty) {\n    Empty() := e\n}\n", tree: []string{"DestructureStmt reinterpreted\n        RecordPat\n          Path\n            Ident Empty"}},
+		{name: "empty record", src: "F(r: R) {\n    () := r\n}\n", codes: "E0101", msg: "nothing to bind"},
 	})
 }
 

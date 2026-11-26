@@ -137,6 +137,7 @@ func (c *checker) restoreSlot(es *state, sl argSlot, t entry) {
 	one := c.sets.of(site)
 	x := es.get(sl.src)
 	x.init = initOf(t)
+	x.cover = t.cover
 	x.held = t.held
 	x.fv = t.fv // the restore carries the field sets and the mode
 	x.sh = t.sh // and the shallow marks, which belong to that held set

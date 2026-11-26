@@ -3,8 +3,11 @@
 // binding modes, pattern tests) is large enough for a file of its own.
 //
 // What: matchStmt, matchUnion and matchCall (match F(x) with ok and err
-// arms), unionArms for their two sides; test, rangeTest and subTests for
-// pattern tests; bindPat for bindings; arms for the sequential fallback.
+// arms), unionArms for their two sides; test, rangeTest, subTests and
+// altTests for pattern tests; bindPat for bindings, with takeWhole for a
+// linear struct of plain fields and takeAlts for alternatives of struct
+// patterns; arms for the sequential fallback, where an arm of alternatives
+// takes each apart on its own edge.
 //
 // How: arms are compiled by the decision tree of decision.go or, past its
 // size guard, by sequential testing: the first matching arm in source order,
@@ -144,9 +147,17 @@ func (bl *builder) arms(arms []*ast.Arm, p mir.Place, mode BindMode, join mir.Bl
 			break
 		}
 		next := bl.newBlock()
-		bl.test(pat(a), p, next)
-		bl.openScope(scopePlain)
-		bl.bindPat(pat(a), p, mode)
+		q := pat(a)
+		if alts := bl.flatAlts(q); alts != nil && mode == ByValue {
+			// The arm has matched where one of its alternatives has: each
+			// takes p apart there, as it would alone, before they join.
+			bl.altTests(alts, p, next, q.Span(), func(x ast.Pattern) { bl.takeAlts([]ast.Pattern{x}, p) })
+			bl.openScope(scopePlain)
+		} else {
+			bl.test(q, p, next)
+			bl.openScope(scopePlain)
+			bl.bindPat(q, p, mode)
+		}
 		bl.armStmts(a.Body)
 		bl.closeScope(closeBrace(a.Body))
 		reached = bl.joinTo(join, a.Span()) || reached
@@ -223,24 +234,55 @@ func (bl *builder) test(q ast.Pattern, p mir.Place, fail mir.BlockID) {
 			}
 		}
 	case PAlt:
-		ok := bl.newBlock()
-		alts := q.(*ast.AltPattern).Alts
-		for i, a := range alts {
-			nf := fail
-			if i < len(alts)-1 {
-				nf = bl.newBlock()
-			}
-			bl.test(a, p, nf)
-			bl.gotoBlock(ok, at)
-			bl.cur = nf
-			if i == len(alts)-1 {
-				bl.cur = mir.NoBlock
-			}
-		}
-		bl.cur = ok
+		bl.altTests(q.(*ast.AltPattern).Alts, p, fail, at, nil)
 	default:
 		source.ICEf(at, "lower: pattern %T (kind %d) in a match", q, pk.Kind)
 	}
+}
+
+// altTests tests the alternatives alts against p in order: control
+// continues in the current block when one matches, and goes to fail when
+// none does. on, when set, runs on each alternative's own success edge,
+// before the edges join.
+func (bl *builder) altTests(alts []ast.Pattern, p mir.Place, fail mir.BlockID, at source.Span, on func(ast.Pattern)) {
+	ok := bl.newBlock()
+	for i, a := range alts {
+		nf := fail
+		if i < len(alts)-1 {
+			nf = bl.newBlock()
+		}
+		bl.test(a, p, nf)
+		if on != nil {
+			on(a)
+		}
+		bl.gotoBlock(ok, at)
+		bl.cur = nf
+		if i == len(alts)-1 {
+			bl.cur = mir.NoBlock
+		}
+	}
+	bl.cur = ok
+}
+
+// flatAlts is the alternatives of q, nested alternatives flattened in
+// order, or nil when q is not an alternative.
+func (bl *builder) flatAlts(q ast.Pattern) []ast.Pattern {
+	if _, ok := q.(*ast.AltPattern); !ok || bl.in.Pattern(q.ID()).Kind != PAlt {
+		return nil
+	}
+	var flat []ast.Pattern
+	var walk func(q ast.Pattern)
+	walk = func(q ast.Pattern) {
+		if a, ok := q.(*ast.AltPattern); ok && bl.in.Pattern(q.ID()).Kind == PAlt {
+			for _, x := range a.Alts {
+				walk(x)
+			}
+			return
+		}
+		flat = append(flat, q)
+	}
+	walk(q)
+	return flat
 }
 
 // rangeTest tests the integer or char place p against the range q:
@@ -490,7 +532,152 @@ func (bl *builder) bindPat(q ast.Pattern, p mir.Place, mode BindMode) {
 			}
 			bl.bindPat(f.Pat, fp, mode)
 		}
+		if mode == ByValue {
+			bl.takeWhole(p, q.Span())
+		}
+	case PAlt:
+		if mode == ByValue {
+			bl.takeAlts(q.(*ast.AltPattern).Alts, p)
+		}
 	}
+}
+
+// takeAlts takes p apart as each alternative would alone, when every
+// alternative has the same shape on it: an alternative binds nothing, so a
+// linear struct of plain fields inside is consumed only by these takes. A
+// struct pattern on every alternative takes p apart (`Ticket(id: 1) |
+// Ticket(id: 2)`); `some`, `ok` or one variant on every alternative tested
+// that variant on every path, so its payload fields are taken apart the
+// same way, each field every alternative has a pattern for. Alternatives
+// that differ (`some(..) | none`, a literal) leave p as it is: a payload
+// may not be there on every path. An arm whose whole pattern is an
+// alternative, tested arm by arm, calls takeAlts on each alternative alone
+// on its own success edge instead (arms).
+func (bl *builder) takeAlts(alts []ast.Pattern, p mir.Place) {
+	var flat []ast.Pattern
+	for _, a := range alts {
+		if f := bl.flatAlts(a); f != nil {
+			flat = append(flat, f...)
+		} else {
+			flat = append(flat, a)
+		}
+	}
+	if len(flat) == 0 {
+		return
+	}
+	k0 := bl.in.Pattern(flat[0].ID())
+	for _, q := range flat {
+		pk := bl.in.Pattern(q.ID())
+		if pk.Kind != k0.Kind || pk.Kind == PVariant && (pk.Item != k0.Item || pk.Variant != k0.Variant) {
+			return
+		}
+	}
+	switch k0.Kind {
+	case PSome:
+		subs := make([]ast.Pattern, len(flat))
+		for i, q := range flat {
+			subs[i] = q.(*ast.SomePattern).Pat
+		}
+		bl.takeAlts(subs, bl.somePayload(p))
+	case POk:
+		subs := make([]ast.Pattern, len(flat))
+		for i, q := range flat {
+			if subs[i] = q.(*ast.OkPattern).Pat; subs[i] == nil {
+				return
+			}
+		}
+		bl.takeAlts(subs, bl.okPayload(p))
+	case PVariant:
+		dc := bl.downcast(p, mir.SelEnum, k0.Variant)
+		bl.takeAltFields(flat, func(f *ast.PatField, i int) (uint32, mir.Place) {
+			return bl.payloadIndex(dc, f, uint32(i)), bl.subField(dc, f, i)
+		})
+	case PStruct:
+		bl.takeAltFields(flat, func(f *ast.PatField, _ int) (uint32, mir.Place) {
+			return bl.in.Pattern(f.ID()).Field, bl.structField(p, f)
+		})
+		bl.takeWhole(p, flat[0].Span())
+	}
+}
+
+// takeAltFields runs takeAlts on each field that every alternative of flat
+// has a pattern for; at gives a field's index and place.
+func (bl *builder) takeAltFields(flat []ast.Pattern, at func(*ast.PatField, int) (uint32, mir.Place)) {
+	byField := map[uint32][]ast.Pattern{}
+	place := map[uint32]mir.Place{}
+	var order []uint32
+	for _, q := range flat {
+		for i, f := range patFields(q) {
+			if f.Pat == nil {
+				continue
+			}
+			k, fp := at(f, i)
+			if _, ok := byField[k]; !ok {
+				order = append(order, k)
+				place[k] = fp
+			}
+			byField[k] = append(byField[k], f.Pat)
+		}
+	}
+	for _, k := range order {
+		if subs := byField[k]; len(subs) == len(flat) {
+			bl.takeAlts(subs, place[k])
+		}
+	}
+}
+
+// takeWhole ends a by-value struct pattern on p whose fields are all plain
+// while p is not (a linear struct of plain fields, as `Ticket(id)`): its
+// bindings copy, so nothing is taken out of p, and borrow sees a part
+// consumed only as a take. One field, a scalar where there is one, moves
+// into a statement temporary, as a destructure that takes nothing does. A
+// struct with no fields has nothing to move: StConsume ends p itself.
+// The result reports whether a take was emitted.
+func (bl *builder) takeWhole(p mir.Place, at source.Span) bool {
+	t := bl.b.PlaceType(p)
+	st := bl.tab.Get(t)
+	d, ok := bl.cfg.Items.Get(st.Item).Decl.(*types.StructDecl)
+	if st.Kind != types.KNamed || !ok || bl.plain(t, at) {
+		return false
+	}
+	if bl.fieldless(t) {
+		bl.emit(mir.Statement{Kind: mir.StConsume, Place: p, Span: bl.span(at)})
+		return true
+	}
+	k, ft := -1, types.NoType
+	for i, f := range d.Fields {
+		ty := bl.substArgs(f.Type, st.Args)
+		if !bl.plain(ty, at) {
+			return false
+		}
+		if k < 0 || !scalarKind(bl.tab.Kind(ft)) && scalarKind(bl.tab.Kind(ty)) {
+			k, ft = i, ty
+		}
+	}
+	h := bl.newTemp(ft, at)
+	bl.assign(bl.b.Place(h), use(mir.Move(bl.field(p, uint32(k), ft))), at)
+	return true
+}
+
+// fieldless reports whether t is a struct with no fields, the one type a
+// StConsume ends.
+func (bl *builder) fieldless(t types.TypeID) bool {
+	st := bl.tab.Get(t)
+	if st.Kind != types.KNamed {
+		return false
+	}
+	d, ok := bl.cfg.Items.Get(st.Item).Decl.(*types.StructDecl)
+	return ok && len(d.Fields) == 0
+}
+
+// scalarKind reports a kind held in one register: takeWhole moves a field
+// of one, where it has one, so the take copies no array or struct.
+func scalarKind(k types.TypeKind) bool {
+	switch k {
+	case types.KInt, types.KIntPtr, types.KFloat, types.KBool, types.KChar, types.KRef, types.KRawPtr:
+		return true
+	}
+	return false
 }
 
 // structField is struct pattern field f's place in the struct place p: the

@@ -392,7 +392,12 @@ func (c *checker) joinPartly(b mir.BlockID, st *state) {
 		if !ri.linear || c.partly[rootID(r)] {
 			continue
 		}
+		// {N} holds nothing linear: with {I} it holds a value on every
+		// path, with {M} none on any.
 		in := initOf(st.get(rootID(r)))
+		if n := in &^ initN; n != 0 {
+			in = n
+		}
 		if in&(in-1) == 0 {
 			continue // one element
 		}

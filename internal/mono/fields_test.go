@@ -1,8 +1,8 @@
 // Why: the fields-loop unroll has paths that TestMonoFieldsUnroll's
 // straight-line Dump does not reach.
 // What: TestFieldsBreakContinue, TestFieldsNoField and
-// TestFieldsInnerLoop: break and continue inside the range, a range with
-// no field, and a non-fields loop inside the range.
+// TestFieldsInnerLoop and TestFieldsConsume: break and continue inside the
+// range, a range with no field, a non-fields loop and a consume in the range.
 // How: instantiates hand-built bodies over small records and checks each
 // copy's blocks, LoopInfo and holder local.
 
@@ -65,6 +65,37 @@ func breakContinueDump(w *world) (types.ItemID, *mir.Body) {
 	w.retTerm(gb, bb[5])
 	w.bodies[dump] = gb
 	return dump, gb
+}
+
+// TestFieldsConsume checks that each loop copy consumes its own instance
+// of a fieldless struct whose type depends on the current field.
+func TestFieldsConsume(t *testing.T) {
+	w := newWorld()
+	dump, gb := breakContinueDump(w)
+	tok := w.items.AddItem(&types.Item{Module: w.mod, Key: types.ItemKey("m", "Token"), Name: w.in.Intern("Token"),
+		Kind: types.KindStruct, Decl: &types.StructDecl{Linear: true, Generics: []types.GenericParam{{Name: w.in.Intern("T")}}}})
+	local := gb.AddLocal(mir.Local{Type: w.tab.Named(tok, []types.GenericArg{ty(w.tab.Param(1))}), Kind: mir.LocalTemp, Loop: mir.NoLoop})
+	body := gb.Loops[0].Header + 1
+	w.stmt(gb, body, gb.Place(local), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: tok})
+	gb.Blocks[body].Stmts = append(gb.Blocks[body].Stmts, mir.Statement{Kind: mir.StConsume, Place: gb.Place(local), Span: gb.AddSpan(w.span())})
+
+	record := w.tab.Record([]types.RecordField{{Name: w.in.Intern("a"), Type: types.Int}, {Name: w.in.Intern("b"), Type: types.Bool}})
+	ib := w.instantiate(t, dump, record)
+	want := []types.TypeID{w.tab.Named(tok, []types.GenericArg{ty(types.Int)}), w.tab.Named(tok, []types.GenericArg{ty(types.Bool)})}
+	var got []types.TypeID
+	for _, blk := range ib.Blocks {
+		for i, st := range blk.Stmts {
+			if st.Kind == mir.StConsume {
+				if i == 0 || blk.Stmts[i-1].Place != st.Place {
+					t.Fatalf("loop copy consumes %v instead of its assignment's destination", st.Place)
+				}
+				got = append(got, ib.PlaceType(st.Place))
+			}
+		}
+	}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("consumed types %v, want %v", got, want)
+	}
 }
 
 // copies finds the unrolled copies of breakContinueDump: per copy, the

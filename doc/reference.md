@@ -3401,6 +3401,7 @@ rect 3 by 4
 - The arms cover every value of the type (E0306). See [exhaustiveness](#exhaustiveness).
 - Each arm is a pattern and a block, one arm per line. There is no fall-through between arms and no guard: test a condition inside the arm.
 - `match e` moves a value that is not plain, and `match &e` and `match mut e` do not. See [what a binding holds](#what-a-binding-holds).
+- On a linear value, each arm of `match e` consumes all of it: every linear part is bound, taken apart by a struct pattern (`some(Res(id))`, or `some(Token())` for a struct with no fields), or tested to a variant that holds nothing linear; in an arm of [alternatives](#alternatives), by the side that matched. `_`, also inside a constructor (`some(_)`, `ok(_)`), consumes nothing, so an arm that leaves a linear part is E0402 ([R2](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)).
 - A `match` on a result or an error set is in [section 9](#match-on-a-result).
 
 A match that moves its scrutinee:
@@ -4079,6 +4080,7 @@ Bucket(n: int): int {
 `A | B` matches when either pattern does. Alternatives may appear at any depth: `some(1 | 2)`.
 
 - Alternatives bind no names (E0101). To share code between variants that carry data, call a function from each arm.
+- In a by-value `match` on a linear value, an arm whose pattern is an alternative consumes the value as the side that matched would alone: `some(Ticket(id: 1)) | none` takes the `Ticket` apart on the `some` side. An alternative inside a field or payload is taken apart only when its sides have the same shape (`S(a: some(Ticket(id: 1)) | some(Ticket(id: 2)), n: 5)`), since a later test of the arm can still fail after a side matched. One whose sides differ, `S(a: some(Ticket(id: 1)) | none, n: 5)`, is E0402: write the alternatives at the top of the arm, `S(a: some(Ticket(id: 1)), n: 5) | S(a: none, n: 5)`.
 
 ```mk
 // verdict: reject E0101
@@ -4409,8 +4411,9 @@ export Main(sys: &System): WriteError!void {
 
 - A record pattern `(a, b)` names fields, not positions, so `(b, a) := e` binds the same values. A name that is not a field is E0309.
 - A destructure names every field, or ends with `..` to skip the rest (E0305). Only the outermost pattern may end with `..`: a nested struct pattern names every field, with `_` for those you skip.
+- A struct with no fields is taken apart by `T() := e`, which names every field: it is how a [`linear`](#linear-and-view-structs) struct with no fields is consumed. Any other pattern that names nothing, `()`, `[]` or `T(..)`, is E0101.
 - A field skipped by `..` must be plain (E0408), because skipping it would drop it.
-- Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct.
+- Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct. Each nested struct pattern consumes the linear struct it names, including when its bindings copy plain fields.
 - `var` before the pattern makes every binding `var`.
 - A pattern that can fail, such as a literal, is E0306. Use `match`.
 - Only a record, a struct or an array pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
@@ -4519,7 +4522,7 @@ Name(b: Bag): str {
 
 | Code | Name | Reported for |
 |---|---|---|
-| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern |
+| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern; a destructure that names nothing but a struct with no fields ([destructuring](#destructuring)) |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
 | E0206 | duplicate-name | A binding that shadows a local, a parameter or a const generic ([bindings](#bindings-and-wildcards)) |
 | E0207 | naming | A binding that is not `snake_case`, often a variant written without its dot or a const that is not in scope ([variants](#variant-patterns), [bindings](#bindings-and-wildcards)) |
