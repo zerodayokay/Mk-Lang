@@ -713,7 +713,7 @@ Max[T: Ord + Plain](xs: []T): ?T {
     return some(best)
 }
 
-struct Stack[T] {
+struct Stack[T: Plain] {
     items: List[T]
 }
 
@@ -747,7 +747,7 @@ Biggest[T](a: &T, b: &T): bool {
 }
 ```
 
-A bound is an interface, such as `T: Ord`, several joined with `+`, or one of the built-in bounds `Plain`, `Send`, `Share` and `Fields[B]`. Without `Plain`, `T` may be a type that must be released, so the body must consume each `T` it is given. [Bounds](reference.md#bounds) and [built-in bounds](reference.md#built-in-bounds) have the rules; [const parameters](reference.md#const-parameters) and [specialization](reference.md#specialization-if-t-is) cover `struct Matrix[const R: int, const C: int]` and `if T is u8 { }`.
+A bound is an interface, such as `T: Ord`, several joined with `+`, or one of the built-in bounds `Plain`, `Send`, `Share` and `Fields[B]`. Without `Plain`, `T` may be a type that must be released, so the body must consume each `T` it is given. An arena `List` frees its elements with its arena and never releases them, so it holds no such type: `Stack` asks for `Plain`, and a stack of values that must be released is built on `HeapList`. [Bounds](reference.md#bounds) and [built-in bounds](reference.md#built-in-bounds) have the rules; [const parameters](reference.md#const-parameters) and [specialization](reference.md#specialization-if-t-is) cover `struct Matrix[const R: int, const C: int]` and `if T is u8 { }`.
 
 See also: [generics and interfaces](reference.md#10-generics-and-interfaces).
 

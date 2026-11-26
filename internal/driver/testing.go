@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"mk/internal/toolchain"
+	"mk/internal/types"
 )
 
 // The environment of a test child that std.testing reads.
@@ -126,6 +127,13 @@ func blockText(t string) string {
 	return t
 }
 
+// stdUnixScratchFiles are the std test files whose fixtures bind relative
+// AF_UNIX names on Windows, to stay within sun_path whatever TEMP is. Their
+// tests run in a private working directory, so the socket files stay out of
+// the caller's tree and two runs from one directory do not share a name.
+var stdUnixScratchFiles = []string{"std/net/tests_unix.mk", "std/proc/tests_handles.mk",
+	"std/task/tests_defects.mk", "std/task/tests_unix.mk"}
+
 // runTestChild runs selected test i (tc) into out: the fuzz loop under
 // --fuzz, the repetitions under mk bench, else one plain child, whose
 // environment names the test's seed corpus when it has one.
@@ -140,8 +148,19 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 		s.benchRun(out, argv, env, i, opt)
 		return
 	}
-	defer judgeExpectedPanic(out, opt.expectToken) // after runChild: testing.ExpectPanic's flip
 	env = childEnv(env, via, TestingExpectEnv+"="+opt.expectToken)
+	workDir := ""
+	if s.cfg.Target.OS == types.OSWindows && s.cfg.StdTests != "" {
+		if f := s.w.sm.File(s.w.items.Get(tc.item).Span.File); f != nil && slices.Contains(stdUnixScratchFiles, f.Path) {
+			var err error
+			workDir, err = os.MkdirTemp("", "mk-unix-test-")
+			if err != nil {
+				out.Result, out.Status, out.Output = "fail", -1, "Unix socket scratch: "+err.Error()
+				return
+			}
+			defer os.RemoveAll(workDir)
+		}
+	}
 	dir := s.fuzzCorpusDir(tc, opt)
 	note := s.fuzzCorpusNote(tc, opt)
 	defer func() { out.Note = note }() // after runChild, which sets the rest
@@ -152,15 +171,44 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 			return
 		}
 		defer os.RemoveAll(filepath.Dir(in))
+		defer fuzzInputLines(out, opt.expectToken)
 		env = childEnv(env, via, TestingFuzzEnv+"=run", TestingInputEnv+"="+hostPath(argv, in))
 	}
+	// Remove ExpectPanic's record before finding line breaks in the displayed
+	// output. Its own newline may follow the last partial line the test wrote.
+	defer judgeExpectedPanic(out, opt.expectToken)
 	if opt.coverDir != "" { // cover.go: this child's counts file
 		counts := filepath.Join(opt.coverDir, strconv.Itoa(i))
 		env = childEnv(env, via, opt.cover.coverEnv(hostPath(argv, counts)))
-		runChild(out, argv, env, i, s.cfg.TestTimeout, func() { out.coverAcked = coverAsk(counts) })
+		runChild(out, argv, env, i, workDir, s.cfg.TestTimeout, func() { out.coverAcked = coverAsk(counts) })
 		return
 	}
-	runChild(out, argv, env, i, s.cfg.TestTimeout)
+	runChild(out, argv, env, i, workDir, s.cfg.TestTimeout)
+}
+
+// fuzzInputLines displays tagged seed markers at the start of a line in
+// the joined stdout and stderr stream. Only the child's private token
+// marks a seed; ordinary output of "fuzz input" is left intact.
+func fuzzInputLines(tc *TestCase, token string) {
+	text := tc.Output
+	mark := "mkfuzzinput " + token + " "
+	at := strings.Index(text, mark)
+	if token == "" || at < 0 {
+		return
+	}
+	var out strings.Builder
+	out.Grow(len(text))
+	for at >= 0 {
+		out.WriteString(text[:at])
+		if at > 0 && text[at-1] != '\n' {
+			out.WriteByte('\n')
+		}
+		out.WriteString("fuzz input ")
+		text = text[at+len(mark):]
+		at = strings.Index(text, mark)
+	}
+	out.WriteString(text)
+	tc.Output = out.String()
 }
 
 // hostPath is p as the child sees it: through a runner prefix (wsl.exe)

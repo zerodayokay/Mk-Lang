@@ -99,7 +99,7 @@ func (fg *fnGen) constLocals() []types.ConstID {
 				case mir.RvRef, mir.RvSlice:
 					borrow(rv.Place, rv.Borrow)
 				}
-			case mir.StScopeEnd, mir.StNop, mir.StJoin:
+			case mir.StScopeEnd, mir.StNop, mir.StJoin, mir.StConsume:
 			default:
 				return nil
 			}

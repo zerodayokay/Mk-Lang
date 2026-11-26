@@ -1,8 +1,8 @@
 // Why: each MIR kind and field lower emits needs a validator rule that
 // accepts it and refuses its misuse.
 // What: tests of joins inside cleanup copies, spawns through &Scope, AggNone,
-// must edges, const arguments, static refs, argument types, the quote builtin
-// and the fields loop shape.
+// must edges, const arguments, static refs, argument types, the quote builtin,
+// the fields loop shape and the place of a consume.
 // How: each test builds a small body from the fixture and expects it to
 // validate, or expects the named invariant (M7, M9...) to fail.
 
@@ -251,4 +251,26 @@ func TestFieldsLoopShape(t *testing.T) {
 			t.Errorf("%s: want %q, got %v", c.name, c.want, err)
 		}
 	}
+}
+
+// TestM4Consume is invariant M4 for StConsume: its place is a struct with
+// no fields, never a struct with fields or a scalar.
+func TestM4Consume(t *testing.T) {
+	consume := func(f *fixture, b *Body, decl *types.StructDecl, ty types.TypeID) {
+		if decl != nil {
+			m := f.items.Get(f.show).Module
+			it := f.items.AddItem(&types.Item{Module: m, Name: f.in.Intern("E"), Kind: types.KindStruct, Key: types.ItemKey("main", "E"), Decl: decl})
+			ty = f.tab.Named(it, nil)
+		}
+		l := local(b, ty)
+		b.Blocks[1].Stmts = append(b.Blocks[1].Stmts, Statement{Kind: StConsume, Place: LocalPlace(l)})
+	}
+	f := newFixture()
+	b := f.showBody()
+	consume(f, b, &types.StructDecl{}, types.NoType)
+	wantOK(t, f, b, "a consume of a struct with no fields")
+	expectViolation(t, "M4", func(f *fixture, b *Body) {
+		consume(f, b, &types.StructDecl{Fields: []types.FieldDecl{{Type: types.I32}}}, types.NoType)
+	})
+	expectViolation(t, "M4", func(f *fixture, b *Body) { consume(f, b, nil, types.I32) })
 }

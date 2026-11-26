@@ -3,7 +3,8 @@
 // What: TestRwColl_BTreeSetAndReplaceBounds over HeapBTree and the arena
 // BTree.
 // How: HeapBTree.Set needs K and V not linear or Free, Replace needs K so; the
-// arena BTree needs them not linear. E0701 only at marked calls.
+// arena BTree's Set and Replace need K and V not linear. E0701 only at marked
+// calls.
 
 package std
 
@@ -15,7 +16,7 @@ import (
 )
 
 // rwCollSetProgram marks each call check must refuse with a trailing
-// "// E0701", and "// E0701 Replace" where the diagnostic names Replace.
+// "// E0701", and "// E0701 X" where the diagnostic names the alternative X.
 const rwCollSetProgram = `import std.coll
 
 linear struct Tok {
@@ -94,17 +95,17 @@ HeapReplace(a: &Alloc) {
 ArenaSet(ar: &Arena) {
     var t := coll.BTree[int, Tok].New(ar)
     x := Tok(n: 1)
-    t.Set(1, x) else { // E0701 Replace
+    t.Set(1, x) else { // E0701 HeapBTree
         Burn(x)
     }
     var s := coll.BTree[Tok, int].New(ar)
     k := Tok(n: 1)
-    s.Set(k, 1) else { // E0701 Replace
+    s.Set(k, 1) else { // E0701 HeapBTree
         Burn(k)
     }
     var f := coll.BTree[int, Res].New(ar)
     r := Res(n: 1)
-    f.Set(1, r) else { // E0701 Replace
+    f.Set(1, r) else { // E0701 HeapBTree
         r.Free(ar.Alloc())
     }
     var p := coll.BTree[int, int].New(ar)
@@ -114,11 +115,11 @@ ArenaSet(ar: &Arena) {
 
 ArenaReplace(ar: &Arena) {
     var t := coll.BTree[int, Tok].New(ar)
-    BurnAll(t.Replace(1, Tok(n: 1)).Must())
+    BurnAll(t.Replace(1, Tok(n: 1)).Must()) // E0701 HeapBTree
     var s := coll.BTree[Tok, int].New(ar)
-    _ = s.Replace(Tok(n: 1), 1).Must() // E0701
+    _ = s.Replace(Tok(n: 1), 1).Must() // E0701 HeapBTree
     var g := coll.BTree[Res, int].New(ar)
-    _ = g.Replace(Res(n: 1), 1).Must() // E0701
+    _ = g.Replace(Res(n: 1), 1).Must() // E0701 HeapBTree
 }
 
 GenericHeapSet[V](a: &Alloc, u: mut coll.HeapBTree[int, V], v: V) {
@@ -128,7 +129,7 @@ GenericHeapSet[V](a: &Alloc, u: mut coll.HeapBTree[int, V], v: V) {
 }
 
 GenericArenaSet[V](t: mut coll.BTree[int, V], v: V) {
-    t.Set(1, v) else { // E0701 Replace
+    t.Set(1, v) else { // E0701 HeapBTree
         return
     }
 }
@@ -159,10 +160,11 @@ func rwCollDiags(out string) map[int][]string {
 }
 
 // TestRwColl_BTreeSetAndReplaceBounds: E0701 at exactly the marked
-// calls, naming Replace on every refused Set, and nothing elsewhere: the
-// heap tree's Set (K and V not linear or Free), both trees' Replace (K),
-// the arena tree's Set (K and V not linear, a Free type included), and a
-// generic Set whose V may be linear.
+// calls, naming the marked alternative, and nothing elsewhere: the heap
+// tree's Set (K and V not linear or Free, naming Replace), the heap tree's
+// Replace (K), the arena tree's Set and Replace (K and V not linear, a Free
+// type included, naming HeapBTree, since the arena tree holds no linear
+// value), and a generic Set whose V may be linear.
 func TestRwColl_BTreeSetAndReplaceBounds(t *testing.T) {
 	t.Parallel()
 	out := checkUncapped(t, rwCollSetProgram)
@@ -170,13 +172,13 @@ func TestRwColl_BTreeSetAndReplaceBounds(t *testing.T) {
 	for i, l := range strings.Split(rwCollSetProgram, "\n") {
 		if _, m, ok := strings.Cut(l, "// E0701"); ok {
 			want[i+1] = "E0701"
-			if strings.TrimSpace(m) == "Replace" {
-				want[i+1] = "E0701 try: Replace"
+			if alt := strings.TrimSpace(m); alt != "" {
+				want[i+1] = "E0701 try: " + alt
 			}
 		}
 	}
-	if len(want) != 10 {
-		t.Fatalf("fixture: %d marked calls, want 10", len(want))
+	if len(want) != 11 {
+		t.Fatalf("fixture: %d marked calls, want 11", len(want))
 	}
 	got := rwCollDiags(out)
 	for n, w := range want {

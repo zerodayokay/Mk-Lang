@@ -1,6 +1,6 @@
 // Why: a filter fill declared "*d into d" may store d's own loans into whatever
 // d can write, which could keep a loan of a local or a freed box past its referent.
-// What: two probes (core8GrowZzf, core8GrowZzf2) and TestCore_FilterPortGrowRejects.
+// What: escaping-fill probes and live Reader controls for TestCore_FilterPortGrowRejects.
 // How: core.FilterPortGrow's Reader declares the store as "*f into f", so the
 // caller sees it; core.FilterPort's fill type has no clause, so the fill does
 // not convert to it (E0608).
@@ -196,8 +196,6 @@ func TestCore_FilterPortGrowRejects(t *testing.T) {
 		{"zzf2 over FilterPortGrow: a box's loan through the fill", "zzf2", grow(core8GrowZzf2), []string{
 			"std/zzf2/p.mk:38:14: E0505", // bx stored into memory that outlives it
 			"std/zzf2/p.mk:38:14: E0604", // the Reader's *f into f reaches out
-			"std/zzf2/p.mk:41:13: E0503", // the box freed while out holds its loan
-			"std/zzf2/p.mk:44:9: E0503",
 		}},
 		{"zzf2 over FilterPort: the fill does not convert", "zzf2", core8GrowZzf2, []string{
 			"std/zzf2/p.mk:17:40: E0608",
@@ -224,6 +222,64 @@ func TestCore_FilterPortGrowRejects(t *testing.T) {
 			}
 			if t.Failed() {
 				t.Logf("output:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestCore_FilterPortGrowBoxLoans targets both takes with a legal Reader
+// construction: the fill may update a local pointer for as long as bx lives.
+// Each take is judged twice: with the Reader used after it (r holds bx's
+// loan directly) and with the fill's target read after it (local holds
+// bx's loan only through the Reader's "*f into f" store).
+func TestCore_FilterPortGrowBoxLoans(t *testing.T) {
+	probe := strings.Replace(core8GrowZzf2, "core.FilterPort[Ds]", "core.FilterPortGrow[Ds]", 1)
+	probe = strings.Replace(probe, "    var f := core.Filtered[Ds].New(Ds(a: bx.Ref(), b: out))",
+		"    var local := *out\n    var f := core.Filtered[Ds].New(Ds(a: bx.Ref(), b: mut local))", 1)
+	const take = "_ = bx.Take(h.Alloc())"
+	const read = "    _ = r.Read(mut d[..]) else {\n        }"
+	const peek = "    x := *local\n    _ = x"
+	errTake, okTake := "        "+take+"\n        return", "    "+take+"\n}"
+	for _, c := range []struct {
+		name, from, to string
+		want           []string // every diagnostic, as path:line:col: code
+		holder         string   // the holder of bx's loan that the E0503 names
+	}{
+		{name: "last use precedes both takes"},
+		{"error path, the Reader read after the take", errTake, "        " + take + "\n    " + read + "\n        return",
+			[]string{"std/zzf2/p.mk:42:13: E0503"}, "r"},
+		{"success path, the Reader read after the take", okTake, "    " + take + "\n" + read + "\n}",
+			[]string{"std/zzf2/p.mk:45:9: E0503"}, "r"},
+		// The read of local is E0504 as well: the store of f's loans into
+		// what f writes counts f's exclusive loan of local among them.
+		{"error path, the fill's target read after the take", errTake, "        " + take + "\n    " + peek + "\n        return",
+			[]string{"std/zzf2/p.mk:42:13: E0503", "std/zzf2/p.mk:43:9: E0504"}, "local"},
+		{"success path, the fill's target read after the take", okTake, "    " + take + "\n" + peek + "\n}",
+			[]string{"std/zzf2/p.mk:45:9: E0503", "std/zzf2/p.mk:46:5: E0504"}, "local"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := probe
+			if c.from != "" {
+				if strings.Count(src, c.from) != 1 {
+					t.Fatal("the keep-live control did not select one take")
+				}
+				src = strings.Replace(src, c.from, c.to, 1)
+			}
+			out, status := core8GrowCheck(t, "zzf2", src)
+			if c.want == nil {
+				if status != 0 {
+					t.Fatalf("legal Reader setup was rejected:\n%s", out)
+				}
+				return
+			}
+			slashed := strings.ReplaceAll(out, "\\", "/")
+			ok := status != 0 && strings.Count(out, ": E") == len(c.want) &&
+				strings.Contains(out, "E0503 move-while-borrowed: bx conflicts with a live shared loan held by "+c.holder+"\n")
+			for _, w := range c.want {
+				ok = ok && strings.Contains(slashed, w)
+			}
+			if !ok {
+				t.Fatalf("want exactly %q with bx's loan held by %s, exit %d:\n%s", c.want, c.holder, status, out)
 			}
 		})
 	}

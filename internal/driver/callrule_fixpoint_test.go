@@ -160,8 +160,8 @@ func TestChainReversed(t *testing.T) {
 // is not stored into its own referents by a later round (self-reach).
 func TestForwardStaysClean(t *testing.T) {
 	t.Parallel()
-	got := d462Codes(t, `Add[T](l: mut List[T], x: T into l): OutOfMemory!void {
-    try l.Push(x)
+	got := d462Codes(t, `Add[T](a: &Alloc, l: mut HeapList[T], x: T into l): OutOfMemory!void {
+    try l.Push(a, x)
 }
 
 Rep[T](l: mut T, x: T into l): T {

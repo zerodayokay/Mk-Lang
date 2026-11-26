@@ -2,9 +2,9 @@
 // compile-time `const` parameters; both need rules of their own in the
 // checker.
 //
-// What: isBranch (the `if T is X` construct), nt and narrowOrIdentity (the
-// narrowing), constArgs, constParamFnValue, notConst and callNotConst (the
-// `const` parameter rules).
+// What: isBranch (the `if T is X` construct), nt, narrowTo and
+// narrowOrIdentity (the narrowing), constArgs, constParamFnValue, notConst
+// and callNotConst (the `const` parameter rules).
 //
 // How: `if T is X` is E0701 at the `is` when X cannot meet T's bounds; the
 // then-branch is checked with T narrowed to X, the else-branch with T opaque.
@@ -65,9 +65,7 @@ func (u *unit) isBranch(s *ast.IfStmt, c *ast.IsCond, v *valueCtx) bool {
 		}
 		if ok {
 			savedEnv, savedNarrow := u.env, u.narrow
-			u.narrow = u.narrowOrIdentity()
-			u.narrow[idx] = types.TypeArg(x)
-			u.env = u.env.Narrow(uint32(idx), x)
+			u.narrowTo(idx, x)
 			then = u.armBlock(s.Then, v)
 			u.env, u.narrow = savedEnv, savedNarrow
 		}
@@ -76,6 +74,26 @@ func (u *unit) isBranch(s *ast.IfStmt, c *ast.IsCond, v *valueCtx) bool {
 		els = u.elseArm(s, v) // always checked: no short circuit
 	}
 	return then && els
+}
+
+// narrowTo installs the then-branch narrowing of parameter idx to x (x is
+// already read under the enclosing narrowing). Every parameter an
+// enclosing branch narrowed to a type naming idx (`if T is U { if U is
+// u32 {`) is narrowed through x as well, in the values' substitution
+// (u.narrow) and the type expressions' Env alike, so a T is u32 in both
+// and the two never disagree.
+func (u *unit) narrowTo(idx int, x types.TypeID) {
+	u.narrow = u.narrowOrIdentity()
+	u.narrow[idx] = types.TypeArg(x)
+	env := u.env.Narrow(uint32(idx), x)
+	for j := range env.narrow {
+		if j == idx || env.narrow[j] == types.NoType || j >= len(u.narrow) || u.narrow[j].IsConst {
+			continue
+		}
+		t := u.c.subst(env.narrow[j], u.narrow, types.NoType)
+		env.narrow[j], u.narrow[j] = t, types.TypeArg(t)
+	}
+	u.env = env
 }
 
 // narrowOrIdentity is a copy of the current narrowing, or the identity

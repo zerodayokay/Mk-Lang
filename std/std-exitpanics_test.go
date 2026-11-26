@@ -14,15 +14,7 @@ import (
 	"testing"
 )
 
-const std10TruncateProgram = `linear struct Tok {
-    n: int
-}
-
-Drop(t: Tok) {
-    Tok(n: _) := t
-}
-
-export Main(sys: &System) {
+const std10TruncateProgram = `export Main(sys: &System) {
     var out := sys.Stdout()
     which := sys.args[1]
     Print(mut out, "before\n", ()) else {
@@ -38,20 +30,17 @@ export Main(sys: &System) {
         }
         l.Truncate(-1)
     } else {
-        var l := List[Tok].New(sys.arena)
+        var l := List[int].New(sys.arena)
         for i in 0..3 {
-            t := Tok(n: i)
-            l.Push(t) else {
-                Drop(t)
+            l.Push(i) else {
+                return
             }
         }
         l.Truncate(3)
         l.Truncate(100)
-        if which == "linear" {
-            l.Truncate(1)
-        }
-        for x := l.Pop() {
-            Drop(x)
+        l.Truncate(1)
+        if l.Len() != 1 {
+            return
         }
         l.Truncate(0)
     }
@@ -134,17 +123,16 @@ func TestStd_ExactDigitsPanics(t *testing.T) {
 }
 
 // TestStd_ListTruncatePanics: List.Truncate to a negative length panics
-// with code 2, and a Truncate that would drop a linear element with code 8,
-// as List.Clear does; a Truncate that drops nothing (n at or above Len) is a
-// no-op even on linear elements. Each panic exits 101 with its message and
-// prints nothing after. The other List, text, sync and Deque checks are test
+// with code 2 and prints nothing after (exit 101); a Truncate at or above Len
+// is a no-op, and one below it keeps the first n. A List holds no linear
+// element (Push and Insert refuse one), so Truncate's code 8 has no
+// case. The other List, text, sync and Deque checks are test
 // blocks in tests_list.mk, tests_text.mk, tests_sync.mk and tests_deque.mk.
 func TestStd_ListTruncatePanics(t *testing.T) {
 	t.Parallel()
 	exe := collBuild(t, std10TruncateProgram)
 	cases := []struct{ name, msg string }{
 		{"negative", "bounds: List.Truncate: negative length"},
-		{"linear", "List.Truncate would drop a linear value"},
 		{"noop", ""},
 	}
 	for _, c := range cases {

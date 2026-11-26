@@ -41,7 +41,7 @@ var intrinsicKeys = []string{
 	"std.raw.HasFree", "std.raw.IsLinear", "std.raw.IsNull", "std.raw.Move", "std.raw.Mul128", "std.raw.Null", "std.raw.Of",
 	"std.raw.OfMut", "std.raw.Offset", "std.raw.Popcount64", "std.raw.PtrCast", "std.raw.Read",
 	"std.raw.ReadUnaligned", "std.raw.Release", "std.raw.RotL64", "std.raw.Same", "std.raw.Select", "std.raw.Slice", "std.raw.SliceMut",
-	"std.raw.SqrtF64", "std.raw.Str", "std.raw.StrData", "std.raw.Write",
+	"std.raw.SqrtF64", "std.raw.Str", "std.raw.StrData", "std.raw.Write", "std.raw.WriteUnaligned",
 	"std.rt.CallMain", "std.rt.ErrorName", "std.rt.FramePointer", "std.rt.FramePointers", "std.rt.FuncTable", "std.rt.ProfileTable", "std.rt.StackPointer", "std.rt.UsesTasks",
 	"std.sys.Clone", "std.sys.LazyPresent", "std.sys.LibcBuild", "std.sys.Restorer", "std.sys.Syscall", "std.sys.Teb", "std.sys.TrapEntry",
 	"std.task.InitContext", "std.task.Switch",
@@ -80,7 +80,7 @@ var intrinsicSigs = map[string]string{
 	"std.raw.PtrCast": "[T, U](*T): *U", "std.raw.Read": "[T](*T): T", "std.raw.ReadUnaligned": "[T: Plain](*T): T",
 	"std.raw.RotL64": "(u64, int): u64", "std.raw.Same": "[T](*T, *T): bool", "std.raw.Select": "[T: Plain](bool, T, T): T", "std.raw.Slice": "[T](*T, int): []T",
 	"std.raw.SliceMut": "[T](*T, int): mut []T", "std.raw.SqrtF64": "(f64): f64", "std.raw.Str": "(*u8, int): str",
-	"std.raw.StrData": "(str): *u8", "std.raw.Write": "[T](*T, T)",
+	"std.raw.StrData": "(str): *u8", "std.raw.Write": "[T](*T, T)", "std.raw.WriteUnaligned": "[T: Plain](*T, T)",
 	"std.rt.CallMain": "(&System): MainResult", "std.rt.ErrorName": "(u32): str", "std.rt.FuncTable": "(): []FuncRow",
 	"std.rt.ProfileTable": "(): []ProfileRecord", "std.rt.StackPointer": "(): uint", "std.rt.FramePointer": "(): uint", "std.rt.FramePointers": "(): bool", "std.rt.UsesTasks": "(): bool",
 	"std.sys.Clone": "(uint, *u8, *u32, *u32, uint, fn(*u8), *u8): int", "std.sys.LibcBuild": "(): bool", "std.sys.Restorer": "(): *u8",
@@ -280,8 +280,11 @@ func (fg *fnGen) intrinsicCall(item types.ItemID, t *mir.Terminator, args []valu
 		d, _ := fg.placeAddr(t.Dest)
 		fg.store(d, fg.loadAtRaw(a, destT))
 		fg.cur.Br(fg.blocks[t.Target])
-	case "std.raw.Write":
+	case "std.raw.Write", "std.raw.WriteUnaligned":
 		_, al := g.sizeAlign(args[1].t)
+		if key == "std.raw.WriteUnaligned" {
+			al = 1
+		}
 		fg.store(addr{v: args[0].v, align: al}, args[1])
 		fg.cur.Br(fg.blocks[t.Target])
 	case "std.raw.Copy", "std.raw.Move":

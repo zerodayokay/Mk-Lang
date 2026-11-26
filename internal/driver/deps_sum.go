@@ -4,7 +4,8 @@
 //
 // What: pkgSum and sumLine (parsePkgSum, parseSumLine, get, check, add,
 // keep, sorted, text), checkSumURL, readPkgSum, writePkgSum, mergePkgSum
-// and writeFileAtomic.
+// and writeFileAtomic, and writeSameFile for a file many builds write with
+// the same bytes.
 //
 // How: one line per package version in the build list, test dependencies
 // included:
@@ -28,6 +29,7 @@
 package driver
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"net/url"
@@ -340,6 +342,82 @@ func writeFileAtomic(path string, data []byte) error {
 	}
 	return err
 }
+
+// writeSameFile makes the file p hold data unless it already does, and
+// reports whether this call wrote it. It is for a file that every writer
+// writes with the same bytes, such as a header in a directory named by
+// its content, when builds in this process and in others may write it at
+// once: each writes a temporary of its own (mode 0644, as os.WriteFile
+// makes a file) and renames it over p, so a reader never sees half the
+// file. On Windows the rename fails while another writer or a reader has
+// p open, so a failed rename is retried, briefly, until it succeeds or p
+// holds data, whoever wrote it. A write also removes the temporaries a
+// killed writer left beside p (removeStaleTemps).
+func writeSameFile(p string, data []byte) (bool, error) {
+	if old, err := os.ReadFile(p); err == nil && bytes.Equal(old, data) {
+		return false, nil
+	}
+	f, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".tmp-*")
+	if err != nil {
+		return false, err
+	}
+	tmp := f.Name()
+	err = f.Chmod(0o644)
+	if err == nil {
+		_, err = f.Write(data)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return false, err
+	}
+	for try := 1; ; try++ {
+		if err = os.Rename(tmp, p); err == nil {
+			removeStaleTemps(p)
+			return true, nil
+		}
+		if old, rerr := os.ReadFile(p); rerr == nil && bytes.Equal(old, data) {
+			err = nil // another writer's copy is in place
+		}
+		if err == nil || try == sameFileTries {
+			os.Remove(tmp)
+			return false, err
+		}
+		time.Sleep(time.Duration(try) * time.Millisecond)
+	}
+}
+
+// sameFileTries bounds writeSameFile's renames: their pauses add up to
+// about a second.
+const sameFileTries = 45
+
+// removeStaleTemps removes the temporaries of p ('.<base>.tmp-*') that
+// are older than staleTempAge: a writer killed between its temporary and
+// its rename leaves one, each with a name of its own, in a directory that
+// may be the user's (an executable's DLLs). A live writer's temporary is
+// seconds old at most.
+func removeStaleTemps(p string) {
+	dir, prefix := filepath.Dir(p), "."+filepath.Base(p)+".tmp-"
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	old := time.Now().Add(-staleTempAge)
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), prefix) || !e.Type().IsRegular() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && fi.ModTime().Before(old) {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// staleTempAge is the age past which removeStaleTemps takes a temporary
+// for a killed writer's.
+const staleTempAge = 10 * time.Minute
 
 // mergePkgSum writes s's lines into dir's pkg.sum under a lock file, adding
 // every line the file holds now that s lacks: a build writes only what it

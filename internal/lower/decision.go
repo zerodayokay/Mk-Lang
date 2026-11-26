@@ -9,8 +9,8 @@
 // How: Maranget's construction ("Compiling pattern matching to good decision
 // trees", 2008) with the first-row heuristic, built abstractly first and
 // emitted second, so the size guard (leaves at most 4 x the pattern nodes)
-// can fall back to sequential testing before any MIR exists. Ranges and
-// struct patterns also take the sequential path.
+// can fall back to sequential testing before any MIR exists. Ranges, struct
+// patterns and nested ok or err patterns also take the sequential path.
 
 package lower
 
@@ -127,6 +127,12 @@ func (m *mcomp) head(q ast.Pattern) (headKind, uint64) {
 	case PRange:
 		// A range is a compare, not a case value: the arms are tested in
 		// order, where LLVM forms a switch from the compares it can.
+		m.abort = true
+		return hWild, 0
+	case POk, PErr:
+		// A nested ok or err pattern (an E!T inside the scrutinee): err has
+		// no one case value, any discriminant but 0, so the arms are tested
+		// in order, where test and bindPat take it apart.
 		m.abort = true
 		return hWild, 0
 	case PStruct:

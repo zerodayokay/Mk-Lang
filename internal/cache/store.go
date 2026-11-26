@@ -41,7 +41,7 @@ type Kind string
 
 const (
 	KindParse    Kind = "parse"    // per-file parse summary (iface.ParseSummary); the driver writes none (a module's summaries are one KindManifest entry, its parse index)
-	KindManifest Kind = "manifest" // every candidate list: module, function, evaluation, generator (the only mutable kind)
+	KindManifest Kind = "manifest" // every candidate list: module, function, evaluation, generator, C bindings, C object (the only mutable kind)
 	KindIface    Kind = "iface"    // module interface
 	KindFunc     Kind = "func"     // function check result
 	KindEval     Kind = "eval"     // evaluation record
@@ -52,7 +52,7 @@ const (
 	KindLayout   Kind = "layout"   // clang data layout and triple, per clang version
 	KindProfile  Kind = "prof"     // merged .mkprof copies (by content)
 	KindFetch    Kind = "fetch"    // a url dependency's archive, keyed by its SHA-256 (internal/fetch)
-	KindCImport  Kind = "cimport"  // a package's C import bindings per target, with their header hashes and negative lookups (internal/cimport)
+	KindCImport  Kind = "cimport"  // a package's C import bindings per target, keyed by the request and its headers' hashes (internal/cimport)
 	KindCObj     Kind = "cobj"     // an object compiled from a c_sources, asm_sources or shim file, keyed by command line and content
 )
 

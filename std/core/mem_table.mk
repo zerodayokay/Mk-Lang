@@ -1,4 +1,4 @@
-// Why: the Swiss table in coll_table.mk reads control bytes in 8-byte groups
+// Why: the Swiss table in coll_table.mk reads control bytes in 16-byte groups
 // and reaches slot fields through raw pointers; this file holds that raw
 // memory access so the table algorithm needs no unsafe block.
 //
@@ -25,7 +25,7 @@ CtrlAt(ctrl: *u8, i: int): u8 {
 CtrlPut(ctrl: *u8, cap: int, i: int, b: u8) {
     unsafe "the caller keeps i below cap; ctrl holds cap + 16 bytes" {
         raw.Write(raw.Offset(ctrl, i), b)
-        if i < 16 {
+        if i < TableGroupWidth {
             raw.Write(raw.Offset(ctrl, cap +% i), b)
         }
     }
@@ -61,12 +61,12 @@ ValueAt[K, V](slots: *Slot[K, V], i: int): *V {
 // NewCtrl allocates cap + 16 control bytes, every one empty; null when a is
 // out of memory.
 NewCtrl(a: &Alloc, cap: int): *u8 {
-    p := AllocBytes(a, cap + 16, 16)
+    p := AllocBytes(a, cap + TableGroupWidth, TableGroupWidth)
     if raw.IsNull(p) {
         return p
     }
     unsafe "p is fresh memory for cap + 16 bytes" {
-        raw.Fill(p, 0xFF, cap + 16)
+        raw.Fill(p, CtrlEmpty, cap + TableGroupWidth)
     }
     return p
 }

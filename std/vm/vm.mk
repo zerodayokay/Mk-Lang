@@ -34,7 +34,7 @@ export error Unsupported
 export error Os(code: i64)
 
 /// Every way a std.vm operation fails.
-export type Error = OutOfMemory | Misaligned | Unsupported | Os
+export open type Error = OutOfMemory | Misaligned | Unsupported | Os
 
 /// The OS's page size in bytes. Every offset and length a Region takes is
 /// a multiple of it. O(1); allocates nothing.

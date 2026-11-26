@@ -2,8 +2,10 @@
 // never panic, and leak nothing on the error path.
 // What: TestSTDBIG_OutOfMemory.
 // How: every allocating operation runs over an arena on a
-// heap that fails exactly one request, the n-th, for every n from 0 until a
-// run meets no failure. At each n the operation either returns its result,
+// heap that fails the n-th request, then repeats with a heap that fails
+// every request from n onward, for each n until no failure is reached. This
+// covers recovery from a single failure and propagation when allocation
+// fallbacks are exhausted. At each n the operation either returns its result,
 // equal to the run with no failure (the arena grew past the failure in a
 // chunk of its own), or fails with OutOfMemory, never anything else and
 // never a panic; and after the arena is freed no byte is live, so the
@@ -26,9 +28,9 @@ import (
 	"testing"
 )
 
-const bigOomFixture = `// Fixture of the std.big OOM test: a heap that fails exactly one request,
-// the fail_at-th alloc or growing resize counted from 0 (none when fail_at
-// is negative), and a driver that runs one std.big operation over an arena
+const bigOomFixture = `// Fixture of the std.big OOM test: a heap that fails one or every request
+// starting at the fail_at-th alloc or growing resize (counted from 0; none
+// when fail_at is negative), and a driver that runs one std.big operation over an arena
 // on it.
 
 import std.core
@@ -40,6 +42,7 @@ struct Fail {
     live: int
     reqs: int
     fail_at: int
+    exhaust: bool
     fails: int
 }
 
@@ -51,7 +54,7 @@ FailAlloc(ctx: *u8, size: int, align: int): *u8 {
         var c := raw.Read(q)
         c.reqs += 1
         var p := raw.Null[u8]()
-        if c.reqs - 1 == c.fail_at {
+        if c.fail_at >= 0 && (c.reqs - 1 == c.fail_at || (c.exhaust && c.reqs - 1 > c.fail_at)) {
             c.fails += 1
         } else {
             p = core.AllocBytes(&*c.inner, size, align)
@@ -72,7 +75,7 @@ FailResize(ctx: *u8, p: *u8, old: int, new: int, align: int): bool {
         var refused := false
         if new > old {
             c.reqs += 1
-            if c.reqs - 1 == c.fail_at {
+            if c.fail_at >= 0 && (c.reqs - 1 == c.fail_at || (c.exhaust && c.reqs - 1 > c.fail_at)) {
                 c.fails += 1
                 refused = true
             }
@@ -191,15 +194,16 @@ Op(ar: &Arena, op: int, x: &big.Int, y: &big.Int, m: &big.Int, s: str): big.Erro
     return 0
 }
 
-// Run runs op once over a heap that fails its fail_at-th request, prints
-// "op fail_at fails result digest live", and returns the failures met.
-export Run(w: mut Writer, a: &Alloc, fail_at: int, op: int, x: &big.Int, y: &big.Int, m: &big.Int, s: str): WriteError!int {
-    var c := Fail(inner: raw.Of(a), live: 0, reqs: 0, fail_at: fail_at, fails: 0)
+// Run runs op once, prints the fault index, policy, result and live bytes,
+// and returns the failures met.
+export Run(w: mut Writer, a: &Alloc, fail_at: int, exhaust: bool, op: int, x: &big.Int, y: &big.Int, m: &big.Int, s: str): WriteError!int {
+    var c := Fail(inner: raw.Of(a), live: 0, reqs: 0, fail_at: fail_at, exhaust: exhaust, fails: 0)
     unsafe "c outlives the heap made over it, freed below" {
         h := core.MakeHeap(raw.PtrCast[Fail, u8](raw.Of(&c)), raw.Of(&FailTable))
         var ar := Arena.New(&h) else {
             f := Fails(&c)
-            try Print(w, "{op} {fail_at} {f} new 0 0\n", (op, fail_at, f))
+            live := Live(&c)
+            try Print(w, "{op} {fail_at} {exhaust} {f} new 0 {live}\n", (op, fail_at, exhaust, f, live))
             return f
         }
         var res := "ok"
@@ -222,7 +226,7 @@ export Run(w: mut Writer, a: &Alloc, fail_at: int, op: int, x: &big.Int, y: &big
         ar.Free()
         f := Fails(&c)
         live := Live(&c)
-        try Print(w, "{op} {fail_at} {f} {res} {d} {live}\n", (op, fail_at, f, res, d, live))
+        try Print(w, "{op} {fail_at} {exhaust} {f} {res} {d} {live}\n", (op, fail_at, exhaust, f, res, d, live))
         return f
     }
 }
@@ -255,19 +259,22 @@ export Main(sys: &System): WriteError|OutOfMemory!void {
     s := try x.Text(sys.arena, 10)
     var out := sys.Stdout()
     for op in 0..21 {
-        var n := -1
-        for {
-            f := try bigfix.Run(mut out, sys.heap.Alloc(), n, op, &x, &y, &m, s)
-            if n >= 0 && f == 0 {
-                break
+        _ = try bigfix.Run(mut out, sys.heap.Alloc(), -1, false, op, &x, &y, &m, s)
+        for exhaust in [false, true] {
+            var n := 0
+            for {
+                f := try bigfix.Run(mut out, sys.heap.Alloc(), n, exhaust, op, &x, &y, &m, s)
+                if f == 0 {
+                    break
+                }
+                n += 1
             }
-            n += 1
         }
     }
 }
 `
 
-var bigOomLine = regexp.MustCompile(`^(\d+) (-?\d+) (\d+) (ok|OutOfMemory|other|new) (\d+) (-?\d+)$`)
+var bigOomLine = regexp.MustCompile(`^(\d+) (-?\d+) (true|false) (\d+) (ok|OutOfMemory|other|new) (\d+) (-?\d+)$`)
 
 // TestSTDBIG_OutOfMemory: see the file comment.
 func TestSTDBIG_OutOfMemory(t *testing.T) {
@@ -322,14 +329,17 @@ func TestSTDBIG_OutOfMemory(t *testing.T) {
 				if g == nil {
 					t.Fatalf("bad line %q", line)
 				}
-				op, failAt, fails, res, digest, live := g[1], g[2], g[3], g[4], g[5], g[6]
+				op, failAt, exhaust, fails, res, digest, live := g[1], g[2], g[3], g[4], g[5], g[6], g[7]
+				if live != "0" {
+					t.Errorf("%s: %s bytes still live", line, live)
+				}
 				if res == "new" {
+					if failAt != "0" || fails == "0" {
+						t.Errorf("%s: Arena.New failed outside the first request", line)
+					}
 					continue
 				}
 				runs[op]++
-				if live != "0" {
-					t.Errorf("%s: %s bytes live after Free", line, live)
-				}
 				switch {
 				case failAt == "-1":
 					if fails != "0" || res != "ok" {
@@ -344,7 +354,9 @@ func TestSTDBIG_OutOfMemory(t *testing.T) {
 					if fails == "0" {
 						t.Errorf("%s: OutOfMemory with no failure met", line)
 					}
-					ooms[op]++
+					if exhaust == "true" {
+						ooms[op]++
+					}
 				default:
 					t.Errorf("%s: an error other than OutOfMemory", line)
 				}
@@ -354,10 +366,10 @@ func TestSTDBIG_OutOfMemory(t *testing.T) {
 			for op := 0; op < 20; op++ {
 				k := strconv.Itoa(op)
 				if ooms[k] < 1 {
-					t.Errorf("op %d: %d runs, none failed with OutOfMemory: the injection did not reach it", op, runs[k])
+					t.Errorf("op %d: %d runs, none failed with OutOfMemory when requests were exhausted", op, runs[k])
 				}
 			}
-			t.Logf("runs %v, runs with OutOfMemory %v", runs, ooms)
+			t.Logf("runs %v, exhaustion runs with OutOfMemory %v", runs, ooms)
 		})
 	}
 }

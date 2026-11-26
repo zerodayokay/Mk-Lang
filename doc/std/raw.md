@@ -26,7 +26,7 @@ import std.raw
 |---|---|
 | Take an address | `Of(r)`, `OfMut(r)`, `Data(s)`, `DataMut(s)`, `StrData(s)` |
 | Make or test a pointer | `Null[T]()`, `IsNull`, `Same`, `Offset(p, n)`, `PtrCast[T, U](p)`, `Addr(p)`, `FromAddr[T](a)` |
-| Read and write through a pointer | `Read`, `ReadUnaligned`, `Write` |
+| Read and write through a pointer | `Read`, `ReadUnaligned`, `Write`, `WriteUnaligned` |
 | Copy, fill and compare memory | `Copy`, `Move`, `Fill`, `Compare`; `AtomicCopy`, `AtomicFill` for memory other threads read |
 | View memory as a slice or a string | `Slice(p, n)`, `SliceMut`, `Str(p, n)` |
 | End a value by hand | `Forget(x)`, `Release(x, a)`, `IsLinear[T]()`, `HasFree[T]()` |
@@ -66,7 +66,7 @@ Taking an address, making a null pointer, testing or comparing pointers, fences,
 | Safe | Needs `unsafe` |
 |---|---|
 | `Of`, `OfMut`, `Null`, `IsNull`, `Same`, `Data`, `DataMut`, `StrData`, `Addr` | `Offset`, `PtrCast`, `FromAddr`, `FnFromAddr` |
-| `IsLinear`, `Fail` | `Read`, `ReadUnaligned`, `Write` |
+| `IsLinear`, `Fail` | `Read`, `ReadUnaligned`, `Write`, `WriteUnaligned` |
 | `Fence`, `FenceOrd`, every method of `Atomic` | `Copy`, `Move`, `Fill`, `Compare`, `AtomicCopy`, `AtomicFill` |
 | `Ctz64`, `Clz64`, `Popcount64`, `RotL64`, `Mul128` | `Slice`, `SliceMut`, `Str` |
 | `AddCarry64`, `SubBorrow64` | `Forget`, `Release`, `HasFree` |
@@ -76,8 +76,8 @@ Taking an address, making a null pointer, testing or comparing pointers, fences,
 
 What the caller answers for inside the block:
 
-- `Read` and `Write` need a pointer aligned to `AlignOf[T]()`. `ReadUnaligned` takes any alignment, for an integer `T` only (E0701 otherwise).
-- `Write` overwrites the old value without releasing it. Release it first, or use it only on memory that holds no value.
+- `Read` and `Write` need a pointer aligned to `AlignOf[T]()`. `ReadUnaligned` and `WriteUnaligned` take any alignment, for an integer `T` only (E0701 otherwise): each is one load or store of `T`'s width at alignment 1. A float goes through its bits (`F32Bits`, `F64Bits`); a struct, through `Copy` of its bytes.
+- `Write` and `WriteUnaligned` overwrite the old value without releasing it. Release it first, or use it only on memory that holds no value.
 - `Copy` needs ranges that do not overlap; `Move` allows overlap. Both count elements of `T`, not bytes. `Fill` and `Compare` count bytes.
 - `Slice`, `SliceMut` and `Str` make a view the compiler treats as valid. The memory must stay valid while the view is in use, and `Str`'s bytes must be UTF-8.
 - `Forget` ends a value without releasing what it owns, a linear value too. `Release(x, a)` calls `T`'s `Free` with `a` when `T` implements `Free`, and forgets `x` otherwise.
@@ -189,6 +189,37 @@ $ mk run .
 
 - `Data` is safe: taking an address checks nothing. `Offset`, `PtrCast`, `ReadUnaligned` and `Copy` are not, so they sit in `unsafe` blocks whose reasons say why the access is in bounds.
 - `Read` would need a 4-byte-aligned pointer; a byte array's offset 1 need not be.
+
+### Write through a pointer
+
+```mk
+// verdict: ok
+import std.raw
+
+// PutF32 stores x's encoding, little-endian, at offset off of b, at any
+// alignment, as a DataView or a wire format does.
+PutF32(b: mut []u8, off: int, x: f32) {
+    Assert(off >= 0 && off + 4 <= b.Len()) // the bounds the raw write cannot check
+    unsafe "off + 4 <= b.Len(), and u32 is an integer, written at alignment 1" {
+        p := raw.Offset(raw.DataMut(b), off)
+        raw.WriteUnaligned(raw.PtrCast[u8, u32](p), raw.F32Bits(x)) // x86_64 is little-endian
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    var buf: [7]u8 = [0; 7]
+    PutF32(mut buf[..], 3, 1.5)
+    try sys.Print("{a} {b} {c}\n", (a: buf[2], b: buf[5], c: buf[6]))
+}
+```
+
+```text
+$ mk run .
+0 192 63
+```
+
+- `WriteUnaligned` is one 4-byte store at alignment 1, whatever the offset: not a byte loop and not a call.
+- A float has no unaligned form of its own: store its bits, and read them back with `ReadUnaligned` and `F32From`.
 
 ### Use an atomic word
 
@@ -993,5 +1024,14 @@ export Write[T](p: *T, x: T)
 
 Write stores x at p, which must be aligned to AlignOf[T](). The value
 that was there is overwritten, not released. Needs unsafe.
+
+### `WriteUnaligned`
+
+```
+export WriteUnaligned[T: Plain](p: *T, x: T)
+```
+
+WriteUnaligned stores an integer x at p, at any alignment; any other
+T is E0701. The value that was there is overwritten. Needs unsafe.
 
 <!-- api:end -->

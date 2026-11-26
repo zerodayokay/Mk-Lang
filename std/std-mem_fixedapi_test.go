@@ -78,11 +78,16 @@ func TestSTDMEM_APIMatchesReference(t *testing.T) {
 		if k := strings.IndexByte(recv, '['); k >= 0 {
 			recv = recv[:k]
 		}
-		want[normalizeFor("std.mem", it.text, nil)] = recv
+		line := normalizeFor("std.mem", it.text, nil)
+		if it.block {
+			line = strings.TrimSuffix(line, " {")
+		}
+		want[line] = recv
 	}
 	types := memTypeNames(items)
 	have := map[string]bool{}
 	for _, d := range decls {
+		have[d.text] = true
 		if blockKind(d.text) {
 			name := blockName(d.text)
 			if !types[name] {
@@ -95,7 +100,6 @@ func TestSTDMEM_APIMatchesReference(t *testing.T) {
 			}
 			continue
 		}
-		have[d.text] = true
 		if _, ok := want[d.text]; !ok {
 			t.Errorf("std/mem exports %q, which is no std.mem line of the reference (%s)", d.text, d.file)
 		}

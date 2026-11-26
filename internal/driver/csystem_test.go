@@ -87,7 +87,7 @@ func TestCImport_RequestUnchanged(t *testing.T) {
 			if !reflect.DeepEqual(got, before) {
 				t.Errorf("request\n%+v\nwant\n%+v", got, before)
 			}
-			if got.Triple != "x86_64-w64-windows-gnu" {
+			if got.Triple != cimport.ParseTriple("x86_64-windows") {
 				t.Errorf("triple %s", got.Triple)
 			}
 			if cimport.Key(id, "rd", got) != cimport.Key(id, "rd", before) {
@@ -99,8 +99,8 @@ func TestCImport_RequestUnchanged(t *testing.T) {
 			if m, _ := filepath.Glob(filepath.Join(s.cacheDir(), "*", "msvch")); len(m) > 0 {
 				t.Error("mk's Windows SDK headers were written for a sysroot that is no SDK")
 			}
-			if ci, ds := s.cImportsOf(nil, cSourcesOnly, dir, "", ""); len(ds) > 0 || ci.sysFlags != nil {
-				t.Errorf("C sources' system flags %q (%v), want none", ci.sysFlags, ds)
+			if ci, ds := s.cImportsOf(nil, cSourcesOnly, dir, "", ""); len(ds) > 0 || !slices.Equal(ci.sysFlags, cimport.TripleFlags(got.Triple)) {
+				t.Errorf("C sources' system flags %q (%v), want %q", ci.sysFlags, ds, cimport.TripleFlags(got.Triple))
 			}
 		})
 	}

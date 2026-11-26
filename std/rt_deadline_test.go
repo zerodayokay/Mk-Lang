@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -35,7 +36,9 @@ func rt8Blocks(all []rtsBlock) []rtsBlock {
 
 // TestRt_DeadlineBlocks runs every RT8- block at 1 and 16 carriers, dev and
 // release, on this host, each under a 60 s watchdog. RTS_ONLY limits both
-// tests to the matching blocks.
+// tests to the matching blocks. On Windows the RT8-Unix- blocks run once
+// more under a TEMP past sun_path (unixLongTemp): they name their sockets
+// relative to the working directory, so its length cannot reach them.
 func TestRt_DeadlineBlocks(t *testing.T) {
 	rtsNative(t)
 	for _, profile := range []string{"dev", "release"} {
@@ -49,6 +52,13 @@ func TestRt_DeadlineBlocks(t *testing.T) {
 				b, n := b, n
 				t.Run(fmt.Sprintf("%s/%s/carriers=%d", profile, b.name, n), func(t *testing.T) {
 					r := rtsRun(t, exe, b.index, 60*time.Second, append(rtsEnv(b), fmt.Sprintf("MK_CARRIERS=%d", n))...)
+					rtsJudge(t, b, r, "")
+				})
+			}
+			if runtime.GOOS == "windows" && strings.HasPrefix(b.name, "RT8-Unix-") {
+				t.Run(fmt.Sprintf("%s/%s/long TEMP", profile, b.name), func(t *testing.T) {
+					long := unixLongTemp(t)
+					r := rtsRun(t, exe, b.index, 60*time.Second, append(rtsEnv(b), "MK_CARRIERS=1", "TEMP="+long, "TMP="+long)...)
 					rtsJudge(t, b, r, "")
 				})
 			}

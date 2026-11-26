@@ -451,8 +451,8 @@ func TestStdWs_GoPeer(t *testing.T) {
 	})
 
 	t.Run("go client, mk server", func(t *testing.T) {
-		r, wait := net3Start(t, exe, "server")
-		port := strings.TrimPrefix(net3Line(t, r), "port ")
+		readLine, wait := net3Start(t, exe, "", "server")
+		port := strings.TrimPrefix(readLine(), "port ")
 		c, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 10*time.Second)
 		if err != nil {
 			t.Fatal(err)
@@ -472,11 +472,11 @@ func TestStdWs_GoPeer(t *testing.T) {
 		if p, ok := resp.Header["Sec-Websocket-Protocol"]; ok {
 			t.Fatalf("no subprotocol was offered, but the 101 names %q", p)
 		}
-		if line := net3Line(t, r); line != "protocol -" {
+		if line := readLine(); line != "protocol -" {
 			t.Fatalf("the Mk server said %q, want protocol -", line)
 		}
 		wsEchoScript(t, w)
-		line := net3Line(t, r)
+		line := readLine()
 		w.close()
 		wait()
 		if line != "closed 1000 after 4" {
@@ -490,8 +490,8 @@ func TestStdWs_GoPeer(t *testing.T) {
 	// supports superchat and chat, and must answer with the client's first
 	// one it supports, chat, in exactly one field.
 	t.Run("go client offering subprotocols, mk server", func(t *testing.T) {
-		r, wait := net3Start(t, exe, "server")
-		port := strings.TrimPrefix(net3Line(t, r), "port ")
+		readLine, wait := net3Start(t, exe, "", "server")
+		port := strings.TrimPrefix(readLine(), "port ")
 		c, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 10*time.Second)
 		if err != nil {
 			t.Fatal(err)
@@ -510,11 +510,11 @@ func TestStdWs_GoPeer(t *testing.T) {
 		if p := resp.Header.Values("Sec-WebSocket-Protocol"); len(p) != 1 || p[0] != "chat" {
 			t.Fatalf("the 101 names subprotocols %q, want exactly chat", p)
 		}
-		if line := net3Line(t, r); line != "protocol chat" {
+		if line := readLine(); line != "protocol chat" {
 			t.Fatalf("the Mk server said %q, want protocol chat", line)
 		}
 		wsEchoScript(t, w)
-		line := net3Line(t, r)
+		line := readLine()
 		w.close()
 		wait()
 		if line != "closed 1000 after 4" {

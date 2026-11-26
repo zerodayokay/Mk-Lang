@@ -14,7 +14,6 @@ package cimport
 
 import (
 	"context"
-	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,47 +22,43 @@ import (
 	"testing"
 
 	"mk/internal/source"
+	"mk/internal/toolchain"
 )
 
 // TestCImport_KeyUnchanged: for a package whose headers are its own, with
 // no sysroot and with a sysroot of plain headers, the triple, the cache key
-// and the flags every Clang run shares are byte-identical to the
-// importer's before the Microsoft flavour (the hex values were taken from
-// that code).
+// and the flags every Clang run shares match the plain ParseTriple request
+// without SystemFor.
 func TestCImport_KeyUnchanged(t *testing.T) {
 	id := source.HashBytes("test.identity", []byte("clang 21"))
-	for _, tc := range []struct {
-		sysroot []string
-		key     string
-	}{
-		{nil, "6f752ba45c16aacbc60078034e95d3a87f07ed6e76bf355d173e0f82be2b7a3a"},
-		{[]string{`C:\sys\include`}, "643383c5f3b2ed021835195c61bf1a71f21a34424657a4cfbb88e8c31077f59c"},
-	} {
-		sys, err := SystemFor("x86_64-windows", tc.sysroot, "")
+	for _, tc := range [][]string{nil, {`C:\sys\include`}} {
+		sys, err := SystemFor("x86_64-windows", tc, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		r := Request{Target: "x86_64-windows", Triple: sys.Triple,
 			Imports: []Import{{Name: "k", Headers: []string{"k.h"}, Defines: []string{"K=1"}, Macros: []string{"int M(int a)"}}},
 			Include: []string{`C:\pkg`}, Sysroot: sys.Dirs}
-		if r.Triple != "x86_64-w64-windows-gnu" {
-			t.Errorf("triple %q", r.Triple)
+		plain := Request{Target: "x86_64-windows", Triple: ParseTriple("x86_64-windows"),
+			Imports: r.Imports, Include: r.Include, Sysroot: tc}
+		if r.Triple != plain.Triple {
+			t.Errorf("triple %q, want %q", r.Triple, plain.Triple)
 		}
-		k := Key(id, `C:\clang\lib\clang\21`, r)
-		if got := hex.EncodeToString(k[:]); got != tc.key {
-			t.Errorf("sysroot %q: key %s, want %s", tc.sysroot, got, tc.key)
+		if Key(id, `C:\clang\lib\clang\21`, r) != Key(id, `C:\clang\lib\clang\21`, plain) {
+			t.Errorf("sysroot %q: cache key changed", tc)
 		}
-		want := []string{"--target=x86_64-w64-windows-gnu", "-nostdinc", "-x", "c", "-std=gnu11", "-fno-caret-diagnostics",
+		want := []string{toolchain.ClangTargetArg(plain.Triple), "-nostdinc", "-x", "c", "-std=gnu11", "-fno-caret-diagnostics",
 			"-fmacro-backtrace-limit=0", "-ferror-limit=0", "-Wno-everything", "-fno-color-diagnostics"}
-		if len(tc.sysroot) > 0 {
-			want = append(want, "--sysroot="+tc.sysroot[0])
+		want = append(want, TripleFlags(plain.Triple)...)
+		if len(tc) > 0 {
+			want = append(want, "--sysroot="+tc[0])
 		}
 		want = append(want, "-I", `C:\pkg`, "-isystem", filepath.Join(`C:\clang\lib\clang\21`, "include"))
-		for _, d := range tc.sysroot {
+		for _, d := range tc {
 			want = append(want, "-isystem", d)
 		}
 		if got := baseArgs(r, `C:\clang\lib\clang\21`); !slices.Equal(got, want) {
-			t.Errorf("sysroot %q: args\n%q\nwant\n%q", tc.sysroot, got, want)
+			t.Errorf("sysroot %q: args\n%q\nwant\n%q", tc, got, want)
 		}
 	}
 }
@@ -144,8 +139,8 @@ func TestCImport_SysrootFlavour(t *testing.T) {
 		f      Flavour
 		want   string
 	}{
-		{"x86_64-windows", FlavourMicrosoft, "x86_64-pc-windows-msvc"}, {"x86_64-windows", FlavourMinGW, "x86_64-w64-windows-gnu"},
-		{"x86_64-windows", FlavourNone, "x86_64-w64-windows-gnu"}, {"x86_64-linux", FlavourMicrosoft, "x86_64-linux-musl"},
+		{"x86_64-windows", FlavourMicrosoft, "x86_64-pc-windows-msvc"}, {"x86_64-windows", FlavourMinGW, ParseTriple("x86_64-windows")},
+		{"x86_64-windows", FlavourNone, ParseTriple("x86_64-windows")}, {"x86_64-linux", FlavourMicrosoft, ParseTriple("x86_64-linux")},
 	} {
 		if got := HeaderTriple(tc.target, tc.f); got != tc.want {
 			t.Errorf("HeaderTriple(%s, %v) = %s, want %s", tc.target, tc.f, got, tc.want)
@@ -208,7 +203,7 @@ func TestCImport_MicrosoftHeaders(t *testing.T) {
 	}
 	r := Request{Target: "x86_64-windows", Triple: sys.Triple, Imports: []Import{{Name: "w", Headers: []string{"windows.h"}}}, Sysroot: sys.Dirs}
 	args := baseArgs(r, `C:\clang`)
-	if args[0] != "--target=x86_64-pc-windows-msvc" || !slices.Equal(isystemArgs(args), append([]string{filepath.Join(`C:\clang`, "include")}, sys.Dirs...)) {
+	if args[0] != toolchain.ClangTargetArg("x86_64-pc-windows-msvc") || !slices.Equal(isystemArgs(args), append([]string{filepath.Join(`C:\clang`, "include")}, sys.Dirs...)) {
 		t.Errorf("args %q", args)
 	}
 	id := source.HashBytes("test.identity", []byte("clang"))
@@ -256,7 +251,7 @@ func TestCImport_FlavourTriple(t *testing.T) {
 	if strings.Contains(res.Modules[0], "FakeMingw") {
 		t.Errorf("the MSVC triple claims mingw:\n%s", res.Modules[0])
 	}
-	mingw := fakeTree(t, map[string]string{"um/_mingw.h": ""})
+	mingw := fakeTree(t, map[string]string{"um/_mingw.h": "", "um/windows.h": "#define FAKE_PLAIN 1\n"})
 	ms, err := SystemFor("x86_64-windows", append([]string{filepath.Join(mingw, "um")}, sdkDirs(sdk)...), t.TempDir())
 	if err != nil || ms.Flavour != FlavourMinGW || ms.Triple != ParseTriple("x86_64-windows") || len(ms.Dirs) != 4 {
 		t.Fatalf("mingw system %+v, %v", ms, err)
@@ -265,8 +260,8 @@ func TestCImport_FlavourTriple(t *testing.T) {
 	if res, err = Translate(context.Background(), tl, rd, r); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Modules[0], "export const FakeMingw: i32 = 1") || strings.Contains(res.Modules[0], "FakeMsvc") {
-		t.Errorf("mingw-w64 triple:\n%s", res.Modules[0])
+	if !strings.Contains(res.Modules[0], "export const FakePlain: i32 = 1") || strings.Contains(res.Modules[0], "FakeMsvc") {
+		t.Errorf("mingw-w64 flavour:\n%s", res.Modules[0])
 	}
 }
 

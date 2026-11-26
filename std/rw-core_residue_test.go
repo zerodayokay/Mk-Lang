@@ -196,7 +196,7 @@ func (r residueRules) textResidue(s string) []string {
 	}
 	for _, id := range residueIDShape.FindAllString(s, -1) {
 		first := id[:strings.IndexByte(id, '-')]
-		if !residueExternal[first] && !residueFamilies[first] {
+		if id != "AVX-512" && !residueExternal[first] && !residueFamilies[first] {
 			out = append(out, "decision, requirement or review id "+id)
 		}
 	}
@@ -440,6 +440,8 @@ func TestStdNoProcessResidue_Rules(t *testing.T) {
 		{"// a TLS session resumes", false},
 		{"// the relay outlives the thread's loop", false},
 		{"// UTF-8 and SHA-256 over P-256", false},
+		{"// the AVX-512 body uses 64-byte registers", false},
+		{"// AVX-12 is a review note", true},
 		{"// the row in tests/bench-lanes/std-net3/ measures it", false},
 		{"// RT-F9-HeapClassCount and TERM-8 check it", false},
 		{"// RT8-Call-CopySelf checks it", false},

@@ -1,5 +1,6 @@
 // Why: std.net must interoperate with a real, independent network stack.
-// What: TestStdNet_GoPeer, Go's net as the peer on loopback, TCP and Unix.
+// What: TestStdNet_GoPeer, Go's net as the peer on loopback, TCP and Unix,
+// and unixLongTemp, a directory past sun_path for the Unix fixtures' tests.
 // How: Mk dials and is dialled by Go; Go checks addresses, Shutdown(Write) and
 // options, including an IPv4-mapped peer on [::] that Mk reports as IPv4.
 
@@ -8,12 +9,15 @@ package std
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -48,6 +52,41 @@ Say[A: Fields[Format] + Plain](sys: &System, const f: str, args: A): WriteError!
     try w.Flush()
 }
 
+ReadExact(io: Io, c: &net.Conn, buf: mut []u8): net.Error!bool {
+    var n := 0
+    for n < buf.Len() {
+        k := try c.Read(io, mut buf[n..])
+        if k == 0 {
+            return false
+        }
+        n += k
+    }
+    return true
+}
+
+ReadFrame(io: Io, c: &net.Conn, buf: mut []u8): net.Error!int {
+    var hdr: [1]u8 = [0]
+    if !try ReadExact(io, c, mut hdr[..]) {
+        fail Closed
+    }
+    n := int(hdr[0])
+    if n > buf.Len() || !try ReadExact(io, c, mut buf[0..n]) {
+        fail Closed
+    }
+    return n
+}
+
+WriteFrame(io: Io, c: &net.Conn, data: []u8): net.Error!void {
+    if data.Len() > 255 {
+        Panic("unix frame too large")
+    }
+    var hdr: [1]u8 = [Trunc[u8](data.Len())]
+    try c.WriteAll(io, hdr[..])
+    if data.Len() > 0 {
+        try c.WriteAll(io, data)
+    }
+}
+
 Dial(sys: &System, mode: str, addr: str): net.Error|WriteError!void {
     io := sys.io
     s := if mode == "dial" { try net.Dial(io, addr) } else { try net.DialUnix(io, addr) }
@@ -69,16 +108,25 @@ Dial(sys: &System, mode: str, addr: str): net.Error|WriteError!void {
     } else {
         try Say(sys, "unix\n", ())
     }
-    try c.WriteAll(io, "ping".AsBytes())
-    try c.Shutdown(io, net.Shutdown.Write)
     var buf: [64]u8 = [0; 64]
     var n := 0
-    for {
-        k := try c.Read(io, mut buf[n..])
-        if k == 0 {
-            break
+    if mode == "dial" {
+        try c.WriteAll(io, "ping".AsBytes())
+        try c.Shutdown(io, net.Shutdown.Write)
+        for {
+            k := try c.Read(io, mut buf[n..])
+            if k == 0 {
+                break
+            }
+            n += k
         }
-        n += k
+    } else {
+        scope r := io.Scope() {
+            r.CancelAfter(time.Seconds(10))
+            try WriteFrame(io, &c, "ping".AsBytes())
+            try c.Shutdown(io, net.Shutdown.Write)
+            n = try ReadFrame(io, &c, mut buf[..])
+        }
     }
     try sys.Print("got {t}\n", (t: str.From(buf[0..n]) else { "?" }))
     try c.Close(io)
@@ -112,26 +160,42 @@ Serve(sys: &System, mode: str, path: str): net.Error|WriteError!void {
     }
     var buf: [64]u8 = [0; 64]
     var n := 0
-    for {
-        k := try c.Read(io, mut buf[n..])
-        if k == 0 {
-            break
+    if tcp {
+        for {
+            k := try c.Read(io, mut buf[n..])
+            if k == 0 {
+                break
+            }
+            n += k
         }
-        n += k
+        try c.WriteAll(io, "pong:".AsBytes())
+        try c.WriteAll(io, buf[0..n])
+    } else {
+        scope r := io.Scope() {
+            r.CancelAfter(time.Seconds(10))
+            n = try ReadFrame(io, &c, mut buf[..])
+            var out: [70]u8 = [0; 70]
+            pre := "pong:".AsBytes()
+            (mut out[0..pre.Len()]).CopyFrom(pre)
+            (mut out[pre.Len()..pre.Len() + n]).CopyFrom(buf[0..n])
+            try WriteFrame(io, &c, out[0..pre.Len() + n])
+        }
     }
-    try c.WriteAll(io, "pong:".AsBytes())
-    try c.WriteAll(io, buf[0..n])
     try c.Close(io)
 }
 `
 
-// net3Start starts exe with args and returns a line reader of its standard
-// output, and a wait function that fails t unless it exited 0.
-func net3Start(t *testing.T, exe string, args ...string) (*bufio.Reader, func()) {
+// net3Start returns a line reader and an exit check. Cleanup reaps the child
+// even when an assertion fails before the normal wait.
+func net3Start(t *testing.T, exe, dir string, args ...string) (line func() string, wait func()) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, exe, args...)
-	cmd.Dir = filepath.Dir(exe)
+	cmd.Dir = dir
+	if dir == "" {
+		cmd.Dir = filepath.Dir(exe)
+	}
 	var errb strings.Builder
 	cmd.Stderr = &errb
 	out, err := cmd.StdoutPipe()
@@ -141,25 +205,41 @@ func net3Start(t *testing.T, exe string, args ...string) (*bufio.Reader, func())
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	var waited bool
+	reap := func() error {
+		waited = true
+		defer cancel()
+		return cmd.Wait()
+	}
+	t.Cleanup(func() {
+		if !waited {
+			cancel()
+			_ = reap()
+		}
+	})
 	r := bufio.NewReader(out)
-	return r, func() {
+	line = func() string {
+		t.Helper()
+		s, err := r.ReadString('\n')
+		if err != nil {
+			status := reap()
+			address := ""
+			if len(args) == 2 && strings.HasSuffix(args[0], "unix") {
+				address = fmt.Sprintf(" (socket address %d bytes)", len(args[1]))
+			}
+			t.Fatalf("%s %q in %q%s: read %q: %v; exit: %v\n%s",
+				filepath.Base(exe), args, cmd.Dir, address, s, err, status, errb.String())
+		}
+		return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r")
+	}
+	wait = func() {
 		t.Helper()
 		_, _ = io.Copy(io.Discard, r)
-		err := cmd.Wait()
-		cancel()
-		if err != nil {
+		if err := reap(); err != nil {
 			t.Fatalf("%s %v: %v\n%s", filepath.Base(exe), args, err, errb.String())
 		}
 	}
-}
-
-func net3Line(t *testing.T, r *bufio.Reader) string {
-	t.Helper()
-	s, err := r.ReadString('\n')
-	if err != nil {
-		t.Fatalf("reading the Mk side's output: %v (got %q)", err, s)
-	}
-	return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r")
+	return line, wait
 }
 
 // net3Serve answers one connection on l as the Mk listener does; it
@@ -184,6 +264,74 @@ func net3Serve(t *testing.T, l net.Listener, got chan<- string) {
 	// The Mk side half-closed first, so its socket, not this one, waits
 	// in TIME_WAIT: one entry per run.
 	got <- string(b) + "|" + c.RemoteAddr().String() + "|" + c.LocalAddr().String()
+}
+
+// net3ReadFrame reads a 1-byte length-prefixed frame from c.
+func net3ReadFrame(c net.Conn) ([]byte, error) {
+	var hdr [1]byte
+	if _, err := io.ReadFull(c, hdr[:]); err != nil {
+		return nil, err
+	}
+	b := make([]byte, int(hdr[0]))
+	if _, err := io.ReadFull(c, b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// net3WriteFrame writes data as a 1-byte length-prefixed frame to c.
+func net3WriteFrame(c net.Conn, data []byte) error {
+	if len(data) > 255 {
+		return fmt.Errorf("frame length %d exceeds 255", len(data))
+	}
+	buf := append([]byte{byte(len(data))}, data...)
+	_, err := c.Write(buf)
+	return err
+}
+
+// net3ServeUnix answers one framed Unix-domain connection on l so neither side
+// waits on a Windows overlapped AF_UNIX EOF that the OS can drop.
+func net3ServeUnix(t *testing.T, l net.Listener, got chan<- string) {
+	c, err := l.Accept()
+	if err != nil {
+		got <- "accept: " + err.Error()
+		return
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+	b, err := net3ReadFrame(c)
+	if err != nil {
+		got <- "read: " + err.Error()
+		return
+	}
+	if err := net3WriteFrame(c, append([]byte("pong:"), b...)); err != nil {
+		got <- "write: " + err.Error()
+		return
+	}
+	got <- string(b) + "|" + c.RemoteAddr().String() + "|" + c.LocalAddr().String()
+}
+
+// net3ClientUnix dials addr over Unix with a length-framed exchange.
+func net3ClientUnix(t *testing.T, network, addr string) (string, net.Conn) {
+	t.Helper()
+	c, err := net.DialTimeout(network, addr, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+	if err := net3WriteFrame(c, []byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	if uc, ok := c.(*net.UnixConn); ok {
+		if err := uc.CloseWrite(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := net3ReadFrame(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b), c
 }
 
 // net3Client dials addr over network as a Go client: it sends "ping",
@@ -228,10 +376,10 @@ func TestStdNet_GoPeer(t *testing.T) {
 		defer l.Close()
 		got := make(chan string, 1)
 		go net3Serve(t, l, got)
-		r, wait := net3Start(t, exe, "dial", l.Addr().String())
-		line := net3Line(t, r)
+		readLine, wait := net3Start(t, exe, "", "dial", l.Addr().String())
+		line := readLine()
 		res := <-got
-		final := net3Line(t, r)
+		final := readLine()
 		wait()
 		parts := strings.Split(res, "|")
 		if len(parts) != 3 || parts[0] != "ping" {
@@ -247,10 +395,10 @@ func TestStdNet_GoPeer(t *testing.T) {
 	})
 
 	t.Run("go dials mk", func(t *testing.T) {
-		r, wait := net3Start(t, exe, "listen")
-		port := strings.TrimPrefix(net3Line(t, r), "port ")
+		readLine, wait := net3Start(t, exe, "", "listen")
+		port := strings.TrimPrefix(readLine(), "port ")
 		reply, c := net3Client(t, "tcp", "127.0.0.1:"+port)
-		line := net3Line(t, r)
+		line := readLine()
 		local, remote := c.LocalAddr().String(), c.RemoteAddr().String()
 		c.Close()
 		wait()
@@ -277,10 +425,10 @@ func TestStdNet_GoPeer(t *testing.T) {
 				}
 				probe.Close()
 			}
-			r, wait := net3Start(t, exe, "listen6")
-			port := strings.TrimPrefix(net3Line(t, r), "port ")
+			readLine, wait := net3Start(t, exe, "", "listen6")
+			port := strings.TrimPrefix(readLine(), "port ")
 			reply, conn := net3Client(t, c.network, c.host+":"+port)
-			line := net3Line(t, r)
+			line := readLine()
 			local, remote := conn.LocalAddr().String(), conn.RemoteAddr().String()
 			conn.Close()
 			wait()
@@ -296,47 +444,107 @@ func TestStdNet_GoPeer(t *testing.T) {
 		})
 	}
 
-	sock := func(t *testing.T) string {
-		dir, err := os.MkdirTemp("", "mknet")
-		if err != nil {
-			t.Fatal(err)
+	// Each direction shares a private current directory with the child.
+	// Windows counts the bytes of the relative address, so it fits even in
+	// a directory past sun_path, as under a long TEMP, which the second
+	// round also gives TEMP and TMP.
+	const path = "sock"
+	for _, under := range []string{"", " under a long TEMP"} {
+		scratch := func(t *testing.T) string {
+			if under == "" {
+				return t.TempDir()
+			}
+			dir := unixLongTemp(t)
+			t.Setenv("TEMP", dir)
+			t.Setenv("TMP", dir)
+			return dir
 		}
-		t.Cleanup(func() { os.RemoveAll(dir) })
-		return filepath.Join(dir, "s")
+		t.Run("mk dials go over unix"+under, func(t *testing.T) {
+			dir := scratch(t)
+			t.Chdir(dir)
+			l, err := net.Listen("unix", path)
+			if errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.Errno(10047)) {
+				t.Skipf("no Unix sockets here: %v", err)
+			}
+			if err != nil {
+				t.Fatalf("listen unix %q in %q: %v", path, dir, err)
+			}
+			defer l.Close()
+			got := make(chan string, 1)
+			go net3ServeUnix(t, l, got)
+			readLine, wait := net3Start(t, exe, dir, "dialunix", path)
+			if line := readLine(); line != "unix" {
+				t.Fatalf("Mk said %q", line)
+			}
+			res := <-got
+			final := readLine()
+			wait()
+			if !strings.HasPrefix(res, "ping|") || final != "got pong:ping" {
+				t.Errorf("Go saw %q, Mk read %q", res, final)
+			}
+		})
+
+		t.Run("go dials mk over unix"+under, func(t *testing.T) {
+			dir := scratch(t)
+			t.Chdir(dir)
+			readLine, wait := net3Start(t, exe, dir, "listenunix", path)
+			if line := readLine(); line != "ready" {
+				t.Fatalf("Mk said %q", line)
+			}
+			reply, c := net3ClientUnix(t, "unix", path)
+			c.Close()
+			wait()
+			if reply != "pong:ping" {
+				t.Errorf("Go read %q", reply)
+			}
+		})
 	}
 
-	t.Run("mk dials go over unix", func(t *testing.T) {
-		path := sock(t)
+	t.Run("readframe fails on premature unix eof", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Chdir(dir)
 		l, err := net.Listen("unix", path)
-		if err != nil {
+		if errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.Errno(10047)) {
 			t.Skipf("no Unix sockets here: %v", err)
 		}
+		if err != nil {
+			t.Fatalf("listen unix %q in %q: %v", path, dir, err)
+		}
 		defer l.Close()
-		got := make(chan string, 1)
-		go net3Serve(t, l, got)
-		r, wait := net3Start(t, exe, "dialunix", path)
-		if line := net3Line(t, r); line != "unix" {
-			t.Fatalf("Mk said %q", line)
+		done := make(chan error, 1)
+		go func() {
+			c, err := l.Accept()
+			if err == nil {
+				_, _ = net3ReadFrame(c)
+				_ = c.Close()
+			}
+			done <- err
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, exe, "dialunix", path)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if aerr := <-done; aerr != nil {
+			t.Fatalf("accept: %v", aerr)
 		}
-		res := <-got
-		final := net3Line(t, r)
-		wait()
-		if !strings.HasPrefix(res, "ping|") || final != "got pong:ping" {
-			t.Errorf("Go saw %q, Mk read %q", res, final)
+		if err == nil || strings.Contains(string(out), "got ") {
+			t.Fatalf("Mk succeeded or printed empty frame on premature EOF: err=%v out=%q", err, out)
 		}
 	})
+}
 
-	t.Run("go dials mk over unix", func(t *testing.T) {
-		path := sock(t)
-		r, wait := net3Start(t, exe, "listenunix", path)
-		if line := net3Line(t, r); line != "ready" {
-			t.Fatalf("Mk said %q", line)
+// unixLongTemp is a new directory under t.TempDir() whose path has at least
+// 112 bytes, past sun_path's 108: no socket named by a path inside it can
+// bind, so a fixture must name its socket relative to it.
+func unixLongTemp(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if n := 112 - len(dir) - 1; n > 0 {
+		dir = filepath.Join(dir, strings.Repeat("u", n))
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
 		}
-		reply, c := net3Client(t, "unix", path)
-		c.Close()
-		wait()
-		if reply != "pong:ping" {
-			t.Errorf("Go read %q", reply)
-		}
-	})
+	}
+	return dir
 }

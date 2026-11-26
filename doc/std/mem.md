@@ -11,7 +11,7 @@
 - `Null` refuses everything.
 - `Custom` is an allocator over your own functions.
 - `Pool` stores values under generational handles.
-- `OffsetOf`, `Prefetch`, `Zeroed`, `AsBytes` and `SliceAsBytes` help with layout and byte views.
+- `OffsetOf`, `Prefetch` and `Zeroed` help with layout.
 
 Reach for it to put a hard budget on memory, to keep small containers off the heap, or to check in a test that code frees what it allocates, allocates nothing, or survives an allocation that fails. Its pool lets values name each other without references.
 
@@ -49,7 +49,6 @@ import std.mem
 | A field's byte offset | `OffsetOf[T]("field")` |
 | A prefetch hint | `Prefetch(p, write)` |
 | A value of zero bytes, such as a C struct of many fields | `Zeroed[T]()` |
-| A read-only byte view of an unpadded plain value or slice | `AsBytes(&x)`, `SliceAsBytes(xs)` |
 
 Each allocator gives an `&Alloc` (`Custom` an `Alloc`, which you pass as `&`), which a heap container (`HeapList`, `HeapMap`, `Box`, `coll.HeapDeque`, ...) or `Arena.NewIn` takes. `Counting`, `Limit`, `Failing` and `Fallback` take an `&Alloc` themselves, so they stack in any order.
 
@@ -107,7 +106,7 @@ A `Pool[T]` keeps its values in slots in its arena, each slot with a generation,
 
 - A handle whose value was freed gets `none` from `Get` and `GetMut` and `false` from `Free`: never a panic, never another value. A slot whose generation is spent, after 2^32 - 1 reuses, is retired and never reused, so a stale handle never matches again.
 - A handle from another pool is refused the same way unless its slot and generation match a live value there. A handle has no room for its pool's identity, so each pool starts its generations at its own base. Between two pools a false match takes about 2^31 reuses of one slot; among the N pools a process has made, the nearest bases are about 2^32 / N apart. A false match is never memory-unsafe, since every value of a pool is a `T`.
-- `Free` drops the value, as `Sweep` does, so each needs a `T` that is not linear (E0701 at the call). Inside a generic function, the bounds must say `T` is not linear, as `T: Plain` does.
+- The pool lives in its arena, which frees its values unconsumed, so `Add` refuses a linear `T`, and `Free` drops the value, as `Sweep` does: each needs a `T` that is not linear (E0701 at the call). Inside a generic function, the bounds must say `T` is not linear, as `T: Plain` does.
 - `Iter` visits the live values in slot order. `Sweep` frees every value whose `keep` returns false and returns how many it freed: the sweep of a mark-and-sweep collector.
 - `GetPair` gives two values for writing, and returns `none` when the two handles are equal or stale, never a panic.
 
@@ -154,7 +153,7 @@ $ mk run layout.mk
 size at 4, next at 8, 16 bytes
 ```
 
-`Zeroed[T]()` is a `T` whose bytes are all zero: every integer and float 0, every `bool` false, every raw pointer null, every optional `none`. It fills a record of many fields without naming each one, as C's `= {0}` does, and is the way to start a C import's struct ([C imports](../reference.md#c-imports)). `T` must be [zero-valid](../reference.md#zero-valid-types), or the call is E0701, so it is safe: a `str`, slice, reference, `fn` value or struct with an `invariant` cannot be zero. `T` is the result, so it is not an error union (E0701): zero the value type instead. O(size of `T`); allocates nothing; also at compile time.
+`Zeroed[T]()` is a `T` whose bytes are all zero: every integer and float 0, every `bool` false, every raw pointer null, every optional `none`, every `E!T` field or element `ok` of its zero. It fills a record of many fields without naming each one, as C's `= {0}` does, and is the way to start a C import's struct ([C imports](../reference.md#c-imports)). `T` must be [zero-valid](../reference.md#zero-valid-types), or the call is E0701, so it is safe: a `str`, slice, reference, `fn` value or struct with an `invariant` cannot be zero. `T` itself is not an error union (E0701): the zero of an `E!T` is always `ok` of the value type's zero, so zero the value type instead. O(size of `T`); allocates nothing; also at compile time.
 
 ```mk
 // verdict: ok
@@ -183,50 +182,26 @@ $ mk run zeroed.mk
 640 0 false
 ```
 
-`AsBytes(p)` and `SliceAsBytes(xs)` return a read-only `[]u8` over `p` or `xs` without copying or allocating. `T` must be `bool`, `char`, a number, `void`, an array of such types, or an unpadded plain struct with no references, raw pointers or interior mutability; padded structs and reference-holding types are E0701.
+An atomic word or a `Cell` of a zero-valid `T` is zero-valid too, and so is a struct or array unique only through them: zero bytes make fresh words, never copies. That is how a global table of atomics starts, which `[e; n]` cannot build, since it copies `e` and an atomic is not Plain (E0408).
 
 ```mk
 // verdict: ok
+import std.atomic
 import std.mem
 
-struct Vertex {
-    x: f32
-    y: f32
-}
+var Claims: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()
 
 export Main(sys: &System): WriteError!void {
-    vs := [Vertex(x: 1.0, y: 2.0), Vertex(x: 3.0, y: 4.0)]
-    one := mem.AsBytes(&vs[0])
-    all := mem.SliceAsBytes(vs[..])
-    try sys.Print("{a} {b}\n", (a: one.Len(), b: all.Len()))
+    Claims[7].Store(42, atomic.Release)
+    a := Claims[7].Load(atomic.Acquire)
+    b := Claims[8].Load(atomic.Acquire)
+    try sys.Print("{a} {b}\n", (a, b))
 }
 ```
 
-```mk
-// verdict: reject E0701
-import std.mem
-
-struct Padded {
-    tag: u8
-    val: u32
-}
-
-F(p: &Padded): []u8 from p {
-    return mem.AsBytes(p) // <- E0701
-}
-```
-
-```mk
-// verdict: reject E0701
-import std.mem
-
-struct HoldsRef {
-    s: str
-}
-
-F(xs: []HoldsRef): []u8 from xs {
-    return mem.SliceAsBytes(xs) // <- E0701
-}
+```text
+$ mk run claims.mk
+42 0
 ```
 
 ## Examples
@@ -1020,7 +995,9 @@ Stores x and returns its handle: in the slot freed last when there is
 one, else in a new slot at the end. Fails with OutOfMemory when the
 arena cannot grow the pool or the pool holds 2^32 - 1 slots; then
 nothing changed and the caller keeps x. Amortized O(1); a growth
-doubles the buffer in the arena, which keeps the old one.
+doubles the buffer in the arena, which keeps the old one. T may not be
+linear (E0701 at the call; in a generic function the bounds must say so,
+as T: Plain does): the arena frees the pool's values unconsumed.
 
 ### `Pool.Free`
 
@@ -1158,7 +1135,8 @@ export Zeroed[T](): T
 A T whose bytes are all zero: every integer and float 0, every bool
 false, every raw pointer null, every optional none. T must be zero-valid
 and not an error union (E0701 otherwise): a C import's struct of any
-size, or an array or struct of such parts. O(size of T); allocates
-nothing.
+size, an atomic word or Cell of a zero-valid T, or an array or struct
+of such parts, so it starts a global table of atomics. O(size of T);
+allocates nothing.
 
 <!-- api:end -->

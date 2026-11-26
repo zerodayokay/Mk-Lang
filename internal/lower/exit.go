@@ -204,9 +204,11 @@ func (bl *builder) narrowBack(v mir.Operand, want types.TypeID, at source.Span) 
 }
 
 // narrowedType is t with the T of every enclosing if T is X branch
-// replaced by its X, innermost first.
+// replaced by its X, outermost first: an outer X may name an inner
+// branch's parameter (`if T is U { if U is u32 {`), an inner X is already
+// read under the outer narrowing.
 func (bl *builder) narrowedType(t types.TypeID) types.TypeID {
-	for i := len(bl.scopes) - 1; i >= 0; i-- {
+	for i := 0; i < len(bl.scopes); i++ {
 		if sc := bl.scopes[i]; sc.kind == scopeTypeTestYes {
 			t = bl.substParam(t, sc.ttParam, sc.ttType)
 		}

@@ -26,8 +26,9 @@ export Prefetch[T](p: &T, write: bool)
 /// A T whose bytes are all zero: every integer and float 0, every bool
 /// false, every raw pointer null, every optional none. T must be zero-valid
 /// and not an error union (E0701 otherwise): a C import's struct of any
-/// size, or an array or struct of such parts. O(size of T); allocates
-/// nothing.
+/// size, an atomic word or Cell of a zero-valid T, or an array or struct
+/// of such parts, so it starts a global table of atomics. O(size of T);
+/// allocates nothing.
 export Zeroed[T](): T
 /// A read-only byte view of p. T must be bool, char, a number, void, an
 /// array of such types, or an unpadded plain struct (or record) with no

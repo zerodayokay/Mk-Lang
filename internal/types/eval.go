@@ -202,6 +202,10 @@ type EvalError struct {
 	Kind EvalErrorKind
 	// Steps is the fuel used when it ran out.
 	Steps uint64
+	// Fuel is, for EvalFuel, the fuel that ran out: the stated or default
+	// one, or more for a const's or global's large value (eval's
+	// startConst); 0 when unknown, and the renderer computes it.
+	Fuel uint64
 	// Panic and Message describe an EvalPanic.
 	Panic   PanicCode
 	Message string

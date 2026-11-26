@@ -100,7 +100,11 @@ func TestSTDSIMD_IntegerLanesE0701(t *testing.T) {
 // sdConstProgram computes each routine at compile time (const) and at run
 // time over the same data: the evaluator runs the 16-lane path with Cpu()
 // at the baseline, the native build the dispatched one (std code that
-// uses SIMD may run at compile time, with the same results).
+// uses SIMD may run at compile time, with the same results). Cut counts
+// ValidUtf8's and ValidWtf8's wrong answers on a scalar cut short where the
+// lookup's unfinished-sequence check decides: at the end of a 64-byte block
+// before an ASCII one, in a tail vector, in the overlapping last window and
+// at the end of the text, and on the completed scalar.
 const sdConstProgram = `import std.simd
 
 const Text: str = "the quick brown fox jumps over the lazy dog, \u{e9}t\u{e9} \u{20ac}100 and more text past sixty-four bytes"
@@ -119,23 +123,53 @@ const P1: int = simd.Compare(Text.AsBytes()[0..70], Text.AsBytes()[1..71])
 const D1: f32 = simd.Dot(Xs[..], Xs[..])
 const S1: f32 = simd.Sum(Xs[..])
 
+Cut(): int {
+    scalars: [3][4]u8 = [[0xC3, 0xA9, 0, 0], [0xE2, 0x82, 0xAC, 0], [0xF0, 0x9F, 0x98, 0x80]]
+    var bad := 0
+    for n in [20, 33, 64, 70, 80, 128, 200, 256, 300] {
+        for j in 0..3 {
+            for prefix in 1..j + 2 {
+                var buf: [556]u8 = [0x61; 556]
+                for k in 0..prefix {
+                    buf[n - prefix + k] = scalars[j][k]
+                }
+                for end in [n, n + 256] {
+                    if simd.ValidUtf8(buf[..end]) || simd.ValidWtf8(buf[..end]) {
+                        bad += 1
+                    }
+                }
+                for k in prefix..j + 2 {
+                    buf[n - prefix + k] = scalars[j][k]
+                }
+                s := buf[..n - prefix + j + 2]
+                if !simd.ValidUtf8(s) || !simd.ValidWtf8(s) {
+                    bad += 1
+                }
+            }
+        }
+    }
+    return bad
+}
+
+const U1: int = Cut()
+
 export Main(sys: &System): OutOfMemory|WriteError!void {
     var out := sys.Stdout()
     b := Text.AsBytes()
-    try Print(mut out, "{a} {b} {c} {d} {e} {f} {g} {h} {i} {j}\n", (a: V1, b: V2, c: I1, d: I2, e: I3, f: C1, g: E1, h: P1, i: D1, j: S1))
+    try Print(mut out, "{a} {b} {c} {d} {e} {f} {g} {h} {i} {j} {k}\n", (a: V1, b: V2, c: I1, d: I2, e: I3, f: C1, g: E1, h: P1, i: D1, j: S1, k: U1))
     bad := Bad
     xs := Xs
     set := Set
     i1 := simd.IndexByte(b, 0x6D) else { -1 }
     i2 := simd.IndexAny(b, set[..]) else { -1 }
     i3 := simd.IndexAny(b, set[0..2]) else { -1 }
-    try Print(mut out, "{a} {b} {c} {d} {e} {f} {g} {h} {i} {j}\n", (a: simd.ValidUtf8(b), b: simd.ValidUtf8(bad[..]), c: i1, d: i2, e: i3, f: simd.Count(b, 0x20), g: simd.Equal(b, b), h: simd.Compare(b[0..70], b[1..71]), i: simd.Dot(xs[..], xs[..]), j: simd.Sum(xs[..])))
+    try Print(mut out, "{a} {b} {c} {d} {e} {f} {g} {h} {i} {j} {k}\n", (a: simd.ValidUtf8(b), b: simd.ValidUtf8(bad[..]), c: i1, d: i2, e: i3, f: simd.Count(b, 0x20), g: simd.Equal(b, b), h: simd.Compare(b[0..70], b[1..71]), i: simd.Dot(xs[..], xs[..]), j: simd.Sum(xs[..]), k: Cut()))
 }
 `
 
 func TestSTDSIMD_CompileTime(t *testing.T) {
 	t.Parallel()
-	const line = "true false 22 37 37 16 true 1 2447.5781 180.375\n"
+	const line = "true false 22 37 37 16 true 1 2447.5781 180.375 0\n"
 	for _, flags := range c2Flags {
 		t.Run(c2FlagName(flags), func(t *testing.T) {
 			t.Parallel()

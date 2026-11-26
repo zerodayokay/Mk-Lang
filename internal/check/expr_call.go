@@ -1002,6 +1002,9 @@ func (u *unit) sliceMethod(fe *ast.FieldExpr, v types.TypeID, n int, idx *ast.In
 	}
 	if (vt.Kind == types.KSlice || vt.Kind == types.KMutSlice) && n == 0 {
 		cs.recvPassed = v
+		if d.Sig.Receiver == types.ByMut {
+			u.constMutation(fe.X, "borrowed mut")
+		}
 	} else {
 		cs.recvPassed = u.receiver(fe.X, d.Sig.Receiver, v, n)
 	}
@@ -1020,6 +1023,7 @@ func (u *unit) receiver(x ast.Expr, mode types.Receiver, v types.TypeID, n int) 
 	case types.ByShared:
 		adj.Kind, passed = AdjRefShared, u.tab.Ref(v)
 	case types.ByMut:
+		u.constMutation(x, "borrowed mut")
 		adj.Kind, passed = AdjRefMut, u.tab.Mut(v)
 	default:
 		passed = v

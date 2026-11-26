@@ -224,6 +224,24 @@ func proc3Blocks(t *testing.T, h ioHost) {
 					}
 				})
 			}
+			// On Windows the refusals block names its Unix-domain listener
+			// relative to the working directory, so a TEMP past sun_path
+			// (unixLongTemp), which it inherits, cannot reach the address.
+			if h.linux || runtime.GOOS != "windows" {
+				return
+			}
+			for _, i := range idx {
+				if !strings.HasPrefix(blocks[i].name, "Command.handles: Spawn refuses") {
+					continue
+				}
+				t.Run(blocks[i].name+"/long TEMP", func(t *testing.T) {
+					long := unixLongTemp(t)
+					r := runNativeEnv(t, exe, ioCall{env: []string{"MK_CARRIERS=1", "TEMP=" + long, "TMP=" + long}, watch: 120, args: []string{fmt.Sprint(i)}})
+					if r.code != 0 {
+						t.Fatalf("exit %d\nstdout: %s\nstderr: %s", r.code, stdioTail(r.stdout), stdioTail(r.stderr))
+					}
+				})
+			}
 		})
 	}
 }

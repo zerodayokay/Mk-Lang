@@ -137,7 +137,7 @@ func (s *Session) benchRun(out *TestCase, argv, env []string, i int, opt TestOpt
 	for {
 		spec := fmt.Sprintf("%d %d", res.N, BenchBatch)
 		var tc TestCase
-		runChild(&tc, argv, childEnv(env, via, TestingBenchEnv+"="+spec), i, s.cfg.TestTimeout)
+		runChild(&tc, argv, childEnv(env, via, TestingBenchEnv+"="+spec), i, "", s.cfg.TestTimeout)
 		if tc.Result != "pass" {
 			*out = TestCase{Module: out.Module, Name: out.Name, Result: tc.Result, Status: tc.Status, Output: tc.Output, Duration: time.Since(start)}
 			return

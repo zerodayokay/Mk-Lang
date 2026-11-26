@@ -792,6 +792,11 @@ func (p *parser) parseGlobal(start uint32) ast.Item {
 	}
 	if p.accept(ast.TokAssign) {
 		n.Value = p.parseExpr()
+		if p.atWord("fuel") {
+			p.errHere("a var cannot state `fuel`: do the work in a const with `fuel`, and initialize the var from that const")
+			p.next()
+			p.parseExpr()
+		}
 		n.Section = p.sectionClause()
 	}
 	if n.Type == nil || n.Value == nil {

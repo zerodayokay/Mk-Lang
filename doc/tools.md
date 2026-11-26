@@ -111,13 +111,18 @@ PASS src "words"
 | Flag | Does |
 |---|---|
 | `--run text` | Run only the tests whose names contain `text` |
-| `--timeout d` | The time limit per test process. The default is `60s`; `0` turns it off |
+| `--timeout d` | The time limit per test process (under `--fuzz`, until the test reaches its loop). The default is `60s`; `0` turns it off |
 | `--release` | Build the tests in the release profile |
 | `--prop` | Run the property tester over the contracts instead of the tests ([section 7](#7-contracts-and-the-property-tester)) |
-| `--sim seed` | Run every test under simulated `Io` with this seed ([section 9](#9-simulation-record-and-replay)) |
+| `--sim seed` | Give every test this seed as `MK_SIM_SEED`, for a test that builds a simulated world from it, and seed the property tester ([section 9](#9-simulation-record-and-replay)) |
 | `--cover`, `--cover-out file` | Print line coverage per file, and write it as lcov |
 | `--fuzz name`, `--fuzztime d` | Run the fuzz target of the named test ([section 10](#10-debugging-coverage-fuzzing-and-profiling)) |
 | `--std module` | Run the standard library's own tests for this module and the modules under it (`std` for all). Takes no path |
+| `--show-output` | Also print each passing test's output under its `PASS` line, indented as a failing test's is |
+
+On Windows, the standard library's Unix socket fixtures run in private working directories. A short relative socket name fits the address field even if the temporary directory has a long absolute path.
+
+A failing test's output is printed under its `FAIL` line, and a passing test's only with `--show-output`, which goes with every other flag. `--prop` prints each contract's output whatever its result. With `--json`, every test's object carries its output in `output`, with or without the flag. `mk bench` prints its statistics, not the output, and does not take the flag.
 
 ### `mk fmt`
 
@@ -611,7 +616,7 @@ The `--json` document, version 1, is one object and a newline (shown wrapped, wi
   - `name` is the name `sig` takes: `Collect`, or `Heap.Grow` for a method. An impl method, which `sig` does not answer, is named after its type too, `Square.Area`, also for an impl for a generic type (`Box.Area` for `impl[T] Shape for Box[T]`), and `impl` names its interface, `Shape`; `impl` is `""` for any other function.
   - `module` is the module path.
   - `file`, `line` and `col` locate the function's name, as diagnostics print it. A generated function's `file` is its module's gen view, `src/gen/<target>/gen.mk`, which a query does not write.
-  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart. An alias is spelled as the declaration writes it, by its name and arguments: `Load(i: u64): Value` for `type Value = u64`, also under `&`, `mut`, `[]`, `?`, an array, `E!T` and a generic type's arguments.
+  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart. An alias is spelled as the declaration writes it, by its name and arguments: `Load(i: u64): Value` for `type Value = u64`, also under `&`, `mut`, `[]`, `?`, an array, `E!T` and a generic type's arguments. A result slot that holds an error union as a value, including one in a nested `fn` type, spells the union followed by `(cannot fail)`.
   - `resolved` is `sig` with every alias spelled as its type, `Load(i: u64): u64`, and equals `sig` when the signature names no alias.
   - `exported` is true for an exported function. An impl method is never `exported`: its type and its interface decide who can call it.
   - `generated` is true for a function a `gen` line wrote, and for the built-in `Format` of an error one wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
@@ -666,7 +671,7 @@ Contracts are checked in the callee, so editing a contract does not rebuild the 
 
 `Io` is a value, so a program that takes an `Io` can run against a simulated one. [std.sim](std/sim.md) simulates a seeded world, and records and replays a real run's `Io` calls.
 
-`mk test --sim SEED` runs every test under simulated `Io` with that seed. A function with no `Io` cannot read the clock or the outside world, so the seed decides the whole run. The limit is `unsafe` code and C: a C library that reads the clock escapes simulation.
+`mk test --sim SEED` puts the seed in each test's environment as `MK_SIM_SEED` and prints it in the report, and `--prop` draws its inputs from it. It does not simulate the test's `System`: `sys.io` is still the real one. A test that wants the simulated world reads the seed (`sys.Env("MK_SIM_SEED")`), builds a `sim.Sim` from it and runs its code on the `Sim`'s `Io`. Code that waits only on that `Io` cannot read the clock or the outside world, so the seed decides the whole run. The limit is `unsafe` code and C: a C library that reads the clock escapes simulation.
 
 ## 10. Debugging, coverage, fuzzing and profiling
 
@@ -676,7 +681,7 @@ Contracts are checked in the callee, so editing a contract does not rebuild the 
 
 **Coverage.** `mk test --cover` counts each basic block and prints line coverage per file. The counts are written at exit, and when the runner stops a test on a timeout. `--cover-out file` also writes lcov. The counters are readable from inside the process. The report lists the package's own files, not std's.
 
-**Fuzzing.** `testing.Fuzz(f)` in a `test` block registers a fuzz target. Plain `mk test` runs it over its saved inputs; `mk test --fuzz <test name> [--fuzztime d]` searches for new failing inputs.
+**Fuzzing.** `testing.Fuzz(f)` in a `test` block registers a fuzz target (`testing.FuzzSys(sys, f)` one that takes the test's `System`, to run an external oracle or write an artifact through `sys.io`, or to allocate from `sys.heap`). Plain `mk test` runs it over its saved inputs; `mk test --fuzz <test name> [--fuzztime d]` searches for new failing inputs. With `--show-output`, a passing plain run shows each `fuzz input` marker on its own line, followed by what the target printed for that input (std.testing writes out `sys`'s buffered streams before each marker and after the last call), and a passing `--fuzz` run only the loop's summary, `fuzz: N calls in T, 0 failing runs, 0 inputs saved`: the target's output over thousands of calls is not kept, and a failing input's `.report` holds the last 200 lines of it.
 
 **Benchmarks.** `testing.Bench(f)` in a `test` block registers a benchmark (`testing.BenchSys(sys, f)` one that allocates from the heap), and `mk bench [name]` runs it. `--limit` bounds the time each benchmark takes, and `--baseline` compares with an earlier run.
 

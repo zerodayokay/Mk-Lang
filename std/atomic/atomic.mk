@@ -91,6 +91,7 @@ export AtomicBool.New(b: bool): AtomicBool {
 /// it, the task sees every write made before the Store or Swap it read.
 /// O(1); it allocates nothing.
 export AtomicBool.Load(&self): bool {
+    // Edge: acquires the write it reads (the doc above).
     return self.v.Load() != 0
 }
 
@@ -98,6 +99,7 @@ export AtomicBool.Load(&self): bool {
 /// task whose Load or Swap reads b also sees every write this task made
 /// before. O(1); it allocates nothing.
 export AtomicBool.Store(&self, b: bool) {
+    // Edge: releases this task's earlier writes (the doc above).
     self.v.Store(BoolByte(b))
 }
 
@@ -107,6 +109,7 @@ export AtomicBool.Store(&self, b: bool) {
 /// what the write it replaces published, and publishes this task's earlier
 /// writes to the next reader. O(1); it allocates nothing.
 export AtomicBool.Swap(&self, b: bool): bool {
+    // Edge: acquires the write it reads and releases this task's earlier writes.
     return self.v.Swap(BoolByte(b)) != 0
 }
 

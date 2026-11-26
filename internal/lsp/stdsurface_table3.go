@@ -4,6 +4,18 @@
 package lsp
 
 var surfaceDocs3 = map[string]surfaceDoc{
+	"net.Datagram.Port":              {Module: "std.net", Lines: []string{"Datagram.Port(&self): int"}},
+	"net.Datagram.Recv":              {Module: "std.net", Lines: []string{"Datagram.Recv(&self, io: Io, buf: mut []u8): net.Error!(n: int, peer: Addr)"}},
+	"net.Datagram.Send":              {Module: "std.net", Lines: []string{"Datagram.Send(&self, io: Io, data: []u8, to: Addr): net.Error!void"}},
+	"net.Datagram.SetBuffers":        {Module: "std.net", Lines: []string{"Datagram.SetBuffers(&self, recv: int, send: int): net.Error!void"}},
+	"net.Datagram.SetDontFragment":   {Module: "std.net", Lines: []string{"Datagram.SetDontFragment(&self): net.Error!void"}},
+	"net.Datagram.Share":             {Module: "std.net", Lines: []string{"Datagram.Share(self): SharedDatagram"}},
+	"net.Dial":                       {Module: "std.net", Lines: []string{"net.Dial(io: Io, addr: str): net.Error!Stream"}},
+	"net.DialUnix":                   {Module: "std.net", Lines: []string{"net.DialUnix(io: Io, path: str): net.Error!Stream"}},
+	"net.Error":                      {Module: "std.net", Lines: []string{"type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory"}},
+	"net.Listen":                     {Module: "std.net", Lines: []string{"net.Listen(io: Io, addr: str): net.Error!Listener"}},
+	"net.ListenOptions":              {Module: "std.net", Lines: []string{"struct ListenOptions"}},
+	"net.ListenUnix":                 {Module: "std.net", Lines: []string{"net.ListenUnix(io: Io, path: str): net.Error!Listener"}},
 	"net.ListenWith":                 {Module: "std.net", Lines: []string{"net.ListenWith(io: Io, addr: str, o: ListenOptions): net.Error!Listener"}},
 	"net.Listener.Accept":            {Module: "std.net", Lines: []string{"Listener.Accept(&self, io: Io): net.Error!Stream"}},
 	"net.Listener.Addr":              {Module: "std.net", Lines: []string{"Listener.Addr(&self): Addr"}},
@@ -384,6 +396,7 @@ var surfaceDocs3 = map[string]surfaceDoc{
 	"testing.BenchSys":               {Module: "std.testing", Lines: []string{"testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))"}},
 	"testing.ExpectPanic":            {Module: "std.testing", Lines: []string{"testing.ExpectPanic(want: str)"}},
 	"testing.Fuzz":                   {Module: "std.testing", Lines: []string{"testing.Fuzz(f: fn([]u8))"}},
+	"testing.FuzzSys":                {Module: "std.testing", Lines: []string{"testing.FuzzSys(sys: &System, f: fn(sys: &System, data: []u8))"}},
 	"text.BidiLevels":                {Module: "std.text", Lines: []string{"text.BidiLevels(a: &Arena, s: str, dir: Direction): OutOfMemory!Levels from a, s"}},
 	"text.Bounds.Next":               {Module: "std.text", Lines: []string{"Bounds.Next(mut self): ?int"}},
 	"text.Breaks.Next":               {Module: "std.text", Lines: []string{"Breaks.Next(mut self): ?(at: int, mandatory: bool)"}},

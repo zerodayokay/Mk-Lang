@@ -36,7 +36,7 @@
 // addresses an element of parameter p's slice: its address is p's data
 // pointer, loaded from p's own unchanged header, plus an index, and then
 // only field offsets, variant selections and array-element offsets
-// (aliasAddr; a SelErr copy makes a fresh temporary and drops the mark). An access tagged
+// (aliasAddr). An access tagged
 // !noalias S_q is such an access of a parameter p != q, with p or q a mut
 // []T. Both slices are arguments of this call, so the caller's loans on
 // both last for the whole call; an exclusive loan excludes every other

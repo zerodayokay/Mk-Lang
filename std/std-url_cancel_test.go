@@ -195,7 +195,7 @@ ReadRest(s: &net.Stream, io: Io, t: mut Text): net.Error|OutOfMemory!void {
         if n == 0 {
             return
         }
-        try t.PushBytes(d[0..n])
+        try t.Push(str.From(d[0..n]).Must())
     }
 }
 

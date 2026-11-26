@@ -118,9 +118,10 @@ func (e *testEnv) structOf(ts []types.TypeID, pack uint32) *types.Layout {
 	return l
 }
 
-// tagged lays out a tag of tagSize bytes at 0 and a union of variants after
-// it, each a struct of its fields at absolute offsets.
-func (e *testEnv) tagged(tagSize uint8, discrs []uint64, variants [][]types.TypeID) *types.Layout {
+// tagged is check's taggedUnion: a tag of tagSize bytes at 0, then each
+// variant a struct of its fields at absolute offsets, after the tag at the
+// largest alignment, or with own (an E!T or an error set) at its own.
+func (e *testEnv) tagged(tagSize uint8, own bool, discrs []uint64, variants [][]types.TypeID) *types.Layout {
 	pa := uint32(1)
 	for _, v := range variants {
 		for _, ft := range v {
@@ -134,6 +135,14 @@ func (e *testEnv) tagged(tagSize uint8, discrs []uint64, variants [][]types.Type
 	for i, v := range variants {
 		vl := types.VariantLayout{Discr: discrs[i]}
 		off := start
+		if own {
+			va := uint32(1)
+			for _, ft := range v {
+				_, a := e.sa(ft)
+				va = max(va, a)
+			}
+			off = alignUp(uint64(tagSize), va)
+		}
 		for _, ft := range v {
 			s, a := e.sa(ft)
 			off = alignUp(off, a)
@@ -208,7 +217,7 @@ func (e *testEnv) compute(t types.TypeID) *types.Layout {
 				s, _ := e.sa(d.Tag)
 				size = uint8(s)
 			}
-			return e.tagged(size, discrs, vs)
+			return e.tagged(size, false, discrs, vs)
 		}
 	case types.KRecord:
 		var ts []types.TypeID
@@ -227,7 +236,7 @@ func (e *testEnv) compute(t types.TypeID) *types.Layout {
 				Tag:      types.TagLayout{Offset: 0, Size: 8, Niche: true},
 				Variants: []types.VariantLayout{{Discr: 0}, {Discr: 1, Fields: []types.FieldLayout{{Offset: 0, Type: ty.Elem}}}}}
 		}
-		return e.tagged(1, []uint64{0, 1}, [][]types.TypeID{nil, {ty.Elem}})
+		return e.tagged(1, false, []uint64{0, 1}, [][]types.TypeID{nil, {ty.Elem}})
 	case types.KErrorUnion, types.KErrorSet:
 		discrs := []uint64{}
 		vs := [][]types.TypeID{}
@@ -248,7 +257,7 @@ func (e *testEnv) compute(t types.TypeID) *types.Layout {
 			}
 			vs = append(vs, fs)
 		}
-		return e.tagged(4, discrs, vs)
+		return e.tagged(4, true, discrs, vs)
 	}
 	panic("testEnv: no layout for " + e.tt.TypeString(t, nil))
 }

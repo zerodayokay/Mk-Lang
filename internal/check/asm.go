@@ -182,6 +182,9 @@ func (u *unit) asmValue(op *ast.AsmOperand) {
 			Text("reason", "not a place").Text("expected", "a place").Text("found", "an expression")
 		return
 	}
+	if t != types.Poison && u.constMutation(op.Value, "assigned") {
+		return
+	}
 	u.externVarWrite(op.Value, "write")
 	u.asmType(op, t, false)
 }

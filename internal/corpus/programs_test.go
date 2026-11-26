@@ -1,7 +1,8 @@
 // Why: the end-to-end programs are the proof that built executables behave
 // the same on every target and profile.
-// What: TestPrograms, TestPanics, the executable-format tests
-// (TestExeImportsOnlyKernel32, TestELFStatic) and the WSL guards and probes.
+// What: TestPrograms, TestPanics, TestProgramsSocketsLongTemp, the
+// executable-format tests (TestExeImportsOnlyKernel32, TestELFStatic) and the
+// WSL guards and probes.
 // How: each program is built once per target and profile, and each case of
 // its .cases file is run; stdout, stderr and the exit status are compared
 // byte for byte.
@@ -167,11 +168,17 @@ func needWSLRun(t *testing.T, target string, strict bool) {
 // kept inside this one too. It is a semaphore, never reassigned.
 var testWSLSlots = make(chan struct{}, 1)
 
+// testRunSlots bounds non-WSL child runs in flight for every runner of this
+// test binary, so parallel program tests do not contend for cores or
+// synchronous first-run executable scans all at once.
+var testRunSlots = make(chan struct{}, 4)
+
 // testRunner is a runner for root with tools, its own cache and executable
-// directories, and testWSLSlots.
+// directories, testWSLSlots and testRunSlots.
 func testRunner(t *testing.T, root string, tools *toolchain.Tools) *Runner {
 	r := NewRunner(root, driver.Config{Tools: tools, CacheDir: t.TempDir()}, t.TempDir())
 	r.WSLSlots = testWSLSlots
+	r.RunSlots = testRunSlots
 	return r
 }
 
@@ -204,6 +211,7 @@ func sharedRunner(t *testing.T, root string, tools *toolchain.Tools) *Runner {
 		}
 		programsShared = NewRunner(root, driver.Config{Tools: tools, CacheDir: cache}, exes)
 		programsShared.WSLSlots = testWSLSlots
+		programsShared.RunSlots = testRunSlots
 	})
 	if programsErr != nil {
 		t.Fatal(programsErr)
@@ -248,6 +256,47 @@ func TestPrograms(t *testing.T) {
 // both targets, exits 101 with exactly its report on stderr (strict).
 func TestPanics(t *testing.T) {
 	runPrograms(t, func(p string) bool { return strings.HasPrefix(p, ProgramsDir+"/panics/") })
+}
+
+// TestProgramsSocketsLongTemp runs sockets.mk's Windows cases with TEMP and
+// TMP at least 112 bytes long, past sun_path's 108: its Unix socket is named
+// relative to the run directory there, so no temporary path can reach it.
+func TestProgramsSocketsLongTemp(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("sockets.mk names its Unix socket relative to the run directory on Windows only")
+	}
+	root := repoRoot(t)
+	cases, err := LoadCases(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The shared runner, made first, keeps its builds in a directory that
+	// outlives this test's.
+	run := sharedRunner(t, root, needLLVM(t))
+	long := t.TempDir()
+	if n := 112 - len(long) - 1; n > 0 {
+		long = filepath.Join(long, strings.Repeat("u", n))
+		if err := os.Mkdir(long, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("TEMP", long)
+	t.Setenv("TMP", long)
+	n := 0
+	for _, c := range cases {
+		if c.Program != ProgramsDir+"/sockets.mk" || !slices.Contains(c.Targets, "x86_64-windows") {
+			continue
+		}
+		for _, prof := range c.Profiles {
+			n++
+			t.Run(c.Name+"/"+prof, func(t *testing.T) {
+				checkProgramCase(t, run, c, "x86_64-windows", prof)
+			})
+		}
+	}
+	if n == 0 {
+		t.Fatal("no x86_64-windows case of sockets.mk")
+	}
 }
 
 // runPrograms runs every case of the programs keep accepts.
@@ -631,4 +680,78 @@ func TestProbeWSL(t *testing.T) {
 	if why := probeWSL(time.Minute, func(context.Context) error { return errors.New("exit status 1") }); why != "wsl.exe -e true: exit status 1" {
 		t.Errorf("failing probe: %q", why)
 	}
+}
+
+// TestRunSlots verifies that Runner.RunSlots bounds concurrent non-WSL child
+// executions and releases its slot after normal exits, panics, and setup
+// errors alike.
+func TestRunSlots(t *testing.T) {
+	if runtime.GOARCH != "amd64" || (runtime.GOOS != "windows" && runtime.GOOS != "linux") {
+		t.Skipf("no direct host runner on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	target := "x86_64-" + runtime.GOOS
+	tools := needLLVM(t)
+	root := t.TempDir()
+	prog := filepath.Join(root, "slot.mk")
+	const src = "export Main(sys: &System) {\n    if sys.args.Len() > 1 {\n        Panic(\"slot-fail\")\n    }\n}\n"
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRunner(root, driver.Config{Tools: tools, CacheDir: t.TempDir()}, t.TempDir())
+	r.RunSlots = make(chan struct{}, 1)
+	exe, err := r.Build("slot.mk", target, "dev")
+	if err != nil {
+		t.Fatalf("build slot.mk: %v", err)
+	}
+
+	assertSlotFree := func(when string) {
+		t.Helper()
+		select {
+		case r.RunSlots <- struct{}{}:
+			<-r.RunSlots
+		default:
+			t.Fatalf("RunSlots leaked (%s)", when)
+		}
+	}
+
+	cPass := ProgramCase{Program: "slot.mk", Name: "ok", Timeout: DefaultCaseTimeout}
+	r.RunSlots <- struct{}{}
+	type runOut struct {
+		res RunResult
+		err error
+	}
+	done := make(chan runOut, 1)
+	go func() {
+		res, err := r.Run(cPass, target, "dev")
+		done <- runOut{res, err}
+	}()
+	select {
+	case got := <-done:
+		<-r.RunSlots
+		t.Fatalf("r.Run completed while RunSlots was held: %+v", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+	<-r.RunSlots
+	got := <-done
+	if got.err != nil || got.res.Exit != 0 {
+		t.Fatalf("r.Run after slot release = (%+v, %v), want exit 0", got.res, got.err)
+	}
+	assertSlotFree("after passing run")
+
+	cPanic := ProgramCase{Program: "slot.mk", Name: "panic", Args: []string{"boom"}, Timeout: DefaultCaseTimeout}
+	if res, err := r.Run(cPanic, target, "dev"); err != nil || res.Exit != 101 {
+		t.Fatalf("panic run = (%+v, %v), want exit 101", res, err)
+	}
+	assertSlotFree("after exit-101 run")
+
+	cMissingFile := ProgramCase{Program: "slot.mk", Name: "missing-file", Files: []string{"absent.in"}, Timeout: DefaultCaseTimeout}
+	if _, err := r.Run(cMissingFile, target, "dev"); err == nil {
+		t.Fatal("missing-file case succeeded, want error")
+	}
+	assertSlotFree("after missing-file setup error")
+
+	if _, _, err := r.runOnce(cPass, "aarch64-macos", exe); !ErrNoRunner(err) {
+		t.Fatalf("unsupported target err = %v, want ErrNoRunner", err)
+	}
+	assertSlotFree("after ErrNoRunner")
 }

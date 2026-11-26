@@ -337,7 +337,7 @@ func TestFs_WalkOutOfMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := strings.Replace(string(b), `unsafe_modules: ["core",`, `unsafe_modules: ["fsoom", "core",`, 1)
+	m := strings.Replace(string(b), `unsafe_modules: [`, `unsafe_modules: ["fsoom", `, 1)
 	if m == string(b) {
 		t.Fatal("std/pkg.mk: unsafe_modules not found")
 	}

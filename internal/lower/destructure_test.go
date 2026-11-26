@@ -21,6 +21,10 @@ struct Res {
 	t: Tok
 	k: int
 }
+struct Pair {
+	left: Tok
+	right: Tok
+}
 linear struct H {
 	r: Tok
 	id: int
@@ -47,6 +51,10 @@ Nested(r: Res): int {
 NestedWild(r: Res) {
 	Res(t: Tok(n: _, m: _), k: _) := r
 }
+Siblings(p: Pair): int {
+	Pair(left: Tok(n, m: _), right: Tok(n: _, m)) := p
+	return n + m
+}
 Linear(h: H): int {
 	H(r, id) := h
 	Tok(n, m) := r
@@ -60,10 +68,9 @@ PlainP(p: P): int {
 
 var takeRE = regexp.MustCompile(`= move _2\.[0-9.]+`)
 
-// TestDestructure_ConsumesNonPlainTemporary pins the take: exactly one Move
-// out of the destructure's temporary _2 when no binding took, of the first
-// `_` leaf (else the first plain binding), and none added when a binding
-// already took or the value is plain.
+// TestDestructure_ConsumesNonPlainTemporary pins the takes: one Move per
+// linear struct with no other take, of the first `_` leaf (else the first
+// plain binding), and none added for a plain value.
 func TestDestructure_ConsumesNonPlainTemporary(t *testing.T) {
 	l := lowerSrc(t, takeSrc)
 	cases := []struct {
@@ -75,6 +82,7 @@ func TestDestructure_ConsumesNonPlainTemporary(t *testing.T) {
 		{"AllBound", []string{"= move _2.0"}},
 		{"Nested", []string{"= move _2.0.1"}},
 		{"NestedWild", []string{"= move _2.0.0"}},
+		{"Siblings", []string{"= move _2.0.1", "= move _2.1.0"}},
 		{"Linear", []string{"= move _2.0"}},
 		{"PlainP", nil},
 	}
@@ -92,7 +100,7 @@ func TestDestructure_ConsumesNonPlainTemporary(t *testing.T) {
 	}
 	// The user's plain bindings stay copies.
 	wantIn(t, l.print("Leaf"), "= copy _2.0", "= move _2.1")
-	wantIn(t, l.print("Nested"), "= copy _2.0.0", "= copy _2.1", "= move _2.0.1")
+	wantIn(t, l.print("Nested"), "= copy _2.0.0", "= move _2.0.1", "= copy _2.1")
 }
 
 // TestDestructure_SecondTemporaryTakes: the second destructure of Linear

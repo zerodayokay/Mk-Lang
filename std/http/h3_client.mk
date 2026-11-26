@@ -290,14 +290,14 @@ Client.SendH3(&self, a: &Arena, io: Io, method: str, u: &url.Url, headers: []Hea
             fail e
         }
         state := Mutex[H3Body].New(H3Body(stream: none, index: slot.index, eof: false, failed: false, content_length: head.length, coded: head.coding.IsSome()))
-        m := a.Put(state) else {
+        m := PutH3Body(a, state) else {
             H3Body(stream: old, index: _, eof: _, failed: _, content_length: _, coded: _) := state.Into()
             if orphan := old {
                 orphan.Release(sess)
             }
             fail OutOfMemory
         }
-        rd := try H3ReadPort(a, io, &*m, head.coding)
+        rd := try H3ReadPort(a, io, m, head.coding)
         var g := m.Lock(io.NoCancel()).Must()
         old := Replace(mut g.Mut().stream, some(stream))
         g.Unlock()
@@ -305,7 +305,7 @@ Client.SendH3(&self, a: &Arena, io: Io, method: str, u: &url.Url, headers: []Hea
             orphan.Release(sess)
         }
         transferred = true
-        return some(Exchange(status: head.status, headers: head.headers, client: self, carrier: Carrier.H3(m: &*m), version: HttpVersion.Http3, reader: rd, io: io, key: key))
+        return some(Exchange(status: head.status, headers: head.headers, client: self, carrier: Carrier.H3(m: m), version: HttpVersion.Http3, reader: rd, io: io, key: key))
     }
     return none
 }

@@ -14,9 +14,10 @@ import (
 	"testing"
 )
 
-// rawStub is the std.raw surface the cases need: ReadUnaligned is unsafe,
-// Ctz64 and the carry intrinsics (AddCarry64, SubBorrow64) are safe.
-const rawStub = "export ReadUnaligned[T: Plain](p: *T): T\n\nexport Ctz64(x: u64): int\n\n" +
+// rawStub is the std.raw surface the cases need: ReadUnaligned and
+// WriteUnaligned are unsafe, Ctz64 and the carry intrinsics (AddCarry64,
+// SubBorrow64) are safe.
+const rawStub = "export ReadUnaligned[T: Plain](p: *T): T\n\nexport WriteUnaligned[T: Plain](p: *T, x: T)\n\nexport Ctz64(x: u64): int\n\n" +
 	"export AddCarry64(x: u64, y: u64, c: u64): (sum: u64, carry: u64)\n\nexport SubBorrow64(x: u64, y: u64, b: u64): (diff: u64, borrow: u64)\n"
 
 func TestUnsafeOnlyNamedAsValue(t *testing.T) {
@@ -30,6 +31,8 @@ func TestUnsafeOnlyNamedAsValue(t *testing.T) {
 		{"raw unsafe named", "F(p: *u32): u32 {\n\tg: fn(p: *u32): u32 from p = raw.ReadUnaligned[u32]\n\tunsafe \"p is valid\" {\n\t\treturn g(p)\n\t}\n}\n", "E1101@4:31", "raw.ReadUnaligned"},
 		{"raw unsafe named in unsafe", "F(p: *u32): u32 {\n\tunsafe \"p is valid\" {\n\t\tg: fn(p: *u32): u32 from p = raw.ReadUnaligned[u32]\n\t\treturn g(p)\n\t}\n}\n", "", ""},
 		{"raw unsafe as an argument", "Apply(m: fn(p: *u32): u32 from p, p: *u32): u32 {\n\treturn m(p)\n}\n\nF(p: *u32): u32 {\n\treturn Apply(raw.ReadUnaligned[u32], p)\n}\n", "E1101@8:15", "raw.ReadUnaligned"},
+		{"raw unsafe store named", "F(p: *u32) {\n\tg: fn(p: *u32, x: u32) = raw.WriteUnaligned[u32]\n\tunsafe \"p is valid\" {\n\t\tg(p, 1)\n\t}\n}\n", "E1101@4:27", "raw.WriteUnaligned"},
+		{"raw unsafe store named in unsafe", "F(p: *u32) {\n\tunsafe \"p is valid\" {\n\t\tg: fn(p: *u32, x: u32) = raw.WriteUnaligned[u32]\n\t\tg(p, 1)\n\t}\n}\n", "", ""},
 		{"raw safe named", "F(x: u64): int {\n\tg := raw.Ctz64\n\treturn g(x)\n}\n", "", ""},
 		// The carry intrinsics are safe, called or named.
 		{"carry called", "F(x: u64, y: u64): u64 {\n\ts := raw.AddCarry64(x, y, 0)\n\td := raw.SubBorrow64(x, y, s.carry)\n\treturn d.diff +% d.borrow\n}\n", "", ""},

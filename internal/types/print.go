@@ -1,13 +1,16 @@
 // Why: diagnostics (facts.type, facts.signature) and goldens show types, and
 // a type shown must read as Mk source and never depend on an ID.
 //
-// What: Table.TypeString and ConstArgString, with the writers they share
-// (writeType, writeOperand, writeErrors, writeConstArg).
+// What: Table.TypeString, ResultString and ConstArgString, with the writers
+// they share (writeType, writeOperand, writeErrors, writeResult,
+// writeConstArg).
 //
 // How: a recursive writer over the type table: named types by their item's
 // name, type parameters by name, const arguments by value, and parentheses
 // where a prefix operator meets "!" or "|", so the text parses back to the
-// same type.
+// same type. A result that cannot fail and is an error union has no
+// source spelling but an alias or a type parameter, so it prints as the
+// union marked " (cannot fail)".
 
 package types
 
@@ -15,6 +18,34 @@ import (
 	"strconv"
 	"strings"
 )
+
+// ResultString spells a function's or fn type's result: E!T for one that
+// can fail; for one that cannot fail whose result is an error union (a
+// result type parameter bound to one, or an alias of one), the union
+// followed by " (cannot fail)", since E!T written as a result fails and
+// the two must not print alike. "" is a void result that cannot fail.
+func (t *Table) ResultString(result TypeID, errs ErrorSetID, gs []GenericParam) string {
+	if result == Void && errs == EmptyErrors {
+		return ""
+	}
+	var b strings.Builder
+	t.writeResult(&b, result, errs, gs)
+	return b.String()
+}
+
+// writeResult is ResultString's writer.
+func (t *Table) writeResult(b *strings.Builder, result TypeID, errs ErrorSetID, gs []GenericParam) {
+	if errs != EmptyErrors {
+		t.writeErrors(b, errs, gs)
+		b.WriteByte('!')
+		t.writeType(b, result, gs)
+		return
+	}
+	t.writeType(b, result, gs)
+	if ty, ok := t.types.Get(uint32(result)); ok && result != NoType && ty.Kind == KErrorUnion {
+		b.WriteString(" (cannot fail)")
+	}
+}
 
 // TypeString spells t as Mk source: i32, &T, mut []T, [4]u8, ?T, A|B!T,
 // (a: i32, b: str), fn(&i32): bool, *u8, List[int]. A KNamed type prints its
@@ -116,11 +147,7 @@ func (t *Table) writeType(b *strings.Builder, id TypeID, gs []GenericParam) {
 		b.WriteByte(')')
 		if ty.Fn.Result != Void || ty.Fn.Errors != EmptyErrors {
 			b.WriteString(": ")
-			if ty.Fn.Errors != EmptyErrors {
-				t.writeErrors(b, ty.Fn.Errors, gs)
-				b.WriteByte('!')
-			}
-			t.writeType(b, ty.Fn.Result, gs)
+			t.writeResult(b, ty.Fn.Result, ty.Fn.Errors, gs)
 		}
 	case KNamed:
 		it := t.items.Get(ty.Item)

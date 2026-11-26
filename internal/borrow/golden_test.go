@@ -28,11 +28,12 @@ import (
 var update = flag.Bool("update", false, "rewrite golden files")
 
 // borrowCodes is the table of every code Check can emit, and no other
-// (E0407 and E0606 do not exist; E0408, E0807, E1001 and E1002 are check's).
+// (E0407 and E0606 do not exist; E0408, E0807, E1001 and E1002 are check's;
+// E0802 is check's too, but for a typed E!T binding's lifetime).
 // E0609 covers the result-loan, store and backstop forms.
 var borrowCodes = []diag.Code{diag.E0401, diag.E0402, diag.E0403, diag.E0404, diag.E0405, diag.E0406,
 	diag.E0409, diag.E0411, diag.E0501, diag.E0502, diag.E0503, diag.E0504, diag.E0505, diag.E0506, diag.E0507,
-	diag.E0508, diag.E0602, diag.E0603, diag.E0604, diag.E0605, diag.E0609, diag.E1102}
+	diag.E0508, diag.E0602, diag.E0603, diag.E0604, diag.E0605, diag.E0609, diag.E0802, diag.E1102}
 
 // kitSources is a source map whose file 1 has a line per 10 bytes, so the
 // kit's span n is line n+1, column 1.
@@ -69,6 +70,19 @@ func triggers() map[diag.Code]func(t *testing.T) (*kit, *mb) {
 			return k, m
 		},
 		diag.E0403: func(t *testing.T) (*kit, *mb) { m, _ := lateBody(t, false); return m.k, m },
+		diag.E0802: func(t *testing.T) (*kit, *mb) {
+			k := k0(t)
+			u := k.tab.ErrorUnion(k.errorItem("Bad"), types.I32)
+			m := k.body(k.sig("Over", []types.Param{k.param("a", u)}, types.Void, types.EmptyErrors))
+			c := m.user("c", u, true)
+			m.set(c, use(cp(m.local(1))))
+			m.set(c, use(cp(m.local(1))))
+			tmp := m.temp(u)
+			m.set(tmp, use(cp(m.local(c))))
+			m.end(tmp, c)
+			m.ret(mir.ExitNormal)
+			return k, m
+		},
 		diag.E0404: func(t *testing.T) (*kit, *mb) {
 			k := k0(t)
 			m := k.body(k.sig("Twice", nil, types.Void, types.EmptyErrors))

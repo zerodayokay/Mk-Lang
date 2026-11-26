@@ -4,8 +4,9 @@
 //
 // What: the per-instance resolution of `if T is X` (TermTypeTest, RvTypeIs,
 // CastNarrow), of onerr guards from borrow's facts, of the build-constant
-// folds (UsesTasks, LibcBuild, HasFree), the drop of contract checks and
-// trace hooks in release, and prune.
+// folds (UsesTasks, LibcBuild, HasFree), the requires clauses true for the
+// instance (reqfold.go), the drop of contract checks and trace hooks in
+// release, and prune.
 //
 // How: each answer becomes a constant branch; prune then drops the blocks
 // unreachable from the entry and renumbers the rest densely in their
@@ -160,6 +161,17 @@ func (bl *builder) resolve() bool {
 					continue
 				case freeRelease:
 					bl.releases = true // resolved after the prune (release.go)
+					continue
+				}
+				if bl.isRequires(t.Callee.Fn.Item) && bl.requiresHolds(t) {
+					// A requires clause true for every run of the instance
+					// (reqfold.go): no entry check, in every profile.
+					blk.Stmts = append(blk.Stmts, mir.Statement{Kind: mir.StAssign, Place: t.Dest,
+						Rvalue: mir.Rvalue{Kind: mir.RvUse, A: mir.Imm(types.Bool, 1)}, Span: t.Span})
+					*t = mir.Terminator{Kind: mir.TermGoto, Span: t.Span, Target: t.Target}
+					if foldSwitchesOn(b, blk.Stmts[len(blk.Stmts)-1].Place, 1) {
+						folded = true
+					}
 					continue
 				}
 			}

@@ -13,9 +13,12 @@
 package cimport
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"mk/internal/source"
 )
@@ -35,22 +38,65 @@ func WriteHeaderDir(base, domain string, names []string, files map[string]string
 		return "", err
 	}
 	for _, n := range names {
-		p := filepath.Join(dir, n)
-		if old, err := os.ReadFile(p); err == nil && string(old) == files[n] {
-			continue
-		}
-		// A temporary and a rename, so a concurrent build never reads a
-		// half-written header.
-		tmp := p + fmt.Sprintf(".%d.tmp", os.Getpid())
-		if err := os.WriteFile(tmp, []byte(files[n]), 0o644); err != nil {
+		if err := writeSameHeader(filepath.Join(dir, n), []byte(files[n])); err != nil {
 			return "", err
-		}
-		if err := os.Rename(tmp, p); err != nil {
-			os.Remove(tmp)
-			if old, rerr := os.ReadFile(p); rerr != nil || string(old) != files[n] {
-				return "", err
-			}
 		}
 	}
 	return dir, nil
+}
+
+// writeSameHeader makes p hold data using a unique temporary file and
+// retried rename so concurrent builds never observe a half-written header
+// or collide on a shared temporary name.
+func writeSameHeader(p string, data []byte) error {
+	if old, err := os.ReadFile(p); err == nil && bytes.Equal(old, data) {
+		return nil
+	}
+	f, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	err = f.Chmod(0o644)
+	if err == nil {
+		_, err = f.Write(data)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	for try := 1; ; try++ {
+		if err = os.Rename(tmp, p); err == nil {
+			removeStaleHeaderTemps(p)
+			return nil
+		}
+		if old, rerr := os.ReadFile(p); rerr == nil && bytes.Equal(old, data) {
+			err = nil
+		}
+		if err == nil || try == 45 {
+			os.Remove(tmp)
+			return err
+		}
+		time.Sleep(time.Duration(try) * time.Millisecond)
+	}
+}
+
+func removeStaleHeaderTemps(p string) {
+	dir, prefix := filepath.Dir(p), "."+filepath.Base(p)+".tmp-"
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	old := time.Now().Add(-10 * time.Minute)
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), prefix) || !e.Type().IsRegular() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && fi.ModTime().Before(old) {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }

@@ -194,7 +194,7 @@ func blockName(header string) string {
 		return ""
 	}
 	k := 0
-	for k < len(f)-1 && (f[k] == "linear" || f[k] == "view" || f[k] == "packed" || f[k] == "export") {
+	for k < len(f)-1 && (f[k] == "linear" || f[k] == "mut" || f[k] == "view" || f[k] == "packed" || f[k] == "export") {
 		k++
 	}
 	if k+1 >= len(f) {

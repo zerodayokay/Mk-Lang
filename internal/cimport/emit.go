@@ -396,6 +396,13 @@ func (e *emitter) sizeAlign(t *ctype) (int64, int64, bool) {
 		if d == nil {
 			return 4, 4, true
 		}
+		// An enum with a fixed underlying type has that type's size and
+		// alignment (C23 6.7.2.2): `enum K : unsigned char` is 1 byte.
+		if d.fixed != nil {
+			if s, a, ok := e.sizeAlign(d.fixed); ok {
+				return s, a, true
+			}
+		}
 		switch e.enumInt(d) {
 		case "i64", "u64":
 			return 8, 8, true

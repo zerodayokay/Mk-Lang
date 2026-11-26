@@ -172,14 +172,21 @@ func (c *Checker) renderEval(err *types.EvalError, req *types.EvalRequest) *diag
 		return diag.New(diag.E0901, site, "compile-time evaluation refused an operation: "+err.Refusal.String()).
 			Text("refused", err.Refusal.String()).Fact("trace", trace(true))
 	case types.EvalFuel:
-		fuel := req.Fuel
+		fuel := err.Fuel // the segment's own, which a large value may raise
+		if fuel == 0 {
+			fuel = req.Fuel
+		}
 		if fuel == 0 {
 			fuel = types.DefaultFuel
 		}
 		d := diag.New(diag.E0902, site, "compile-time evaluation ran out of fuel after "+strconv.FormatUint(err.Steps, 10)+" steps").
 			Int("steps", int64(err.Steps)).Int("fuel", int64(fuel)).Fact("trace", trace(true))
-		switch req.What {
-		case types.EvalConst, types.EvalGen:
+		_, global := items.Get(req.Item).Decl.(*types.GlobalDecl)
+		switch {
+		case req.What == types.EvalConst && global:
+			// A var cannot state fuel (E0101): its work moves to a const.
+			d.Alt("a global cannot state fuel: do the work in a const with fuel " + strconv.FormatUint(2*fuel, 10) + ", and initialize " + name(req.Item) + " from that const")
+		case req.What == types.EvalConst, req.What == types.EvalGen:
 			d.Alt("raise the limit: fuel " + strconv.FormatUint(2*fuel, 10))
 		default:
 			d.Alt("move the evaluation into a named const with fuel")

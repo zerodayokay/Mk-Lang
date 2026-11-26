@@ -419,6 +419,93 @@ func TestSB_Linear(t *testing.T) {
 	wantClean(t, w.tcall(w.evaluator(0), mk("Consume", true), nil))
 }
 
+// TestSB_ConsumeFields checks that consuming an empty struct field neither
+// consumes another field nor requires the empty field to have any bytes.
+func TestSB_ConsumeFields(t *testing.T) {
+	w := newWorld(t)
+	empty, et := w.structType("lib", "Empty")
+	w.layoutLocked(et).Shape.Kind = types.Linear
+	pair, pt := w.structType("lib", "Pair", et, et, types.I64)
+	w.layoutLocked(pt).Shape.Kind = types.Linear
+	for _, tc := range []struct {
+		name   string
+		fields []uint32
+	}{
+		{"Both", []uint32{0, 1}},
+		{"OnlyFirst", []uint32{0}},
+		{"SameFieldTwice", []uint32{0, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := w.fn("lib", tc.name, types.Void)
+			x := w.body(f, types.Void)
+			a, b, p := x.local(et), x.local(et), x.local(pt)
+			value := mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: empty}
+			x.assign(0, lp(a), value)
+			x.assign(0, lp(b), value)
+			x.assign(0, lp(p), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: pair, Ops: x.b.AddOperands(mir.Move(lp(a)), mir.Move(lp(b)), imm(types.I64, 1))})
+			for _, i := range tc.fields {
+				field := x.b.Place(p, mir.Projection{Kind: mir.ProjField, A: i, Type: et})
+				x.b.Blocks[0].Stmts = append(x.b.Blocks[0].Stmts, mir.Statement{Kind: mir.StConsume, Place: field, Span: x.sp()})
+			}
+			x.scopeEnd(0, p)
+			x.ret(0)
+			x.done()
+			got := w.tcall(w.evaluator(0), f, nil)
+			if tc.name == "Both" {
+				wantClean(t, got)
+			} else {
+				wantViolation(t, got, VLinear)
+			}
+		})
+	}
+}
+
+// TestSB_LinearEnumNarrow checks both sides of a discriminant switch: only
+// the variant with a plain payload can leave the temporary unowned.
+func TestSB_LinearEnumNarrow(t *testing.T) {
+	w := newWorld(t)
+	ticket, tt := w.shaped("Ticket", types.Linear)
+	enum, et := w.enumType("lib", "Choice", []types.TypeID{tt}, []types.TypeID{types.I64})
+	w.layoutLocked(et).Shape.Kind = types.Linear
+	for _, tc := range []struct {
+		name        string
+		plain, test bool
+	}{
+		{"Plain", true, true},
+		{"Untested", true, false},
+		{"Linear", false, true},
+	} {
+		f := w.fn("lib", tc.name, types.Void)
+		x := w.body(f, types.Void)
+		a := x.local(et)
+		var variant uint32
+		op := imm(types.I64, 1)
+		if tc.plain {
+			variant = 1
+		} else {
+			payload := x.local(tt)
+			x.assign(0, lp(payload), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: ticket, Ops: x.b.AddOperands(op)})
+			op = mir.Move(lp(payload))
+		}
+		x.assign(0, lp(a), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggEnum, Item: enum, Variant: variant, Ops: x.b.AddOperands(op)})
+		var end mir.BlockID
+		if tc.test {
+			d := x.local(types.U64)
+			end = x.block()
+			x.assign(0, lp(d), mir.Rvalue{Kind: mir.RvDiscriminant, Place: lp(a), Type: types.U64})
+			x.branch(0, cp(d), end, end)
+		}
+		x.ret(end)
+		x.done()
+		got := w.tcall(w.evaluator(0), f, nil)
+		if tc.plain && tc.test {
+			wantClean(t, got)
+		} else {
+			wantViolation(t, got, VLinear)
+		}
+	}
+}
+
 // TestSB_ProtectorMut and TestSB_ProtectorShared: during a call holding a
 // reference parameter, an access by another path that pops the parameter's
 // item is VProtected naming the call; the same access after the call

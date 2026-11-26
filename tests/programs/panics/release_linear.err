@@ -1,1 +1,1 @@
-panic: List.Clear would drop a linear value at std/core/coll_list.mk:79:9
+panic: free non-empty: HeapList.Clear of linear elements at std/core/coll_heap.mk:217:9

@@ -399,8 +399,8 @@ PtTimer(s: &Scope, io: Io, d: i64) {
     s.Cancel()
 }
 
-// PtCount asks port until cancelled, counting the answers.
-PtCount(io: Io, port: i64, n: mut int) {
+// PtCount asks port until canceled or, during startup, the first reply.
+PtCount(io: Io, port: i64, n: mut int, first: bool) {
     for {
         var bad := PtBad(canceled: 0, dial: 0, short: 0, os: 0)
         v := PtAsk(io, port, 105, mut bad)
@@ -409,6 +409,9 @@ PtCount(io: Io, port: i64, n: mut int) {
         }
         if v > 0 {
             *n += 1
+            if first {
+                return
+            }
         }
         // 1 ms between asks: the block needs one served ask, and an
         // unpaced loop made thousands of connections a round.
@@ -416,6 +419,22 @@ PtCount(io: Io, port: i64, n: mut int) {
             return
         }
     }
+}
+
+// PtServing waits for a real reply under a startup deadline, then starts
+// the separate serving window. The parent checks for zero replies after
+// cancellation and cleanup so a watchdog expiry cannot pass as success.
+PtServing(s: &Scope, io: Io, port: i64, d: i64, n: mut int) {
+    scope startup := io.Scope() {
+        startup.CancelAfter(core.DurationOf(20_000_000_000))
+        PtCount(io, port, mut *n, true)
+    }
+    if *n == 0 {
+        s.Cancel()
+        return
+    }
+    s.CancelAfter(core.DurationOf(d))
+    PtCount(io, port, mut *n, false)
 }
 
 // The worker serves one ask and exits. The block reads Slot's trace
@@ -862,11 +881,11 @@ test "Supervise: only Canceled ends a slot whose wait failed" (sys: &System) {
     }
 }
 
-// 64 workers: each cancel, at 1.5 s, 0, 300 ms and 1.5 s, ends
-// every worker (Refused once the parent closes its listener), the 1.5 s
-// rounds are served, and no handle is left behind: a waiting slot holds
-// no pool thread (procwait is a poller operation), which a thread handle
-// per worker would show on Windows.
+// 64 workers: the first and last rounds cancel 1.5 s after a reply, and
+// the middle two cancel immediately or after 300 ms. Every cancel ends
+// all workers (Refused after the listener closes) without a handle leak:
+// a waiting slot holds no pool thread (procwait is a poller operation),
+// which a thread handle per worker would show on Windows.
 test "Supervise: 64 workers serve; a cancel at 1.5 s, 0, 300 ms and 1.5 s ends all of them with no handle left" (sys: &System) {
     var port: i64 = 0
     l := PtListen(sys.io, mut port)
@@ -905,18 +924,23 @@ test "Supervise: 64 workers serve; a cancel at 1.5 s, 0, 300 ms and 1.5 s ends a
         var got := ""
         var served := 0
         t0 := Now(sys.io)
+        serving := k == 0 || k == 3
         scope s := sys.io.Scope() {
-            s.go PtTimer(&s, sys.io, i64(d))
-            s.go PtCount(sys.io, lport, mut served)
+            if serving {
+                s.go PtServing(&s, sys.io, lport, i64(d), mut served)
+            } else {
+                s.go PtTimer(&s, sys.io, i64(d))
+                s.go PtCount(sys.io, lport, mut served, false)
+            }
             SuperviseOn[PtStop, PtListener](sys, 64, last.h, &last, PtWorker) else e {
                 got = PtSupName(e)
             }
         }
         Assert(got == "Canceled" && Now(sys.io) - t0 < 30_000_000_000)
-        if k == 0 || k == 3 {
-            Assert(served > 0)
-        }
         PtGone(sys.io, last, lport)
+        if serving && served == 0 {
+            Panic("Supervise: no worker replied before the startup deadline")
+        }
     }
     PtNoLeak(sys, before, 32)
 }

@@ -147,6 +147,10 @@ func readRaw(m *Machine, f *frame, t *mir.Terminator, fn types.FnRef) {
 	m.copyValue(dst, src)
 }
 
+func writeRaw(m *Machine, f *frame, t *mir.Terminator, fn types.FnRef) {
+	m.writeOp(f, m.argOp(f, t, 1), m.ptrLoc(m.argU(f, t, 0), m.targ(f, fn, 0)))
+}
+
 func copyRaw(m *Machine, f *frame, t *mir.Terminator, fn types.FnRef) {
 	d := m.argU(f, t, 0)
 	dt := m.takeVal()
@@ -215,13 +219,12 @@ var intrinsics = map[string]intrinsicFunc{
 		}
 		m.store(m.dest(f, t), ptrWord(ptrAlloc(p), uint32(off)))
 	},
-	"std.raw.Read":          readRaw,
-	"std.raw.ReadUnaligned": readRaw,
-	"std.raw.Write": func(m *Machine, f *frame, t *mir.Terminator, fn types.FnRef) {
-		m.writeOp(f, m.argOp(f, t, 1), m.ptrLoc(m.argU(f, t, 0), m.targ(f, fn, 0)))
-	},
-	"std.raw.Copy": copyRaw,
-	"std.raw.Move": copyRaw,
+	"std.raw.Read":           readRaw,
+	"std.raw.ReadUnaligned":  readRaw,
+	"std.raw.Write":          writeRaw,
+	"std.raw.WriteUnaligned": writeRaw,
+	"std.raw.Copy":           copyRaw,
+	"std.raw.Move":           copyRaw,
 	"std.raw.Fill": func(m *Machine, f *frame, t *mir.Terminator, _ types.FnRef) {
 		d, v, n := m.argU(f, t, 0), m.argU(f, t, 1), m.argCount(f, t, 2)
 		m.charge(c(n))

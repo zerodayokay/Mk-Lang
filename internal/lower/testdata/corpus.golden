@@ -10517,6 +10517,55 @@ body m.UseMut generics=1 params=1 {
     return normal
 }
 == memory.md, ok block 5
+body m.Spend generics=0 params=1 {
+  let _0: void // return
+  let _1: Token // param 1 t
+  let _2: Token // temp
+  bb0:
+    _2 = move _1
+    consume _2
+    scope_end _2
+    return normal
+}
+body m.SpendSome generics=0 params=1 {
+  let _0: void // return
+  let _1: ?Token // param 1 o
+  let _2: ?Token // temp
+  let _3: u64 // temp
+  let _4: u64 // temp
+  bb0:
+    _2 = move _1
+    _3 = Discriminant(_2)
+    switch copy _3 [1: bb3, _: bb2]
+  bb1:
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    return normal
+  bb2:
+    _4 = Discriminant(_2)
+    switch copy _4 [0: bb5, _: bb4]
+  bb3:
+    consume (_2 as some).0
+    goto bb1
+  bb4:
+    unreachable
+  bb5:
+    goto bb1
+}
+body m.Use generics=1 params=1 {
+  let _0: void // return
+  let _1: &$0 // param 1 x
+  bb0:
+    return normal
+}
+body m.UseMut generics=1 params=1 {
+  let _0: void // return
+  let _1: mut $0 // param 1 x
+  bb0:
+    return normal
+}
+== memory.md, ok block 6
 body m#impl(std.core.Format for m.Full):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Full // param 1 self
@@ -10638,7 +10687,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 6
+== memory.md, ok block 7
 body m.Late generics=0 params=1 {
   let _0: i32 // return
   let _1: bool // param 1 c
@@ -10675,7 +10724,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 7
+== memory.md, ok block 8
 body m.Disjoint generics=0 params=0 {
   let _0: void // return
   let _1: Point // var p
@@ -10727,7 +10776,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 8
+== memory.md, ok block 9
 body m.ReleaseAll generics=0 params=1 {
   let _0: void // return
   let _1: [2]Res // param 1 rs
@@ -10763,7 +10812,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 9
+== memory.md, ok block 10
 body m.Shared generics=0 params=0 {
   let _0: void // return
   let _1: int // var n
@@ -10799,7 +10848,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 10
+== memory.md, ok block 11
 body m.LastUseEndsIt generics=0 params=0 {
   let _0: void // return
   let _1: Point // temp
@@ -10832,7 +10881,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 11
+== memory.md, ok block 12
 body m.Replace generics=0 params=0 {
   let _0: void // return
   let _1: int // var n
@@ -10865,7 +10914,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 12
+== memory.md, ok block 13
 body m.Split generics=0 params=0 {
   let _0: void // return
   let _1: Res // temp
@@ -10918,7 +10967,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 13
+== memory.md, ok block 14
 body m.Shared generics=0 params=0 {
   let _0: void // return
   let _1: Res // temp
@@ -10988,7 +11037,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 14
+== memory.md, ok block 15
 body m.ReadOut generics=0 params=1 {
   let _0: str // return
   let _1: &Holder // param 1 h
@@ -11008,7 +11057,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 15
+== memory.md, ok block 16
 body m.At generics=0 params=2 {
   let _0: &i32 // return
   let _1: []i32 // param 1 xs
@@ -11107,7 +11156,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 16
+== memory.md, ok block 17
 body m.Name generics=0 params=2 {
   let _0: OutOfMemory!str // return
   let _1: &System // param 1 sys
@@ -11339,7 +11388,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 17
+== memory.md, ok block 18
 body m.Lexer:Next generics=0 params=1 {
   let _0: ?str // return
   let _1: mut Lexer // param 1 self
@@ -11427,7 +11476,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 18
+== memory.md, ok block 19
 body m.Index:First generics=0 params=1 {
   let _0: str // return
   let _1: &Index // param 1 self
@@ -11543,7 +11592,7 @@ body m.Words2:Next generics=0 params=1 {
     scope_end _2
     return normal
 }
-== memory.md, ok block 19
+== memory.md, ok block 20
 body m.Deep:Mix generics=0 params=1 {
   let _0: void // return
   let _1: mut Deep // param 1 self
@@ -11597,7 +11646,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 20
+== memory.md, ok block 21
 body m.Names:Keys generics=0 params=2 {
   let _0: OutOfMemory!List[str] // return
   let _1: &Names // param 1 self
@@ -11688,7 +11737,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 21
+== memory.md, ok block 22
 body m.BumpFirst generics=0 params=1 {
   let _0: void // return
   let _1: mut Counters // param 1 c
@@ -11758,7 +11807,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 22
+== memory.md, ok block 23
 body m.Shelf:Put generics=0 params=2 {
   let _0: void // return
   let _1: mut Shelf // param 1 self
@@ -11799,7 +11848,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 23
+== memory.md, ok block 24
 body m.CopyAll generics=0 params=2 {
   let _0: OutOfMemory!List[str] // return
   let _1: &Arena // param 1 a
@@ -11899,7 +11948,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 24
+== memory.md, ok block 25
 body m.B1 generics=0 params=1 {
   let _0: void // return
   let _1: &Arena // param 1 a
@@ -11981,7 +12030,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 25
+== memory.md, ok block 26
 body m.Load generics=0 params=1 {
   let _0: OutOfMemory!str // return
   let _1: &Arena // param 1 a
@@ -12060,7 +12109,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 26
+== memory.md, ok block 27
 body m.Twice generics=0 params=1 {
   let _0: void // return
   let _1: mut i32 // param 1 r
@@ -12087,7 +12136,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 27
+== memory.md, ok block 28
 body m.Grow generics=0 params=1 {
   let _0: OutOfMemory!void // return
   let _1: mut List[int] // param 1 list
@@ -12127,7 +12176,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 28
+== memory.md, ok block 29
 body m.CountSorted generics=0 params=1 {
   let _0: int // return
   let _1: mut []i32 // param 1 xs
@@ -12176,7 +12225,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 29
+== memory.md, ok block 30
 body m.Passes generics=0 params=0 {
   let _0: void // return
   let _1: Point // temp
@@ -12205,7 +12254,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 30
+== memory.md, ok block 31
 body m.Last generics=0 params=1 {
   let _0: mut Node // return
   let _1: mut Node // param 1 head
@@ -12290,7 +12339,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 31
+== memory.md, ok block 32
 body m.Limit generics=0 params=0 {
   let _0: i32 // return
   bb0:
@@ -12318,7 +12367,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 32
+== memory.md, ok block 33
 body m.Parallel generics=0 params=3 {
   let _0: i64 // return
   let _1: Io // param 1 io
@@ -12402,7 +12451,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 33
+== memory.md, ok block 34
 body m.Late generics=0 params=4 {
   let _0: OutOfMemory!void // return
   let _1: Io // param 1 io
@@ -12505,7 +12554,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 34
+== memory.md, ok block 35
 body m.Reuse generics=0 params=1 {
   let _0: OutOfMemory!int // return
   let _1: &Heap // param 1 h
@@ -12619,7 +12668,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 35
+== memory.md, ok block 36
 body m.Peek generics=0 params=1 {
   let _0: i32 // return
   let _1: *i32 // param 1 p
@@ -12639,7 +12688,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 36
+== memory.md, ok block 37
 body m.All generics=0 params=2 {
   let _0: void // return
   let _1: Io // param 1 io
@@ -12698,7 +12747,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 37
+== memory.md, ok block 38
 body m.Build generics=0 params=1 {
   let _0: OutOfMemory!Arena // return
   let _1: &Heap // param 1 h
@@ -12756,7 +12805,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== memory.md, ok block 38
+== memory.md, ok block 39
 body m.Get generics=0 params=1 {
   let _0: mut ?&i32 // return
   let _1: mut S // param 1 s
@@ -15382,7 +15431,7 @@ body m.Stack:Pop generics=1 params=1 {
     _2 = mut (*_1).0
     _3 = call std.core.List:Pop[$0](move _2) -> bb1
   bb1:
-    _0 = move _3
+    _0 = copy _3
     scope_end _3
     scope_end _2
     return normal
@@ -15396,7 +15445,7 @@ body m.Stack:Push generics=1 params=2 {
   let _5: void // temp
   bb0:
     _4 = mut (*_1).0
-    _5 = call std.core.List:Push[$0](move _4, move _2) -> bb2 err try _3 -> bb1
+    _5 = call std.core.List:Push[$0](move _4, copy _2) -> bb2 err try _3 -> bb1
   bb1:
     _0 = err(copy _3)
     scope_end _5
@@ -27047,6 +27096,247 @@ body m.UseMut generics=1 params=1 {
     return normal
 }
 == reference.md, ok block 80
+body m#impl(std.core.Format for m.Empty):Format generics=0 params=2 {
+  let _0: WriteError!void // return
+  let _1: &Empty // param 1 self
+  let _2: mut Writer // param 2 w
+  let _3: WriteError // temp
+  let _4: void // temp
+  let _5: &int // temp
+  let _6: WriteError // temp
+  let _7: void // temp
+  let _8: WriteError // temp
+  let _9: void // temp
+  bb0:
+    _4 = call std.core.Writer:Str(reborrow copy _2, const str "Empty(slot: ") -> bb2 err try _3 -> bb1
+  bb1:
+    _0 = err(copy _3)
+    scope_end _4
+    scope_end _3
+    return try
+  bb2:
+    scope_end _4
+    scope_end _3
+    _5 = &((*_1) as m.Empty).0
+    _7 = call std.core#impl(std.core.Format for int):Format(copy _5, reborrow copy _2) -> bb4 err try _6 -> bb3
+  bb3:
+    _0 = err(copy _6)
+    scope_end _7
+    scope_end _6
+    scope_end _5
+    return try
+  bb4:
+    scope_end _7
+    scope_end _6
+    scope_end _5
+    _9 = call std.core.Writer:Str(reborrow copy _2, const str ")") -> bb6 err try _8 -> bb5
+  bb5:
+    _0 = err(copy _8)
+    scope_end _9
+    scope_end _8
+    return try
+  bb6:
+    scope_end _9
+    scope_end _8
+    _0 = ok()
+    return normal
+}
+body m#impl(std.core.Format for m.Late):Format generics=0 params=2 {
+  let _0: WriteError!void // return
+  let _1: &Late // param 1 self
+  let _2: mut Writer // param 2 w
+  let _3: WriteError // temp
+  let _4: void // temp
+  bb0:
+    _4 = call std.core.Writer:Str(reborrow copy _2, const str "Late") -> bb2 err try _3 -> bb1
+  bb1:
+    _0 = err(copy _3)
+    scope_end _4
+    scope_end _3
+    return try
+  bb2:
+    scope_end _4
+    scope_end _3
+    _0 = ok()
+    return normal
+}
+body m.Fetch generics=1 params=2 {
+  let _0: Late!$0 // return
+  let _1: &$0 // param 1 x
+  let _2: bool // param 2 late
+  let _3: Late // temp
+  bb0:
+    switch copy _2 [0: bb2, _: bb1]
+  bb1:
+    _3 = m.Late()
+    _0 = err(copy _3)
+    scope_end _3
+    return fail new-error
+  bb2:
+    goto bb3
+  bb3:
+    _0 = ok(copy (*_1))
+    return normal
+}
+body m.Main generics=0 params=1 {
+  let _0: WriteError!void // return
+  let _1: &System // param 1 sys
+  let _2: WriteError // temp
+  let _3: int // temp
+  let _4: int // temp
+  let _5: int // temp
+  let _6: int // temp
+  let _7: (a: int, b: int, c: int, d: int) // temp
+  let _8: void // temp
+  bb0:
+    _3 = call m.Show(int 5, bool 0) -> bb2
+  bb1:
+    _0 = err(copy _2)
+    scope_end _8
+    scope_end _7
+    scope_end _6
+    scope_end _5
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    return try
+  bb2:
+    _4 = call m.Show(int 18446744073709551614, bool 0) -> bb3
+  bb3:
+    _5 = call m.Show(int 5, bool 1) -> bb4
+  bb4:
+    _6 = call m.Show(int 0, bool 0) -> bb5
+  bb5:
+    _7 = (a: int, b: int, c: int, d: int)(copy _3, copy _4, copy _5, copy _6)
+    _8 = call std.core.System:Print[(a: int, b: int, c: int, d: int)](copy _1, const str "{a} {b} {c} {d}\n", copy _7) -> bb6 err try _2 -> bb1
+  bb6:
+    scope_end _8
+    scope_end _7
+    scope_end _6
+    scope_end _5
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    _0 = ok()
+    return normal
+}
+body m.Read generics=0 params=1 {
+  let _0: Empty!int // return
+  let _1: int // param 1 n
+  let _2: bool // temp
+  let _3: int // temp
+  let _4: Empty // temp
+  bb0:
+    _2 = Lt(copy _1, int 0)
+    switch copy _2 [0: bb2, _: bb1]
+  bb1:
+    _3 = Neg(copy _1)
+    _4 = m.Empty(copy _3)
+    _0 = err(copy _4)
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    return fail new-error
+  bb2:
+    goto bb3
+  bb3:
+    scope_end _2
+    _0 = ok(copy _1)
+    return normal
+}
+body m.Show generics=0 params=2 {
+  let _0: int // return
+  let _1: int // param 1 n
+  let _2: bool // param 2 late
+  let _3: Empty // temp
+  let _4: int // temp
+  let _5: Empty!int // temp
+  let _6: Empty!int // var r
+  let _7: int // temp
+  let _8: Late // temp
+  let _9: &(Empty!int) // temp
+  let _10: Empty!int // temp
+  let _11: u64 // temp
+  let _12: u64 // temp
+  let _13: int // v
+  let _14: u64 // temp
+  let _15: u64 // temp
+  let _16: int // slot
+  bb0:
+    _4 = call m.Read(copy _1) -> bb2 err match _3 -> bb1
+  bb1:
+    _5 = err(move _3)
+    goto bb3
+  bb2:
+    _5 = ok(move _4)
+    goto bb3
+  bb3:
+    _6 = copy _5
+    scope_end _5
+    scope_end _4
+    scope_end _3
+    _9 = &_6
+    _10 = call m.Fetch[Empty!int](copy _9, copy _2) -> bb5 err match _8 -> bb4
+  bb4:
+    goto bb15
+  bb5:
+    _11 = Discriminant(_10)
+    switch copy _11 [0: bb8, _: bb7]
+  bb6:
+    _0 = copy _7
+    scope_end _15
+    scope_end _14
+    scope_end _12
+    scope_end _11
+    scope_end _10
+    scope_end _9
+    scope_end _8
+    scope_end _7
+    scope_end _6
+    return normal
+  bb7:
+    _12 = Discriminant(_10)
+    switch copy _12 [0: bb11, _: bb10]
+  bb8:
+    switch copy (_10 as ok).0 [0: bb9, _: bb7]
+  bb9:
+    _7 = int 0
+    goto bb6
+  bb10:
+    _14 = Discriminant(_10)
+    switch copy _14 [0: bb12, _: bb13]
+  bb11:
+    _13 = copy (_10 as ok).0
+    _7 = copy _13
+    scope_end _13
+    goto bb6
+  bb12:
+    unreachable
+  bb13:
+    _15 = Discriminant((_10 as err))
+    switch copy _15 [325548896: bb14, _: bb12]
+  bb14:
+    _16 = copy ((_10 as err) as m.Empty).0
+    _7 = Add(int 100, copy _16)
+    scope_end _16
+    goto bb6
+  bb15:
+    _7 = int 0
+    goto bb6
+}
+body m.Use generics=1 params=1 {
+  let _0: void // return
+  let _1: &$0 // param 1 x
+  bb0:
+    return normal
+}
+body m.UseMut generics=1 params=1 {
+  let _0: void // return
+  let _1: mut $0 // param 1 x
+  bb0:
+    return normal
+}
+== reference.md, ok block 81
 body m.Divide generics=0 params=2 {
   let _0: (q: int, r: int) // return
   let _1: int // param 1 n
@@ -27166,7 +27456,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 81
+== reference.md, ok block 82
 body m.Conn:Close generics=0 params=1 {
   let _0: int // return
   let _1: Conn // param 1 self
@@ -27281,7 +27571,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 82
+== reference.md, ok block 83
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -27357,7 +27647,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 83
+== reference.md, ok block 84
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -27484,7 +27774,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 84
+== reference.md, ok block 85
 body m.Main generics=0 params=1 {
   let _0: int // return
   let _1: &System // param 1 sys
@@ -27522,7 +27812,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 85
+== reference.md, ok block 86
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -27622,7 +27912,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 86
+== reference.md, ok block 87
 body m#impl(std.core.Eq for m.Pair):Eq generics=0 params=2 {
   let _0: bool // return
   let _1: &Pair // param 1 self
@@ -27796,7 +28086,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 87
+== reference.md, ok block 88
 body m.Loud generics=0 params=2 {
   let _0: bool // return
   let _1: &System // param 1 sys
@@ -27906,7 +28196,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 88
+== reference.md, ok block 89
 body m.Counter:Bump generics=0 params=1 {
   let _0: void // return
   let _1: mut Counter // param 1 self
@@ -28016,7 +28306,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 89
+== reference.md, ok block 90
 body m.Main generics=0 params=1 {
   let _0: OutOfMemory|WriteError!void // return
   let _1: &System // param 1 sys
@@ -28465,7 +28755,7 @@ body m.Zero generics=0 params=1 {
     scope_end _2
     return normal
 }
-== reference.md, ok block 90
+== reference.md, ok block 91
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -28544,7 +28834,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 91
+== reference.md, ok block 92
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -28631,7 +28921,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 92
+== reference.md, ok block 93
 body m.Add generics=0 params=2 {
   let _0: i32 // return
   let _1: i32 // param 1 a
@@ -28679,7 +28969,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 93
+== reference.md, ok block 94
 body m.Apply generics=0 params=2 {
   let _0: int // return
   let _1: fn(int): int // param 1 f
@@ -28908,7 +29198,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 94
+== reference.md, ok block 95
 body m.Sorted generics=0 params=1 {
   let _0: int // return
   let _1: mut []i32 // param 1 xs
@@ -28957,7 +29247,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 95
+== reference.md, ok block 96
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -29008,7 +29298,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 96
+== reference.md, ok block 97
 body m.Longer generics=0 params=2 {
   let _0: str // return
   let _1: str // param 1 a
@@ -29262,7 +29552,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 97
+== reference.md, ok block 98
 body m#impl(std.core.Format for m.Denied):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Denied // param 1 self
@@ -29445,7 +29735,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 98
+== reference.md, ok block 99
 body m#impl(std.core.Format for m.BadByte):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &BadByte // param 1 self
@@ -29679,7 +29969,7 @@ body m.Where generics=0 params=1 {
     _0 = copy _1.0.0
     return normal
 }
-== reference.md, ok block 99
+== reference.md, ok block 100
 body m#impl(std.core.Format for m.BadByte):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &BadByte // param 1 self
@@ -29915,7 +30205,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 100
+== reference.md, ok block 101
 body m#impl(std.core.Format for m.Unsupported):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Unsupported // param 1 self
@@ -30091,7 +30381,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 101
+== reference.md, ok block 102
 body m#impl(std.core.Format for m.BadChar):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &BadChar // param 1 self
@@ -30422,7 +30712,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 102
+== reference.md, ok block 103
 body m#impl(std.core.Format for m.Negative):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Negative // param 1 self
@@ -30632,7 +30922,187 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 103
+== reference.md, ok block 104
+body m#impl(std.core.Format for m.Negative):Format generics=0 params=2 {
+  let _0: WriteError!void // return
+  let _1: &Negative // param 1 self
+  let _2: mut Writer // param 2 w
+  let _3: WriteError // temp
+  let _4: void // temp
+  bb0:
+    _4 = call std.core.Writer:Str(reborrow copy _2, const str "Negative") -> bb2 err try _3 -> bb1
+  bb1:
+    _0 = err(copy _3)
+    scope_end _4
+    scope_end _3
+    return try
+  bb2:
+    scope_end _4
+    scope_end _3
+    _0 = ok()
+    return normal
+}
+body m.Copy generics=1 params=1 {
+  let _0: $0 // return
+  let _1: &$0 // param 1 x
+  bb0:
+    _0 = copy (*_1)
+    return normal
+}
+body m.Main generics=0 params=1 {
+  let _0: WriteError!void // return
+  let _1: &System // param 1 sys
+  let _2: [2]int // temp
+  let _3: int // temp
+  let _4: int // temp
+  let _5: bool // temp
+  let _6: int // n
+  let _7: Negative // temp
+  let _8: int // temp
+  let _9: Negative!int // temp
+  let _10: Negative!int // var r
+  let _11: &(Negative!int) // temp
+  let _12: Negative!int // temp
+  let _13: u64 // temp
+  let _14: Negative // e
+  let _15: WriteError // temp
+  let _16: (e: Negative) // temp
+  let _17: void // temp
+  let _18: int // v
+  let _19: WriteError // temp
+  let _20: (v: int) // temp
+  let _21: void // temp
+  bb0:
+    _2 = [2]int(int 4, int 18446744073709551612)
+    _3 = Len(_2)
+    _4 = int 0
+    goto bb1
+  bb1:
+    _5 = Lt(copy _4, copy _3)
+    switch copy _5 [0: bb4, _: bb2]
+  bb2:
+    _6 = copy _2[_4]
+    _8 = call m.Root(copy _6) -> bb6 err match _7 -> bb5
+  bb3:
+    _4 = AddNoWrap(copy _4, int 1)
+    goto bb1
+  bb4:
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    _0 = ok()
+    return normal
+  bb5:
+    _9 = err(move _7)
+    goto bb7
+  bb6:
+    _9 = ok(move _8)
+    goto bb7
+  bb7:
+    _10 = copy _9
+    scope_end _9
+    scope_end _8
+    scope_end _7
+    _11 = &_10
+    _12 = call m.Copy[Negative!int](copy _11) -> bb8
+  bb8:
+    _13 = Discriminant(_12)
+    switch copy _13 [0: bb9, _: bb10]
+  bb9:
+    _18 = copy (_12 as ok).0
+    scope_end _13
+    scope_end _12
+    scope_end _11
+    _20 = (v: int)(copy _18)
+    _21 = call std.core.System:Print[(v: int)](copy _1, const str "{v}\n", copy _20) -> bb14 err try _19 -> bb13
+  bb10:
+    _14 = copy (_12 as err)
+    _16 = (e: Negative)(copy _14)
+    _17 = call std.core.System:Print[(e: Negative)](copy _1, const str "{e}\n", copy _16) -> bb12 err try _15 -> bb11
+  bb11:
+    _0 = err(copy _15)
+    scope_end _17
+    scope_end _16
+    scope_end _15
+    scope_end _14
+    scope_end _13
+    scope_end _12
+    scope_end _11
+    scope_end _10
+    scope_end _6
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    return try
+  bb12:
+    scope_end _17
+    scope_end _16
+    scope_end _15
+    scope_end _14
+    scope_end _13
+    scope_end _12
+    scope_end _11
+    scope_end _10
+    scope_end _6
+    goto bb3 else-exit
+  bb13:
+    _0 = err(copy _19)
+    scope_end _21
+    scope_end _20
+    scope_end _19
+    scope_end _18
+    scope_end _10
+    scope_end _6
+    scope_end _4
+    scope_end _3
+    scope_end _2
+    return try
+  bb14:
+    scope_end _21
+    scope_end _20
+    scope_end _19
+    scope_end _18
+    scope_end _10
+    scope_end _6
+    goto bb3
+}
+body m.Root generics=0 params=1 {
+  let _0: Negative!int // return
+  let _1: int // param 1 n
+  let _2: bool // temp
+  let _3: Negative // temp
+  let _4: int // temp
+  bb0:
+    _2 = Lt(copy _1, int 0)
+    switch copy _2 [0: bb2, _: bb1]
+  bb1:
+    _3 = m.Negative()
+    _0 = err(copy _3)
+    scope_end _3
+    scope_end _2
+    return fail new-error
+  bb2:
+    goto bb3
+  bb3:
+    scope_end _2
+    _4 = Mul(copy _1, int 2)
+    _0 = ok(copy _4)
+    scope_end _4
+    return normal
+}
+body m.Use generics=1 params=1 {
+  let _0: void // return
+  let _1: &$0 // param 1 x
+  bb0:
+    return normal
+}
+body m.UseMut generics=1 params=1 {
+  let _0: void // return
+  let _1: mut $0 // param 1 x
+  bb0:
+    return normal
+}
+== reference.md, ok block 105
 body m#impl(std.core.Format for m.Busy):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Busy // param 1 self
@@ -30864,7 +31334,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 104
+== reference.md, ok block 106
 body m#impl(std.core.Format for m.Short):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Short // param 1 self
@@ -31141,7 +31611,7 @@ body m.Word generics=0 params=2 {
     scope_end _5
     return normal
 }
-== reference.md, ok block 105
+== reference.md, ok block 107
 body m#impl(std.core.Format for m.Missing):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Missing // param 1 self
@@ -31396,7 +31866,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 106
+== reference.md, ok block 108
 body m#impl(std.core.Format for m.Denied):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Denied // param 1 self
@@ -31705,7 +32175,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 107
+== reference.md, ok block 109
 body m#impl(std.core.Format for m.Denied):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Denied // param 1 self
@@ -31826,7 +32296,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 108
+== reference.md, ok block 110
 body m#impl(std.core.Format for m.Bad):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Bad // param 1 self
@@ -32033,7 +32503,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 109
+== reference.md, ok block 111
 body m#impl(std.core.Format for m.Bad):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Bad // param 1 self
@@ -32167,7 +32637,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 110
+== reference.md, ok block 112
 body m.Save generics=0 params=2 {
   let _0: NotFound|Other!void // return
   let _1: Io // param 1 io
@@ -32246,7 +32716,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 111
+== reference.md, ok block 113
 body m#impl(std.core.Format for m.Denied):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Denied // param 1 self
@@ -32431,7 +32901,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 112
+== reference.md, ok block 114
 body m#impl(std.core.Format for m.Empty):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Empty // param 1 self
@@ -32556,7 +33026,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 113
+== reference.md, ok block 115
 body m.Size generics=0 params=3 {
   let _0: OutOfMemory|NotFound|Other!int // return
   let _1: &Arena // param 1 a
@@ -32611,7 +33081,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 114
+== reference.md, ok block 116
 body m#impl(std.core.Format for m.Denied):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Denied // param 1 self
@@ -32718,7 +33188,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 115
+== reference.md, ok block 117
 body m.Main generics=0 params=1 {
   let _0: int // return
   let _1: &System // param 1 sys
@@ -32763,7 +33233,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 116
+== reference.md, ok block 118
 body m#impl(m.Weight for m.Apple):Grams generics=0 params=1 {
   let _0: int // return
   let _1: &Apple // param 1 self
@@ -32880,7 +33350,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 117
+== reference.md, ok block 119
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -33025,7 +33495,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 118
+== reference.md, ok block 120
 body m.Main generics=0 params=1 {
   let _0: OutOfMemory|WriteError!void // return
   let _1: &System // param 1 sys
@@ -33316,7 +33786,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 119
+== reference.md, ok block 121
 body m#impl(m.Merge for m.Span):With generics=0 params=2 {
   let _0: Span // return
   let _1: &Span // param 1 self
@@ -33548,7 +34018,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 120
+== reference.md, ok block 122
 body m#impl(m.Shape for m.Box):Area generics=1 params=1 {
   let _0: f64 // return
   let _1: &Box[$0] // param 1 self
@@ -33631,7 +34101,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 121
+== reference.md, ok block 123
 body m.Forget generics=1 params=1 {
   let _0: void // return
   let _1: $0 // param 1 x
@@ -33657,7 +34127,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 122
+== reference.md, ok block 124
 body m#impl(std.core.Slice for m.Ring):Items generics=0 params=1 {
   let _0: []int // return
   let _1: &Ring // param 1 self
@@ -33771,7 +34241,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 123
+== reference.md, ok block 125
 body m.CloseHandle generics=0 params=1 {
   let _0: void // return
   let _1: Handle // param 1 h
@@ -34039,7 +34509,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 124
+== reference.md, ok block 126
 body m.Apply generics=0 params=2 {
   let _0: i32 // return
   let _1: fn(i32): i32 // param 1 f
@@ -34122,7 +34592,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 125
+== reference.md, ok block 127
 body m.Default generics=0 params=0 {
   let _0: Opts // return
   let _1: Opts // temp
@@ -34295,7 +34765,7 @@ body m.Width generics=0 params=1 {
     _0 = copy _1
     return normal
 }
-== reference.md, ok block 126
+== reference.md, ok block 128
 body m.Count generics=0 params=2 {
   let _0: int // return
   let _1: []i32 // param 1 xs
@@ -34429,7 +34899,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 127
+== reference.md, ok block 129
 body m.First generics=2 params=1 {
   let _0: $0 // return
   let _1: [$1]$0 // param 1 xs
@@ -34578,7 +35048,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 128
+== reference.md, ok block 130
 body m.Forward generics=0 params=1 {
   let _0: int // return
   let _1: int // param 1 k
@@ -34692,7 +35162,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 129
+== reference.md, ok block 131
 body m.Lane generics=1 params=0 {
   let _0: int // return
   let _1: bool // temp
@@ -34783,7 +35253,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 130
+== reference.md, ok block 132
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -34870,7 +35340,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 131
+== reference.md, ok block 133
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -35030,7 +35500,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 132
+== reference.md, ok block 134
 body m.Answer generics=0 params=0 {
   let _0: int // return
   let _1: int // temp
@@ -35141,7 +35611,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 133
+== reference.md, ok block 135
 body m.Four generics=0 params=0 {
   let _0: i32 // return
   let _1: i32 // temp
@@ -35174,7 +35644,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 134
+== reference.md, ok block 136
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -35256,7 +35726,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 135
+== reference.md, ok block 137
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -35466,7 +35936,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 136
+== reference.md, ok block 138
 body m.Routes generics=0 params=0 {
   let _0: []Route // return
   let _1: []str // temp
@@ -35534,7 +36004,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 137
+== reference.md, ok block 139
 body m.HasOs generics=0 params=0 {
   let _0: bool // return
   let _1: TargetInfo // temp
@@ -35651,7 +36121,7 @@ body m.Wide generics=0 params=0 {
     scope_end _1
     return normal
 }
-== reference.md, ok block 138
+== reference.md, ok block 140
 body m.Dump generics=2 params=2 {
   let _0: WriteError!void // return
   let _1: mut Writer // param 1 w
@@ -35793,7 +36263,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 142
+== reference.md, ok block 144
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -35948,7 +36418,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 143
+== reference.md, ok block 145
 body m.Count generics=0 params=1 {
   let _0: int // return
   let _1: []int // param 1 xs
@@ -36047,7 +36517,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 144
+== reference.md, ok block 146
 body m.Fill generics=0 params=2 {
   let _0: void // return
   let _1: mut int // param 1 out
@@ -36130,7 +36600,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 145
+== reference.md, ok block 147
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -36225,7 +36695,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 146
+== reference.md, ok block 148
 body m#impl(std.core.Format for m.Bad):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Bad // param 1 self
@@ -36418,7 +36888,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 147
+== reference.md, ok block 149
 body m.Leaf generics=0 params=2 {
   let _0: void // return
   let _1: int // param 1 n
@@ -36531,7 +37001,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 148
+== reference.md, ok block 150
 body m#impl(std.core.Format for m.Bad):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Bad // param 1 self
@@ -36762,7 +37232,7 @@ body m.Work generics=0 params=0 {
     scope_end _1
     return fail new-error
 }
-== reference.md, ok block 149
+== reference.md, ok block 151
 body m.Each generics=1 params=2 {
   let _0: void // return
   let _1: Io // param 1 io
@@ -36879,7 +37349,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 150
+== reference.md, ok block 152
 body m.Main generics=0 params=1 {
   let _0: OutOfMemory|WriteError!void // return
   let _1: &System // param 1 sys
@@ -37159,7 +37629,7 @@ body m.Workers generics=0 params=3 {
     scope_end _7
     goto bb4
 }
-== reference.md, ok block 151
+== reference.md, ok block 153
 body m.Add generics=0 params=2 {
   let _0: void // return
   let _1: Io // param 1 io
@@ -37294,7 +37764,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 152
+== reference.md, ok block 154
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -37435,7 +37905,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 153
+== reference.md, ok block 155
 body m.Use generics=1 params=1 {
   let _0: void // return
   let _1: &$0 // param 1 x
@@ -37448,7 +37918,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 154
+== reference.md, ok block 156
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -37554,7 +38024,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 155
+== reference.md, ok block 157
 body m.Enter generics=0 params=2 {
   let _0: void // return
   let _1: Io // param 1 io
@@ -37754,7 +38224,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 156
+== reference.md, ok block 158
 body m.Deep generics=0 params=1 {
   let _0: int // return
   let _1: int // param 1 n
@@ -37904,7 +38374,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 157
+== reference.md, ok block 159
 body m.Get generics=0 params=3 {
   let _0: void // return
   let _1: []int // param 1 xs
@@ -37993,7 +38463,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 158
+== reference.md, ok block 160
 body m.Kind generics=0 params=1 {
   let _0: str // return
   let _1: NotFound|Other // param 1 e
@@ -38040,7 +38510,7 @@ body m.Width generics=0 params=1 {
     scope_end _2
     return normal
 }
-== reference.md, ok block 159
+== reference.md, ok block 161
 body m.MkEntry generics=0 params=0 {
   let _0: never // return
   let _1: int // var n
@@ -38094,7 +38564,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 160
+== reference.md, ok block 162
 body m.Clear generics=0 params=2 {
   let _0: void // return
   let _1: *int // param 1 p
@@ -38252,7 +38722,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 161
+== reference.md, ok block 163
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -38345,7 +38815,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 162
+== reference.md, ok block 164
 body m.Check generics=0 params=0 {
   let _0: bool // return
   let _1: *u8 // temp
@@ -38409,7 +38879,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 163
+== reference.md, ok block 165
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -38506,7 +38976,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 164
+== reference.md, ok block 166
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -38554,7 +39024,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 165
+== reference.md, ok block 167
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -38607,7 +39077,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 166
+== reference.md, ok block 168
 body m.SharedLoad generics=0 params=1 {
   let _0: u32 // return
   let _1: *u32 // param 1 p
@@ -38634,7 +39104,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 167
+== reference.md, ok block 169
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -38794,7 +39264,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 168
+== reference.md, ok block 170
 body m.Add generics=0 params=2 {
   let _0: u64 // return
   let _1: u64 // param 1 a
@@ -38884,7 +39354,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 169
+== reference.md, ok block 171
 body m.Forms generics=0 params=3 {
   let _0: u64 // return
   let _1: u64 // param 1 a
@@ -38939,7 +39409,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 170
+== reference.md, ok block 172
 body m.KernelMain generics=0 params=0 {
   let _0: never // return
   bb0:
@@ -38969,7 +39439,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 171
+== reference.md, ok block 173
 body m.Boot generics=0 params=0 {
   let _0: [2]u32 // return
   let _1: [2]u32 // temp
@@ -39054,7 +39524,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 172
+== reference.md, ok block 174
 body m.ApicVersion generics=0 params=0 {
   let _0: u32 // return
   let _1: Reg[u32] // temp
@@ -39117,7 +39587,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 173
+== reference.md, ok block 175
 body m#test("len") generics=0 params=0 {
   let _0: void // return
   let _1: Span // temp
@@ -39294,7 +39764,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 174
+== reference.md, ok block 176
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -39402,7 +39872,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 175
+== reference.md, ok block 177
 body m.Abs generics=0 params=1 {
   let _0: int // return
   let _1: int // param 1 n
@@ -39535,7 +40005,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 176
+== reference.md, ok block 178
 body m.Main generics=0 params=1 {
   let _0: WriteError!void // return
   let _1: &System // param 1 sys
@@ -39644,7 +40114,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 177
+== reference.md, ok block 179
 body m#test("clamp above") generics=0 params=0 {
   let _0: void // return
   let _1: int // temp
@@ -39767,7 +40237,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 178
+== reference.md, ok block 180
 body m.SafeDiv generics=0 params=2 {
   let _0: i32 // return
   let _1: i32 // param 1 a
@@ -39856,7 +40326,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 179
+== reference.md, ok block 181
 body m.Sum generics=0 params=1 {
   let _0: int // return
   let _1: []int // param 1 xs
@@ -39903,7 +40373,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 180
+== reference.md, ok block 182
 body m.Area generics=0 params=1 {
   let _0: int // return
   let _1: &Rect // param 1 r
@@ -40151,7 +40621,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 181
+== reference.md, ok block 183
 body m.Main generics=0 params=1 {
   let _0: OutOfMemory|WriteError!void // return
   let _1: &System // param 1 sys
@@ -40244,7 +40714,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 182
+== reference.md, ok block 184
 body m#impl(m.Shape for m.Square):Area generics=0 params=1 {
   let _0: int // return
   let _1: &Square // param 1 self
@@ -40731,7 +41201,7 @@ body m.UseMut generics=1 params=1 {
   bb0:
     return normal
 }
-== reference.md, ok block 184
+== reference.md, ok block 186
 body m#impl(std.core.Format for m.Empty):Format generics=0 params=2 {
   let _0: WriteError!void // return
   let _1: &Empty // param 1 self

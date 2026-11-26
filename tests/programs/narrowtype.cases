@@ -1,0 +1,3 @@
+# A type written T inside if T is X is X, in every instance of the generic.
+case ok
+stdout narrowtype.out

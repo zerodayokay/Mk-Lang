@@ -6,7 +6,7 @@ import std.simd
 // The golden's offsets are those of the type's fields in declaration order (a record's in name
 // order, as it is laid out), of a slice's pointer and length, of an array's elements, of an
 // optional's some flag and value, of an enum's tag and payload, and of a result's code and
-// payload. Mk has no OffsetOf, so the offsets are compared with the checker's types.Layout and
+// payloads (each where it starts). Mk has no OffsetOf, so the offsets are compared with the checker's types.Layout and
 // with native reads, not returned by these functions.
 
 struct Layout {

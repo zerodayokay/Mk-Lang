@@ -459,7 +459,9 @@ func layoutOffsetMismatches(rows []LayoutRow, layouts map[string]driver.TypeLayo
 // record's in name order (both as Layout.Fields lays them out); a slice's
 // or str's pointer and length; an array's elements; for a tagged type (an
 // enum, a ?T, an E!T) its tag, unless the tag is a niche, then where every
-// variant's payload starts. A type of fewer than two parts lists no offset
+// variant's payload starts: one offset for an enum and a ?T, and for an E!T,
+// whose variants each start at their own alignment, every distinct start in
+// variant order, the ok payload first. A type of fewer than two parts lists no offset
 // (scalars, references, fn, a niche ?&T, an enum with no payload, Cell[i32]).
 func goldenOffsets(l driver.TypeLayout) ([]int, error) {
 	var parts []int
@@ -468,20 +470,21 @@ func goldenOffsets(l driver.TypeLayout) ([]int, error) {
 		if !l.Layout.Tag.Niche {
 			parts = append(parts, int(l.Layout.Tag.Offset))
 		}
-		payload := -1
+		own := l.Kind == types.KErrorUnion || l.Kind == types.KErrorSet
+		var starts []int
 		for _, v := range l.Layout.Variants {
 			if len(v.Fields) == 0 {
 				continue
 			}
 			at := int(v.Fields[0].Offset)
-			if payload >= 0 && at != payload {
-				return nil, fmt.Errorf("variant payloads start at %d and %d", payload, at)
+			if len(starts) > 0 && !own && at != starts[0] {
+				return nil, fmt.Errorf("variant payloads start at %d and %d", starts[0], at)
 			}
-			payload = at
+			if !slices.Contains(starts, at) {
+				starts = append(starts, at)
+			}
 		}
-		if payload >= 0 {
-			parts = append(parts, payload)
-		}
+		parts = append(parts, starts...)
 	case l.Kind == types.KStr || l.Kind == types.KSlice || l.Kind == types.KMutSlice:
 		parts = []int{0, int(l.Layout.Shape.Size / 2)}
 	case l.Kind == types.KArray:

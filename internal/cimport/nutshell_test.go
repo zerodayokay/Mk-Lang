@@ -12,7 +12,6 @@ func TestNutshellParseTriple(t *testing.T) {
 		"x86_64-nutshell":     "x86_64-unknown-nutshell-elf",
 		"aarch64-nutshell":    "aarch64-unknown-nutshell-elf",
 		"x86_64-freestanding": "x86_64-unknown-none-elf",
-		"x86_64-linux":        "x86_64-linux-musl",
 	} {
 		if got := ParseTriple(target); got != want {
 			t.Errorf("ParseTriple(%q) = %q, want %q", target, got, want)

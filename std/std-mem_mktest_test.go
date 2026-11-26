@@ -189,9 +189,9 @@ func judgeMemBlock(t *testing.T, name string, r stdTestResult, ok bool) {
 	}
 }
 
-// TestStdMem_MkTestBlocks: every block of memTestFiles ends as its name
-// asks, at dev and at release; a block with an [env] tag runs again alone
-// with that environment (MK_CARRIERS=1: the same tasks on one carrier).
+// TestStdMem_MkTestBlocks: every block in memTestFiles ends as its name asks,
+// at dev and at release; a block with an [env] tag runs again alone with
+// that environment (MK_CARRIERS=1: the same tasks on one carrier).
 func TestStdMem_MkTestBlocks(t *testing.T) {
 	t.Parallel()
 	var names []string

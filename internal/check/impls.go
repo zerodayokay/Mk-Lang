@@ -4,9 +4,9 @@
 //
 // What: implPass (duplicate blocks, coherence and the table, impl
 // signatures, name collisions), coherence (where an impl may live, E0704,
-// built-in bound assertions such as `unsafe impl Send`), implSignatures and
-// sameSig (E0707), implFlowChecks (E0608), implRequires, implCollisions
-// (E0206), and the lookup index implState.
+// built-in bound assertions such as `unsafe impl Send`), implSignatures,
+// implFallibility, expectedSigText and sameSig (E0707), implFlowChecks (E0608),
+// implRequires, implCollisions (E0206), and the lookup index implState.
 //
 // How: an impl is keyed by its type constructor (ctorKey). It reads
 // declarations only, never facts. Lookups go through a per-module index
@@ -292,7 +292,7 @@ func (m *Module) implSignatures(it *types.Item) {
 		exp := m.expectedSig(d, idecl, im)
 		if mi == nil {
 			m.Diags = append(m.Diags, diag.New(diag.E0707, it.Span, "the impl has no method `"+c.cfg.Interner.Str(im.Name)+"`").
-				Text("expected", m.ifaceSigText(ifaceIt, exp)).Text("found", "nothing"))
+				Text("expected", m.expectedSigText(ifaceIt, im, exp)).Text("found", "nothing"))
 			continue
 		}
 		fd, _ := mi.Decl.(*types.FuncDecl)
@@ -301,7 +301,16 @@ func (m *Module) implSignatures(it *types.Item) {
 		}
 		if !c.sameSig(exp, &fd.Sig, len(d.Generics)) {
 			m.Diags = append(m.Diags, diag.New(diag.E0707, mi.Span, "this method's signature differs from the interface's").
-				Text("expected", m.ifaceSigText(ifaceIt, exp)).Text("found", m.methodSigText(mi, &fd.Sig)))
+				Text("expected", m.expectedSigText(ifaceIt, im, exp)).Text("found", m.methodSigText(mi, &fd.Sig)))
+			continue
+		}
+		if ifaceFails, implFails := im.Errors != types.EmptyErrors, fd.Sig.Errors != types.EmptyErrors; ifaceFails != implFails {
+			// sameSig compares E!T whole, so an E!T value result (a type
+			// parameter bound to one, Src[E!int]'s Get(&self): T, or an
+			// alias of one) matches a written E!T, which fails. A call
+			// through a bound fails exactly when the interface method can,
+			// so the two must agree.
+			m.Diags = append(m.Diags, m.implFallibility(ifaceIt, im, mi, &fd.Sig, exp, ifaceFails))
 			continue
 		}
 		m.implFlows = append(m.implFlows, implFlowJob{it: mi, impl: &fd.Sig, iface: im})
@@ -312,6 +321,37 @@ func (m *Module) implSignatures(it *types.Item) {
 				c.cfg.Interner.Str(mi.Name)+"`").Text("expected", "nothing").Text("found", m.methodSigText(mi, &mi.Decl.(*types.FuncDecl).Sig)))
 		}
 	}
+}
+
+// implFallibility is E0707 for an impl method that fails where its
+// interface method cannot, or the reverse. A written E!T result fails; an
+// alias of one names no error set, so the method returns the E!T as a
+// value, which is how an impl of Src[E!int] writes Get(&self): T.
+func (m *Module) implFallibility(ifaceIt *types.Item, im *types.Signature, mi *types.Item, got, exp *types.Signature, ifaceFails bool) *diag.Diagnostic {
+	c := m.c
+	in, tab := c.cfg.Interner, c.cfg.Types
+	what := "`" + in.Str(ifaceIt.Name) + "`'s `" + in.Str(im.Name) + "`"
+	ret := tab.TypeString(tab.ReturnType(exp.Result, exp.Errors), exp.Generics)
+	if ifaceFails {
+		return diag.New(diag.E0707, mi.Span, what+" can fail, and this method cannot: it returns a `"+ret+"` as a value, never failing with its error").
+			Text("expected", m.ifaceSigText(ifaceIt, exp)).Text("found", m.methodSigText(mi, got)).
+			Alt("write the result as `" + ret + "`, as the interface does")
+	}
+	return diag.New(diag.E0707, mi.Span, what+" cannot fail, and this method can: the `"+ret+"` its result stands for is a value the method returns, never an error it fails with").
+		Text("expected", m.expectedSigText(ifaceIt, im, exp)).Text("found", m.methodSigText(mi, got)).
+		Alt("return the `" + ret + "` as a value: write the result as an alias of it (`type R = " + ret + "`, then `" + in.Str(im.Name) + "(..): R`)")
+}
+
+// expectedSigText is ifaceSigText of exp, marked " (cannot fail)" when the
+// interface method im cannot fail but exp, whose result expectedSig splits
+// as a written E!T is split, holds the error union its type parameter
+// stands for: without the mark the text would read as a method that fails.
+func (m *Module) expectedSigText(ifaceIt *types.Item, im, exp *types.Signature) string {
+	s := m.ifaceSigText(ifaceIt, exp)
+	if im.Errors == types.EmptyErrors && exp.Errors != types.EmptyErrors {
+		s += " (cannot fail)"
+	}
+	return s
 }
 
 // methodSigText is an impl method's signature for E0707's found fact, with

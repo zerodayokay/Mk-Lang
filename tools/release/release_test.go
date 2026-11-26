@@ -376,8 +376,10 @@ func TestSignRefusesTestKey(t *testing.T) {
 
 // TestKeygen: keygen writes a key that signs and verifies against the
 // printed public key, refuses an existing file, and refuses a path inside
-// a git work tree. The key is a throwaway in the test's temporary
-// directory, never a release key.
+// a git work tree, whose .git is a directory or a linked work tree's file.
+// The work trees are the test's own, so it holds in a source export too.
+// The key is a throwaway in the test's temporary directory, never a
+// release key.
 func TestKeygen(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "throwaway.key")
 	var stdout, stderr bytes.Buffer
@@ -396,14 +398,31 @@ func TestKeygen(t *testing.T) {
 	if st := run([]string{"keygen", "-out", out}, &stdout, &stderr); st != 2 {
 		t.Error("keygen overwrote a key file")
 	}
-	repo, _ := filepath.Abs(filepath.Join("..", ".."))
-	inRepo := filepath.Join(repo, "tools", "release", "never-written.key")
-	if st := run([]string{"keygen", "-out", inRepo}, &stdout, &stderr); st != 2 {
-		t.Error("keygen wrote into the repository")
-	}
-	if _, err := os.Stat(inRepo); err == nil {
-		os.Remove(inRepo)
-		t.Error("a key file was left in the repository")
+	// A clone's .git is a directory; a linked work tree's is a file.
+	for _, linked := range []bool{false, true} {
+		repo := filepath.Join(t.TempDir(), "repository")
+		nested := filepath.Join(repo, "nested")
+		if err := os.MkdirAll(nested, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(repo, ".git")
+		if linked {
+			err = os.WriteFile(marker, []byte("gitdir: "+filepath.Join(t.TempDir(), "worktrees", "repository")+"\n"), 0o644)
+		} else {
+			err = os.Mkdir(marker, 0o755)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		inRepo := filepath.Join(nested, "never-written.key")
+		stderr.Reset()
+		if st := run([]string{"keygen", "-out", inRepo}, &stdout, &stderr); st != 2 ||
+			!strings.Contains(stderr.String(), "lies in the git work tree "+repo+";") {
+			t.Errorf("keygen inside a repository (linked %v): exit %d, want a refusal naming %s: %s", linked, st, repo, stderr.String())
+		}
+		if _, err := os.Stat(inRepo); !os.IsNotExist(err) {
+			t.Errorf("repository key should be absent (linked %v): %v", linked, err)
+		}
 	}
 }
 

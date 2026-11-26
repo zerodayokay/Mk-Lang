@@ -114,11 +114,19 @@ var sourceRoots = map[string]bool{"cmd": true, "internal": true, "std": true, "t
 
 var cToolArg = regexp.MustCompile(`"-x",\s*"c(\+\+)?"|"-xc(\+\+)?"|"-x c(\+\+)?"|"[^"\s]*\.(c|h|cc|cpp)"`)
 
+// lineHasCToolArg reports whether a non-comment Go source line matches cToolArg.
+func lineHasCToolArg(line string) bool {
+	if strings.HasPrefix(strings.TrimSpace(line), "//") {
+		return false
+	}
+	return cToolArg.MatchString(line)
+}
+
 func TestNoCSource(t *testing.T) {
 	for s, want := range map[string]bool{`args("-x", "c")`: true, `"-x", "c++"`: true, `"-xc"`: true, `"rt/start.c"`: true,
-		`"x.h"`: true, `"-x", "ir"`: false, `"a.cache"`: false, `"lib.cpp2"`: false} {
-		if cToolArg.MatchString(s) != want {
-			t.Errorf("cToolArg on %s = %v, want %v", s, !want, want)
+		`"x.h"`: true, `// "x.h"`: false, `    // __has_include("opt.h")`: false, `"-x", "ir"`: false, `"a.cache"`: false, `"lib.cpp2"`: false} {
+		if lineHasCToolArg(s) != want {
+			t.Errorf("lineHasCToolArg on %s = %v, want %v", s, !want, want)
 		}
 	}
 	root := repoRoot(t)
@@ -184,7 +192,7 @@ func TestNoCSource(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(b), "\n") {
-			if !cToolArg.MatchString(line) {
+			if !lineHasCToolArg(line) {
 				continue
 			}
 			if _, ok := cToolFiles[rel]; ok {
@@ -209,15 +217,21 @@ func TestNoCSource(t *testing.T) {
 // file that stops matching cToolArg is an error, so the list cannot go stale.
 var cToolFiles = map[string]string{
 	"internal/cimport/cimport.go": "c_imports: Clang reads the translation unit of a package's C imports",
+	"internal/cimport/msvch.go":   "synthesizes Microsoft CRT header shims in memory for Windows SDK C imports",
+	"internal/cimport/sysroot.go": "stats _mingw.h, windows.h and winnt.h to classify a C import sysroot",
 	"internal/driver/cimport.go":  "c_sources and c_imports of a user package",
 	"internal/driver/libch.go":    "std.libc's C headers generated from its export extern signatures for c_sources",
 	"internal/driver/libout.go":   "a library's generated C header for its C host; no C is compiled",
 	// The system-libc mode: the link hint names the C
 	// header (math.h) a libc symbol is declared in, to say which glibc
 	// library supplies it; no C is compiled.
-	"internal/driver/links_libc.go": "system-libc mode's link hint names a symbol's C header",
-	"internal/driver/workdir.go":    "--cpu floor: clang -dM -E of an empty C file reads predefined macros and compiles nothing",
-	"internal/toolchain/cc.go":      "clang -c of a package's c_sources",
+	"internal/driver/links_libc.go":   "system-libc mode's link hint names a symbol's C header",
+	"internal/driver/sdkdir.go":       "stats um\\windows.h to locate the installed Windows SDK",
+	"internal/driver/sysgen.go":       "checks for vulkan.h, X11 and Wayland headers when generating shipped system views",
+	"internal/driver/sysgen_glibc.go": "reads GLIBC and LINUX_VERSION macros from sysroot features.h and version.h",
+	"internal/driver/workdir.go":      "--cpu floor: clang -dM -E of an empty C file reads predefined macros and compiles nothing",
+	"internal/sysview/table.go":       "system view catalog listing the SDK headers each shipped view binds",
+	"internal/toolchain/cc.go":        "clang -c of a package's c_sources",
 }
 
 // cSourcePath matches one pkg.CSource entry of a manifest and captures its

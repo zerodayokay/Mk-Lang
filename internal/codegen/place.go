@@ -10,8 +10,10 @@
 //
 // How: a place is an address at types.Layout offsets; a downcast selects a
 // variant's fields without moving the address. The error side of an E!T is
-// an address view when its layout matches the error-set value's, else a copy
-// that only a read may use. Slice lengths load with !range [0, lenMax].
+// an address view: check's layout puts every error's fields at the same
+// offsets in an E!T and in its error set, so a read, a write and a borrow of
+// it all address the union's own storage. Slice lengths load with !range
+// [0, lenMax].
 
 package codegen
 
@@ -32,11 +34,8 @@ type value struct {
 }
 
 // readAddr is placeAddr for a place that is only read (an operand, a
-// shared borrow, a discriminant, a length): the error side of an E!T whose
-// layout is not the error-set value's is read as a copy.
+// shared borrow, a discriminant, a length).
 func (fg *fnGen) readAddr(p mir.Place) (addr, types.TypeID) {
-	fg.reading = true
-	defer func() { fg.reading = false }()
 	return fg.placeAddr(p)
 }
 
@@ -85,16 +84,11 @@ func (fg *fnGen) placeAddr(p mir.Place) (addr, types.TypeID) {
 			variant = nil
 		case mir.ProjDowncast:
 			if st.Sel == mir.SelErr && !g.errViewOK(curT, st.Type) {
-				// The view is a copy into a
-				// temporary, which only a read may use.
-				if !fg.reading {
-					source.ICEf(fg.spanOf(fg.span), "codegen: a write or mut borrow of the error side of %s, which is not laid out as %s",
-						g.tt.TypeString(curT, nil), g.tt.TypeString(st.Type, nil))
-				}
-				tmp := fg.temp(st.Type)
-				fg.widenErrorSide(tmp, st.Type, value{t: curT, kind: rAgg, a: cur})
-				cur, variant = tmp, nil
-				break
+				// INVARIANT: check's layout places each error's fields
+				// by the error alone, so the view always holds; a copy
+				// here would leave a borrow of it pointing at a temporary.
+				source.ICEf(fg.spanOf(fg.span), "codegen: the error side of %s is not laid out as %s",
+					g.tt.TypeString(curT, nil), g.tt.TypeString(st.Type, nil))
 			}
 			variant = fg.downcast(curT, st)
 		}
@@ -116,8 +110,7 @@ func (g *packGen) fieldsOf(t types.TypeID) []types.FieldLayout {
 // downcast is the field list a downcast selects: the variant's fields
 // for SelEnum and SelCase, the payload as field 0 for SelSome and SelOk. The
 // address does not change. SelErr is the error side of E!T as an error-set
-// value; it is an address view only when every error's fields sit at the same
-// offsets in both layouts, else an ICE until the copy is written.
+// value, an address view (errViewOK).
 func (fg *fnGen) downcast(t types.TypeID, st mir.Projection) []types.FieldLayout {
 	g := fg.g
 	ty := g.tt.Get(t)
@@ -138,7 +131,7 @@ func (fg *fnGen) downcast(t types.TypeID, st mir.Projection) []types.FieldLayout
 	case mir.SelCase:
 		return g.errorVariant(t, types.ItemID(st.A)).Fields
 	case mir.SelErr:
-		return nil // placeAddr copies when the layouts differ
+		return nil // the error-set value at the same address
 	}
 	source.ICEf(fg.spanOf(fg.span), "codegen: downcast selector %d", st.Sel)
 	return nil

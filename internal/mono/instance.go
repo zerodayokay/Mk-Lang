@@ -182,6 +182,9 @@ func (bl *builder) sizeOf(t types.TypeID) types.ConstArg {
 	if l == nil {
 		ice("SizeOf[%s]: no layout", bl.tab.TypeString(t, nil))
 	}
+	if r, ok := bl.env.(LayoutReader); ok {
+		r.ReadLayout(t)
+	}
 	return types.ConstArg{Kind: types.CAValue, Value: intConst(bl.env.Consts(), int64(l.Shape.Size))}
 }
 

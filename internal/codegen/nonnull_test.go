@@ -77,7 +77,7 @@ func TestNonnullConstRepairsEmptyViews(t *testing.T) {
 			t.Errorf("no const %s in\n%s", want, cs)
 		}
 	}
-	if strings.Contains(cs, `c"`+strings.Repeat(`\00`, 16)+`"`) {
+	if strings.Contains(cs, `c"`+strings.Repeat(`\00`, 16)+`"`) || strings.Contains(cs, `[16 x i8] zeroinitializer`) {
 		t.Errorf("a 16-byte all-zero view const is still emitted:\n%s", cs)
 	}
 	if !strings.Contains(fnText(ll, "mk.main.Raw"), "inttoptr (i64 8 to ptr)") {

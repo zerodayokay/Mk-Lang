@@ -271,6 +271,13 @@ func silentPoison(w *world, body *Body) []string {
 			if ux, ok := x.Value.(*ast.UnaryExpr); ok {
 				skip[ux.ID()] = true
 			}
+		case *ast.MatchStmt:
+			// `match &x` and `match mut x` type the & or mut Poison: they
+			// are the match's mode, and lower unwraps them to x as check
+			// does.
+			if ux, ok := x.X.(*ast.UnaryExpr); ok && (ux.Op == ast.TokAmp || ux.Op == ast.TokMut) {
+				skip[ux.ID()] = true
+			}
 		}
 		if _, ok := n.(ast.Expr); !ok || skip[n.ID()] {
 			return true

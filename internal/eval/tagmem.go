@@ -48,12 +48,13 @@ type tseg struct {
 }
 
 // tlocal is one local of a frame allocation: its bytes, whether a linear
-// value is owned there, and its MIR local id.
+// value is owned there, and the paths already taken or narrowed.
 type tlocal struct {
 	lo, hi uint32
 	owned  bool
 	linear bool
 	user   bool
+	taken  [][]mir.Projection
 }
 
 // tagAlloc is the tagged state of one allocation number. Numbers are never

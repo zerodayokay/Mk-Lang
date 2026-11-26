@@ -2,19 +2,19 @@
 // must behave like TCP ones: echo, refusals, backlog waits and cancels.
 // What: RT8-Unix-Echo, -Refused, -Backlog and -AcceptCancel (UxName, UxPhase).
 // How: a cancel or a deadline must end a waiting accept or dial with nothing
-// held, so it can be repeated. The socket files are in the temporary
-// directory (FlName: TEMP on Windows, TMPDIR or /tmp on Linux, the
-// distribution's own file system: WSL's Windows drive refuses a bind). Run
+// held, so it can be repeated. Windows uses a relative socket name in the
+// child's scratch working directory, within the sun_path limit. Linux uses
+// TMPDIR or /tmp on the distribution's file system (WSL's Windows drive
+// refuses a bind). Run
 // by the scheduler harness, and at 1 and 16 carriers by std/rt_deadline_test.go.
 
 import std.core
 import std.raw
 import std.rt
 
-// UxName is a socket path in the temporary directory, removed first so a
-// file left by an earlier run does not make the listen AddrInUse.
+// UxName removes a socket left by an earlier run before listening.
 UxName(io: Io, b: mut [256]u8, tag: str): str from b {
-    name := FlName(b, tag, 0)
+    name := if Target.os == core.Os.Windows { FlNameAt(b, 0, tag, 0) } else { FlName(b, tag, 0) }
     _ = NativeRemove(io, name)
     return name
 }
@@ -32,8 +32,22 @@ UxPhase(w: &raw.Atomic[u64], k: int, phase: u64) {
     }
 }
 
+// UxRecvAll reads dst.Len() bytes from s, returning early on error or end of stream.
+UxRecvAll(io: Io, s: uint, dst: mut []u8): core.IoResult {
+    var got := 0
+    for got < dst.Len() {
+        r := NativeRecv(io, s, mut dst[got..])
+        if r.err != core.SysErr.None || r.value <= 0 {
+            return r
+        }
+        got += Trunc[int](r.value)
+    }
+    return core.IoResult(value: i64(got), err: core.SysErr.None, os: 0)
+}
+
 // UxEcho is NEcho (tests_net.mk) for the Unix block, with its phase kept
-// in slot k of ph.
+// in slot k of ph. Messages are 1-byte length-framed (a 0 frame ends the
+// session) so Windows AF_UNIX does not hang waiting on a lost peer EOF.
 UxEcho(io: Io, l: uint, done: &raw.Atomic[u64], ph: &raw.Atomic[u64], k: int) {
     UxPhase(ph, k, 1)
     a := NativeAccept(io, l)
@@ -41,20 +55,34 @@ UxEcho(io: Io, l: uint, done: &raw.Atomic[u64], ph: &raw.Atomic[u64], k: int) {
         return
     }
     s := Trunc[uint](a.value)
+    var hdr: [1]u8 = [0]
     var buf: [256]u8 = [0; 256]
     for {
         UxPhase(ph, k, 2)
-        r := NativeRecv(io, s, mut buf[..])
-        if r.err != core.SysErr.None {
+        hr := UxRecvAll(io, s, mut hdr[..])
+        if hr.err != core.SysErr.None || hr.value <= 0 {
             UxPhase(ph, k, 6)
             rt.Abandon(s)
             UxPhase(ph, k, 7)
             return
         }
-        if r.value == 0 {
+        if hdr[0] == 0 {
             break
         }
-        n := Trunc[int](r.value)
+        n := int(hdr[0])
+        if n > buf.Len() {
+            UxPhase(ph, k, 6)
+            rt.Abandon(s)
+            UxPhase(ph, k, 7)
+            return
+        }
+        r := UxRecvAll(io, s, mut buf[0..n])
+        if r.err != core.SysErr.None || r.value <= 0 {
+            UxPhase(ph, k, 6)
+            rt.Abandon(s)
+            UxPhase(ph, k, 7)
+            return
+        }
         UxPhase(ph, k, 3)
         if !NSendAll(io, s, buf[0..n]) {
             rt.Abandon(s)
@@ -113,17 +141,18 @@ UxClient(io: Io, path: []u8, rounds: int, seed: u64, ok: &raw.Atomic[u32], bad: 
         return
     }
     c := Trunc[uint](d.value)
-    var out: [200]u8 = [0; 200]
+    var pkt: [201]u8 = [0; 201]
     var back: [200]u8 = [0; 200]
     var rng := FlRng(s: seed | 1)
     for _ in 0..rounds {
         n := 1 + Trunc[int](rng.Next() % 200)
+        pkt[0] = Trunc[u8](n)
         for i in 0..n {
-            out[i] = Trunc[u8](rng.Next())
+            pkt[1 + i] = Trunc[u8](rng.Next())
         }
         UxPhase(ph, k, 2)
         _ = sent.Add(Trunc[u64](n))
-        if !NSendAll(io, c, out[0..n]) {
+        if !NSendAll(io, c, pkt[0..1 + n]) {
             UxFail(bad, 2, core.IoResult(value: 0, err: core.SysErr.Other, os: 0))
             rt.Abandon(c)
             return
@@ -140,12 +169,18 @@ UxClient(io: Io, path: []u8, rounds: int, seed: u64, ok: &raw.Atomic[u32], bad: 
             got += Trunc[int](r.value)
         }
         for i in 0..n {
-            if back[i] != out[i] {
+            if back[i] != pkt[1 + i] {
                 UxFail(bad, 4, core.IoResult(value: 0, err: core.SysErr.Other, os: 0))
                 rt.Abandon(c)
                 return
             }
         }
+    }
+    var end: [1]u8 = [0]
+    if !NSendAll(io, c, end[..]) {
+        UxFail(bad, 2, core.IoResult(value: 0, err: core.SysErr.Other, os: 0))
+        rt.Abandon(c)
+        return
     }
     UxPhase(ph, k, 4)
     Assert(rt.CloseRuntimeHandle(c).err == core.SysErr.None)
@@ -173,7 +208,6 @@ test "RT8-Unix-Echo 8 Unix-domain connections at once, 300 round trips each, thr
     cp := raw.Atomic[u64].New(0)
     ep := raw.Atomic[u64].New(0)
     fin := raw.Atomic[u32].New(0)
-    var lost: u64 = 0
     scope w := io.Scope() {
         w.go UxWatch(io, &fin, &cp, &ep, &done)
         scope s := io.Scope() {
@@ -189,25 +223,10 @@ test "RT8-Unix-Echo 8 Unix-domain connections at once, 300 round trips each, thr
                 // A client that failed leaves an accept waiting: end it, so
                 // the block fails with the cause instead of hanging.
                 s.Cancel()
-            } else {
-                // Every client has closed: each echo's pending receive must
-                // see the end of the stream. Windows' AF_UNIX provider now
-                // and then never completes an overlapped receive pending at
-                // the peer's close (Go's net, with the same echo, shows it
-                // too; a blocking receive does not): after 2 s such echoes
-                // are counted and cancelled.
-                var waited := 0
-                for (done.Load() >> 40) < 8 && waited < 200 {
-                    io.Sleep(core.DurationOf(10 * DlMs)) else {}
-                    waited += 1
-                }
-                lost = 8 - (done.Load() >> 40)
-                if lost > 0 {
-                    s.Cancel()
-                }
             }
         }
         _ = fin.Store(1)
+        w.Cancel()
     }
     if ok.Load() != 8 {
         f := bad.Load()
@@ -215,13 +234,9 @@ test "RT8-Unix-Echo 8 Unix-domain connections at once, 300 round trips each, thr
             (st: f >> 56, e: (f >> 32) & 0xFF, o: f & 0xFFFF_FFFF)) else {}
     }
     Assert(ok.Load() == 8)
+    Assert((done.Load() >> 40) == 8)
     // Every byte every client sent was echoed.
     Assert((done.Load() & 0xFF_FFFF_FFFF) == sent.Load())
-    if lost > 0 {
-        sys.PrintErr("RT8-Unix-Echo: the OS lost the end of stream on {lost} of 8 connections\n", (lost: lost)) else {}
-    }
-    // Only Windows' provider loses the end of a stream; Linux never may.
-    Assert(lost == 0 || PWin())
     Assert(rt.CloseRuntimeHandle(lh).err == core.SysErr.None)
     Assert(NativeRemove(io, name).err == core.SysErr.None)
 }

@@ -2,10 +2,11 @@
 // what crosses a boundary: what a task may receive, where a Scope value may
 // go, and which operations only unsafe code may perform.
 //
-// What: scopeStmt, goExpr, taskResult, scopeEscapes and sendable (E0301,
-// E0801 to E0804, E1001, E1002, E1003 for `scope` and `s.go`); rawDeref
-// (E1103), unsafeCall, unsafeOnly, unsafeValue and packedBorrow (E1101);
-// variadicArg (the types an argument after `...` may have).
+// What: scopeStmt, goExpr, taskResult, calleeCanFail, scopeEscapes and
+// sendable (E0301, E0801 to E0804, E1001, E1002, E1003 for `scope` and
+// `s.go`); rawDeref (E1103), unsafeCall, unsafeOnly, unsafeValue and
+// packedBorrow (E1101); variadicArg (the types an argument after `...` may
+// have).
 //
 // How: every task argument, the receiver (at the type self receives) and
 // the fn value must be Send: E1002 for a &C or []C with C not Share, else
@@ -133,6 +134,14 @@ func (u *unit) taskResult(call *ast.CallExpr, scope types.TypeID) {
 	case isErr && (ty.Kind != types.KErrorUnion || ty.Elem != types.Void):
 		want := u.str(u.tab.ErrorUnion(es, types.Void))
 		u.err(diag.E0301, call.Span(), "a task under `"+u.str(scope)+"` returns `"+want+"`, found `"+u.str(ct)+"`").Text("expected", want).Text("found", u.str(ct))
+	case isErr && !u.calleeCanFail(call):
+		// A generic's result type parameter bound to E!void, or an alias
+		// of one: the task returns that E!void as a value, and the scope,
+		// which sees only a failure, would drop its error.
+		want := u.str(u.tab.ErrorUnion(es, types.Void))
+		u.err(diag.E0301, call.Span(), "a task under `"+u.str(scope)+"` must be able to fail, and this callee cannot: the `"+u.str(ct)+"` it returns is a value the scope would drop").
+			Text("expected", want+" (can fail)").Text("found", u.str(ct)+" (cannot fail)").
+			Alt("start a function that passes the value on with `try`")
 	case isErr:
 		if missing := u.missingErrors(ty.Errors, es); len(missing) > 0 {
 			sp := call.Span()
@@ -140,6 +149,39 @@ func (u *unit) taskResult(call *ast.CallExpr, scope types.TypeID) {
 				Alt("add them to the scope's error set").Alt("handle them inside the task")
 		}
 	}
+}
+
+// calleeCanFail reports whether call's callee names an error set: a
+// function's or interface method's signature, or a fn value's type. A call
+// whose type is E!T only because a type parameter or an alias stands for
+// it cannot fail. An unresolved callee counts as one that can.
+func (u *unit) calleeCanFail(call *ast.CallExpr) bool {
+	if u.b.Uses == nil {
+		return true
+	}
+	cu := u.b.Uses[u.b.slot(call.ID())]
+	switch cu.Kind {
+	case UseItem, UseMethod:
+		if cu.Item != types.NoItem {
+			if d, ok := u.c.declOfItem(u.c.cfg.Items.Get(cu.Item)).(*types.FuncDecl); ok {
+				return d.Sig.Errors != types.EmptyErrors
+			}
+			return true
+		}
+	case UseIfaceMethod:
+		if d, ok := u.c.declOfItem(u.c.cfg.Items.Get(cu.Item)).(*types.InterfaceDecl); ok && int(cu.Index) < len(d.Methods) {
+			return d.Methods[cu.Index].Errors != types.EmptyErrors
+		}
+		return true
+	case UseFnValueCall:
+	default:
+		return true
+	}
+	// A fn value, or a const fn parameter (UseItem with no item).
+	if t := u.tab.Get(u.b.TypeOf(call.Fun.ID())); t.Kind == types.KFn {
+		return t.Fn.Errors != types.EmptyErrors
+	}
+	return true
 }
 
 // goExpr is `x.go F(args)`: x the scope binding or a &Scope (E0301

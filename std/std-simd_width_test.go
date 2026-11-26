@@ -185,7 +185,7 @@ func TestSTDSIMD_WordForms(t *testing.T) {
 	t.Parallel()
 	sdMatrix(t, sdWords, sdByteProgs())
 	fx := sdFixtures(t, sdWords)
-	const line = "true false 22 37 37 16 true 1 2447.5781 180.375\n"
+	const line = "true false 22 37 37 16 true 1 2447.5781 180.375 0\n"
 	t.Run("const", func(t *testing.T) {
 		t.Parallel()
 		if got := sdRunWith(t, fx, sdConstProgram); got != line+line {

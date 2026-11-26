@@ -29,6 +29,7 @@
 # session. -JoinPathOnly <value>,<entry> prints the user PATH value the
 # script would write and does nothing else (tests).
 
+try {
 & {
 [CmdletBinding()]
 param(
@@ -329,6 +330,45 @@ function Add-MkUserPath([string]$Entry) {
     return $true
 }
 
+# Use extended paths for .NET ZIP and directory operations. The final
+# install directory can be short while an entry's staging path exceeds
+# the Windows PowerShell 5.1 MAX_PATH limit.
+function Get-MkLongPath([string]$Path) {
+    if ($Path.StartsWith('\\?\')) { return $Path }
+    if ($Path.StartsWith('\\')) { return '\\?\UNC\' + $Path.Substring(2) }
+    return '\\?\' + $Path
+}
+
+# The signed ZIP uses slash-separated names. Check each relative name
+# before switching to Win32 extended paths, which bypass normalization.
+function Expand-MkArchive([string]$Zip, [string]$Tree) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
+    try {
+        foreach ($entry in $archive.Entries) {
+            $directory = $entry.FullName.EndsWith('/')
+            $name = $entry.FullName
+            if ($directory) { $name = $name.Substring(0, $name.Length - 1) }
+            foreach ($part in $name.Split('/')) {
+                if (-not $part -or $part -match '[<>:"\\|?*\x00-\x1f\x7f]|[. ]$' -or
+                    $part -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]) *(\.|$)') {
+                    throw "unsafe archive entry '$($entry.FullName)'"
+                }
+            }
+            $path = "$Tree\" + $name.Replace('/', '\')
+            if ($directory) {
+                if ($entry.Length -ne 0) { throw "archive directory '$name' contains data" }
+                [IO.Directory]::CreateDirectory($path) | Out-Null
+            } else {
+                [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) | Out-Null
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $path)
+            }
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
 function Install-Mk {
     if (-not $Releases) { $Releases = $MkDefaultReleases }
     if (-not $Root) { $Root = Join-Path $env:LOCALAPPDATA 'mk' }
@@ -362,18 +402,17 @@ function Install-Mk {
             Save-MkFile (Get-MkFileUrl $Releases $a.Version $a.Name) $zip
             $got = Get-MkSha256 $zip
             if ($got -ne $a.Hash) { throw "$($a.Name): SHA-256 $got, but SHA256SUMS says $($a.Hash); nothing was installed" }
-            $tree = Join-Path $work 'tree'
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tree)
-            $top = Join-Path $tree "mk-$($a.Version)-$MkHost"
-            if (-not (Test-Path -LiteralPath (Join-Path $top 'bin\mk.exe'))) { throw "$($a.Name) holds no bin\mk.exe; nothing was installed" }
-            [IO.Directory]::Move($top, $dest)
+            $tree = Get-MkLongPath (Join-Path $work 'tree')
+            Expand-MkArchive $zip $tree
+            $top = "$tree\mk-$($a.Version)-$MkHost"
+            if (-not [IO.File]::Exists("$top\bin\mk.exe")) { throw "$($a.Name) holds no bin\mk.exe; nothing was installed" }
+            [IO.Directory]::Move($top, (Get-MkLongPath $dest))
             Write-Output "unpacked mk $($a.Version) to $dest"
         }
         Set-MkJunction (Join-Path $Root 'current') $dest
         Write-Output "current is mk $($a.Version)"
     } finally {
-        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+        try { [IO.Directory]::Delete((Get-MkLongPath $work), $true) } catch { }
     }
 
     $entry = Join-Path $Root 'current\bin'
@@ -393,3 +432,8 @@ if ($JoinPathOnly) {
 }
 Install-Mk
 } @args
+} catch {
+    # A terminating error in the invoked scope alone can leave -File at
+    # exit code 0. Rethrow in script scope so the host sees the failure.
+    throw
+}

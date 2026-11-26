@@ -139,8 +139,13 @@ func (qx *queryIndex) sigText(display string, s *types.Signature, resolved bool)
 		b.WriteString(", ...")
 	}
 	b.WriteByte(')')
-	if r := tab.ReturnType(s.Result, s.Errors); r != types.Void {
-		b.WriteString(": " + spell(len(s.Params), r))
+	if r := tab.ResultString(s.Result, s.Errors, s.Generics); r != "" {
+		i := len(s.Params)
+		if !resolved && i < len(s.Spelled) && s.Spelled[i] != "" &&
+			(s.Errors != types.EmptyErrors || tab.Kind(s.Result) != types.KErrorUnion) {
+			r = s.Spelled[i]
+		}
+		b.WriteString(": " + r)
 	}
 	if f := qx.flowClauses(s); f != "" {
 		b.WriteString(" " + f)

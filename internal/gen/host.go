@@ -105,6 +105,10 @@ type run struct {
 	// check (NoType or Poison in a stage-4 signature): the checker's own
 	// diagnostic stands and the run yields poison, not E0901.
 	poisoned bool
+	// unspelled is set when a spliced type held a fn type whose result is
+	// an error union held as a value (valueResult): the entry point that
+	// spelled it fails the run with it.
+	unspelled *types.EvalError
 }
 
 func newRun(c *Context, l *Line) *run {
@@ -505,6 +509,9 @@ func (r *run) splice(m *eval.Machine, v eval.Value, at source.Span) ([]tok, *typ
 			}
 			r.identity(m, r.types[h])
 			ts := r.nameToks(r.types[h])
+			if err := r.spellFailed(); err != nil {
+				return nil, err
+			}
 			return ts, r.chargeToks(m, len(ts))
 		case k.Code:
 			h, err := r.handleOf(m, v)

@@ -1090,7 +1090,7 @@ backtrace:
 | An enum with a tag type ([enum types](#enum-types)) | Its tag type, or what the tag type converts to |
 
 - `int` and `uint` count as 64 bits, so `int(x)` takes an `i64` or a `u32`, and `int(u)` of a `uint` is E0303.
-- A constant whose value fits passes `T(x)`: `u8(200)`, `i32(Max)` for a `const Max: int = 100`.
+- An integer constant whose value fits passes `T(x)`: `u8(200)`, `i32(Max)` for a `const Max: int = 100`, and a constant of another module or a C import named qualified, `i8(m.C)` for an `export const C: i32 = -4`. A constant of an enum type or of `char` is judged by its type, as a variant `i8(W.Hi)` or a char literal `u8('a')` is: write `Cast[u8](c)`.
 - A float literal or named float constant whose value is exactly an `f32` passes `f32(x)`: `f32(0.5)`, `f32(-1.5e3)`, `f32(Half)` for a `const Half: f64 = 0.5`. `f32(0.1)` and `f32(1e39)` would round or overflow, so they are E0303, and so is an operator over float literals or constants, `f32(0.25 + 0.25)` or `f32(Half + Half)`, which is not judged by its value: write `x: f32 = 0.1`, where the literal takes `f32` and is rounded once, or `Cast[f32](0.1)`.
 - `Cast` to an integer truncates a float toward zero, and panics on NaN, an infinity or a value out of range.
 - `Cast` from an integer to a float rounds to the nearest value, ties to even, and never panics: `Cast[f64](n)`.
@@ -1919,7 +1919,7 @@ The library's types have these kinds:
 
 | Library types | Kind | Release | Crosses tasks by value | Shared across tasks by `&` |
 |---|---|---|---|---|
-| `List Map Set Text` | Unique | None. The arena ends them | No: they hold `&Arena` | No |
+| `List Map Set Text` | Unique | None. The arena ends them, so they hold no linear value (E0701 at a call that would store one) | No: they hold `&Arena` | No |
 | `Arena` | Linear | `Free()`, or `Reset()` to reuse | No | No |
 | `Heap` | Reached by `&Heap` | Never | | Yes |
 | `HeapList HeapMap TextMap HeapText Box Shared` | Linear | `Free(a)`; `Shared` lives on the heap and takes `&Heap` | If contents are | If contents are |
@@ -1943,7 +1943,9 @@ The iterators `Split`, `Lines`, `Words`, `Scalars`, `MapIter`, `TextMapIter`, `C
 
 A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, and [`mem.Zeroed[T]()`](std/mem.md#layout) returns one zeroed value, so both need one.
 
-A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, or an `E!T` whose `T` is zero-valid. A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not.
+A zero-valid type is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, an `E!T` whose `T` is zero-valid, or an atomic word or `Cell` of a zero-valid `T` (`raw.Atomic[T]`, `atomic.Atomic[T]`, `atomic.AtomicInt`, `atomic.AtomicBool`, `Cell[T]`). A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not, and neither is a linear type, a `view` or `mut view` struct, a type with an `unsafe impl` of `Send` or `Share`, or a `Mutex`, `Chan`, `Arena` or `Io` (whose table is never null), whatever their fields. Zeroing reaches private fields, so a struct whose `unsafe` code trusts a field never to be zero, such as a raw pointer it reads through, states it as an `invariant` (`invariant !raw.IsNull(p)`), and is then not zero-valid. The zero of an `E!T` is `ok` of `T`'s zero, whatever its errors carry, since error codes start at 1.
+
+An atomic or a `Cell` is unique, so `[e; n]`, which copies `e`, cannot build an array of them (E0408), but zero bytes are a fresh value, not a copy: a global table of atomic words is `var Table: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()`, every word 0, with no `unsafe`.
 
 ```mk
 // verdict: reject E0701
@@ -1953,7 +1955,7 @@ Names(a: &Arena): OutOfMemory!int {
 }
 ```
 
-`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is its result, so it is not an error union either: `mem.Zeroed[E!T]()` is E0701, and `mem.Zeroed[T]()` makes the value. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
+`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is not an error union either: `mem.Zeroed[E!T]()` is E0701, since the zero of an `E!T` is always `ok` of `T`'s zero, the value `mem.Zeroed[T]()` makes. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
 
 ```mk
 // verdict: ok
@@ -2478,7 +2480,7 @@ export Main(sys: &System): WriteError!void {
 
 - The value is computed once, by the compiler, and stored in the program. It may call ordinary functions. What a compile-time evaluation may do is in [section 11](#11-compile-time).
 - The type must be plain (E0408). `&Limit` is a valid reference that lives as long as the program ([globals](memory.md#r16-globals)).
-- A constant cannot be assigned (E0301).
+- A constant and its fields and elements cannot be assigned or borrowed `mut` (E0301). To change the value, copy it into a `var` local.
 - A literal that does not fit the type is E0303. An evaluation that panics, and constants in a cycle, are compile errors ([evaluating constants](#evaluating-constants), [the stage rule](#the-stage-rule)).
 - A constant of an integer, `bool`, `char` or `str` type is a pattern, matched by its value ([literal patterns](#literal-patterns)).
 
@@ -2509,6 +2511,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. E0507 applies to a qualified name such as `settings.Count` too. The rules are in [globals](memory.md#r16-globals).
+- A table of atomics starts zeroed with [`mem.Zeroed`](#zero-valid-types), since `[e; n]` copies its `e` and an atomic is not Plain: `var Table: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()`.
 - Its initial value is computed at compile time, as a constant's is.
 
 ```mk
@@ -3398,6 +3401,7 @@ rect 3 by 4
 - The arms cover every value of the type (E0306). See [exhaustiveness](#exhaustiveness).
 - Each arm is a pattern and a block, one arm per line. There is no fall-through between arms and no guard: test a condition inside the arm.
 - `match e` moves a value that is not plain, and `match &e` and `match mut e` do not. See [what a binding holds](#what-a-binding-holds).
+- On a linear value, each arm of `match e` consumes all of it: every linear part is bound, taken apart by a struct pattern (`some(Res(id))`, or `some(Token())` for a struct with no fields), or tested to a variant that holds nothing linear; in an arm of [alternatives](#alternatives), by the side that matched. `_`, also inside a constructor (`some(_)`, `ok(_)`), consumes nothing, so an arm that leaves a linear part is E0402 ([R2](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)).
 - A `match` on a result or an error set is in [section 9](#match-on-a-result).
 
 A match that moves its scrutinee:
@@ -4076,6 +4080,7 @@ Bucket(n: int): int {
 `A | B` matches when either pattern does. Alternatives may appear at any depth: `some(1 | 2)`.
 
 - Alternatives bind no names (E0101). To share code between variants that carry data, call a function from each arm.
+- In a by-value `match` on a linear value, an arm whose pattern is an alternative consumes the value as the side that matched would alone: `some(Ticket(id: 1)) | none` takes the `Ticket` apart on the `some` side. An alternative inside a field or payload is taken apart only when its sides have the same shape (`S(a: some(Ticket(id: 1)) | some(Ticket(id: 2)), n: 5)`), since a later test of the arm can still fail after a side matched. One whose sides differ, `S(a: some(Ticket(id: 1)) | none, n: 5)`, is E0402: write the alternatives at the top of the arm, `S(a: some(Ticket(id: 1)), n: 5) | S(a: none, n: 5)`.
 
 ```mk
 // verdict: reject E0101
@@ -4201,7 +4206,7 @@ See also: [the memory model](memory.md#r4-places-and-moves-out-of-them) for move
 
 ### Optionals, results and errors
 
-`some(p)` and `none` match an optional. `ok(p)` and `err(p)` match the result of a call that can fail. Inside them, `p` is any pattern.
+`some(p)` and `none` match an optional. `ok(p)` and `err(p)` match the result of a call that can fail, or an `E!T` value. Inside them, `p` is any pattern.
 
 ```mk
 // verdict: ok
@@ -4290,6 +4295,45 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - In a `match` on an error-set value, the members are written without `err`: `NotFound(id) { ... }`.
+- `ok(p)` and `err(p)` nest like any pattern wherever an `E!T` value sits: in the ok payload of an `E!(F!T)`, which a generic whose result is its type parameter returns ([results](#results-et)), as `ok(ok(n))` and `ok(err(F))`, and in a `some`, a field or a variant's payload that a type argument makes an `E!T`, as `some(ok(v))` and `S(r: err(F))`. An alternative may join both sides: `ok(0) | err(_)`.
+
+```mk
+// verdict: ok
+error Late
+error Empty(slot: int)
+
+Read(n: int): Empty!int {
+    if n < 0 {
+        fail Empty(slot: -n)
+    }
+    return n
+}
+
+Fetch[T: Plain](x: &T, late: bool): Late!T {
+    if late {
+        fail Late
+    }
+    return *x
+}
+
+Show(n: int, late: bool): int {
+    var r: Empty!int = Read(n)
+    return match Fetch(&r, late) {
+        ok(ok(0)) | err(_) { 0 }
+        ok(ok(v)) { v }
+        ok(err(Empty(slot))) { 100 + slot }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    try sys.Print("{a} {b} {c} {d}\n", (a: Show(5, false), b: Show(-2, false), c: Show(5, true), d: Show(0, false)))
+}
+```
+
+```text
+5 102 0 0
+```
+
 - `ok` and `err` exist only as pattern heads.
 - [`match` on a result](#match-on-a-result) shows `ok` and `err` arms in a full example.
 
@@ -4367,11 +4411,12 @@ export Main(sys: &System): WriteError!void {
 
 - A record pattern `(a, b)` names fields, not positions, so `(b, a) := e` binds the same values. A name that is not a field is E0309.
 - A destructure names every field, or ends with `..` to skip the rest (E0305). Only the outermost pattern may end with `..`: a nested struct pattern names every field, with `_` for those you skip.
+- A struct with no fields is taken apart by `T() := e`, which names every field: it is how a [`linear`](#linear-and-view-structs) struct with no fields is consumed. Any other pattern that names nothing, `()`, `[]` or `T(..)`, is E0101.
 - A field skipped by `..` must be plain (E0408), because skipping it would drop it.
-- Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct.
+- Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct. Each nested struct pattern consumes the linear struct it names, including when its bindings copy plain fields.
 - `var` before the pattern makes every binding `var`.
 - A pattern that can fail, such as a literal, is E0306. Use `match`.
-- Only a record, a struct or an array pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
+- Only a record, a struct or an array pattern destructures. A variant, an error's, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`. An error is read by its fields (`e.code`) or taken apart with `match e { Bad(code) { ... } }`. When the value may be one of several errors, `match` is the only form, with an arm for each of them or `_`.
 - Outside the struct's module, a struct with private fields cannot be destructured (E0204).
 - A `for` loop may destructure each element with a record pattern: `for (key, value) in m.Iter()`. A struct pattern there is E0101. See [`for`](#for-loops).
 
@@ -4477,7 +4522,7 @@ Name(b: Bag): str {
 
 | Code | Name | Reported for |
 |---|---|---|
-| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern |
+| E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern; a destructure that names nothing but a struct with no fields ([destructuring](#destructuring)) |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
 | E0206 | duplicate-name | A binding that shadows a local, a parameter or a const generic ([bindings](#bindings-and-wildcards)) |
 | E0207 | naming | A binding that is not `snake_case`, often a variant written without its dot or a const that is not in scope ([variants](#variant-patterns), [bindings](#bindings-and-wildcards)) |
@@ -5594,7 +5639,9 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
-- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be stored, passed or returned as it is. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later, and a field or element of a [zeroed](#zero-valid-types) array, record or struct holds one, `ok` of its zero. The same holds for a stored one: as an argument, a construction's field, an array, record or repeat element, `some(..)`'s argument, or assigned into a field, an element or through a reference (`h.r = r`, `xs[i] = r`, `*p = r`), or inside a `fn` literal to a binding the literal captures, it is E0802. Assigned to such a binding, `r = Root(m)` or `r = s`, it is kept. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- Such a binding must be handled before it is assigned again and before its scope ends, on every path, as a call's result must be where it is made (E0802, checked with moves and loans). `try`, `else`, `match` or `.Must()` reads it. Returning it as a value or assigning it to another such binding hands it on. A shared borrow leaves it unread until it is read through a reference known to name it, or a value known to carry its reference is passed to another function or returned. A caller checks the handoff against the signature alone. Assigning the binding or borrowing it `mut` while its value may be unread is E0802 at that line. A scope ending with its value unread is E0802 at its declaration, a `try` or `fail` exit included. A binding never read at all is E0208. A local of a type parameter is not such a binding, whatever its instance: generic code may drop any `T`.
+- A stored `E!T` is handled as a call's is: `try`, `else`, `match` and `.Must()` read it once and take its payload or its error. It is such a binding, a global or a const, or a field or element of a value that holds one, which `mem.Zeroed` or a generic's `T` can make. `.Must()` also reads one through a reference (`p.Must()` for a `p: &(Negative!int)`); the others take `*p`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
 ```mk
@@ -5611,6 +5658,41 @@ Root(n: int): Negative!int {
 Twice(n: int): Negative!int {
     return Root(n) // <- E0802
 }
+```
+
+A function can fail only when its signature names an error set, as a result written `E!T` does. A generic whose result is its type parameter, called with an `E!T` for it, cannot fail, and neither can a function whose result is an alias of an `E!T`: each returns the `E!T` as a value, which the caller handles with `try`, `else` or `match` as any other. So does an interface method whose result is such a type parameter or alias, and an `impl` method must fail exactly when its interface method can (E0707). Such a result has no spelling of its own in a written type, since `E!T` written as a result fails, so diagnostics, `mk query sig`, hover and `mk apidiff` print it as the union followed by `(cannot fail)`: `Copy[Negative!int]` is `fn(&(Negative!int)): Negative!int (cannot fail)`, and `fn(&(Negative!int)): Negative!int` is one that can fail. Source-spelled query signatures retain aliases in the other positions. The mark is not source: to write such a type, name the alias or the type parameter.
+
+```mk
+// verdict: ok
+error Negative
+
+Root(n: int): Negative!int {
+    if n < 0 {
+        fail Negative
+    }
+    return n * 2
+}
+
+Copy[T: Plain](x: &T): T {
+    return *x
+}
+
+export Main(sys: &System): WriteError!void {
+    for n in [4, -4] {
+        var r: Negative!int = Root(n)
+
+        v := Copy(&r) else e { // Copy cannot fail: else handles the E!T it returns
+            try sys.Print("{e}\n", (e: e))
+            continue
+        }
+        try sys.Print("{v}\n", (v: v))
+    }
+}
+```
+
+```text
+8
+Negative
 ```
 
 ### `fail`
@@ -5960,7 +6042,7 @@ IsBusy(e: Busy | Gone): bool {
 
 ### `Must`
 
-`e.Must()` is the value of `e`, or a panic when `e` holds an error or `none`. It works on `E!T` and on `?T`. Use it where a failure is a bug: a value the program itself built and knows to be valid.
+`e.Must()` is the value of `e`, or a panic when `e` holds an error or `none`. It works on `E!T` and on `?T`, on a call and on a stored value alike: `r.Must()` on a `var r: Denied!int` panics with the error as `Load(false).Must()` does. Use it where a failure is a bug: a value the program itself built and knows to be valid.
 
 ```mk
 // verdict: ok
@@ -6404,7 +6486,7 @@ See also: [`mk query panics`](tools.md#51-member-wide-panic-sites), which lists 
 | E0704 | impl-conflict | `impl Format` for an error ([printing](#how-errors-print)) |
 | E0706 | requires-failed | An error with no `Format` in a format string ([printing](#how-errors-print)) |
 | E0801 | error-not-in-set | A `fail` or `try` whose error is not in the function's set ([`fail`](#fail), [`try`](#try)) |
-| E0802 | error-unhandled | An `E!T` used without `try`, `else` or `match` ([results](#results-et)) |
+| E0802 | error-unhandled | An `E!T` used without `try`, `else` or `match`, or stored in a field or element, by construction or assignment ([results](#results-et)) |
 | E0803 | else-falls-through | [`else`](#else) |
 | E0804 | try-on-non-error | `try` on a value that cannot fail, such as a `?T` ([`try`](#try)) |
 | E0806 | try-in-defer | `try`, `fail`, `return`, `break` or `continue` out of a `defer` or `onerr` body ([`onerr`](#cleanup-on-the-error-path-onerr)) |
@@ -6706,7 +6788,7 @@ Total(s: &Shape): f64 { // <- E0301
 
 ### `impl`
 
-`impl I for T { ... }` makes `T` implement `I`. It holds one method for each method of `I`, with the same signature.
+`impl I for T { ... }` makes `T` implement `I`. It holds one method for each method of `I`, with the same signature. An impl's method fails exactly when the method of `I` names an error set (E0707). Where the result of `I`'s method is a type parameter of `I` and the impl's argument is an `E!T`, as `Get(&self): T` in an `impl Source[E!int]`, the method cannot fail: it returns the `E!T` as a value. A generic impl writes that result as its own type parameter, and any other as an alias of the `E!T` (`type R = E!int`, then `Get(&self): R`), since a result written `E!int` fails.
 
 ```mk
 // verdict: ok
@@ -7002,6 +7084,8 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - The compiler checks both branches when it checks the generic, not per instance.
+- A type written `T` inside the branch is `X` as well, in every type position: a type argument (`Id[T](x)` is `Id[u32](x)`), a local's declared type, a conversion `T(n)` or `Cast[T](n)`, the arguments of a nested generic or a generic owner (`Box[T]`), and the signature and body of a `fn` literal written in the branch (`fn(y: T): T { .. }` there is a `fn(u32): u32`, and a value of type `T` it captures is a `u32`). `T` written as a value is not `X`: `T.Make()` is E0301, and so is `T(x: 1)` for a struct `X`; write `X`. The `else` branch keeps `T` opaque.
+- A branch that narrows `T` to another parameter follows that parameter's own narrowing: inside `if T is U { if U is u32 { ... } }` `T` is `u32`, its values and the types written `T` alike. Between the two tests `T` is `U`.
 - A value whose type is plain inside the branch needs no consuming there: it ends at the branch's end.
 - `if T is` names one type and takes `else` and `else if T is` like any `if`; `||` and `&&` are E0101.
 
@@ -7416,7 +7500,7 @@ Start(): int {
 | E0704 | impl-conflict | A duplicate, orphan or blanket `impl`, or an `impl` of `Plain` or `Fields[B]` ([`impl`](#impl)) |
 | E0705 | not-const | A const argument that is not constant, a misused `const` `fn` parameter ([const parameters](#const-parameters)) |
 | E0706 | requires-failed | A compile-time `requires` that is false or not restated ([requirements](#compile-time-requirements)) |
-| E0707 | impl-signature | An `impl` method missing, extra or with another signature ([`impl`](#impl)) |
+| E0707 | impl-signature | An `impl` method missing, extra or with another signature, or one that fails where its interface method cannot, or the reverse ([`impl`](#impl)) |
 | E0708 | instantiation-limit | Instantiation without end ([runaway instantiation](#runaway-instantiation)) |
 | E0709 | const-arithmetic | Arithmetic in a const argument inside a generic ([const arguments](#const-arguments-in-a-generic)) |
 | E0711 | cannot-infer | A type argument nothing fixes, or a generic value without its arguments ([generic functions](#generic-functions), [values](#generic-functions-as-values)) |
@@ -7620,10 +7704,11 @@ main.mk:10:7: E0902 fuel-exhausted: compile-time evaluation ran out of fuel afte
 - Each basic operation costs one step. Moving data costs one more step per 16 bytes, rounded up: what an assignment writes, what a call or a return passes, and what an allocation, a frame, a copy, a fill or a compare touches.
 - Each call of the generator API costs one step. A generic function costs what its instance for the given types costs.
 - The count is fixed for a compiler version, so a build that fits on one machine fits on every machine.
-- Running out is E0902, reported before the operation that does not fit, with the calls that led there.
+- Running out is E0902, reported before the operation that does not fit, with the calls that led there. A `var` global cannot state `fuel` (E0101), so its E0902's `try` line names the route that compiles: the work in a `const` with the raised `fuel`, and the global initialized from that const.
 - `fuel` also follows a `gen` line: `gen derive.Eq(Big) fuel 10_000_000`.
 - The fuel is a number literal or a named constant, `fuel Limit`; any other expression is E0705. A gen line runs before its module's consts are evaluated, so its named constant comes from another module (E0908, [the stage rule](#the-stage-rule)).
 - An evaluation's frames, measured at the target's layout, may hold 1 MiB, or a quarter of the stated fuel in bytes when that is more, up to 256 MiB. Deeper recursion is the `stack limit` panic, reported as E0901.
+- A const's or global's own value is not recursion: its initializer's frames may hold 1 MiB plus eight times the value's size, up to 256 MiB, and its fuel is at least two steps per byte of the value. That is room for the value built in the initializer or in the functions it calls, two calls deep. So a table of megabytes, `var T: [1 << 21]u64 = mem.Zeroed[[1 << 21]u64]()`, `[7; 1 << 21]` or `Build()`, needs no `fuel`, which a global cannot state. A loop that fills it is work beyond that: compute the table in a `const` with a `fuel`, and initialize the global from that const. Another initializer that reads part of a large const, `const N: u64 = T[9]`, copies the whole const into its own frame, so that read is held to its own limits: index a large table at run time.
 
 ### The stage rule
 
@@ -7991,6 +8076,8 @@ These types are in the prelude, so a generator module needs no import for them. 
 | `m.Name()`, `m.Receiver()`, `m.Params()`, `m.Result()`, `m.Generic()`, `m.Signature()` | A method's signature. `m.Flows()` and `m.HasFlows()` give its `from`, `into` and `ends` clauses |
 | `fl.Kind()`, `fl.Param()`, `fl.Path()`, `fl.Field()` | One `Flow` of `m.Flows()`: its `FlowKind` (`From`, `Into`, `Ends`, or `Store` for `*q into p`); the destination (`result` for `From`, the receiving parameter for `Into` and `Store`, the ended parameter for `Ends`, `self` for the receiver); the source as written, `""` for `Ends`; the result field of a per-field clause, else `""`. `m.Flows()` lists one entry per source, by kind, field, parameter and path |
 | `p.Name()`, `p.Type()`, `p.Const()` | A parameter |
+
+A `fn` type or a method whose result is an error union held as a value (`fn(&R): R` with `type R = Bad!int`, a function that cannot fail) has no spelling in generated code: a written `E!T` result is one that fails. `t.Name()`, a `Type` splice and `m.Signature()` of one stop the run with E0901 at the `gen` line, naming the type or method, and the line emits nothing.
 
 A generator reports bad input with `Fail`. This one refuses a type that is not a struct:
 
@@ -8408,7 +8495,7 @@ both: Bad(n: 2)
 body: Late
 ```
 
-- A task in a `Scope[E]` returns `E!void`, or `F!void` where every error of `F` is in `E` (E0801). A task returning `void` there is E0301.
+- A task in a `Scope[E]` returns `E!void`, or `F!void` where every error of `F` is in `E` (E0801). A task returning `void` there is E0301, and so is a call that [cannot fail](#results-et) and returns an `E!void` as a value, which the scope would drop.
 - The first error a task returns cancels the scope: the body and every other task. Those tasks see `Canceled` at their next cancellable operation, and their `Canceled` is not reported. After the join, `try scope` fails with the first error.
 - A `scope` over a `Scope[E]` must be written `try scope` (E0802). `try scope` over a plain `Scope` is E0804. There is no `else` form: to handle the error, put the scope in a function of its own and handle that function's error, as `Main` does above.
 - The function's error set must hold `E` (E0801), as for any `try`.
@@ -9492,7 +9579,7 @@ std's system layer for macOS calls libSystem. Arguments, the environment, memory
 - A child that holds a `Pty` as its controlling terminal does not end until its output has been read, so read a `Pty` while you wait for its children. Output that a child without one leaves unread is discarded shortly after it exits. A child's terminal mode starts from the defaults each time a new child first opens the `Pty`; its size is kept.
 - A child inherits the raised descriptor limit: `posix_spawn` runs nothing in the child that could restore the original one.
 - A Unix-socket dial to a listener whose backlog is full is `SysErr.Refused`, not a wait. A send buffer (`SocketOption`) must be at least 1 byte.
-- `runtime.WriteDump` and the platform certificate verifier answer `SysErr.Unsupported`, as on Linux; `std.x509` checks chains itself.
+- As on Linux, `runtime.WriteDump` returns `runtime.Unsupported` and the platform certificate verifier answers `SysErr.Unsupported`. `std.x509` checks chains itself.
 
 All of it is checked and linked here, and none of it has run on a Mac yet.
 
@@ -9973,6 +10060,7 @@ How C declarations appear in Mk:
 | `struct geom_point` | `struct GeomPoint`, its fields in snake_case: `maxCount` is `max_count` |
 | `enum geom_kind` and its constants | `type GeomKind = i32` and `const GeomKindLine: GeomKind = 1` |
 | `union num` | A struct of bytes with a getter and a setter per member: `Num.I`, `Num.SetI` |
+| A record whose layout no Mk struct has (a packed record with a bitfield, say) | Also a struct of bytes with a getter and a setter per member and bitfield. A member or a bitfield's unit that the record's alignment does not align is read and written at alignment 1. A bitfield's unit holds no byte of another member but the bitfields next to it, so a setter stores none of a neighbour's bytes, as C's own store does not: it is the smallest integer at an aligned offset that holds the field, else the smallest at the field's first byte. A bitfield that no such unit inside the record holds (a 20-bit field at byte 3 of a 6-byte packed record, or after an `int` at byte 1) is read and written through its own bytes alone; one spanning more than 8 bytes gets no accessor. A signed bitfield reads sign-extended: one of a signed type, of an enum whose fixed type is signed, or of an enum without one that has a negative constant (on the `x86_64-windows` target, where such an enum is `int`, any enum without a fixed type) |
 | An incomplete `struct opaque` | An empty `struct Opaque`, used through `*Opaque` |
 | `DECLARE_HANDLE(HWND)` | `struct HwndStruct` and `type Hwnd = *HwndStruct` |
 | A COM interface (`lpVtbl`) | `struct IDemo { lp_vtbl: *IDemoVtbl }` plus methods (`d.Query(...)`); calling or naming a method needs `unsafe` (E1101) |
@@ -9985,14 +10073,15 @@ How C declarations appear in Mk:
 
 - Types and constants become PascalCase, and fields snake_case. Functions keep their C names. Each declaration's C form is in a comment above it.
 - A COM-style struct (whose first field is `lp_vtbl: *Vtbl`, where `Vtbl` holds function pointers whose first parameter is `*Self`) emits one `&self` method per vtable slot (`(*device).GetNodeCount()`). Because safe code could forge `lp_vtbl`, calling or naming the method outside `unsafe` is E1101.
-- A struct is made by naming every field, or zeroed whole as C's `= {0}` does with [`mem.Zeroed`](#zero-valid-types): `mem.Zeroed[geom.GeomPoint]()`. A C struct's fields (integers, floats, raw pointers, `?fn`, arrays, nested structs, a union's bytes, bitfield units) are all zero-valid, so it needs no `unsafe`.
+- A struct is made by naming every field, or zeroed whole as C's `= {0}` does with [`mem.Zeroed`](#zero-valid-types): `mem.Zeroed[geom.GeomPoint]()`. A C struct's fields (integers, floats, raw pointers, `?fn`, arrays, nested structs, a union's bytes, bitfield units) are all zero-valid, so it needs no `unsafe`. In a struct, a non-bitfield member or a zero-width bitfield separates bitfield runs. The units for separate runs never overlap.
 - `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. `--skipped` lists every skipped declaration with its kind and reason; `--why <name>` explains how a single C name was bound or why it was skipped. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
 - `headers` are paths from the package root. `defines` are macros the headers are read with, `NAME` or `NAME=value`.
 - `include_dirs` are directories of the package searched for headers after the package root, for a library whose headers include each other by a name under their own include directory: `pkg.CImport(name: "z", headers: ["third_party/z/include/z.h"], defines: [], macros: [], vendor: false, include_dirs: ["third_party/z/include"])`, where `z.h` has `#include "zconf.h"`. Each is a relative path with `/` separators inside the package, other than the root itself (E0202 otherwise). The field may be left out.
 - All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them. So their `include_dirs` form one search path, in the order the imports list them, and the shim and the package's C sources are compiled with the same path.
+- The binding, shim and C sources use the native target's Clang triple by default. On `x86_64-windows` it is `x86_64-pc-windows-msvc19.33.0`, so the default `_MSC_VER` is 1933 independently of the installed Visual Studio. A C source's explicit flags and freestanding mode can change what its headers see. The headers must declare the same layout on both sides of the binding.
 - `mk check` runs Clang to translate the C imports, with a minimal environment. It compiles no C source.
 - A target's system headers come only from `MK_SYSROOT_<target>`, where `_` may stand for `-` (`MK_SYSROOT_x86_64-windows` is read first, then `MK_SYSROOT_x86_64_windows`): a list of directories separated as `PATH` is (`;` on Windows, `:` elsewhere), searched in order after Clang's own headers. A directory that has an `include` subdirectory stands for that subdirectory. Without the variable, only Clang's headers and the package's are seen. The C imports, the shim and the package's C sources all use this list.
-- For `x86_64-windows` the headers are read as mingw-w64's (Clang's triple `x86_64-w64-windows-gnu`), unless the list is a Windows SDK: the first directory holding `windows.h` also holds `winnt.h`, and no directory holds `_mingw.h`. A Windows SDK is read for `x86_64-pc-windows-msvc`, the only triple its headers parse under, and for Visual C++ 19.33 (`_MSC_VER` 1933, the version Clang assumes with no Visual Studio) even where a Visual Studio is installed, whose version Clang would otherwise take: the SDK's headers depend on it. The shim and the package's C sources are compiled for the same version. List its `um`, `shared` and `ucrt` directories: `C:\Program Files (x86)\Windows Kits\10\Include\10.0.28000.0\um;...\shared;...\ucrt`.
+- For `x86_64-windows`, a Windows SDK (the first directory holding `windows.h` also holds `winnt.h`, and no directory holds `_mingw.h`) gets mk's toolset headers below before its own; every `x86_64-windows` sysroot is read for `x86_64-pc-windows-msvc` and Visual C++ 19.33 (`_MSC_VER` 1933, the version Clang assumes with no Visual Studio) even where a Visual Studio is installed, whose version Clang would otherwise take: the SDK's headers depend on it, and the layouts match the C objects. The shim and the package's C sources are compiled for the same version. List its `um`, `shared` and `ucrt` directories: `C:\Program Files (x86)\Windows Kits\10\Include\10.0.28000.0\um;...\shared;...\ucrt`.
 - The SDK includes four headers of the MSVC toolset that it does not ship: `vcruntime.h`, `vadefs.h`, `vcruntime_string.h` and `excpt.h`. mk supplies its own, generated, before the SDK's directories, and uses them even when the list names a toolset directory, so a binding's names never depend on the machine. With them `size_t` is `SizeT`, as on every target, and the SDK's `SIZE_T` is `SizeTType`. No other toolset header is supplied, so a header that includes one fails with E0001 naming it: `<wchar.h>` and `<intrin.h>` need `setjmp.h`, `<process.h>` and `<corecrt_startup.h>` need `vcruntime_startup.h`, and `<crtdbg.h>` needs `vcruntime_new_debug.h` (`'setjmp.h' file not found`). A function of the SDK links as any extern does ([linking](#linking-libraries)): through `pkg.Link`, or the system DLLs mk links on a Windows host.
 - `sdk: true` reads the headers with the host's SDK, for a library whose header includes `<windows.h>`: the first of `MK_SYSROOT_<target>`; for `x86_64-windows` on a Windows host, the newest Windows SDK under the registry's `KitsRoot10` (`HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots`), then under `%ProgramFiles(x86)%\Windows Kits\10`, with mk's toolset headers first; for a Linux target on a Linux host, the target's multiarch directory and `/usr/include`; then `$MK_EVIDENCE/c-import/sysroots/<target>`. None is E0213 `reason: no-sysroot`, unless every import says `vendor: true`. On any C import of a package it applies to the package's one translation unit. On `x86_64-windows`, `sdk: true` also reads the SDK's import libraries (`Lib/<version>/um/x64`) to link used functions automatically, failing with E0001 if a symbol is exported by multiple libraries not resolved by precedence (`pkg.Link` settles it). When the program also imports [system views](#system-views) generated for the build's target, a declaration a view binds (a struct or union and its tag, an enum, a typedef, a function, an extern var) is not bound again: the binding names the view's item (`windows.Hwnd`), and a record whose size or alignment differs from the view's is an error. A view read from another target's declarations, as `c.windows` and `c.vulkan` are in a build for Linux, shares nothing, since a C `long` or `wchar_t` there is not the target's. Without `sdk: true` nothing changes.
 - The bindings are made per target. `mk check --all-targets` translates them for both `x86_64-windows` and `x86_64-linux` and reports an item the package uses whose API differs (E0213). A constant's value is not part of the API. It needs each target's system headers, from `MK_SYSROOT_<target>`, or `vendor: true` to read the committed `gen/<target>/c/` files instead. Without either, it is E0213, `reason: no-sysroot`.
@@ -10607,6 +10696,7 @@ backtrace:
 - A function may have several `requires` clauses. Each is checked in order, and the report names the one that failed.
 - A clause may call functions, such as `requires Sorted(xs)`, if they take no `Io`.
 - A clause that reads only const parameters, consts and literals is checked at compile time, at each call, in every build: a false clause is E0706 at the call. See [compile-time requirements](#compile-time-requirements).
+- A clause whose value is fixed by each instance of a generic function (over type or `const` parameters) is computed once for that instance. That works when it uses only the instance's const arguments, literals, `SizeOf`, `AlignOf` and operators, with no call and no named const. A clause that holds for the instance is not checked again on entry, in any build. A compile-time evaluation of a generic function's instance skips it too, so it costs no fuel there; a function whose only const arguments are `const` value parameters does not have per-value instances, so it still runs its clauses on entry in dev builds and at compile time. A clause that is false or would panic is still checked on entry, as is one the compiler cannot compute this way, such as a clause that [only the entry check judges](#checked-only-on-entry).
 - In a release build a run-time clause is not checked. With `--release`, the program above divides by zero instead.
 
 ### Postconditions: `ensures`
@@ -10784,6 +10874,7 @@ PASS main "prints"
 - In a test, the heap counts its allocations. Memory still allocated when the test ends fails it with `leak (exit 102)`.
 - Test names are strings, unique in their module (E0206). No naming convention makes a function a test.
 - A test is checked with its module by every command, but built only by `mk test`. `mk build` and `mk run` leave tests out.
+- `mk test --show-output` also prints a passing test's output under its `PASS` line, indented as a failing test's is, so a test that measures or reports something can be read without failing it ([`mk test`](tools.md#mk-test)).
 
 ```mk
 // verdict: reject E0206
@@ -10852,10 +10943,10 @@ PASS main "prop Span.Len"
 
 These are library features that run inside `test` blocks:
 
-- `testing.Fuzz(f)` registers a fuzz target. `mk test` runs it over saved inputs, and `mk test --fuzz name` searches for new failing ones. See [fuzz targets](std/testing.md#fuzz-targets).
+- `testing.Fuzz(f)` registers a fuzz target, and `testing.FuzzSys(sys, f)` one that takes the test's `System`, to run an external oracle through `sys.io` or to allocate. `mk test` runs it over saved inputs, and `mk test --fuzz name` searches for new failing ones. See [fuzz targets](std/testing.md#fuzz-targets).
 - `testing.Bench(f)` registers a benchmark that `mk bench` runs, and `testing.BenchSys(sys, f)` one that takes the test's `System`, to allocate. See [benchmarks](std/testing.md#benchmarks).
 - `testing.ExpectPanic(want)` makes a test pass only when it panics after the call, so a test can check that an `Assert` or a contract refuses a bad input. See [expected panics](std/testing.md#expected-panics).
-- `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` runs every test that way. See [`std.sim`](std/sim.md).
+- `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` gives every test that seed, in its environment as `MK_SIM_SEED` (`sys.Env("MK_SIM_SEED")`), and prints it in the report; a test's `System` stays the real one, so a test that wants the simulated world builds a `Sim` from the seed. See [`std.sim`](std/sim.md).
 
 See also: [write a test and a property](cookbook.md#write-a-test-and-a-property), [tests beside code](codebase.md#6-tests-beside-code), [`mk test`](tools.md#mk-test).
 
@@ -11260,6 +11351,7 @@ Move `Area` into `impl Shape for Tile { Area(&self): int { ... } }`, in place of
 | `mod util;` | Nothing: a module is a directory, and every file in it sees all of it | E0101 |
 | `pat => expr` in a `match` | `pat { expr }` | E1214 |
 | `if let Some(x) = e` | `if x := e` | E1217 |
+| `.Or(x)` on an optional or fallible value `e` | `e else { x }` | E0207 |
 | `Some`, `None`, `Ok`, `Err` | `some`, `none`, `ok`, `err` | E0207 |
 | `Result<T, E>` | `E!T` | E0101 |
 | `?` after a call | `try` before it | E1208 |
@@ -11577,7 +11669,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
-| `std.testing` | `Fuzz Bench BenchSys ExpectPanic` |
+| `std.testing` | `Fuzz FuzzSys Bench BenchSys ExpectPanic` |
 | `std.image` | `Compare DecodeLimits DecodePng DefaultDecodeLimits Difference EncodePng Error Image Invalid Pixels TooLarge Unsupported Why`, Provisional |
 | `std.window` | `Button Cursor CursorMode DefaultWindowOptions Error Event EventKind Fullscreen InputState Key Mods Native Open Os Surface Unsupported Window WindowOptions`, Experimental |
 | `std.gpu` | `Acquired AdapterId AdapterInfo AdapterKind Adapters Address Aspect Backend BindEntry BindGroup BindGroupLayout BindingKind Blend BlendComponent BlendFactor BlendOp BlendOver Bound Buffer BufferUsage Call CheckShader ColorAttachment ColorOf ColorTarget ColorWrites Compare ComputePass ComputePipeline Cull DataLayout DebugMode DefaultDeviceOptions DefaultRenderPipeline DefaultSamplerDesc DefaultSwapchainOptions DefaultTextureDesc DefaultViewDesc DepthAttachment DepthBias DepthOf DepthStencil Device DeviceLimits DeviceLost DeviceOptions Driver Encoder Error Extent Feature Features Filter FormatCaps FrontFace IndexFormat Invalid LayoutEntry Leaks Load LoadDepth LoadStencil LossReason Mapped MappedMut Message Missing Misuse NoAdapter NoBufferUsage NoFeatures NoTextureUsage Open OutOfDeviceMemory PassDesc PipelineLayout Power Presented PresentMode RenderPass RenderPipeline RenderPipelineDesc Sampler SamplerDesc SampleType Severity Shader ShaderCode Stage Stencil StencilFace StencilOp StepMode Store SurfaceLost SurfaceTexture Swapchain SwapchainInfo SwapchainOptions Texture TextureDesc TextureFormat TextureRegion TextureUsage TextureView Topology Unsupported VertexAttribute VertexFormat VertexLayout ViewDesc ViewDimension Visibility WriteAll`, Experimental |
@@ -12758,24 +12850,36 @@ mem.Prefetch[T](p: &T, write: bool)
 mem.Zeroed[T](): T
 mem.AsBytes[T](p: &T): []u8 from p
 mem.SliceAsBytes[T](xs: []T): []u8 from xs
+mut view struct Fixed {
+}
 Fixed.New(buf: mut []u8): Fixed
 Fixed.Alloc(&self): &Alloc from self
 Fixed.Reset(mut self) ends self
+mut view struct FixedHeap {
+}
 FixedHeap.New(buf: mut []u8): FixedHeap
 FixedHeap.Alloc(&self): &Alloc from self
 FixedHeap.Reset(mut self) ends self
+mut view struct Fallback {
+}
 Fallback.New(inner: &Alloc, buf: mut []u8): Fallback from inner, buf
 Fallback.Alloc(&self): &Alloc from self
 Fallback.Reset(mut self) ends self
+mut view struct Counting {
+}
 Counting.New(inner: &Alloc): Counting
 Counting.Alloc(&self): &Alloc from self
 Counting.Bytes(&self): int
 Counting.Live(&self): int
 Counting.Peak(&self): int
+mut view struct Limit {
+}
 Limit.New(inner: &Alloc, max: int): Limit
 Limit.Alloc(&self): &Alloc from self
 Limit.Bytes(&self): int
 Limit.Left(&self): int
+mut view struct Failing {
+}
 Failing.New(inner: &Alloc, at: int): Failing
 Failing.NewFrom(inner: &Alloc, at: int): Failing
 Failing.Alloc(&self): &Alloc from self
@@ -12850,6 +12954,7 @@ Bitset.Count(&self): int
 Bitset.Len(&self): int
 
 // std.text. Category, Script and Property below are text's, generated from the UCD
+// Script and Property may gain members
 text.Graphemes(s: str): Clusters
 Clusters.Next(mut self): ?str from self.text
 text.Normalize(a: &Arena, s: str, form: Form): OutOfMemory!str from a
@@ -13062,7 +13167,7 @@ struct ServerOptions {
     export alt_svc: bool
 }
 
-// HttpVersion may gain members.
+// HttpVersion may gain members
 enum HttpVersion {
     Http10
     Http11
@@ -13823,11 +13928,15 @@ linux.Syscall(nr: uint, a0: uint, a1: uint, a2: uint, a3: uint, a4: uint, a5: ui
 
 // std.testing
 testing.Fuzz(f: fn([]u8))
+testing.FuzzSys(sys: &System, f: fn(sys: &System, data: []u8))
 testing.Bench(f: fn(n: int))
 testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))
 testing.ExpectPanic(want: str)
 
 // std.gpu
+// AdapterKind, Address, Aspect, Backend, BindingKind, BlendFactor, BlendOp, Call and Compare may gain members
+// Cull, DebugMode, Feature, Filter, FrontFace, IndexFormat, LossReason, Misuse and Power may gain members
+// PresentMode, SampleType, Severity, Stage, StencilOp, StepMode, TextureFormat, Topology, VertexFormat and ViewDimension may gain members
 gpu.Adapters(a: &Arena, io: Io, backend: Backend): Error!List[AdapterInfo] from a
 gpu.Open(heap: &Heap, io: Io, o: DeviceOptions): Error!Device from heap
 gpu.CheckShader(code: ShaderCode, stage: Stage, entry: str): Error!void
@@ -13896,6 +14005,7 @@ Texture.Close(self, dev: mut Device)
 TextureView.Close(self, dev: mut Device)
 
 // std.window
+// Button, Cursor, CursorMode, Fullscreen, Key and Native may gain members
 window.Open(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap
 Window.Close(self)
 Window.Poll(&self): ?Event
@@ -13913,6 +14023,7 @@ Surface.Close(self)
 InputState.IsButtonDown(&self, b: Button): bool
 
 // std.image
+// Pixels and Why may gain members
 image.Compare(a: &Image, b: &Image, tolerance: int): Error!Difference
 image.DecodePng(a: &Arena, bytes: []u8, limits: DecodeLimits): Error!Image from a
 image.EncodePng(a: &Arena, img: Image): Error![]u8 from a
@@ -13949,7 +14060,7 @@ enum FlowKind {
 
 `std.raw` has no lines in the listing. Its functions, in full ([std.raw](std/raw.md)):
 
-**`std.raw`** is std-internal, except that a module listed in `unsafe_modules` may import it, on every target: it turns an address into a pointer and back, and reads and writes through one. Its functions are intrinsics, O(1) unless they copy: `Of(r: &T): *T` and `OfMut(r: mut T): *T`, `Null[T]()`, `IsNull`, `Same`, `Offset(p, n)` by `n` elements, `PtrCast[T, U](p): *U`, `Read(p): T`, `ReadUnaligned` (alignment 1, an integer `T`), `Write(p, x)` (the old value is not released), `Copy(dst, src, n)` and `Move` (which may overlap) of `n` elements, `Fill(dst, b, n)` and `Compare(a, b, n)` of bytes, `Slice(p, n): []T` and `SliceMut`, `Data(s): *T`, `DataMut` and `StrData(s)`, `Str(p, n): str` (the caller answers for UTF-8), `Addr(p): uint`, `FromAddr[T](a: uint): *T`, `Forget(x)`, which ends a value without releasing it, `Release(x, a)`, which frees it through `a` with `T`'s `Free`, else forgets it, `IsLinear[T]()` and `HasFree[T]()`, whether `T` is linear and whether it implements `Free`, and `Fail(code, msg): never`, which panics with that code. `Atomic[T: Plain]` is a word, of an integer type of 1, 2, 4 or 8 bytes, or a raw pointer, that tasks on any carrier read and write whole: `New(x)`, then `Load`, `Store`, `Add` (wrapping, an integer `T`), `Swap` and `Cas(old, new): bool`, sequentially consistent, and `LoadOrd`, `StoreOrd`, `SwapOrd`, `AddOrd`, `SubOrd`, `AndOrd`, `OrOrd`, `XorOrd` and `CasOrd(old, new, s, f, weak): (ok, value)`, each under a constant order `o`, `std.atomic`'s `Order` value (0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4 sequentially consistent, 5 unordered, for a load or a store only); `Fence()` and `FenceOrd(o)` are fences. `Ctz64`, `Clz64` and `Popcount64` count bits, `RotL64(x, n)` rotates left, `Mul128(a, b): (hi, lo)` is the full product, `F64Bits`, `F64From`, `F32Bits` and `F32From` reinterpret a float's encoding, `SqrtF64` is the correctly rounded square root, and `Select[T: Plain](c, a, b): T` is `a` when `c` holds, else `b`: the compiler is told `c` is unpredictable, so for an integer, `bool`, pointer or record `T` the choice is a conditional move, not a branch (a float `T` may still branch on x86_64). Of these, `Of`, `OfMut`, `Null`, `IsNull`, `Same`, `Data`, `DataMut`, `StrData`, `Addr`, `IsLinear`, `Fail`, `Fence`, `FenceOrd`, `Ctz64`, `Clz64`, `Popcount64`, `RotL64`, `Mul128`, `F64Bits`, `F64From`, `F32Bits`, `F32From`, `SqrtF64`, `Select` and every method of `Atomic` are safe, and the rest are called inside `unsafe` (E1101).
+**`std.raw`** is std-internal, except that a module listed in `unsafe_modules` may import it, on every target: it turns an address into a pointer and back, and reads and writes through one. Its functions are intrinsics, O(1) unless they copy: `Of(r: &T): *T` and `OfMut(r: mut T): *T`, `Null[T]()`, `IsNull`, `Same`, `Offset(p, n)` by `n` elements, `PtrCast[T, U](p): *U`, `Read(p): T`, `ReadUnaligned` (alignment 1, an integer `T`), `Write(p, x)` (the old value is not released), `WriteUnaligned` (alignment 1, an integer `T`), `Copy(dst, src, n)` and `Move` (which may overlap) of `n` elements, `Fill(dst, b, n)` and `Compare(a, b, n)` of bytes, `Slice(p, n): []T` and `SliceMut`, `Data(s): *T`, `DataMut` and `StrData(s)`, `Str(p, n): str` (the caller answers for UTF-8), `Addr(p): uint`, `FromAddr[T](a: uint): *T`, `Forget(x)`, which ends a value without releasing it, `Release(x, a)`, which frees it through `a` with `T`'s `Free`, else forgets it, `IsLinear[T]()` and `HasFree[T]()`, whether `T` is linear and whether it implements `Free`, and `Fail(code, msg): never`, which panics with that code. `Atomic[T: Plain]` is a word, of an integer type of 1, 2, 4 or 8 bytes, or a raw pointer, that tasks on any carrier read and write whole: `New(x)`, then `Load`, `Store`, `Add` (wrapping, an integer `T`), `Swap` and `Cas(old, new): bool`, sequentially consistent, and `LoadOrd`, `StoreOrd`, `SwapOrd`, `AddOrd`, `SubOrd`, `AndOrd`, `OrOrd`, `XorOrd` and `CasOrd(old, new, s, f, weak): (ok, value)`, each under a constant order `o`, `std.atomic`'s `Order` value (0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4 sequentially consistent, 5 unordered, for a load or a store only); `Fence()` and `FenceOrd(o)` are fences. `Ctz64`, `Clz64` and `Popcount64` count bits, `RotL64(x, n)` rotates left, `Mul128(a, b): (hi, lo)` is the full product, `F64Bits`, `F64From`, `F32Bits` and `F32From` reinterpret a float's encoding, `SqrtF64` is the correctly rounded square root, and `Select[T: Plain](c, a, b): T` is `a` when `c` holds, else `b`: the compiler is told `c` is unpredictable, so for an integer, `bool`, pointer or record `T` the choice is a conditional move, not a branch (a float `T` may still branch on x86_64). Of these, `Of`, `OfMut`, `Null`, `IsNull`, `Same`, `Data`, `DataMut`, `StrData`, `Addr`, `IsLinear`, `Fail`, `Fence`, `FenceOrd`, `Ctz64`, `Clz64`, `Popcount64`, `RotL64`, `Mul128`, `F64Bits`, `F64From`, `F32Bits`, `F32From`, `SqrtF64`, `Select` and every method of `Atomic` are safe, and the rest are called inside `unsafe` (E1101).
 
 ## 19. Test prelude
 
@@ -13957,6 +14068,13 @@ The examples in this reference use these names without declaring them. They are 
 
 ```mk
 // verdict: parse
+// Why: the examples in the documentation are short and call helpers they do
+// not declare; they still have to compile as tests.
+// What: the corpus test prelude: Point, the linear Res with Close and
+// Acquire, and the stubs MakePoint, Cond, Use, UseMut and Take.
+// How: the corpus runner and mk doc --check give it to each example block;
+// the bodiless declarations are signatures only, enough for the checker.
+
 struct Point {
     x: i32
     y: i32

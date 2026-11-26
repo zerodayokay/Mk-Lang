@@ -80,11 +80,21 @@ func TestStackOverflowPanics(t *testing.T) {
 				ll := emit(t, e, unitOf(e, []*mir.Body{deepBody(e)}), target, p.profile)
 				dir := t.TempDir()
 				osIR, kernel := harnessOS(target)
-				h := osIR + harnessRT + `
+				extraDecl, setGuarantee := "", ""
+				if target.OS == types.OSWindows {
+					// Reserve stack for Windows's default unhandled-exception
+					// dispatcher so hitting the 512 KiB guard page exits with
+					// STATUS_STACK_OVERFLOW (0xC00000FD) rather than a secondary
+					// 0xC0000005 fault inside UnhandledExceptionFilter.
+					kernel = append(kernel, "SetThreadStackGuarantee")
+					extraDecl = "declare i32 @SetThreadStackGuarantee(ptr) nounwind\n"
+					setGuarantee = "  %g = alloca i32, align 4\n  store i32 65536, ptr %g, align 4\n  %sg = call i32 @SetThreadStackGuarantee(ptr %g)\n"
+				}
+				h := osIR + harnessRT + extraDecl + `
 declare i64 @mk.main.Deep(i64)
 
 define void @"mk.std.task.Start"(ptr %sp) noreturn nounwind {
-  %r = call i64 @mk.main.Deep(i64 1)
+` + setGuarantee + `  %r = call i64 @mk.main.Deep(i64 1)
   call void @h_exit(i32 42)
   unreachable
 }

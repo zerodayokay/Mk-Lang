@@ -2,10 +2,9 @@
 // unstable sort, an in-place stable sort and binary search with no
 // allocator in sight, usable at compile time and in freestanding builds.
 //
-// What: Slice[T].Sort (pdqsort) and Slice[T].Search, with their
-// partition, network, insertion and heap helpers. Slice[T].SortStableInPlace
-// and StableSort are in core_sort_stable.mk; Slice[T].SortStable, which
-// takes an allocator for scratch memory, is in coll_sort.mk.
+// What: Slice[T].Sort (pdqsort) and Slice[T].Search, with their partition,
+// network, insertion and heap helpers. SortStableInPlace is in
+// core_sort_stable.mk; SortStable takes an allocator and is in coll_sort.mk.
 //
 // How: Sort is Go's pdqsort_func (Go 1.27, zsortfunc.go): ninther pivots,
 // pattern breaking with a xorshift seeded by the length, heapsort after too

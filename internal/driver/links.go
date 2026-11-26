@@ -672,13 +672,13 @@ func (p *linkPlan) copyDLLs(exe string, st *cache.Store) []*diag.Diagnostic {
 				markExe(st, dst)
 				continue
 			}
-			tmp := dst + ".mk-tmp"
-			if err = os.WriteFile(tmp, want, 0o644); err == nil {
-				if err = os.Rename(tmp, dst); err != nil {
-					os.Remove(tmp)
-				} else {
-					countExe(st, dst)
-				}
+			// Two builds of one executable, in this process or in two,
+			// copy its DLLs at once (writeSameFile).
+			var wrote bool
+			if wrote, err = writeSameFile(dst, want); wrote {
+				countExe(st, dst)
+			} else if err == nil {
+				markExe(st, dst)
 			}
 		}
 		if err != nil {

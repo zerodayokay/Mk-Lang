@@ -251,7 +251,48 @@ Over() {
 ```
 
 - `_ = e` does not consume a linear value (E0402).
+- An arm of a by-value `match` consumes a linear value only when its pattern binds each linear part, takes it apart with a struct pattern (`some(Res(id))`), or tests it to a variant that holds nothing linear. An arm of alternatives does so by the side that matched, `some(Res(id: 1)) | none`; an alternative inside a field does so only when its sides have the same shape ([alternatives](reference.md#alternatives)). `_` consumes nothing, also inside a constructor such as `some(_)`, so an arm that leaves a linear part in the value is E0402. A field matched by `_` or left out is E0408:
+
+```mk
+// verdict: reject E0402
+linear struct Pair {
+    a: ?Res
+    b: ?Res
+}
+
+Drop(p: Pair) {
+    match p { // <- E0402
+        Pair(a: some(r), b: some(_)) { // b's Res is left in p
+            r.Close()
+        }
+        Pair(a, b) {
+            Take(a)
+            Take(b)
+        }
+    }
+}
+```
+
+- A linear struct with no fields has nothing to bind. A struct pattern that names it takes it apart, in a destructure or in an arm:
+
+```mk
+// verdict: ok
+linear struct Token {}
+
+Spend(t: Token) {
+    Token() := t
+}
+
+SpendSome(o: ?Token) {
+    match o {
+        some(Token()) {}
+        none {}
+    }
+}
+```
+
 - Leaving a statement by `try` or `else` while a linear temporary of it is still live is E0402.
+- An arena container (`List`, `Map`, `coll.Deque` and the others) is not linear and ends with its arena, which frees what it holds without consuming it, so it holds no linear value: a call that would store one there is E0701. A heap container (`HeapList`, `HeapMap`) is linear and holds them ([releasing what a container holds](std/core.md#releasing-what-a-container-holds)).
 
 **Fallible calls consume only on success.** A function returning `E!T` that takes a non-plain argument by value consumes it only when it succeeds. On the error edge of `try` or `else`, the caller still owns the argument and must still consume it, for example in an `onerr`:
 
@@ -1639,7 +1680,7 @@ Fix: store a value, not a reference to a local: `Mutex[?i32]` and `g.Store(some(
 
 | Rule | Detail |
 |---|---|
-| `const` | A compile-time value. Its type must be plain. `&Limit` is valid |
+| `const` | A compile-time value. Its type must be plain. `&Limit` is valid. Assigning or borrowing a constant or its parts `mut` is E0301 |
 | `var` | One instance. Its type must be `Share` (E1002). It is never assigned, moved or borrowed `mut`. It is reached only through `&` |
 | Static pseudo-loan | A reference to a global holds it. It never conflicts. Storing a value into anything reachable from it needs the value to hold no loan but the static one (E0605) |
 | Error payload | An error travels up the stack and across tasks, so a `str` in its payload is held to the same rule: the value given when the error is built or assigned to the field holds no loan but the static one, and a `mut` borrow of the field is E0605. A literal, a `const` and a result that comes from no parameter hold none, and so a read of the field holds none, even through a reference |

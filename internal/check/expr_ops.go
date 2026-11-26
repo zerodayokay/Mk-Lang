@@ -119,6 +119,7 @@ func (u *unit) unary(e *ast.UnaryExpr, want types.TypeID) types.TypeID {
 			if t == types.Poison {
 				return t
 			}
+			u.constMutation(s, "borrowed mut")
 			if k := tab.Kind(t); k == types.KSlice {
 				return tab.MutSlice(tab.Get(t).Elem)
 			}
@@ -150,6 +151,7 @@ func (u *unit) unary(e *ast.UnaryExpr, want types.TypeID) types.TypeID {
 			return t
 		}
 		u.externVarWrite(e.X, "borrow")
+		u.constMutation(e.X, "borrowed mut")
 		u.packedBorrow(e, "mut")
 		return tab.Mut(t)
 	case ast.TokStar:
@@ -382,9 +384,17 @@ func (u *unit) call(e *ast.CallExpr, want types.TypeID) types.TypeID {
 	builtin := BuiltinNone
 	switch f := e.Fun.(type) {
 	case *ast.Ident:
-		if r := u.ref(f); r.Kind == resolve.RefPrim {
+		switch r := u.ref(f); r.Kind {
+		case resolve.RefPrim:
 			to = types.TypeID(r.A)
 			builtin = BuiltinConvert
+		case resolve.RefTypeParam:
+			// `T(x)` inside `if T is X` is the conversion `X(x)`; outside
+			// one, T is no value (notValue).
+			// A struct X is constructed by its name, not through T.
+			if int(r.A) < len(u.env.narrow) && u.env.narrow[r.A] != types.NoType && !u.isStructType(u.env.narrow[r.A]) {
+				to, builtin = u.x.typeOf(f, posPlain), BuiltinConvert
+			}
 		}
 	case *ast.IndexExpr:
 		if id, ok := f.X.(*ast.Ident); ok {
@@ -405,6 +415,13 @@ func (u *unit) call(e *ast.CallExpr, want types.TypeID) types.TypeID {
 		return u.callOther(e, want)
 	}
 	return u.conversion(e, to, builtin)
+}
+
+// isStructType reports whether t is a struct type, which `T(..)` would
+// construct rather than convert to.
+func (u *unit) isStructType(t types.TypeID) bool {
+	ty := u.tab.Get(t)
+	return ty.Kind == types.KNamed && u.c.cfg.Items.Get(ty.Item).Kind == types.KindStruct
 }
 
 // conversion checks `T(x)`, `Cast[T](x)` or `Trunc[T](x)` with T already
@@ -657,10 +674,12 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 			return false
 		}
 		v = x
-	case *ast.Ident:
-		// A named const is judged by its value (`u64(PageCount)`).
-		// A same-module const has no value before its evaluation; it is
-		// accepted here rather than reported falsely.
+	case *ast.Ident, *ast.FieldExpr:
+		// A named const is judged by its value (`u64(PageCount)`), and so
+		// is another module's, named qualified (`i8(m.C)`), a C import's
+		// macro or enum constant among them. A same-module const has no
+		// value before its evaluation; it is accepted here rather than
+		// reported falsely.
 		r := u.ref(a)
 		if r.Kind != resolve.RefItem {
 			return false
@@ -673,11 +692,21 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 		if u.isFloat(from) {
 			return to == types.F32 && u.floatConstFitsF32(it, a.Span())
 		}
+		// A const of an enum type or of char is judged by type, as its
+		// tag (`i8(W.Hi)`) or a char literal (`u8('a')`) is: the fold
+		// gives neither an integer value.
+		if !u.isInt(from) {
+			return false
+		}
 		var x int64
+		// wide is an unsigned value past the int64 range (a u64 or uint
+		// above MaxInt64): its magnitude is x's bits, never a negative x.
+		wide := false
 		if d.HasValue {
 			if x, ok = u.c.constInt(d.Value); !ok {
 				return false
 			}
+			wide = x < 0 && !u.tab.Get(u.c.cfg.Consts.Get(d.Value).Type).Signed
 		} else {
 			// A same-module const whose value the driver has not written
 			// yet: folded here when its initializer folds (fold.go), else
@@ -686,14 +715,23 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 			// reported at the use, any other failure is the const's own.
 			f := u.constFolder()
 			fv, good, _ := f.fold(a)
-			if !good || fv.isBool || !fv.n.IsInt64() {
+			switch {
+			case !good || fv.isBool:
+				return true
+			case fv.n.IsInt64():
+				x = fv.n.Int64()
+			case fv.n.IsUint64():
+				x, wide = int64(fv.n.Uint64()), true
+			default:
 				return true
 			}
-			x = fv.n.Int64()
 		}
-		if x < 0 {
+		switch {
+		case wide:
+			v = uint64(x)
+		case x < 0:
 			neg, v = !neg, uint64(-x)
-		} else {
+		default:
 			v = uint64(x)
 		}
 	case *ast.BinaryExpr, *ast.UnaryExpr:

@@ -108,7 +108,7 @@ func identityOf(c, kind string, defs []string) (viewKey, string, bool) {
 	case strings.HasPrefix(c, "typedef "):
 		f := strings.Fields(c)
 		name := f[len(f)-1]
-		if name == "" || !isIdent(name) {
+		if name == "" || !isCIdent(name) {
 			return viewKey{}, "", false
 		}
 		return viewKey{"typedef", name}, "", true
@@ -116,8 +116,8 @@ func identityOf(c, kind string, defs []string) (viewKey, string, bool) {
 	return viewKey{}, "", false
 }
 
-// isIdent reports a C identifier.
-func isIdent(s string) bool {
+// isCIdent reports a C identifier.
+func isCIdent(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if !(c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || i > 0 && c >= '0' && c <= '9') {

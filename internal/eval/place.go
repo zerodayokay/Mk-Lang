@@ -28,7 +28,10 @@ type loc struct {
 	// tag is the tagged mode's tag of the reference the place went through
 	// (0: the owner, a local named directly).
 	tag uint32
-	ti  *tinfo
+	// zeroLocal is the whole zero-byte linear local, plus one. Its offset
+	// alone cannot distinguish it from other locals in the same frame.
+	zeroLocal mir.LocalID
+	ti        *tinfo
 	// view is set on an error-set value seen through SelErr inside an E!T:
 	// the union whose layout holds the payloads.
 	view *tinfo
@@ -36,7 +39,11 @@ type loc struct {
 
 // local is the location of a whole local of frame f.
 func (f *frame) local(l mir.LocalID) loc {
-	return loc{a: f.base, off: f.code.localOff[l], ti: f.code.localTI[l]}
+	p := loc{a: f.base, off: f.code.localOff[l], ti: f.code.localTI[l]}
+	if p.ti.size == 0 && linearOwner(p.ti) {
+		p.zeroLocal = l + 1
+	}
+	return p
 }
 
 // place resolves a place of frame f.
@@ -405,8 +412,10 @@ func (m *Machine) writeOp(f *frame, op *mir.Operand, dst loc) {
 		}
 		// `x = x` moves the value into its own place: the place is written
 		// again, so it stays written and owned (no false VUninit after
-		// `h = h`).
-		if dst.a != src.a || dst.off != src.off {
+		// `h = h`). Equal offsets do not identify byte-free projections.
+		samePlace := dst.a == src.a && dst.off == src.off &&
+			(src.ti.size != 0 || src.zeroLocal != 0 && src.zeroLocal == dst.zeroLocal)
+		if !samePlace {
 			m.tgMoved(f, op.Place, src)
 		}
 		return

@@ -178,6 +178,10 @@ func (bl *builder) emitCallAt(x *ast.CallExpr, c Call, edge *errEdge, spawn mir.
 				}
 			} else if bl.isRecvExclView(fe.X, c.Sig) {
 				pa.borrow, pa.kind, pa.exclView = true, mir.Exclusive, true
+			} else if u, ok := unparen(fe.X).(*ast.UnaryExpr); ok && u.Op == ast.TokMut && spawn == mir.NoLocal {
+				// An explicit exclusive slice is a receiver borrow too.
+				_, pa.borrow = bl.sliceBorrow(u)
+				pa.kind = mir.Exclusive
 			}
 		}
 		ps = append(ps, pa)
@@ -330,7 +334,9 @@ func (bl *builder) emitCallAt(x *ast.CallExpr, c Call, edge *errEdge, spawn mir.
 	args = append(args, envArgs...)
 	union := bl.typeOf(x)
 	ret := union
-	if t := bl.tab.Get(ret); t.Kind == types.KErrorUnion {
+	if t := bl.tab.Get(ret); t.Kind == types.KErrorUnion && c.Errors != types.EmptyErrors {
+		// A callee that cannot fail returns an E!T (a result type
+		// parameter bound to one) whole, as a value.
 		ret = t.Elem
 	}
 	if spawn != mir.NoLocal {
@@ -423,9 +429,9 @@ func (bl *builder) environment(env Env, at source.Span) mir.Operand {
 		var p mir.Place
 		switch s.Kind {
 		case UseLocal:
-			p = bl.b.Place(bl.localOf(s.Binding, at))
+			p = bl.b.Place(bl.remapped(bl.localOf(s.Binding, at))) // inside if T is X, its narrowed copy
 		case UseParam:
-			p = bl.b.Place(mir.LocalID(s.Param))
+			p = bl.b.Place(bl.remapped(mir.LocalID(s.Param)))
 		case UseCapture:
 			p = bl.capturePlace(s.Capture, s.Direct, at)
 		default:
@@ -628,15 +634,19 @@ func (bl *builder) borrowArg(pa *pendingArg, c Call, call source.Span) {
 		pa.mode = mir.ArgReborrow
 		return
 	}
+	u, _ := unparen(pa.e).(*ast.UnaryExpr)
+	explicit := u != nil && (u.Op == ast.TokAmp || u.Op == ast.TokMut)
+	if explicit {
+		if _, isSlice := bl.sliceBorrow(u); isSlice {
+			// A slice borrow is its RvSlice value. Unary lowers it
+			// through sliceExpr, bounds and all.
+			pa.op = bl.operand(pa.e)
+			pa.mode = bl.argMode(pa.op, at)
+			return
+		}
+	}
 	if !pa.recv {
-		if u, ok := unparen(pa.e).(*ast.UnaryExpr); ok && (u.Op == ast.TokAmp || u.Op == ast.TokMut) {
-			if _, isSlice := bl.sliceBorrow(u); isSlice {
-				// A slice borrow is its RvSlice value, not a reference to
-				// it: unary lowers it through sliceExpr, bounds and all.
-				pa.op = bl.operand(pa.e)
-				pa.mode = bl.argMode(pa.op, at)
-				return
-			}
+		if explicit {
 			var p mir.Place
 			if s, ok := bl.mutSliceDeref(u); ok && bl.isPlaceExpr(s) {
 				p = bl.mutPlace(s) // `mut *s` reborrows s
@@ -1072,14 +1082,41 @@ func (bl *builder) builtin(x *ast.CallExpr, c Call) mir.Rvalue {
 		d := bl.discr(p, at)
 		ok := bl.newBlock()
 		bl.switchOn(d, []mir.SwitchCase{{Value: 1, Target: ok}}, bl.panicBlock(types.PanicMust, nil, at), at)
-		bl.cur = ok
-		return use(bl.valueOf(bl.somePayload(p), true, at))
-	case BResMust:
-		inner, ok := unparen(recvExpr(x)).(*ast.CallExpr)
-		if !ok {
-			source.ICEf(at, "lower: Must on a value that is not a call")
+		value := func() mir.Rvalue { return use(bl.valueOf(bl.somePayload(p), true, at)) }
+		if bl.dropped == ast.Expr(x) {
+			// Dropped, a payload that is not plain moves into a T
+			// temporary (okTemp): a T for borrow's E0402, with T's
+			// release facts, as on an E!T.
+			ok, value = bl.okTemp(p, ok, value, recvExpr(x).Span())
 		}
-		ic := bl.in.Call(inner.ID())
+		bl.cur = ok
+		return value()
+	case BResMust:
+		recv := recvExpr(x)
+		inner, ic, isCall := bl.fallibleCall(recv)
+		if !isCall {
+			// An E!T value, as try and else take one: a stored one (a
+			// field, a local, an element, a deref, a const, an if or
+			// match value), a builtin's (`?(E!T).Must()`) or a callee
+			// that cannot fail returning one (a result type parameter
+			// bound to one). It is taken once, and its discriminant
+			// picks ok's payload or the panic with the error, as
+			// elseUnion's does. A payload that is not plain moves into
+			// a T temporary first (okTemp), as tryUnion's does, so a
+			// dropped `r.Must()` is a T for borrow's E0402, as a call's
+			// destination is.
+			p := bl.optTaken(recv)
+			e := bl.newTemp(bl.tab.ErrorSetType(bl.tab.Get(bl.b.PlaceType(p)).Errors), at)
+			ok, pb := bl.newBlock(), bl.newBlock()
+			bl.unionSwitch(p, ok, pb, at)
+			bl.cur = pb
+			bl.assign(bl.b.Place(e), use(bl.valueOf(bl.errPayload(p), true, at)), at)
+			bl.term(mir.Terminator{Kind: mir.TermPanic, Panic: types.PanicMust, HasMsg: true, Msg: bl.valueOfTemp(e, at)}, at)
+			bl.cur = ok
+			ok, value := bl.okTemp(p, ok, func() mir.Rvalue { return use(bl.valueOf(bl.okPayload(p), true, at)) }, recv.Span())
+			bl.cur = ok
+			return value()
+		}
 		et := bl.tab.ErrorSetType(ic.Errors)
 		e := bl.newTemp(et, at)
 		save := bl.cur

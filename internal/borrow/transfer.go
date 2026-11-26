@@ -426,6 +426,10 @@ func (c *checker) statement(st *state, ctx *stmtCtx, s *mir.Statement) {
 		c.asm(st, ctx, &c.body.Asms[s.Asm])
 	case mir.StScopeEnd:
 		c.scopeEnd(st, ctx, s.Local)
+	case mir.StConsume:
+		// A move of Place whose value goes nowhere: a whole local is
+		// moved, a part of a temporary taken (operand).
+		c.operand(st, ctx, mir.Move(s.Place))
 	case mir.StJoin, mir.StNop:
 		// StJoin is a use of s (liveness); its transfer changes nothing:
 		// the scope's loans end at s's scope end.
@@ -691,16 +695,17 @@ func (c *checker) operand(st *state, ctx *stmtCtx, o mir.Operand) setID {
 	}
 	if c.roots[root].kind == rkTemp && pi.onlyFieldSteps() {
 		// A take: the value holds H(t), or of a split t the field the
-		// take names; t becomes {T}.
+		// take names; t becomes {T}, or {T, I} while a linear part of t
+		// is left (consumePart).
 		c.useCheck(st, ctx, root, true)
 		h := c.held(st, root)
 		if s, _, ok := c.splitRead(st, p); ok {
 			h = s
 		}
 		e := st.get(root)
-		e.init = initT
 		e.moved = c.sets.add(e.moved, c.site(ctx))
 		c.put(st, root, e)
+		c.consumePart(st, root, p, true)
 		return h
 	}
 	c.e0409(st, ctx, p)
@@ -716,6 +721,7 @@ func (c *checker) moveRoot(st *state, ctx *stmtCtx, r rootID, e0411 bool) {
 	c.setHeld(st, r, emptySet)
 	e := st.get(r)
 	e.init = initM
+	e.cover = emptySet
 	e.moved = c.sets.add(e.moved, c.site(ctx))
 	if e0411 && c.e0411Param(r) {
 		e.changed = c.sets.add(e.changed, c.site(ctx))
@@ -962,7 +968,7 @@ func (c *checker) slice(st *state, ctx *stmtCtx, s *mir.Statement) setID {
 			// none for this arm), the slice holds nothing, as borrow's
 			// shared-step row.
 			c.useCheck(st, ctx, c.paths.get(p).root, false)
-			c.e0507Mut(ctx, c.paths.extend(p, step{kind: stDeref, mode: dmShared}, ty))
+			c.e0507Mut(st, ctx, c.paths.extend(p, step{kind: stDeref, mode: dmShared}, ty))
 			return emptySet
 		}
 		c.readPlace(st, ctx, rv.Place, false, colRead)

@@ -9,7 +9,8 @@
 // How: a recursive walk memoized per TypeID (memo.go). Structs lay fields
 // out in order with alignment padding (or packed); an optional of a niche
 // element is one pointer, else {u8 some, T}; error unions and enums are
-// tagged unions. A type on a by-value cycle (E0907) gets size zero.
+// tagged unions, an error union's variants each at its own alignment. A
+// type on a by-value cycle (E0907) gets size zero.
 
 package check
 
@@ -288,8 +289,12 @@ func (w *layoutWalk) optional(elem types.TypeID) (types.Layout, bool) {
 		Variants: []types.VariantLayout{{Discr: 0}, {Discr: 1, Fields: []types.FieldLayout{{Offset: off, Type: elem}}}}}, cyc
 }
 
-// tagged4 is E!T (hasOk) or an error-set value: {u32 code, union}, the
-// union sized and aligned to the largest of T and every error's payload.
+// tagged4 is E!T (hasOk) or an error-set value: a u32 code, then each
+// variant's fields at the first offset after the code that its own
+// alignment allows, so an error's fields sit at the same offsets in every
+// error set and every E!T that holds it, whatever T is: the error side of
+// an E!T is then an error-set value in place, which a borrow points into.
+// The size is the largest variant's end, rounded to the largest alignment.
 // Variants: ok (code 0) first, then each error by its
 // ErrorCode in the set's member order.
 func (w *layoutWalk) tagged4(es types.ErrorSetID, ok types.TypeID, hasOk bool) (types.Layout, bool) {
@@ -317,7 +322,7 @@ func (w *layoutWalk) tagged4(es types.ErrorSetID, ok types.TypeID, hasOk bool) (
 		}
 		parts = append(parts, part{uint64(d.Code), fts})
 	}
-	return w.taggedUnion(4, func(yield func(uint64, []types.TypeID)) {
+	return w.taggedUnion(4, true, func(yield func(uint64, []types.TypeID)) {
 		for _, p := range parts {
 			yield(p.discr, p.fts)
 		}
@@ -325,9 +330,10 @@ func (w *layoutWalk) tagged4(es types.ErrorSetID, ok types.TypeID, hasOk bool) (
 }
 
 // taggedUnion lays out {tag of tagSize bytes, union of variant structs}:
-// the union aligned to its largest member and placed after the tag; each
+// the union aligned to its largest member and placed after the tag, or,
+// with own, each variant placed after the tag at its own alignment; each
 // variant's fields are offsets from the start of the whole value.
-func (w *layoutWalk) taggedUnion(tagSize uint8, each func(yield func(uint64, []types.TypeID))) (types.Layout, bool) {
+func (w *layoutWalk) taggedUnion(tagSize uint8, own bool, each func(yield func(uint64, []types.TypeID))) (types.Layout, bool) {
 	type v struct {
 		discr uint64
 		l     types.Layout
@@ -351,12 +357,23 @@ func (w *layoutWalk) taggedUnion(tagSize uint8, each func(yield func(uint64, []t
 	if usize == 0 {
 		uoff = uint64(tagSize)
 	}
-	out := types.Layout{Shape: types.Shape{Size: alignUp(uoff+usize, align), Align: align}, HasTag: true,
+	end := uoff + usize
+	if own {
+		end = uint64(tagSize)
+		for _, x := range vs {
+			end = max(end, alignUp(uint64(tagSize), x.l.Shape.Align)+x.l.Shape.Size)
+		}
+	}
+	out := types.Layout{Shape: types.Shape{Size: alignUp(end, align), Align: align}, HasTag: true,
 		Tag: types.TagLayout{Offset: 0, Size: tagSize}}
 	for _, x := range vs {
 		vl := types.VariantLayout{Discr: x.discr}
+		at := uoff
+		if own {
+			at = alignUp(uint64(tagSize), x.l.Shape.Align)
+		}
 		for _, f := range x.l.Fields {
-			vl.Fields = append(vl.Fields, types.FieldLayout{Offset: uoff + f.Offset, Type: f.Type})
+			vl.Fields = append(vl.Fields, types.FieldLayout{Offset: at + f.Offset, Type: f.Type})
 		}
 		out.Variants = append(out.Variants, vl)
 	}
@@ -369,7 +386,7 @@ func (w *layoutWalk) taggedUnion(tagSize uint8, each func(yield func(uint64, []t
 func (w *layoutWalk) enum(d *types.EnumDecl, args []types.GenericArg) (types.Layout, bool) {
 	c := w.c
 	tagSize := c.enumTagBytes(d)
-	return w.taggedUnion(tagSize, func(yield func(uint64, []types.TypeID)) {
+	return w.taggedUnion(tagSize, false, func(yield func(uint64, []types.TypeID)) {
 		for _, v := range d.Variants {
 			fts := make([]types.TypeID, len(v.Fields))
 			for i, f := range v.Fields {

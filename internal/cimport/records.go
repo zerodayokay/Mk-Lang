@@ -4,14 +4,17 @@
 //
 // What: record, which binds a C record as a transparent Mk struct when its
 // layout matches (transparent) and as an opaque struct otherwise (opaque,
-// opaqueBits); pointerOnly and markSSE, which mark the records that may
+// opaqueBits, opaqueSpanBits); pointerOnly and markSSE, which mark the records that may
 // not be used by value; unalias, and signedOf for signed bitfields.
 //
 // How: a transparent struct's layout is checked against Clang's (natural,
 // or packed(n) for #pragma pack). A bitfield becomes a pair of accessors
 // over its storage unit, as bindgen generates them. A union, or a layout
 // Mk cannot express, is an opaque struct of the record's size and alignment
-// with an accessor pair per member, through std.raw.
+// with an accessor pair per member, through std.raw: a member or a
+// bitfield unit the record's alignment does not align is loaded and stored
+// at align 1 (memberAccess), and a bitfield no aligned unit inside the
+// record holds through its own bytes.
 
 package cimport
 
@@ -224,11 +227,14 @@ func (e *emitter) transparent(d *decl, name string, l *recLayout) bool {
 	for i := 0; i < len(d.fields); i++ {
 		f := &d.fields[i]
 		fl := l.fields[i]
-		if f.bits >= 0 {
+		if f.bits == 0 {
+			continue
+		}
+		if f.bits > 0 {
 			// A run of bitfields: one unit per run that fits one integer.
 			j := i
 			lo, hi := fl.bit, fl.bit+int64(fl.width)
-			for j+1 < len(d.fields) && d.fields[j+1].bits >= 0 {
+			for j+1 < len(d.fields) && d.fields[j+1].bits > 0 {
 				nl := l.fields[j+1]
 				if end := nl.bit + int64(nl.width); end > hi {
 					if end-lo > 64 {
@@ -619,10 +625,10 @@ func (e *emitter) opaque(d *decl, name string, l *recLayout) {
 			e.skippedDecl(d.imp, "member", cname+"."+f.name, "member: "+why)
 			continue
 		}
-		_, al, ok := e.sizeAlign(f.t)
+		sz, al, ok := e.sizeAlign(f.t)
 		if f.anon != nil {
 			if la := e.lay[f.anon.dumpKey]; la != nil && f.t.kind != tArray && f.t.kind != tPointer {
-				al, ok = la.align, true
+				sz, al, ok = la.size, la.align, true
 			}
 		}
 		if !ok {
@@ -637,43 +643,120 @@ func (e *emitter) opaque(d *decl, name string, l *recLayout) {
 		}
 		g := sc.fresh(pascal(label), "Field")
 		e.mods[d.imp].needRaw = true
-		ptr := fmt.Sprintf("raw.PtrCast[u8, %s](raw.Offset(raw.PtrCast[%s, u8](raw.Of(self)), %d))", typ, name, off)
-		read := "raw.Read"
-		aligned := al == 0 || off%al == 0
-		if !aligned {
-			read = "raw.ReadUnaligned"
-		}
+		// The record is only l.align aligned, so a member is aligned when
+		// its offset is a multiple of its alignment and that alignment is
+		// at most the record's.
+		aligned := al == 0 || off%al == 0 && al <= l.align
+		get, set := e.memberAccess(f, typ, name, off, sz, aligned)
 		fmt.Fprintf(w, "\n// C: member %s, at byte %d\n", label, off)
-		fmt.Fprintf(w, "export %s.%s(&self): %s {\n    unsafe \"the C member %s is at byte %d of %s\" {\n        return %s(%s)\n    }\n}\n",
-			name, g, typ, label, off, name, read, ptr)
-		if aligned {
-			s := sc.fresh("Set"+pascal(label), "Field")
-			mptr := strings.Replace(ptr, "raw.Of(self)", "raw.OfMut(self)", 1)
-			fmt.Fprintf(w, "export %s.%s(mut self, v: %s) {\n    unsafe \"the C member %s is at byte %d of %s\" {\n        raw.Write(%s, v)\n    }\n}\n",
-				name, s, typ, label, off, name, mptr)
-		}
+		fmt.Fprintf(w, "export %s.%s(&self): %s {\n    unsafe \"the C member %s is at byte %d of %s\" {\n%s    }\n}\n",
+			name, g, typ, label, off, name, get)
+		s := sc.fresh("Set"+pascal(label), "Field")
+		fmt.Fprintf(w, "export %s.%s(mut self, v: %s) {\n    unsafe \"the C member %s is at byte %d of %s\" {\n%s    }\n}\n",
+			name, s, typ, label, off, name, set)
 	}
 	st.Generated++
 }
 
+// memberAccess is the body of the getter and of the setter (v) of the
+// member f of Mk type typ, sz bytes at byte off of the opaque record name.
+// An aligned member is a raw.Read and a raw.Write. An unaligned one is
+// loaded and stored at align 1: an integer through raw.ReadUnaligned and
+// WriteUnaligned, a float through its bits, and any other type (a pointer,
+// a fn, a record, an array) as a copy of its sz bytes, the getter's through
+// an aligned local. sz is C's size, which is the Mk type's (sizeAlign).
+func (e *emitter) memberAccess(f *field, typ, name string, off, sz int64, aligned bool) (get, set string) {
+	at := func(t, of string) string {
+		return fmt.Sprintf("raw.PtrCast[u8, %s](raw.Offset(raw.PtrCast[%s, u8](%s(self)), %d))", t, name, of, off)
+	}
+	if aligned {
+		return fmt.Sprintf("        return raw.Read(%s)\n", at(typ, "raw.Of")),
+			fmt.Sprintf("        raw.Write(%s, v)\n", at(typ, "raw.OfMut"))
+	}
+	switch k := e.unalignedKind(f); k {
+	case "int":
+		return fmt.Sprintf("        return raw.ReadUnaligned(%s)\n", at(typ, "raw.Of")),
+			fmt.Sprintf("        raw.WriteUnaligned(%s, v)\n", at(typ, "raw.OfMut"))
+	case "f32", "f64":
+		bits := map[string]string{"f32": "u32", "f64": "u64"}[k]
+		up := strings.ToUpper(k)
+		return fmt.Sprintf("        return raw.%sFrom(raw.ReadUnaligned(%s))\n", up, at(bits, "raw.Of")),
+			fmt.Sprintf("        raw.WriteUnaligned(%s, raw.%sBits(v))\n", at(bits, "raw.OfMut"), up)
+	}
+	n := (sz + 7) / 8
+	buf := fmt.Sprintf("raw.PtrCast[[%d]u64, %%s](raw.OfMut(mut b))", n)
+	return fmt.Sprintf("        var b := [u64(0); %d]\n        raw.Copy[u8](%s, %s, %d)\n        return raw.Read(%s)\n",
+			n, fmt.Sprintf(buf, "u8"), at("u8", "raw.Of"), sz, fmt.Sprintf(buf, typ)),
+		fmt.Sprintf("        raw.Copy[u8](%s, raw.PtrCast[%s, u8](raw.Of(&v)), %d)\n", at("u8", "raw.OfMut"), typ, sz)
+}
+
+// unalignedKind is how an unaligned member of declared type f.t is
+// accessed: "int" (an integer or an enum), "f32" or "f64", or "" (bytes).
+func (e *emitter) unalignedKind(f *field) string {
+	if f.anon != nil && (f.t == nil || f.t.kind != tArray && f.t.kind != tPointer) {
+		return ""
+	}
+	r := e.resolve(f.t)
+	if r == nil {
+		return ""
+	}
+	switch r.kind {
+	case tEnum:
+		return "int"
+	case tTypedef:
+		if specialTypedefs[r.name] != "" {
+			return "int"
+		}
+	case tBuiltin:
+		switch m, _, _ := e.builtin(r.name); m {
+		case "u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "uint", "int":
+			return "int"
+		case "f32", "f64":
+			return m
+		}
+	}
+	return ""
+}
+
 // opaqueBits writes the accessor pair of bitfield i of an opaque record:
-// the smallest integer unit at an aligned offset that holds its bits,
-// read through std.raw (unaligned when the unit is wider than the
-// record's alignment, and then with no setter).
+// the smallest integer unit at an aligned offset that holds its bits, else
+// the smallest that starts at its first byte, read through std.raw
+// (unaligned when the unit is not aligned in the record), and set by a
+// load, a mask and a store of the unit (both align 1 in that case). The
+// unit lies inside the record and holds no byte of another member but the
+// bitfields of the field's own run (otherBytes), the bytes C's own store
+// may write: a setter that rewrote a neighbour's byte would lose a store
+// to that member made at the same time. When no such unit fits (a 20-bit
+// field at byte 3 of a 6-byte packed record, or one after an int at byte
+// 1 of a 5-byte one), opaqueSpanBits.
 func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *nameScope) {
 	f := &d.fields[i]
 	fl := l.fields[i]
 	lo, hi := fl.bit, fl.bit+int64(fl.width)
+	taken := e.otherBytes(d, l, i)
+	free := func(o, s int64) bool {
+		for _, r := range taken {
+			if o < r[1] && r[0] < o+s {
+				return false
+			}
+		}
+		return true
+	}
 	var size, off int64
-	for _, s := range []int64{1, 2, 4, 8} {
-		o := lo / (8 * s) * s
-		if (o+s)*8 >= hi && o+s <= l.size {
-			size, off = s, o
+	for _, start := range []func(s int64) int64{func(s int64) int64 { return lo / (8 * s) * s }, func(int64) int64 { return lo / 8 }} {
+		for _, s := range []int64{1, 2, 4, 8} {
+			o := start(s)
+			if (o+s)*8 >= hi && o+s <= l.size && free(o, s) {
+				size, off = s, o
+				break
+			}
+		}
+		if size != 0 {
 			break
 		}
 	}
 	if size == 0 {
-		e.skippedDecl(d.imp, "member", d.name+"."+f.name, "bitfield of an opaque record")
+		e.opaqueSpanBits(d, name, l, i, sc)
 		return
 	}
 	ut := uintOf(size)
@@ -697,12 +780,123 @@ func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *name
 	}
 	fmt.Fprintf(w, "export %s.%s(&self): %s {\n    unsafe \"the C bitfield %s is in the %s at byte %d of %s\" {\n        return %s\n    }\n}\n",
 		name, g, vt, f.name, ut, off, name, read)
-	if size <= l.align {
-		s := sc.fresh("Set"+pascal(f.name), "Bits")
-		mptr := strings.Replace(ptr, "raw.Of(self)", "raw.OfMut(self)", 1)
-		fmt.Fprintf(w, "export %s.%s(mut self, v: %s) {\n    unsafe \"the C bitfield %s is in the %s at byte %d of %s\" {\n        p := %s\n        raw.Write(p, (raw.Read(p) & %#x) | ((%s & %#x) << %d))\n    }\n}\n",
-			name, s, vt, f.name, ut, off, name, mptr, clear, val, mask, shift)
+	// A unit at a multiple of its size is aligned when that size is at
+	// most the record's alignment; else it is loaded and stored at align 1.
+	load, store := "raw.Read", "raw.Write"
+	if size > l.align || off%size != 0 {
+		load, store = "raw.ReadUnaligned", "raw.WriteUnaligned"
 	}
+	s := sc.fresh("Set"+pascal(f.name), "Bits")
+	mptr := strings.Replace(ptr, "raw.Of(self)", "raw.OfMut(self)", 1)
+	fmt.Fprintf(w, "export %s.%s(mut self, v: %s) {\n    unsafe \"the C bitfield %s is in the %s at byte %d of %s\" {\n        p := %s\n        %s(p, (%s(p) & %#x) | ((%s & %#x) << %d))\n    }\n}\n",
+		name, s, vt, f.name, ut, off, name, mptr, store, load, clear, val, mask, shift)
+}
+
+// otherBytes returns the byte intervals [start, end) that bitfield i's
+// unit may not hold: every other member but the bitfields of i's run (C11
+// 6.7.2.1: adjacent bitfields of nonzero width are one memory location; a
+// zero-width bitfield or another member ends the run). A member of unknown
+// size takes every byte up to the next member's offset or the record's
+// end. In a union every member holds the same bytes, so none is taken.
+func (e *emitter) otherBytes(d *decl, l *recLayout, i int) [][2]int64 {
+	if d.union {
+		return nil
+	}
+	var taken [][2]int64
+	runLo, runHi := i, i
+	for runLo > 0 && d.fields[runLo-1].bits > 0 {
+		runLo--
+	}
+	for runHi+1 < len(d.fields) && d.fields[runHi+1].bits > 0 {
+		runHi++
+	}
+	for j := range d.fields {
+		if j >= runLo && j <= runHi {
+			continue
+		}
+		f, fl := &d.fields[j], l.fields[j]
+		from, to := fl.bit/8, int64(-1)
+		switch {
+		case f.bits == 0:
+			continue
+		case f.bits > 0:
+			to = (fl.bit + int64(fl.width) + 7) / 8
+		default:
+			sz, _, ok := e.sizeAlign(f.t)
+			if f.anon != nil && (f.t == nil || f.t.kind != tArray && f.t.kind != tPointer) {
+				if la := e.lay[f.anon.dumpKey]; la != nil {
+					sz, ok = la.size, true
+				}
+			}
+			if ok {
+				to = from + sz
+			} else {
+				to = l.size
+				for _, g := range l.fields {
+					if g.bit/8 > from && g.bit/8 < to {
+						to = g.bit / 8
+					}
+				}
+			}
+		}
+		if from < to {
+			taken = append(taken, [2]int64{from, to})
+		}
+	}
+	return taken
+}
+
+// opaqueSpanBits writes the accessor pair of bitfield i of an opaque
+// record that no aligned unit inside the record holds: its bytes alone
+// (from its first bit's byte to its last's) are copied into a u64 and
+// back at align 1, so neither accessor touches a byte of another member
+// (a wider unit at an unaligned start would load and store the
+// neighbour's bytes, which C's own code does not). The getter's type is
+// the smallest unsigned integer that holds those bytes, or the field's
+// signed type. A field spanning more than 8 bytes (a 64-bit field off a
+// byte boundary) gets no accessor.
+func (e *emitter) opaqueSpanBits(d *decl, name string, l *recLayout, i int, sc *nameScope) {
+	f := &d.fields[i]
+	fl := l.fields[i]
+	lo, hi := fl.bit, fl.bit+int64(fl.width)
+	off, end := lo/8, (hi+7)/8
+	n := end - off
+	if n > 8 || end > l.size {
+		e.skippedDecl(d.imp, "member", d.name+"."+f.name, "bitfield of an opaque record")
+		return
+	}
+	size := int64(1)
+	for size < n {
+		size *= 2
+	}
+	ut := uintOf(size)
+	shift := lo - off*8
+	mask := uint64(1)<<uint(fl.width) - 1
+	if fl.width >= 64 {
+		mask = ^uint64(0)
+	}
+	clear := ^(mask << uint(shift))
+	e.mods[d.imp].needRaw = true
+	w := &e.mods[d.imp].items
+	at := func(of string) string {
+		return fmt.Sprintf("raw.Offset(raw.PtrCast[%s, u8](%s(self)), %d)", name, of, off)
+	}
+	load := fmt.Sprintf("        var b := u64(0)\n        raw.Copy[u8](raw.PtrCast[u64, u8](raw.OfMut(mut b)), %s, %d)\n", at("raw.Of"), n)
+	g := sc.fresh(pascal(f.name), "Bits")
+	fmt.Fprintf(w, "\n// C: bitfield %s, %d bits at bit %d of its %d bytes at byte %d\n", f.name, fl.width, shift, n, off)
+	vt, read, val := ut, fmt.Sprintf("(b >> %d) & %#x", shift, mask), "u64(v)"
+	if size < 8 {
+		read = "Trunc[" + ut + "](" + read + ")"
+	}
+	if st := e.signedOf(f.t); st != "" {
+		vt, read, val = st, signedGet("b", 64, int(shift), fl.width, st), signedSet("v", st, "u64")
+	}
+	fmt.Fprintf(w, "export %s.%s(&self): %s {\n    unsafe \"the C bitfield %s is in the %d bytes at byte %d of %s\" {\n%s        return %s\n    }\n}\n",
+		name, g, vt, f.name, n, off, name, load, read)
+	set := strings.Replace(load, at("raw.Of"), "p", 1)
+	s := sc.fresh("Set"+pascal(f.name), "Bits")
+	fmt.Fprintf(w, "export %s.%s(mut self, v: %s) {\n    unsafe \"the C bitfield %s is in the %d bytes at byte %d of %s\" {\n        p := %s\n%s        b = (b & %#x) | ((%s & %#x) << %d)\n        raw.Copy[u8](p, raw.PtrCast[u64, u8](raw.Of(&b)), %d)\n    }\n}\n",
+		name, s, vt, f.name, n, off, name, at("raw.OfMut"), set, clear, val, mask, shift, n)
 }
 
 // signedOf is the Mk signed integer type a bitfield of declared type t
@@ -719,6 +913,17 @@ func (e *emitter) signedOf(t *ctype) string {
 		m, _, _ = e.builtin(r.name)
 	case tEnum:
 		if d := e.tagDecl(r); d != nil {
+			if d.fixed != nil {
+				// Its fixed type's, through any typedef (enumInt spells
+				// an alias by its Mk name).
+				return e.signedOf(d.fixed)
+			}
+			if !e.win && d.enumMin >= 0 {
+				// GNU C's type for an enum with no negative constant is
+				// unsigned (unsigned int, or wider), and so its
+				// bitfield; on the MSVC target it is int.
+				return ""
+			}
 			m = e.enumInt(d)
 		}
 	}

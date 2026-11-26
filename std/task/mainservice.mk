@@ -18,10 +18,12 @@ var MainServiceHook: raw.Atomic[uint] = raw.Atomic[uint].New(0)
 /// standalone macOS program with the task scheduler, or when a hook is installed.
 /// O(1); allocates nothing.
 export MainThreadService(f: fn(): bool): bool {
+    // Edge: MainServiceEnabled is published by Start before MainEntry runs.
     if Target.os == Os.Macos && MainServiceEnabled.Load() != 0 {
         unsafe "a named static function is one machine word and stays callable for the process" {
             var slot := f
             word := raw.Read(raw.PtrCast[fn(): bool, uint](raw.Of(&slot)))
+            // Edge: publishes the hook pointer before WakeMainThreadService wakes carrier 0.
             if MainServiceHook.Cas(0, word) {
                 WakeMainThreadService()
                 return true
@@ -35,6 +37,7 @@ export MainThreadService(f: fn(): bool): bool {
 /// installation it does nothing. The caller publishes its requests before
 /// waking. O(1); allocates nothing.
 export WakeMainThreadService() {
+    // Edge: observes the hook installed by MainThreadService before waking carrier 0.
     if Target.os == Os.Macos && MainServiceHook.Load() != 0 {
         sys.PollWakeMain()
     }
@@ -47,6 +50,7 @@ MainServiceDue(c: *Carrier): i64 {
 }
 
 RunMainService(c: *Carrier) {
+    // Edge: acquires the hook pointer published by MainThreadService's Cas.
     hook := MainServiceHook.Load()
     if hook == 0 {
         return

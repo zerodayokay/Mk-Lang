@@ -278,9 +278,7 @@ export Main(sys: &System): WriteError!void {
 // Sha1Rounds4 clause at a concrete call: each call in
 // simd/kernel/sha1.mk passes a literal round
 // group, the four groups 0 to 3 each appear, and no other std file calls
-// Sha1Rounds4. A round group forwarded from a caller's const generic is
-// not judged by check, so std never
-// writes one.
+// Sha1Rounds4. The kernel specializes all four round groups directly.
 func TestHash_Sha1KernelLiteralGroups(t *testing.T) {
 	t.Parallel()
 	call := regexp.MustCompile(`raw\.Sha1Rounds4\(([^()]*)\)`)
@@ -326,15 +324,14 @@ func TestHash_Sha1KernelLiteralGroups(t *testing.T) {
 }
 
 // TestHash_Sha1RoundGroupGeneric: the round group as a generic's const
-// type parameter, with no clause restated, as std never writes it. G[0]
-// and G[3] build and run, and the const is the evaluator's; G[4] (run
-// time) and H[9] (in a const) never build. Check does not judge the
-// forwarded clause, so the
-// evaluator's or codegen's group test stops them (E0000); the test pins
-// only that they never build, so it holds when check gives E0706 instead.
+// type parameter whose constraint is forwarded to Sha1Rounds4. G[0]
+// runs on a CPU with SHA and H[3] evaluates as a const. G[4] and H[9]
+// fail their respective instantiations with E0706.
 func TestHash_Sha1RoundGroupGeneric(t *testing.T) {
 	t.Parallel()
-	const fn = `[const g: u8](s: [4]u32, w: [4]u32): [4]u32 {
+	const fn = `[const g: u8](s: [4]u32, w: [4]u32): [4]u32
+    requires g < 4
+{
     unsafe "test: the evaluator, or a CPU with sha" {
         return raw.Sha1Rounds4(s, w, g)
     }
@@ -357,8 +354,13 @@ export Main(sys: &System): WriteError!void {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			src := prog(c.run, c.cnst)
-			if _, out, status := s8Try(t, nil, src, true); status == 0 {
-				t.Fatalf("mk build: exit 0, want a failed build for an invalid round group\n%s\n%s", out, src)
+			bad := c.run
+			if c.name == "const 9" {
+				bad = c.cnst
+			}
+			if _, out, status := s8Try(t, nil, src, true); status == 0 || !strings.Contains(out, "E0706") ||
+				!strings.Contains(out, bad) || strings.Contains(out, "E0000") {
+				t.Fatalf("mk build: exit %d, want E0706 at %s\n%s", status, bad, out)
 			}
 		})
 	}
@@ -373,7 +375,7 @@ export Main(sys: &System): WriteError!void {
 		cnst := fmt.Sprintf("const %d\n", h11S1Rounds(one, two, 3)[0])
 		got := s8Run(t, nil, src, true)
 		if got == cnst+"skip\n" {
-			t.Skip("this CPU lacks sha: the const G[3] matched section 6.1.2; the run-time G[0] was not run")
+			t.Skip("this CPU lacks sha: the const H[3] matched section 6.1.2; the run-time G[0] was not run")
 		}
 		if want := fmt.Sprintf("%d %d\n", h11S1Rounds(one, two, 0)[0], h11S1Rounds(one, two, 3)[0]); got != want {
 			t.Fatalf("got %q, want %q (section 6.1.2's groups 0 and 3)\n%s", got, want, src)

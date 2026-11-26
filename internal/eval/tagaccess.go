@@ -4,7 +4,7 @@
 //
 // What: tacc (the access rule), ownerAccess, taggedAccess, retag and
 // retagRef, tgEnter and tgPopFrame (function entry and exit), tgScopeEnd,
-// tgMoved, the fallible-call error edge (tgArgUndo, tgErrorEdge,
+// tgMoved, tgTake, the fallible-call error edge (tgArgUndo, tgErrorEdge,
 // tgErrorExit), and tgStorePtr.
 //
 // How: an access checks liveness, then interior bytes (liveness, init and
@@ -160,6 +160,7 @@ func (m *Machine) tacc(a, off uint32, n uint64, tag uint32, mode uint8) {
 				for k := i; k < j; k++ {
 					if l := ta.segs[k].local; l >= 0 {
 						ta.locals[l].owned = true
+						ta.locals[l].taken = nil
 					}
 				}
 			}
@@ -343,10 +344,9 @@ func (m *Machine) tgPushFrame(f *frame) {
 	tg.callItems[tg.calls] = f.item
 }
 
-// linearOwner reports whether a local of ti owns a linear value while its
-// bytes are written: a linear named type (an optional or an error union of
-// one may hold none or an error, so its bytes say nothing; the linear rule
-// there is borrow's, through the payload's own local).
+// linearOwner reports whether initializing a local of ti creates a linear
+// obligation. Optionals and error unions can hold none or an error, so
+// borrow checks their linear rule through the payload's own local.
 func linearOwner(ti *tinfo) bool {
 	if ti.layout.Shape.Kind != types.Linear {
 		return false
@@ -356,6 +356,53 @@ func linearOwner(ti *tinfo) bool {
 		return false
 	}
 	return true
+}
+
+// tgNarrow follows a switch on a freshly read discriminant. A plain variant
+// discharges the tested part of a match temporary.
+func (m *Machine) tgNarrow(f *frame, on mir.Operand, discr uint64) {
+	if on.Kind != mir.OpCopy || on.Place.Proj.Len != 0 {
+		return
+	}
+	b := f.code.body
+	stmts := b.Blocks[f.block].Stmts
+	if len(stmts) == 0 {
+		return
+	}
+	s := &stmts[len(stmts)-1]
+	if s.Kind != mir.StAssign || s.Place.Proj.Len != 0 || s.Place.Local != on.Place.Local || s.Rvalue.Kind != mir.RvDiscriminant {
+		return
+	}
+	p := s.Rvalue.Place
+	if b.Locals[p.Local].Kind != mir.LocalTemp {
+		return
+	}
+	if !m.tg.rec(f.base).locals[p.Local].owned {
+		return
+	}
+	ti := m.ti(b.PlaceType(p))
+	switch ti.ty.Kind {
+	case types.KOptional, types.KErrorUnion:
+	case types.KNamed:
+		if m.items().Get(ti.ty.Item).Kind == types.KindEnum {
+			break
+		}
+		return
+	default:
+		return
+	}
+	for _, v := range ti.layout.Variants {
+		if v.Discr != discr {
+			continue
+		}
+		for _, field := range v.Fields {
+			if m.ti(field.Type).layout.Shape.Kind != types.Plain {
+				return
+			}
+		}
+		m.tgTake(f, p)
+		return
+	}
 }
 
 // tgEnter is the entry retag of frame f: each parameter of type &T,
@@ -451,6 +498,7 @@ func (m *Machine) tgScopeEnd(f *frame, x mir.LocalID) {
 		m.violation(Violation{Kind: VLinear, Where: m.localName(f.code.body, f.item, int(x)), Off: l.lo, Len: l.hi - l.lo})
 	}
 	l.owned = false
+	l.taken = nil
 	if l.hi == l.lo {
 		return
 	}
@@ -464,24 +512,16 @@ func (m *Machine) tgScopeEnd(f *frame, x mir.LocalID) {
 	ta.merge()
 }
 
-// tgMoved runs after an operand moved a non-plain value out of place p
-// (located at src): with no dereference in p, the moved bytes are no longer
-// written and p's local no longer owns a linear value. A move
-// through a dereference does not occur in safe MIR (E0409).
-//
-// A move of a plain field out of a local is a take that consumes the whole
-// value (destructuring consumes): lower ends a destructure whose bindings all
-// copy with one such take (lower/stmt.go destructure), and borrow reads it as
-// the consumption, so the local no longer owns a linear value; the plain bytes
-// stay written.
+// tgMoved empties the moved bytes of a local. In a temporary a projected
+// move is a take, including the move of a plain field during destructuring.
 func (m *Machine) tgMoved(f *frame, p mir.Place, src loc) {
-	plain := src.ti.layout.Shape.Kind == types.Plain || src.ti.size == 0
+	plain := src.ti.layout.Shape.Kind == types.Plain
 	if plain && p.Proj.Len == 0 {
 		return
 	}
 	b := f.code.body
-	for i := p.Proj.Start; i < p.Proj.End(); i++ {
-		if b.Projections[i].Kind == mir.ProjDeref {
+	for _, pr := range b.Proj(p) {
+		if pr.Kind == mir.ProjDeref {
 			return
 		}
 	}
@@ -489,12 +529,115 @@ func (m *Machine) tgMoved(f *frame, p mir.Place, src loc) {
 	if !ta.frame || src.a != f.base {
 		return
 	}
-	if !plain {
+	if !plain && src.ti.size != 0 {
 		clearBits(ta.init, src.off, src.off+uint32(src.ti.size))
 	}
-	if int(p.Local) < len(ta.locals) {
-		ta.locals[p.Local].owned = false
+	if p.Proj.Len != 0 && b.Locals[p.Local].Kind == mir.LocalTemp {
+		m.tgTake(f, p)
+		return
 	}
+	l := &ta.locals[p.Local]
+	l.owned, l.taken = false, nil
+}
+
+// tgTake discharges the ownership of a whole local or one part of it.
+// Field paths distinguish parts even when their byte offsets coincide.
+func (m *Machine) tgTake(f *frame, p mir.Place) {
+	ta := m.tg.rec(f.base)
+	if !ta.frame || int(p.Local) >= len(ta.locals) {
+		return
+	}
+	l := &ta.locals[p.Local]
+	if !l.linear || !l.owned {
+		return
+	}
+	path := f.code.body.Proj(p)
+	for _, pr := range path {
+		if pr.Kind != mir.ProjField && pr.Kind != mir.ProjDowncast {
+			return
+		}
+	}
+	l.taken = append(l.taken, path)
+	if m.tgCovered(f.code.localTI[p.Local], l.taken) {
+		l.owned, l.taken = false, nil
+	}
+}
+
+// tgCovered reports whether the paths leave no linear part of ti live.
+// A downcast on the executed path identifies the active variant.
+func (m *Machine) tgCovered(ti *tinfo, paths [][]mir.Projection) bool {
+	if ti.layout.Shape.Kind != types.Linear {
+		return true
+	}
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		if len(path) == 0 {
+			return true
+		}
+	}
+	if ti.ty.Kind == types.KArray {
+		elem, n := m.ti(ti.ty.Elem), m.arrayLen(ti.ty)
+		if elem.layout.Shape.Kind != types.Linear {
+			return true
+		}
+		// Each linear element needs a path of its own, even at size zero.
+		if n > uint64(len(paths)) {
+			return false
+		}
+		for i := uint64(0); i < n; i++ {
+			if !m.tgCovered(elem, takenFields(paths, uint32(i))) {
+				return false
+			}
+		}
+		return true
+	}
+	fields := ti.layout.Fields
+	if ti.layout.HasTag {
+		pr := paths[0][0]
+		if pr.Kind != mir.ProjDowncast {
+			return false
+		}
+		var i uint32
+		switch pr.Sel {
+		case mir.SelSome:
+			i = 1
+		case mir.SelOk:
+		case mir.SelEnum:
+			i = pr.A
+		default:
+			return false
+		}
+		if int(i) >= len(ti.layout.Variants) {
+			return false
+		}
+		fields = ti.layout.Variants[i].Fields
+		var payload [][]mir.Projection
+		for _, path := range paths {
+			if path[0] == pr {
+				payload = append(payload, path[1:])
+			}
+		}
+		paths = payload
+	}
+	for i, field := range fields {
+		if !m.tgCovered(m.ti(field.Type), takenFields(paths, uint32(i))) {
+			return false
+		}
+	}
+	return true
+}
+
+// takenFields is the tail of every consumed path through field i.
+func takenFields(paths [][]mir.Projection, i uint32) [][]mir.Projection {
+	var out [][]mir.Projection
+	for _, path := range paths {
+		if len(path) != 0 && path[0].Kind == mir.ProjField && path[0].A == i {
+			out = append(out, path[1:])
+		}
+	}
+	return out
 }
 
 // tgArgUndo records, before a fallible call's argument a moves out of a
@@ -513,7 +656,7 @@ func (m *Machine) tgArgUndo(caller *frame, a *mir.Arg) {
 	}
 	src := m.place(caller, op.Place)
 	ta := m.tg.rec(caller.base)
-	if !ta.frame || src.a != caller.base || src.ti.size == 0 || uint64(src.off)+src.ti.size > uint64(ta.size) {
+	if !ta.frame || src.a != caller.base || (src.ti.size == 0 && src.zeroLocal == 0) || uint64(src.off)+src.ti.size > uint64(ta.size) {
 		return
 	}
 	// An argument slot (t = move x, then the call takes move t) restores x
@@ -630,12 +773,25 @@ func (m *Machine) tgCopyInit(dst, src loc, n uint64) {
 	}
 }
 
-// tgCopy is the tagged half of a copy of n bytes from src to dst: a read of
+// tgCopyCheck is the tagged half of a copy of n bytes from src to dst: a read of
 // the source through its tag, a write of the destination through its tag,
 // then (after the bytes moved) the init bits.
 func (m *Machine) tgCopyCheck(dst, src loc, n uint64) {
+	if n == 0 {
+		m.tgWriteZero(dst)
+		return
+	}
 	m.tacc(src.a, src.off, n, src.tag, accRead)
 	m.tacc(dst.a, dst.off, n, dst.tag, accWrite)
+}
+
+// tgWriteZero records a whole linear local's initialization without a
+// byte access. Projections do not carry the whole local's identity.
+func (m *Machine) tgWriteZero(dst loc) {
+	if dst.zeroLocal != 0 {
+		l := &m.tg.rec(dst.a).locals[dst.zeroLocal-1]
+		l.owned, l.taken = true, nil
+	}
 }
 
 // tgDied records where allocation a ended (a page freed, a frame popped), so

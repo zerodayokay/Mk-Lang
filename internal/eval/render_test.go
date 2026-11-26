@@ -144,3 +144,25 @@ func TestRender_Snapshots(t *testing.T) {
 		}
 	}
 }
+
+// TestRender_GlobalFuel: a var global cannot state fuel, so its E0902
+// names the route that compiles instead of a fuel clause; a const keeps
+// the raised fuel.
+func TestRender_GlobalFuel(t *testing.T) {
+	w := newWorld(t)
+	g := w.item("main", "Total", types.KindGlobal, &types.GlobalDecl{Type: types.Int})
+	c := w.constItem("main", "C", types.Int, 0)
+	for _, tc := range []struct {
+		item types.ItemID
+		alt  string
+	}{
+		{c, "raise the limit: fuel 8000000"},
+		{g, "a global cannot state fuel: do the work in a const with fuel 8000000, and initialize Total from that const"},
+	} {
+		err := &types.EvalError{Kind: types.EvalFuel, Steps: 4000000, Items: []types.ItemID{tc.item}, Trace: []source.Span{{}}}
+		d := Render(err, constReq(w, tc.item, types.StageBodies), w.items, w.in)
+		if d.Code != diag.E0902 || len(d.Alternatives) != 1 || d.Alternatives[0] != tc.alt {
+			t.Errorf("%v %q, want E0902 with %q", d.Code, d.Alternatives, tc.alt)
+		}
+	}
+}
