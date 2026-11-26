@@ -1,12 +1,12 @@
-// Why: a test that measures or reports something and passes printed none of
-// it, so a writer had to fail it on purpose to read its output (MKH-620).
-// What: TestMkTestShowOutput and TestShowOutputExpectedPanic: the text
-// report under TestReport.ShowOutput (mk test --show-output).
+// Why: the output of a test that measures or reports something and passes
+// must be readable without failing the test, and the default report must
+// stay as quiet as it is.
+// What: TestMkTestShowOutput and TestShowOutputLines: the text report under
+// TestReport.ShowOutput (mk test --show-output).
 // How: runs a package of a passing test that prints, a passing test that
 // prints nothing and a failing test that prints, and compares the whole text
-// report without and with the switch; then writes a report of a pass with
-// testing.ExpectPanic's shape (status 101, a printed line and the panic's
-// report) both ways.
+// report without and with the switch; then writes a report of a pass whose
+// output has several CRLF lines, both ways.
 
 package driver
 
@@ -52,20 +52,20 @@ func TestMkTestShowOutput(t *testing.T) {
 	}
 }
 
-func TestShowOutputExpectedPanic(t *testing.T) {
+func TestShowOutputLines(t *testing.T) {
 	rep := &TestReport{Passed: 1, Tests: []TestCase{{
-		Module: "main", Name: "refuses", Result: "pass", Status: 101,
-		Output: "checked 3 inputs\r\npanic: assert at p.mk:4:5\r\nbacktrace:\r\n  test \"refuses\" (p.mk)\r\n",
+		Module: "main", Name: "counts", Result: "pass",
+		Output: "checked 3 inputs\r\ncaught 2 of 2\r\n  in 4 ms\r\n",
 	}}}
 	var b bytes.Buffer
 	_ = rep.WriteText(&b, false)
-	if want := "PASS main \"refuses\"\n1 passed, 0 failed\n"; b.String() != want {
+	if want := "PASS main \"counts\"\n1 passed, 0 failed\n"; b.String() != want {
 		t.Errorf("default:\n%s\nwant:\n%s", b.String(), want)
 	}
 	rep.ShowOutput = true
 	b.Reset()
 	_ = rep.WriteText(&b, false)
-	want := "PASS main \"refuses\"\n    checked 3 inputs\n    panic: assert at p.mk:4:5\n    backtrace:\n      test \"refuses\" (p.mk)\n1 passed, 0 failed\n"
+	want := "PASS main \"counts\"\n    checked 3 inputs\n    caught 2 of 2\n      in 4 ms\n1 passed, 0 failed\n"
 	if b.String() != want {
 		t.Errorf("--show-output:\n%s\nwant:\n%s", b.String(), want)
 	}

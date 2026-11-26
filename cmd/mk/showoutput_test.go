@@ -1,5 +1,5 @@
-// Why: mk test --show-output (MKH-620) must print a passing test's output
-// and leave the default report as it was; mk bench does not take it.
+// Why: mk test --show-output must print a passing test's output and leave
+// the default report as it is; mk bench does not take it.
 // What: TestShowOutputFlag.
 // How: runs mk test on a package of one passing test that prints, without
 // the flag, with it, with it and --run selecting nothing, and with --json;
