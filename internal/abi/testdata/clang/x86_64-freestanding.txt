@@ -1,8 +1,8 @@
 # Clang's lowering of the C equivalent of each row of ../suite.txt, for x86_64-freestanding.
 # clang: clang version 21.1.8
 # command: clang --target=x86_64-unknown-none-elf -S -emit-llvm -O0 -ffreestanding -fno-ident -o - suite.c
-# probe: $MK_EVIDENCE/abi-oracle/probe.go generates suite.c from suite.txt in a temporary directory and writes this file;
-# probe-sha256: 44c047dc06e0c891d30ef1158a1dbc2236dec62d123f491a811b33417e0d473c
+# probe: $MK_EVIDENCE/abi-oracle/probe-v2.go generates suite.c from suite.txt in a temporary directory and writes this file;
+# probe-sha256: 0414cd1f6d508df5149986db20052481864250be5a75e226ac603260e89dfde8
 # struct and union type names are replaced by their bodies; a row the probe cannot express in C says SKIP.
 =layout 1 1 S1
 =offsets 0 S1
@@ -536,18 +536,18 @@ p_Er2xi32: void @p_Er2xi32(i64)
 r_Er2xi32: i64 @r_Er2xi32()
 p_Er1xf64: void @p_Er1xf64(i32, double)
 r_Er1xf64: { i32, double } @r_Er1xf64()
-p_Er3xi32: void @p_Er3xi32(i32, i64)
-r_Er3xi32: { i32, i64 } @r_Er3xi32()
-p_Er4xi64: void @p_Er4xi64(ptr noundef byval({ i32, { { i64, i64 } } } ) align 8)
-r_Er4xi64: void @r_Er4xi64(ptr dead_on_unwind noalias writable sret({ i32, { { i64, i64 } } } ) align 8)
+p_Er3xi32: void @p_Er3xi32(i64, double)
+r_Er3xi32: { i64, double } @r_Er3xi32()
+p_Er4xi64: void @p_Er4xi64(ptr noundef byval({ { i32, { i64, i64 } } } ) align 8)
+r_Er4xi64: void @r_Er4xi64(ptr dead_on_unwind noalias writable sret({ { i32, { i64, i64 } } } ) align 8)
 p_Er5xu8: void @p_Er5xu8(i64)
 r_Er5xu8: i64 @r_Er5xu8()
 p_Er1oEr2xu8: void @p_Er1oEr2xu8(i64)
 r_Er1oEr2xu8: i64 @r_Er1oEr2xu8()
-p_Er1xS16: void @p_Er1xS16(ptr noundef byval({ i32, { { i64, i64 } } } ) align 8)
-r_Er1xS16: void @r_Er1xS16(ptr dead_on_unwind noalias writable sret({ i32, { { i64, i64 } } } ) align 8)
-p_Er1xstr: void @p_Er1xstr(ptr noundef byval({ i32, { { ptr, i64 } } } ) align 8)
-r_Er1xstr: void @r_Er1xstr(ptr dead_on_unwind noalias writable sret({ i32, { { ptr, i64 } } } ) align 8)
+p_Er1xS16: void @p_Er1xS16(ptr noundef byval({ { i32, { i64, i64 } } } ) align 8)
+r_Er1xS16: void @r_Er1xS16(ptr dead_on_unwind noalias writable sret({ { i32, { i64, i64 } } } ) align 8)
+p_Er1xstr: void @p_Er1xstr(ptr noundef byval({ { i32, { ptr, i64 } } } ) align 8)
+r_Er1xstr: void @r_Er1xstr(ptr dead_on_unwind noalias writable sret({ { i32, { ptr, i64 } } } ) align 8)
 p_Er1: void @p_Er1(i32)
 r_Er1: i32 @r_Er1()
 p_Er2: void @p_Er2(i64)
@@ -556,8 +556,8 @@ p_Er3: void @p_Er3(i32, double)
 r_Er3: { i32, double } @r_Er3()
 p_Er1oEr3: void @p_Er1oEr3(i32, double)
 r_Er1oEr3: { i32, double } @r_Er1oEr3()
-p_Er4: void @p_Er4(ptr noundef byval({ i32, { { i64, i64 } } } ) align 8)
-r_Er4: void @r_Er4(ptr dead_on_unwind noalias writable sret({ i32, { { i64, i64 } } } ) align 8)
+p_Er4: void @p_Er4(ptr noundef byval({ { i32, { i64, i64 } } } ) align 8)
+r_Er4: void @r_Er4(ptr dead_on_unwind noalias writable sret({ { i32, { i64, i64 } } } ) align 8)
 f: void @f(i8 noundef signext, i16 noundef zeroext)
 g: void @g(i1 noundef zeroext)
 h: zeroext i8 @h()

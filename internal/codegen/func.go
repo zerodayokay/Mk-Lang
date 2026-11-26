@@ -323,8 +323,6 @@ type fnGen struct {
 	// dbgHome is each local's home block (debug_full.go), nil without
 	// Config.Debug.
 	dbgHome []int
-	// reading is set while readAddr computes a place that is only read.
-	reading bool
 	// cover is the function's counter array under Config.Cover (cover.go).
 	cover llvm.Value
 	// promoted[l] is the constant local l is bound to (constLocals): its

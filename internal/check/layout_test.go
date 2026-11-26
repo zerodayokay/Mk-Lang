@@ -1,7 +1,8 @@
 // Why: layouts and shape terms must agree with the target architecture,
 // and a layout cycle must be E0907, never a hang.
 // What: TestLayoutMatchesArchitecture, TestShapeTermInstantiates,
-// TestE0907_LayoutCycle, TestShape_OpaqueAlwaysFalse, TestLayoutMemoConcurrent.
+// TestE0907_LayoutCycle, TestShape_OpaqueAlwaysFalse, TestLayoutMemoConcurrent,
+// TestErrorSideInPlace.
 // How: builds types by hand and compares Layout with evalTerm, a reference
 // evaluation of each shape term.
 
@@ -329,6 +330,84 @@ func TestLayoutMemoConcurrent(t *testing.T) {
 		for g := range res {
 			if res[g][i] != want {
 				t.Errorf("%s: goroutine %d %+v, want %+v", h.str(x), g, res[g][i], want)
+			}
+		}
+	}
+}
+
+// TestErrorSideInPlace: an error's fields sit at the same offsets in every
+// error set and every E!T that holds it, whatever the ok type and the other
+// errors are, so the error side of an E!T and a widened set are the
+// union's own bytes; the set is never larger or more aligned than the
+// union, and no union is larger than a common payload offset would make it.
+func TestErrorSideInPlace(t *testing.T) {
+	h := newHand(t)
+	tab := h.tab
+	a16 := h.strct("A16", 0, "", types.U8)
+	h.items.Get(a16).Decl.(*types.StructDecl).Align = 16
+	big := h.named(a16)
+	errs := []types.ItemID{
+		h.errorItem("Bare"), h.errorItem("B1", types.U8), h.errorItem("B2", types.U16),
+		h.errorItem("B3", types.U8, types.U8, types.U8), h.errorItem("B4", types.U32),
+		h.errorItem("B8", types.I64), h.errorItem("B12", tab.Array(h.c.intArg(3), types.U32)),
+		h.errorItem("B16", big), h.errorItem("Mix", types.U8, types.I64, types.U16),
+	}
+	all := make([]types.ErrorMember, len(errs))
+	for i, e := range errs {
+		all[i] = types.ErrorMember{Item: e}
+	}
+	sets := [][]types.ErrorMember{all}
+	for i := range all {
+		sets = append(sets, all[i:i+1])
+	}
+	oks := []types.TypeID{types.Void, types.U8, types.U16, types.I32, types.I64, big,
+		tab.Array(h.c.intArg(3), types.U8), tab.Optional(types.Int)}
+	fields := func(l types.Layout, code uint64) string {
+		for _, v := range l.Variants {
+			if v.Discr == code {
+				return fmt.Sprint(v.Fields)
+			}
+		}
+		return "absent"
+	}
+	for _, members := range sets {
+		es := tab.ErrorSet(members)
+		st := tab.ErrorSetType(es)
+		ls := h.c.Layout(st)
+		for _, ok := range oks {
+			u := tab.ErrorUnion(es, ok)
+			lu := h.c.Layout(u)
+			name := h.str(u)
+			if ls.Shape.Size > lu.Shape.Size || ls.Shape.Align > lu.Shape.Align {
+				t.Errorf("%s: the set is %+v, larger than the union %+v", name, ls.Shape, lu.Shape)
+			}
+			if lu.Tag.Offset != 0 || lu.Tag.Size != 4 || ls.Tag != lu.Tag {
+				t.Errorf("%s: tag %+v, the set's %+v", name, lu.Tag, ls.Tag)
+			}
+			// The bound a common payload offset gives: the union after the
+			// code at the largest alignment, sized to the largest variant.
+			us, ua := h.c.Shape(ok).Size, max(h.c.Shape(ok).Align, 4)
+			for _, m := range members {
+				end, va := uint64(0), uint32(1)
+				for _, f := range h.items.Get(m.Item).Decl.(*types.ErrorDecl).Fields {
+					fs := h.c.Shape(f.Type)
+					end, va = alignUp(end, fs.Align)+fs.Size, max(va, fs.Align)
+				}
+				us, ua = max(us, alignUp(end, va)), max(ua, va)
+			}
+			if bound := alignUp(alignUp(4, ua)+us, ua); lu.Shape.Size > bound {
+				t.Errorf("%s: size %d, more than %d", name, lu.Shape.Size, bound)
+			}
+			for _, m := range members {
+				code := uint64(h.items.Get(m.Item).Decl.(*types.ErrorDecl).Code)
+				alone := h.c.Layout(tab.ErrorSetType(tab.ErrorSet([]types.ErrorMember{m})))
+				want := fields(alone, code)
+				if got := fields(lu, code); got != want {
+					t.Errorf("%s: %s at %s, alone at %s", name, h.items.Get(m.Item).Key, got, want)
+				}
+				if got := fields(ls, code); got != want {
+					t.Errorf("%s: %s in the set at %s, alone at %s", name, h.items.Get(m.Item).Key, got, want)
+				}
 			}
 		}
 	}

@@ -264,7 +264,9 @@ func (w *world) structOf(ts []types.TypeID, pack uint32) *types.Layout {
 	return l
 }
 
-func (w *world) tagged(tagSize uint8, tagAlign uint32, discrs []uint64, variants [][]types.TypeID) *types.Layout {
+// tagged is check's taggedUnion: the variants after the tag at the largest
+// alignment, or with own (an E!T or an error set) each at its own.
+func (w *world) tagged(tagSize uint8, tagAlign uint32, own bool, discrs []uint64, variants [][]types.TypeID) *types.Layout {
 	var vs []*types.Layout
 	usize, ualign := uint64(0), uint32(1)
 	for _, fs := range variants {
@@ -279,10 +281,21 @@ func (w *world) tagged(tagSize uint8, tagAlign uint32, discrs []uint64, variants
 	if usize == 0 {
 		l.Shape.Size = alignUpT(uint64(tagSize), align)
 	}
+	if own {
+		end := uint64(tagSize)
+		for _, v := range vs {
+			end = max(end, alignUpT(uint64(tagSize), v.Shape.Align)+v.Shape.Size)
+		}
+		l.Shape.Size = alignUpT(end, align)
+	}
 	for i, v := range vs {
 		vl := types.VariantLayout{Discr: discrs[i]}
+		at := p
+		if own {
+			at = alignUpT(uint64(tagSize), v.Shape.Align)
+		}
 		for _, f := range v.Fields {
-			vl.Fields = append(vl.Fields, types.FieldLayout{Offset: p + f.Offset, Type: f.Type})
+			vl.Fields = append(vl.Fields, types.FieldLayout{Offset: at + f.Offset, Type: f.Type})
 		}
 		l.Variants = append(l.Variants, vl)
 	}
@@ -335,7 +348,7 @@ func (w *world) compute(t types.TypeID) *types.Layout {
 				Tag:      types.TagLayout{Size: 8, Niche: true},
 				Variants: []types.VariantLayout{{Discr: 0}, {Discr: 1, Fields: []types.FieldLayout{{Offset: 0, Type: ty.Elem}}}}}
 		}
-		return w.tagged(1, 1, []uint64{0, 1}, [][]types.TypeID{nil, {ty.Elem}})
+		return w.tagged(1, 1, false, []uint64{0, 1}, [][]types.TypeID{nil, {ty.Elem}})
 	case types.KErrorUnion, types.KErrorSet:
 		var discrs []uint64
 		var vs [][]types.TypeID
@@ -356,7 +369,7 @@ func (w *world) compute(t types.TypeID) *types.Layout {
 			}
 			vs = append(vs, fs)
 		}
-		return w.tagged(4, 4, discrs, vs)
+		return w.tagged(4, 4, true, discrs, vs)
 	case types.KNamed:
 		switch d := w.items.Get(ty.Item).Decl.(type) {
 		case *types.StructDecl:
@@ -383,7 +396,7 @@ func (w *world) compute(t types.TypeID) *types.Layout {
 				vs = append(vs, fs)
 			}
 			ts := types.EnumTagBytes(discrs)
-			return w.tagged(ts, uint32(ts), discrs, vs)
+			return w.tagged(ts, uint32(ts), false, discrs, vs)
 		}
 	}
 	w.t.Fatalf("test layout: no layout for %s", ty.Kind)
