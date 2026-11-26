@@ -49,7 +49,7 @@ A fuzz target is a function `f: fn([]u8)` that fails by panicking: a failed `Ass
 A function value captures nothing, so `f: fn([]u8)` cannot reach a `System`: it cannot run an external oracle (a reference implementation or a disassembler, through `std.proc`), write a finding's artifact, or allocate from `sys.heap`. A target that needs one is a function `f: fn(sys: &System, data: []u8)`. Its test block takes `(sys: &System)` and calls `testing.FuzzSys(sys, f)`, which calls `f(sys, data)` wherever `Fuzz` calls `f(data)`, in plain `mk test` and in the mutation loop alike.
 
 - The fuzzer's own work, reading the saved inputs and writing the state the driver saves a failing input from, never goes through `sys`: it uses the native `Io` and the process heap, under `mk test --sim` too.
-- Under `mk test --sim SEED`, `f`'s `sys` is the simulated `System` every test block gets, so what `f` does through `sys.io` repeats with the seed. An `f` that reaches past it, to a real process or to C, is deterministic only as far as what it reaches is.
+- `f`'s `sys` is the test block's own, under `mk test --sim SEED` too: an oracle it runs is a real process, deterministic only as far as that process is. An `f` that wants a seeded, simulated world builds one with [`std.sim`](sim.md).
 - The hang limit counts the whole call of `f`, an oracle's time included.
 
 Commit the `testdata/fuzz/` directories: they are the regression tests the mutation loop leaves behind.
@@ -380,7 +380,9 @@ guided by the blocks they reach, until the fuzz time ends or 20 runs
 have failed. It saves an input that panics, leaks, hangs or exits
 non-zero into that directory, one input per distinct failure. f fails
 by panicking. Under plain `mk test` with no corpus files, and in any run
-outside `mk test`, f is not called.
+outside `mk test`, f is not called. A target that needs the System, to
+run an external oracle or allocate from the heap, takes one: see
+FuzzSys.
 
 It allocates its inputs from the process heap and frees them before it
 returns; O(the corpus) in plain mode.
@@ -397,11 +399,11 @@ artifact) or to allocate from sys.heap: the test block passes its own
 sys, and FuzzSys calls f(sys, data) wherever Fuzz would call f(data).
 The fuzzer's own work, reading the corpus and writing the state file
 the driver saves a failing input from, runs on the native Io and the
-process heap, never on sys, so it is the same under `mk test --sim`;
-there f's sys is the simulated System, as for any test block, and an f
-that reaches past it (a real process, C) is deterministic only as far
-as what it reaches is. The hang limit counts f's whole call, an
-oracle's time included.
+process heap, never on sys, so it is the same under `mk test --sim`.
+f's sys is the test block's own, under `--sim` too: an oracle it runs
+is a real process, deterministic only as far as that process is, and
+an f that wants a simulated world builds one with std.sim. The hang
+limit counts f's whole call, an oracle's time included.
 
 It allocates its inputs from the process heap and frees them before it
 returns; O(the corpus) in plain mode.

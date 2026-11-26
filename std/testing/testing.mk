@@ -71,7 +71,9 @@ const BenchTarget: i64 = 20_000_000
 /// have failed. It saves an input that panics, leaks, hangs or exits
 /// non-zero into that directory, one input per distinct failure. f fails
 /// by panicking. Under plain `mk test` with no corpus files, and in any run
-/// outside `mk test`, f is not called.
+/// outside `mk test`, f is not called. A target that needs the System, to
+/// run an external oracle or allocate from the heap, takes one: see
+/// FuzzSys.
 ///
 /// It allocates its inputs from the process heap and frees them before it
 /// returns; O(the corpus) in plain mode.
@@ -85,11 +87,11 @@ export Fuzz(f: fn([]u8)) {
 /// sys, and FuzzSys calls f(sys, data) wherever Fuzz would call f(data).
 /// The fuzzer's own work, reading the corpus and writing the state file
 /// the driver saves a failing input from, runs on the native Io and the
-/// process heap, never on sys, so it is the same under `mk test --sim`;
-/// there f's sys is the simulated System, as for any test block, and an f
-/// that reaches past it (a real process, C) is deterministic only as far
-/// as what it reaches is. The hang limit counts f's whole call, an
-/// oracle's time included.
+/// process heap, never on sys, so it is the same under `mk test --sim`.
+/// f's sys is the test block's own, under `--sim` too: an oracle it runs
+/// is a real process, deterministic only as far as that process is, and
+/// an f that wants a simulated world builds one with std.sim. The hang
+/// limit counts f's whole call, an oracle's time included.
 ///
 /// It allocates its inputs from the process heap and frees them before it
 /// returns; O(the corpus) in plain mode.
