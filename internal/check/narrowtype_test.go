@@ -27,6 +27,9 @@ func TestNarrowedTypeExpr(t *testing.T) {
 		{"else if chain", id + "F[T: Plain](x: T): T {\n\tif T is u32 {\n\t\treturn Id[T](x) + 1\n\t} else if T is i64 {\n\t\tvar f: T = x - 1\n\t\treturn Id[T](f) * 10\n\t}\n\treturn Id[T](x)\n}\n", ""},
 		// The else branch is not narrowed: T there is any type.
 		{"else branch keeps T", id + "F[T: Plain](x: T): T {\n\tif T is u32 {\n\t\treturn x\n\t} else {\n\t\treturn Id[T](x) + 1\n\t}\n}\n", "E0703@9:21"},
+		// A struct is constructed by its name: T(..) for a struct X stays
+		// E0301, not a one-value conversion.
+		{"struct target", "struct Pt {\n\tx: int\n}\n\nF[T: Plain](p: T): int {\n\tif T is Pt {\n\t\tq := T(x: 1)\n\t\treturn q.x\n\t}\n\treturn 0\n}\n", "E0301@7:8"},
 		{"conversion outside a branch", "F[T: Plain](n: u8): T {\n\treturn T(n)\n}\n", "E0301@2:9"},
 		// The narrowed argument is a closed type, judged as one written so.
 		{"narrowed argument against a closed parameter", id + "F[T: Plain](x: T, y: i64): i64 {\n\tif T is u32 {\n\t\treturn Id[T](y)\n\t}\n\treturn y\n}\n", "E0301@7:10 E0301@7:16"},

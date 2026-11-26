@@ -389,7 +389,8 @@ func (u *unit) call(e *ast.CallExpr, want types.TypeID) types.TypeID {
 		case resolve.RefTypeParam:
 			// `T(x)` inside `if T is X` is the conversion `X(x)`; outside
 			// one, T is no value (notValue).
-			if int(r.A) < len(u.env.narrow) && u.env.narrow[r.A] != types.NoType {
+			// A struct X is constructed by its name, not through T.
+			if int(r.A) < len(u.env.narrow) && u.env.narrow[r.A] != types.NoType && !u.isStructType(u.env.narrow[r.A]) {
 				to, builtin = u.x.typeOf(f, posPlain), BuiltinConvert
 			}
 		}
@@ -412,6 +413,13 @@ func (u *unit) call(e *ast.CallExpr, want types.TypeID) types.TypeID {
 		return u.callOther(e, want)
 	}
 	return u.conversion(e, to, builtin)
+}
+
+// isStructType reports whether t is a struct type, which `T(..)` would
+// construct rather than convert to.
+func (u *unit) isStructType(t types.TypeID) bool {
+	ty := u.tab.Get(t)
+	return ty.Kind == types.KNamed && u.c.cfg.Items.Get(ty.Item).Kind == types.KindStruct
 }
 
 // conversion checks `T(x)`, `Cast[T](x)` or `Trunc[T](x)` with T already

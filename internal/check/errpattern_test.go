@@ -29,8 +29,18 @@ func TestErrorPatternDestructure(t *testing.T) {
 			if tc.msg == "" {
 				return
 			}
-			if d := b.bodyDiags(t)[0]; !strings.Contains(d.Message, tc.msg) {
+			d := b.bodyDiags(t)[0]
+			if !strings.Contains(d.Message, tc.msg) {
 				t.Fatalf("message %q, want it to say %q", d.Message, tc.msg)
+			}
+			// The alternatives are forms that compile ("the forms that
+			// work" checks them): a match arm naming the fields, and for
+			// one error a field read.
+			if tc.want == "E0306@10:2" {
+				alts := strings.Join(d.Alternatives, "; ")
+				if !strings.Contains(alts, "match e { Bad(code) { ... } }") || (tc.name == "one error") != strings.Contains(alts, "`e.code`") {
+					t.Errorf("alternatives %q", alts)
+				}
 			}
 		})
 	}

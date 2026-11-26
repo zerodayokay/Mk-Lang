@@ -17,6 +17,7 @@ package check
 
 import (
 	"strconv"
+	"strings"
 
 	"mk/internal/ast"
 	"mk/internal/diag"
@@ -257,10 +258,19 @@ func (u *unit) errorPat(at source.Span, it *types.Item, t types.TypeID) bool {
 	if len(ms) > 1 {
 		msg += ", and the value may be any of `" + u.str(t) + "`"
 	}
+	pat, field := name, ""
+	if ed, ok := u.c.declOfItem(it).(*types.ErrorDecl); ok && len(ed.Fields) > 0 {
+		field = u.c.cfg.Interner.Str(ed.Fields[0].Name)
+		fs := make([]string, len(ed.Fields))
+		for i, f := range ed.Fields {
+			fs[i] = u.c.cfg.Interner.Str(f.Name)
+		}
+		pat += "(" + strings.Join(fs, ", ") + ")"
+	}
 	d := u.err(diag.E0306, at, msg+"; take it apart with `match`").Text("reason", "refutable").
-		Alt("use `match e { " + name + "(..) { ... } }`")
-	if len(ms) == 1 {
-		d.Alt("read the error's fields: `e.field`")
+		Alt("use `match e { " + pat + " { ... } }`")
+	if len(ms) == 1 && field != "" {
+		d.Alt("read the error's fields: `e." + field + "`")
 	}
 	return true
 }

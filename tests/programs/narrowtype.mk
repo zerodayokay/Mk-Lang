@@ -1,7 +1,8 @@
 // A type written T inside `if T is X` is X: a type argument, a local's
 // declared type, a conversion, a nested generic and a generic owner's
 // method, in an `else if T is` chain; the else branch keeps T opaque.
-// Each instance takes its own branch.
+// A callee's requires clause over T is judged at X. Each instance takes its
+// own branch.
 Id[T](x: T): T {
     return x
 }
@@ -34,9 +35,22 @@ Shapes[T: Plain](x: T): T {
     }
 }
 
+Small[T](): int
+    requires SizeOf[T]() < 4 {
+    return 1
+}
+
+Clause[U](): int {
+    if U is u16 {
+        return Small[U]()
+    }
+    return 0
+}
+
 export Main(sys: &System): WriteError!void {
     a := Shapes[u32](3)
     b := Shapes[i64](3)
     c := Shapes[int](3)
-    try sys.Print("{a} {b} {c}\n", (a, b, c))
+    d := Clause[u16]() + Clause[u64]()
+    try sys.Print("{a} {b} {c} {d}\n", (a, b, c, d))
 }
