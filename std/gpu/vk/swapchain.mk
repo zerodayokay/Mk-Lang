@@ -707,7 +707,9 @@ RunPresentSys(arg: *u8) {
                     si.p_command_buffer_infos = raw.Of(&cb_i)
                     si.signal_semaphore_info_count = 1
                     si.p_signal_semaphore_infos = raw.Of(&sig_i)
-                    _ = (*st).dev_d.vk_queue_submit2.Must()(q, 1, raw.Of(&si), raw.Null[vulkan.VkFenceT]())
+                    if (*st).dev_d.vk_queue_submit2.Must()(q, 1, raw.Of(&si), raw.Null[vulkan.VkFenceT]()) == vulkan.VkSuccess {
+                        (*st).queued_serial = (*a).no_sub_serial
+                    }
                     _ = (*st).dev_d.vk_queue_wait_idle.Must()(q)
                 }
                 (*st).dev_d.vk_destroy_command_pool.Must()(dev, pool, raw.Null[vulkan.VkAllocationCallbacks]())
@@ -744,6 +746,7 @@ RunPresentSys(arg: *u8) {
                 (*a).out_err = some(MapVkError(sr, CallQueueSubmit))
                 return
             }
+            (*st).queued_serial = (*a).present_serial
         }
 
         // Step 2: vkQueuePresentKHR waiting on render_done[j].
@@ -791,11 +794,6 @@ export Device.SwapchainPresent(mut self, sc_id: u64, img_idx: u32, no_sub_serial
     sc_idx := Cast[int](sc_id)
     if sc_idx <= 0 || sc_idx >= st.swapchains.Len() || !st.swapchains[sc_idx].alive {
         fail SurfaceLost
-    }
-    if present_serial > st.next_serial {
-        st.next_serial = present_serial + 1
-    } else {
-        st.next_serial += 1
     }
     var arg := VkPresentCallArg(
         st_ptr: raw.Addr(raw.Of(&*st)),

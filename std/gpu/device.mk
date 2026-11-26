@@ -603,7 +603,7 @@ export Device.WaitIdle(mut self, io: Io): Error!void {
     try self.CheckAlive()
     try self.FlushPreSubmit()
     st := self.state.Mut()
-    last := st.serials.LastSubmitted()
+    var last := st.serials.LastSubmitted()
     match mut st.native {
         .Stub(s) {
             try s.WaitSerial(last)
@@ -614,9 +614,10 @@ export Device.WaitIdle(mut self, io: Io): Error!void {
                 RecordDxFailure(st, ge)
                 fail ge
             }
+            last = st.serials.LastSubmitted()
         }
         .Vk(v) {
-            v.WaitSerial(io, last) else e {
+            last = v.WaitQueuedSerial(io, last) else e {
                 match e {
                     vk.DeviceLost(reason: r) {
                         st.lost = true
@@ -628,7 +629,7 @@ export Device.WaitIdle(mut self, io: Io): Error!void {
             }
         }
     }
-    st.serials.Complete(st.serials.LastSubmitted())
+    st.serials.Complete(last)
     self.DrainCompleted()
 }
 

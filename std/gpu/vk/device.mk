@@ -215,7 +215,7 @@ CreateDeviceStateFromRaw(heap: &Heap, ic: VkInstCreated, pr: PdProbe, rc: VkRawC
             mem_blocks: HeapList[VkMemBlock].New(a),
             tlsf_allocs: HeapList[VkTlsf].New(a),
             timeline_sem: 0,
-            next_serial: 1,
+            queued_serial: 0,
             waiter_ptr: 0,
             cmd_slots: HeapList[VkCmdSlot].New(a),
             buffers: HeapList[VkBufRec].New(a),
@@ -342,7 +342,7 @@ FreeEmptyDeviceLists(a: &Alloc, st: VkDeviceState) {
         instance: _, physical_device: _, device: _, queue: _, queue_family: _, gipa: _,
         inst_d: _, dev_d: _, has_surface: _, has_swapchain: _, has_debug: _,
         debug_messenger: _, debug_ring_ptr: _, d24s8_vk_format: _, frames_in_flight: _,
-        mem_props: _, mem_blocks, tlsf_allocs, timeline_sem: _, next_serial: _,
+        mem_props: _, mem_blocks, tlsf_allocs, timeline_sem: _, queued_serial: _,
         waiter_ptr: _, cmd_slots, buffers, textures, views, samplers,
         bg_layouts, pipe_layouts, bind_groups, shaders, pipelines, swapchains,
         pending_zero_bufs, pending_zero_texs, pending_copies, upload_chunks, staging_bufs,
@@ -504,6 +504,15 @@ SetVkObjectName(st: &VkDeviceState, obj_type: vulkan.VkObjectType, handle: u64, 
 /// Waits on the device waiter thread until serial completes.
 export Device.WaitSerial(mut self, io: Io, serial: u64): Error!void {
     try WaitForSerial(self.state.Mut(), io, serial)
+}
+
+/// Waits for at most the most recent queued signal and returns the serial waited on.
+/// Errors as WaitSerial. Suspends on the waiter thread; allocates nothing.
+export Device.WaitQueuedSerial(mut self, io: Io, requested: u64): Error!u64 {
+    st := self.state.Mut()
+    target := if requested < st.queued_serial { requested } else { st.queued_serial }
+    try WaitForSerial(st, io, target)
+    return target
 }
 
 /// Polls the hardware timeline semaphore counter.

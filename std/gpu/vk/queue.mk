@@ -342,11 +342,6 @@ export Device.SubmitStream(
     if st.lost {
         fail DeviceLost(reason: st.loss_reason)
     }
-    if serial > st.next_serial {
-        st.next_serial = serial + 1
-    } else {
-        st.next_serial += 1
-    }
     cc := chunks.Len()
     var stk_ptrs: [16]uint = [0; 16]
     var stk_words: [16]int = [0; 16]
@@ -432,6 +427,7 @@ export Device.SubmitStream(
         some(e) { fail e }
         none {}
     }
+    st.queued_serial = serial
     StampUploadChunks(st, serial)
 }
 
@@ -458,11 +454,6 @@ SubmitReadbackTexture(
     layers: int,
     pmask: u8,
 ): Error!u64 {
-    if serial > st.next_serial {
-        st.next_serial = serial + 1
-    } else {
-        st.next_serial += 1
-    }
     slot_idx := try AcquireCmdSlot(a, st)
     cmd_u := st.cmd_slots[slot_idx].buf
     st.cmd_slots[slot_idx].serial = serial
@@ -526,6 +517,7 @@ SubmitReadbackTexture(
             if IsDeviceLostResult(r3) { st.lost = true }
             fail MapVkError(r3, CallQueueSubmit)
         }
+        st.queued_serial = serial
         StampUploadChunks(st, serial)
         return serial
     }

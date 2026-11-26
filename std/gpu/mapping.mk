@@ -55,7 +55,7 @@ export Device.MapRead(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Mapp
             st.serials.Complete(wait_target)
         }
         .Vk(v) {
-            v.WaitSerial(io, wait_target) else e {
+            waited := v.WaitQueuedSerial(io, wait_target) else e {
                 match e {
                     vk.DeviceLost(reason: r) {
                         st.lost = true
@@ -65,7 +65,7 @@ export Device.MapRead(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Mapp
                 }
                 fail MapVkErr(e)
             }
-            st.serials.Complete(wait_target)
+            st.serials.Complete(waited)
         }
     }
     self.DrainCompleted()
@@ -125,7 +125,7 @@ export Device.MapWrite(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Map
             st.serials.Complete(wait_target)
         }
         .Vk(v) {
-            v.WaitSerial(io, wait_target) else e {
+            waited := v.WaitQueuedSerial(io, wait_target) else e {
                 match e {
                     vk.DeviceLost(reason: r) {
                         st.lost = true
@@ -135,7 +135,7 @@ export Device.MapWrite(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Map
                 }
                 fail MapVkErr(e)
             }
-            st.serials.Complete(wait_target)
+            st.serials.Complete(waited)
         }
     }
     self.DrainCompleted()

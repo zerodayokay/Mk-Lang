@@ -682,7 +682,7 @@ struct VkDeviceState {
     mem_blocks: HeapList[VkMemBlock]
     tlsf_allocs: HeapList[VkTlsf]
     timeline_sem: u64
-    next_serial: u64
+    queued_serial: u64
     waiter_ptr: uint
     cmd_slots: HeapList[VkCmdSlot]
     buffers: HeapList[VkBufRec]

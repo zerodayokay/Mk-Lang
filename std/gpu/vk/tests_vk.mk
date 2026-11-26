@@ -236,6 +236,11 @@ test "vk waiter thread completion, retarget, and injected device loss" (sys: &Sy
     try d.SubmitStream(1, empty_c[..], empty_b[..], empty_l[..])
     try d.WaitSerial(io, 1)
     Assert(d.PollCompleted() >= 1)
+    scope stop := io.Scope() {
+        stop.Cancel()
+        // Serial 2 was never queued, so this waits for the completed serial 1.
+        Assert((try d.WaitQueuedSerial(io, 2)) == 1)
+    }
 
     // Inject device loss on next submit.
     d.SetFaultNextSubmit()
