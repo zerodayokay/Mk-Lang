@@ -197,8 +197,6 @@ CreateVkDeviceRaw(ic: &VkInstCreated, pr: &PdProbe, opts: &OpenOptions): Error!V
 CreateDeviceStateFromRaw(heap: &Heap, ic: VkInstCreated, pr: PdProbe, rc: VkRawCreated, opts: &OpenOptions): Error!VkOpenResult from heap {
     a := heap.Alloc()
     unsafe "handles in VkRawCreated are live" {
-        vkdev := HandleFrom[vulkan.VkDeviceT](rc.vkdev)
-        dev_d := rc.dev_d
         var vst := VkDeviceState(
             instance: ic.inst,
             physical_device: pr.pd,
@@ -207,7 +205,7 @@ CreateDeviceStateFromRaw(heap: &Heap, ic: VkInstCreated, pr: PdProbe, rc: VkRawC
             queue_family: pr.queue_family,
             gipa: ic.gipa,
             inst_d: ic.inst_d,
-            dev_d: dev_d,
+            dev_d: rc.dev_d,
             has_surface: ic.has_surface,
             has_swapchain: pr.has_swapchain,
             has_debug: ic.has_debug,
@@ -248,15 +246,14 @@ CreateDeviceStateFromRaw(heap: &Heap, ic: VkInstCreated, pr: PdProbe, rc: VkRawC
             planted_bug: BugNone,
         )
 
+        // Open owns the raw device and instance until this function succeeds.
         var box := Box[VkDeviceState].New(a, vst) else e {
-            dev_d.vk_destroy_device.Must()(vkdev, raw.Null[vulkan.VkAllocationCallbacks]())
             FreeEmptyDeviceLists(a, vst)
             fail e
         }
 
         StartWaiterThread(a, box.Mut()) else e {
-            var vst2 := box.Take(a)
-            dev_d.vk_destroy_device.Must()(vkdev, raw.Null[vulkan.VkAllocationCallbacks]())
+            vst2 := box.Take(a)
             FreeEmptyDeviceLists(a, vst2)
             fail e
         }
@@ -265,7 +262,6 @@ CreateDeviceStateFromRaw(heap: &Heap, ic: VkInstCreated, pr: PdProbe, rc: VkRawC
             var vst3 := box.Take(a)
             StopWaiterThread(a, mut vst3)
             FreeAllDeviceMemBlocks(a, mut vst3)
-            dev_d.vk_destroy_device.Must()(vkdev, raw.Null[vulkan.VkAllocationCallbacks]())
             FreeEmptyDeviceLists(a, vst3)
             fail e
         }
