@@ -212,7 +212,7 @@ const (
 	BOptMust           // ?T .Must()
 	BOptIsSome         // ?T .IsSome()
 	BOptIsNone         // ?T .IsNone()
-	BResMust           // E!T .Must(): the receiver is the fallible call
+	BResMust           // E!T .Must(): the receiver is a fallible call or an E!T value
 	BLen               // Len() on []T, mut []T, [N]T, str
 	BOk                // ok(x), when check types it
 	BErr               // err(x)
