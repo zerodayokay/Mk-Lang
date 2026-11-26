@@ -307,6 +307,7 @@ StartOn(p: *u8) {
         TaskInit(raw.PtrCast[u8, Boot](p))
     }
     if Target.os == Os.Macos {
+        // Edge: single-threaded init before carrier 0 starts and before MainEntry runs.
         MainServiceEnabled.Store(1)
     }
     // Calls from C (lib.mk) run as tasks from here on.

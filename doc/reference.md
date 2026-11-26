@@ -13167,7 +13167,7 @@ struct ServerOptions {
     export alt_svc: bool
 }
 
-// HttpVersion may gain members.
+// HttpVersion may gain members
 enum HttpVersion {
     Http10
     Http11
@@ -13934,6 +13934,9 @@ testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))
 testing.ExpectPanic(want: str)
 
 // std.gpu
+// AdapterKind, Address, Aspect, Backend, BindingKind, BlendFactor, BlendOp, Call and Compare may gain members
+// Cull, DebugMode, Feature, Filter, FrontFace, IndexFormat, LossReason, Misuse and Power may gain members
+// PresentMode, SampleType, Severity, Stage, StencilOp, StepMode, TextureFormat, Topology, VertexFormat and ViewDimension may gain members
 gpu.Adapters(a: &Arena, io: Io, backend: Backend): Error!List[AdapterInfo] from a
 gpu.Open(heap: &Heap, io: Io, o: DeviceOptions): Error!Device from heap
 gpu.CheckShader(code: ShaderCode, stage: Stage, entry: str): Error!void
@@ -14002,6 +14005,7 @@ Texture.Close(self, dev: mut Device)
 TextureView.Close(self, dev: mut Device)
 
 // std.window
+// Button, Cursor, CursorMode, Fullscreen, Key and Native may gain members
 window.Open(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap
 Window.Close(self)
 Window.Poll(&self): ?Event
@@ -14019,6 +14023,7 @@ Surface.Close(self)
 InputState.IsButtonDown(&self, b: Button): bool
 
 // std.image
+// Pixels and Why may gain members
 image.Compare(a: &Image, b: &Image, tolerance: int): Error!Difference
 image.DecodePng(a: &Arena, bytes: []u8, limits: DecodeLimits): Error!Image from a
 image.EncodePng(a: &Arena, img: Image): Error![]u8 from a

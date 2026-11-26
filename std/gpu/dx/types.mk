@@ -18,7 +18,7 @@ import std.task
 export error Unsupported
 
 /// Categorised failure from the D3D12 backend, mapped by std.gpu to gpu.Error.
-export open enum ErrKind {
+export enum ErrKind {
     Unsupported
     NoAdapter
     MissingBc
