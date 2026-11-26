@@ -36,8 +36,8 @@ func TestCImport_KeyUnchanged(t *testing.T) {
 		sysroot []string
 		key     string
 	}{
-		{nil, "323536cb16577819f8f34ad6eaf3aabd5ab958f23851973c0387087bdb4c11be"},
-		{[]string{`C:\sys\include`}, "13ee79969e4de6d3071cde9194c2bfe0c7b9e040ad3a8d640f32e5250d82ebb3"},
+		{nil, "6f752ba45c16aacbc60078034e95d3a87f07ed6e76bf355d173e0f82be2b7a3a"},
+		{[]string{`C:\sys\include`}, "643383c5f3b2ed021835195c61bf1a71f21a34424657a4cfbb88e8c31077f59c"},
 	} {
 		sys, err := SystemFor("x86_64-windows", tc.sysroot, "")
 		if err != nil {

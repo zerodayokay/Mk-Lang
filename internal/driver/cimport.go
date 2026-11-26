@@ -169,6 +169,8 @@ type cImports struct {
 	// program names.
 	imports   []cimport.Import
 	shimFuncs []cimport.ShimFunc
+	funcLike  [][]string
+	merged    []map[string]string
 }
 
 // otherBinding is a package's C bindings for another target.
@@ -450,7 +452,7 @@ func (s *Session) translateC(imports []cimport.Import, man *Manifest, osRoot, ta
 		}
 		cimport.Save(st, key, res)
 	}
-	ci.hit, ci.stats = hit, res.Stats
+	ci.hit, ci.stats, ci.funcLike, ci.merged = hit, res.Stats, res.FuncLike, res.Merged
 	ci.imports, ci.shimFuncs = imports, res.ShimFuncs
 	for i := range imports {
 		if ci.dep == "" {
@@ -914,6 +916,9 @@ func (b *build) cImportNames() []string {
 	return out
 }
 
+// SkippedCDecl is one C declaration, macro or member skipped during translation.
+type SkippedCDecl = cimport.SkippedDecl
+
 // CImportInfo is one C import of the package after Check, as mk cimport
 // prints it: the view written for the session's target and how much of
 // the headers it binds.
@@ -924,6 +929,7 @@ type CImportInfo struct {
 	Direct       int    // bound as plain Mk items
 	Generated    int    // bound through accessors or shims
 	Skipped      map[string]int
+	SkippedDecls []SkippedCDecl
 	CacheHit     bool // the translation came from the cache
 }
 
@@ -940,7 +946,39 @@ func (s *Session) CImports() []CImportInfo {
 		out[i] = CImportInfo{Name: n, Target: target, View: filepath.Join(ci.root, "gen", target, "c", n+".mk"), CacheHit: ci.hit}
 		if i < len(ci.stats) {
 			st := ci.stats[i]
-			out[i].Decls, out[i].Direct, out[i].Generated, out[i].Skipped = st.Decls, st.Direct, st.Generated, st.Skipped
+			out[i].Decls, out[i].Direct, out[i].Generated, out[i].Skipped, out[i].SkippedDecls = st.Decls, st.Direct, st.Generated, st.Skipped, st.SkippedDecls
+		}
+	}
+	return out
+}
+
+// CImportWhy explains what happened to C name cname across the package's
+// translated C imports, returning one line per import that mentions it.
+func (s *Session) CImportWhy(cname string) []string {
+	ci := s.w.cimports
+	if ci == nil {
+		return nil
+	}
+	var out []string
+	for i, n := range ci.names {
+		var text string
+		if i < len(ci.full) {
+			text = ci.full[i]
+		}
+		var skipped []cimport.SkippedDecl
+		if i < len(ci.stats) {
+			skipped = ci.stats[i].SkippedDecls
+		}
+		var fl []string
+		if i < len(ci.funcLike) {
+			fl = ci.funcLike[i]
+		}
+		var merged map[string]string
+		if i < len(ci.merged) {
+			merged = ci.merged[i]
+		}
+		if exp, ok := cimport.ExplainWhy(n, text, skipped, fl, merged, cname); ok {
+			out = append(out, exp)
 		}
 	}
 	return out

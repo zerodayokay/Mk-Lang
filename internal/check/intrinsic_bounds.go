@@ -21,7 +21,7 @@ import (
 
 // The implicit bounds' texts, after implicitFailure's "an ".
 const (
-	boundFnType     = "`fn` type, as FnFromAddr's F"
+	boundFnType     = "`fn` or `?fn` type, as FnFromAddr's F"
 	boundAtomicElem = "element of 1, 2, 4 or 8 bytes, aligned to its size, that is plain"
 )
 
@@ -58,9 +58,13 @@ func (c *Checker) rawFnFromAddr(it types.ItemID) bool {
 	return c.rawItem(it, "FnFromAddr")
 }
 
-// fnTypeArg reports whether t (narrowed in env) is a fn type.
+// fnTypeArg reports whether t (narrowed in env) is a fn or ?fn type.
 func (c *Checker) fnTypeArg(env *Env, t types.TypeID) bool {
-	return c.cfg.Types.Get(narrowed(c.cfg.Types, env, t)).Kind == types.KFn
+	ty := c.cfg.Types.Get(narrowed(c.cfg.Types, env, t))
+	if ty.Kind == types.KFn {
+		return true
+	}
+	return ty.Kind == types.KOptional && c.cfg.Types.Get(narrowed(c.cfg.Types, env, ty.Elem)).Kind == types.KFn
 }
 
 // atomicElemArg reports whether t (narrowed in env) is a plain closed type

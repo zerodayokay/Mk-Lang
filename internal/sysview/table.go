@@ -49,10 +49,10 @@ var windowsTargets = []string{"x86_64-windows"}
 
 // Table is every system view, in ownership order.
 var Table = []Row{
-	{Name: "windows", Targets: windowsTargets, Headers: []string{"windows.h", "windowsx.h"}, Input: InputWindowsSDK},
-	{Name: "dxgi", Targets: windowsTargets, Headers: []string{"dxgi1_6.h", "dxgidebug.h"}, Requires: []string{"windows"}, Input: InputWindowsSDK},
-	{Name: "d3d12", Targets: windowsTargets, Headers: []string{"d3d12.h", "d3d12sdklayers.h"}, Requires: []string{"windows", "dxgi"}, Input: InputWindowsSDK},
-	{Name: "d3dcompiler", Targets: windowsTargets, Headers: []string{"d3dcompiler.h"}, Requires: []string{"windows", "d3d12"}, Input: InputWindowsSDK},
+	{Name: "windows", Targets: windowsTargets, Headers: []string{"windows.h", "windowsx.h"}, Defines: []string{"INITGUID"}, Input: InputWindowsSDK},
+	{Name: "dxgi", Targets: windowsTargets, Headers: []string{"dxgi1_6.h", "dxgidebug.h"}, Defines: []string{"INITGUID"}, Requires: []string{"windows"}, Input: InputWindowsSDK},
+	{Name: "d3d12", Targets: windowsTargets, Headers: []string{"d3d12.h", "d3d12sdklayers.h"}, Defines: []string{"INITGUID"}, Requires: []string{"windows", "dxgi"}, Input: InputWindowsSDK},
+	{Name: "d3dcompiler", Targets: windowsTargets, Headers: []string{"d3dcompiler.h"}, Defines: []string{"INITGUID"}, Requires: []string{"windows", "d3d12"}, Input: InputWindowsSDK},
 	{Name: "vulkan", Targets: []string{"x86_64-windows", "x86_64-linux", "aarch64-linux"}, Headers: []string{"vulkan/vulkan.h"},
 		TargetDefines: map[string][]string{
 			"x86_64-windows": {"VK_USE_PLATFORM_WIN32_KHR"},

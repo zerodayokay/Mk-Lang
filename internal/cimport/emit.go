@@ -47,8 +47,17 @@ type emitter struct {
 	// vars is, by C name, the declaration that binds each extern variable
 	// (varBinders): C may declare one variable more than once.
 	vars map[string]*decl
-	// funcLike are the function-like macros the headers define.
-	funcLike map[string]bool
+	// funcLike are the function-like macros the headers define, by import.
+	funcLike map[string]int
+	// structFields records the Mk fields of transparent structs without
+	// bitfields or flexible arrays, for struct constant literals.
+	structFields map[*decl][]mkField
+	// constVals and constValsByName hold evaluated scalar const VarDecls
+	// for later constant expressions referencing them.
+	constVals       map[string]constScalar
+	constValsByName map[string]constScalar
+	// merged records C typedefs merged into their tag's Mk name, per import.
+	merged []map[string]string
 }
 
 // modOut is one import's binding text being written.
@@ -67,24 +76,33 @@ type shimFunc struct {
 	imp   int  // the import whose binding declares it
 }
 
+// SkippedDecl is one skipped C declaration, macro or record member.
+type SkippedDecl struct {
+	Name   string
+	Kind   string
+	Reason string
+}
+
 // Stats counts one import's declarations.
 type Stats struct {
-	Decls     int            // declarations considered
-	Direct    int            // bound as a plain Mk item
-	Generated int            // bound through generated code: accessors or a shim
-	Skipped   map[string]int // not bound, by reason
+	Decls        int            // declarations considered
+	Direct       int            // bound as a plain Mk item
+	Generated    int            // bound through generated code: accessors or a shim
+	Skipped      map[string]int // not bound, by reason
+	SkippedDecls []SkippedDecl  // skipped items, for mk cimport --skipped/--why
 }
 
 // Bound is Direct plus Generated: the declarations that import with no
 // glue written by hand.
 func (s Stats) Bound() int { return s.Direct + s.Generated }
 
-func (e *emitter) skipped(imp int, reason string) {
+func (e *emitter) skippedDecl(imp int, kind, name, reason string) {
 	st := &e.stats[imp]
 	if st.Skipped == nil {
 		st.Skipped = map[string]int{}
 	}
 	st.Skipped[reason]++
+	st.SkippedDecls = append(st.SkippedDecls, SkippedDecl{Name: name, Kind: kind, Reason: reason})
 }
 
 // specialTypedefs are the typedefs a binding spells as Mk's pointer-sized
@@ -417,6 +435,30 @@ func (e *emitter) name() {
 			e.skip[d] = "function name"
 		}
 	}
+	// Pre-scan unmerged typedefs so a backing tag ending in "_" (such as
+	// Windows DECLARE_HANDLE's `struct HWND__`) does not steal the typedef's
+	// clean name (`Hwnd`).
+	unmergedTypedef := make([]map[string]bool, len(e.imports))
+	for i := range unmergedTypedef {
+		unmergedTypedef[i] = map[string]bool{}
+	}
+	for _, d := range e.u.decls {
+		if d.kind != dTypedef || e.u.typedefs[d.name] != d {
+			continue
+		}
+		if _, ok := specialTypedefs[d.name]; ok {
+			continue
+		}
+		if o := e.u.byID[d.owned]; o != nil && o.name == "" && (o.kind == dRecord || o.kind == dEnum) {
+			continue
+		}
+		if r := e.resolve(d.under); r != nil && (r.kind == tRecord || r.kind == tEnum) {
+			if td := e.tagDecl(r); td != nil && td.name != "" && fold(pascal(td.name)) == fold(pascal(d.name)) {
+				continue
+			}
+		}
+		unmergedTypedef[d.imp][fold(pascal(d.name))] = true
+	}
 	// Named tags and typedefs, in order.
 	for _, d := range e.u.decls {
 		switch d.kind {
@@ -428,7 +470,12 @@ func (e *emitter) name() {
 			if d.union {
 				suffix = "Union"
 			}
-			e.mkName[d] = e.scopes[d.imp].fresh(pascal(d.name), suffix)
+			base := pascal(d.name)
+			if strings.HasSuffix(d.name, "_") && unmergedTypedef[d.imp][fold(base)] {
+				e.mkName[d] = e.scopes[d.imp].fresh(base+suffix, "")
+			} else {
+				e.mkName[d] = e.scopes[d.imp].fresh(base, suffix)
+			}
 		case dEnum:
 			if d.name != "" && e.u.tags["enum "+d.name] == d {
 				e.mkName[d] = e.scopes[d.imp].fresh(pascal(d.name), "Enum")
@@ -444,8 +491,10 @@ func (e *emitter) name() {
 			// typedef struct { } T: the record takes T's name.
 			if o := e.u.byID[d.owned]; o != nil && o.name == "" && (o.kind == dRecord || o.kind == dEnum) {
 				if _, done := e.mkName[o]; !done {
-					e.mkName[o] = e.scopes[o.imp].fresh(pascal(d.name), "Type")
+					mk := e.scopes[o.imp].fresh(pascal(d.name), "Type")
+					e.mkName[o] = mk
 					e.mkName[d] = ""
+					e.merged[d.imp][d.name] = mk
 					continue
 				}
 			}
@@ -454,6 +503,9 @@ func (e *emitter) name() {
 			if r := e.resolve(d.under); r != nil && (r.kind == tRecord || r.kind == tEnum) {
 				if td := e.tagDecl(r); td != nil && td.name != "" && fold(pascal(td.name)) == fold(pascal(d.name)) {
 					e.mkName[d] = ""
+					if mk := e.mkName[td]; mk != "" {
+						e.merged[d.imp][d.name] = mk
+					}
 					continue
 				}
 			}
@@ -549,20 +601,20 @@ func (e *emitter) function(d *decl) {
 	st := &e.stats[d.imp]
 	st.Decls++
 	if r, ok := e.skip[d]; ok {
-		e.skipped(d.imp, r)
+		e.skippedDecl(d.imp, "func", d.name, r)
 		return
 	}
 	if d.static && !d.inline {
-		e.skipped(d.imp, "static function")
+		e.skippedDecl(d.imp, "func", d.name, "static function")
 		return
 	}
 	if d.static && (!d.hasBody || !shimmable(d.ret, d.params) || d.variadic) {
-		e.skipped(d.imp, "static inline function the shim cannot spell")
+		e.skippedDecl(d.imp, "func", d.name, "static inline function the shim cannot spell")
 		return
 	}
 	sig, why := e.signature(d.name, d.ret, d.params, d.variadic, d.imp)
 	if why != "" {
-		e.skipped(d.imp, why)
+		e.skippedDecl(d.imp, "func", d.name, why)
 		return
 	}
 	w := &e.mods[d.imp].items
@@ -665,7 +717,7 @@ func (e *emitter) typedef(d *decl) {
 		}
 		delete(e.mkName, d)
 		e.skip[d] = why
-		e.skipped(d.imp, why)
+		e.skippedDecl(d.imp, "typedef", d.name, why)
 		return
 	}
 	fmt.Fprintf(&e.mods[d.imp].items, "\n// C: typedef %s %s\nexport type %s = %s\n", d.under, d.name, n, t)
@@ -681,21 +733,32 @@ func (e *emitter) typedef(d *decl) {
 // declares many IID_ names twice): it binds once, by the declaration
 // varBinders picks, and counts as one declaration.
 func (e *emitter) externVar(d *decl) {
-	if !d.extern || d.vt == nil {
+	if d.extern {
+		if b := e.vars[d.name]; b != nil && b != d {
+			return // another declaration binds the variable
+		}
+		if d.constVar && d.initExpr != nil && e.emitConstVar(d) {
+			return
+		}
+	} else {
+		if d.constVar && d.initExpr != nil && e.emitConstVar(d) {
+			return
+		}
 		e.stats[d.imp].Decls++
-		e.skipped(d.imp, "variable that is not extern")
+		e.skippedDecl(d.imp, "var", d.name, "variable that is not extern")
 		return
 	}
-	if b := e.vars[d.name]; b != nil && b != d {
-		return // another declaration binds the variable
-	}
 	e.stats[d.imp].Decls++
+	if d.vt == nil {
+		e.skippedDecl(d.imp, "var", d.name, "no type")
+		return
+	}
 	s, why := e.mkType(d.vt, d.imp)
 	if why == "" && (s == "void" || strings.HasPrefix(s, "fn(")) {
 		why = "extern var of a function or void type"
 	}
 	if why != "" {
-		e.skipped(d.imp, why)
+		e.skippedDecl(d.imp, "var", d.name, why)
 		return
 	}
 	w := &e.mods[d.imp].items
@@ -705,13 +768,9 @@ func (e *emitter) externVar(d *decl) {
 }
 
 // varBinders gives, by C name, the declaration of each extern variable
-// that binds it, in its module and with its type: the first, while every
-// later one has its type (typedefs followed); once one differs, the last.
-// Clang accepts a redeclaration only with a compatible type, and gives each
-// one the composite type of the declarations so far (C11 6.2.7): after
-// `extern int z[];` and `extern int z[3];` the last is `int[3]`, where the
-// first has no Mk spelling. The last is in the latest import, whose module
-// may name the earlier imports' types.
+// that binds it, in its module and with its type: a declaration with a
+// constant initializer wins (INITGUID DEFINE_GUID after a forward extern),
+// else the first while every later one has its type, else the last.
 func (e *emitter) varBinders() map[string]*decl {
 	out := map[string]*decl{}
 	first := map[string]*decl{}
@@ -723,6 +782,10 @@ func (e *emitter) varBinders() map[string]*decl {
 		switch {
 		case f == nil:
 			first[d.name], out[d.name] = d, d
+		case d.constVar && d.initExpr != nil:
+			out[d.name] = d
+		case out[d.name] != f && (out[d.name].constVar && out[d.name].initExpr != nil):
+			// keep the definition with initializer
 		case out[d.name] != f || !e.sameType(f.vt, d.vt):
 			out[d.name] = d
 		}

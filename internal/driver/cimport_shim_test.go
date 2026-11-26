@@ -170,7 +170,7 @@ func TestCImport_ShimInitGuid(t *testing.T) {
 		"#ifdef INITGUID\n#define K_DEFINE_GUID(name, l, w) extern const K_GUID __declspec(selectany) name = { l, w }\n" +
 		"#else\n#define K_DEFINE_GUID(name, l, w) extern const K_GUID name\n#endif\n" +
 		"K_DEFINE_GUID(IID_K, 42, 7);\nstatic inline int k_unused(void) { return 1; }\n"
-	files := cBin("sig", h, "", cMain("", "        d := k.IID_K.data1\n", "{d}", "d: d"))
+	files := cBin("sig", h, "", cMain("", "        d := k.IidK.data1\n", "{d}", "d: d"))
 	files["pkg.mk"] = strings.Replace(files["pkg.mk"], "defines: []", `defines: ["INITGUID"]`, 1)
 	dir := writeTree(t, files)
 	out, ci := shimBuild(t, dir, t.TempDir())
