@@ -231,7 +231,7 @@ func (s *Session) cImportsOf(stdB *build, man *Manifest, osRoot, dep, treePrefix
 	ci := &cImports{root: osRoot, man: man, dep: dep, treePrefix: treePrefix}
 	// The C and assembly sources see the target's system headers
 	// whether or not the package also imports C.
-	sys, d := s.cSystem(target)
+	sys, d := s.cSystem(target, man)
 	if d != nil {
 		return nil, []*diag.Diagnostic{d}
 	}
@@ -257,7 +257,7 @@ func (s *Session) cImportsOf(stdB *build, man *Manifest, osRoot, dep, treePrefix
 			if t.Name == target {
 				continue
 			}
-			if len(sysrootFor(t.Name, os.Getenv)) == 0 && !allVendored(man) {
+			if dirs, _ := s.sysrootOf(t.Name, man); len(dirs) == 0 && !allVendored(man) {
 				return nil, []*diag.Diagnostic{cimport.NoSysroot(at, t.Name)}
 			}
 			mods, _, ds := s.translateC(imports, man, osRoot, t.Name, at, &cImports{dep: dep})
@@ -331,6 +331,9 @@ func (ci *cImports) prune(w *world, builds []*build) {
 				}
 			}
 		}
+	}
+	if d := ci.shareViews(w, builds); d != nil { // sdkimport.go
+		ci.mismatch = append(ci.mismatch, d)
 	}
 	used := cloneWant(want)
 	pruned := cimport.PruneAll(ci.names, ci.full, want)

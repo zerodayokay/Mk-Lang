@@ -261,6 +261,9 @@ type TestHooks struct {
 	// SysViewWhole gives every system view the program names whole
 	// instead of the items it uses.
 	SysViewWhole bool
+	// HostSDK replaces the host SDK a C import with sdk: true reads: the
+	// directories for target and where they come from.
+	HostSDK func(target string) ([]string, string)
 	// PlaceObject, when set, replaces the hard link or copy that places a
 	// stored pack object in the work directory for a staged link
 	// (stagedHits), so a test can make it fail as a store emptied during
