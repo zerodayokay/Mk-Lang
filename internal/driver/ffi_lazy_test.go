@@ -581,3 +581,38 @@ func TestFFI_LazyPresentArgument(t *testing.T) {
 	})
 	clean(t, check(t, Config{Root: root}))
 }
+
+// TestFFI_LazyPresentKey: a lazy link's .def that stops naming MkPk moves
+// it to the dynamic link after it, which changes dl.Present's lowering
+// (codegen.Config.Lazy): the pack that holds the call is emitted again,
+// the program answers for the new binding, and a verify build, which emits
+// and compares every pack, finds the reused objects right. The link file's
+// bytes also move the front end's context here; codegen's TestPresentFacts
+// checks the pack key's own part.
+func TestFFI_LazyPresentKey(t *testing.T) {
+	needWindows(t)
+	tools := needTools(t)
+	root := t.TempDir()
+	lazyDLL(t, tools, root, "mkpk.dll", "__declspec(dllexport) int MkPk(void) { return 4; }\n", false)
+	lazyDLL(t, tools, root, "mkpk2.dll", "__declspec(dllexport) int MkPk(void) { return 5; }\n", false)
+	w := types.X86_64Windows.Name
+	lazyWrite(t, filepath.Join(root, "pkg.mk"), lazyManifest(linkLit("mkpk.dll", "lazy", "mkpk.def", w), linkLit("mkpk2.dll", "dynamic", "mkpk2.dll", w)))
+	main := "import std.dl\n\nextern MkPk(): i32\n\nexport Main(sys: &System): WriteError!void {\n    p := dl.Present(sys.io, MkPk)\n    try sys.Print(\"{p}\\n\", (p))\n}\n"
+	lazyWrite(t, filepath.Join(root, "app", "main.mk"), main)
+	cfg := Config{Root: root, Target: types.X86_64Windows, Profile: types.Dev, Tools: tools, CacheDir: t.TempDir(), Jobs: 4}
+	out := filepath.Join(t.TempDir(), "ffi.exe")
+	var runs []pkRun
+	for _, def := range []string{"MkPk\n", "Other\n"} {
+		lazyWrite(t, filepath.Join(root, "mkpk.def"), def)
+		run := pkBuild(t, cfg, out)
+		// mkpk.dll is absent, so Present is false while MkPk binds lazily.
+		if got, want := runOut(t, out), map[string]string{"MkPk\n": "false\n", "Other\n": "true\n"}[def]; got != want {
+			t.Errorf("def %q: printed %q, want %q", def, got, want)
+		}
+		runs = append(runs, run)
+	}
+	if !slices.Contains(runs[1].emittedMods(), "app") {
+		t.Errorf("the app pack was not emitted again after MkPk left the lazy list: %v", runs[1].emittedMods())
+	}
+	pkVerify(t, cfg, out, runs[1].exe)
+}
