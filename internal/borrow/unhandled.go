@@ -10,11 +10,11 @@
 // How: one forward may-dataflow over the reachable blocks, a bit per such
 // local: a whole assignment sets it (after reporting a set one), a read of
 // the value (a copy or move of a place it roots, its length or
-// discriminant) clears it, as a borrow does (what reads through the
-// reference handles it), a mut borrow then sets it again (a fn literal's
-// capture may assign the binding), and a scope end reports a set one. A copy that an `if T is X` branch makes (a CastNarrow between
-// two whole locals) is the same binding as its source. Bodies with no such
-// local cost one scan of the locals.
+// discriminant) clears it. A shared borrow alone does not read it. A
+// dereference or handoff at a call or return can clear it through the
+// reference. A mut borrow sets it again, since a fn literal's capture
+// may assign the binding. A scope end reports a set bit. A narrowed
+// copy made by an `if T is X` branch is the same binding as its source.
 
 package borrow
 
@@ -38,11 +38,28 @@ type unionFlow struct {
 	owner []mir.LocalID
 }
 
+// unionState keeps the unread bindings on any path and the bindings each
+// local holds a reference to on every incoming path.
+type unionState struct {
+	unread unionBits
+	refs   []setID
+}
+
 // unhandledUnions reports E0802 (phase flow) where a named local of an
 // error union type is assigned, or its scope ends, while it may still hold
 // a value no try, else, match or .Must() has read.
 func (c *checker) unhandledUnions() {
 	b := c.body
+	hasUnion := false
+	for _, l := range b.Locals {
+		if l.Kind == mir.LocalUser && c.tab.Kind(l.Type) == types.KErrorUnion {
+			hasUnion = true
+			break
+		}
+	}
+	if !hasUnion {
+		return
+	}
 	f := &unionFlow{index: make([]int, len(b.Locals)), owner: make([]mir.LocalID, len(b.Locals))}
 	for i := range f.owner {
 		f.owner[i] = mir.LocalID(i)
@@ -68,10 +85,13 @@ func (c *checker) unhandledUnions() {
 	for i := range f.index {
 		f.index[i] = f.index[f.owner[i]]
 	}
-	entry := make([]unionBits, len(b.Blocks))
-	entry[mir.EntryBlock] = make(unionBits, (n+63)/64)
-	run := func(bi mir.BlockID, report bool) unionBits {
-		s := append(unionBits(nil), entry[bi]...)
+	entry := make([]unionState, len(b.Blocks))
+	entry[mir.EntryBlock] = unionState{make(unionBits, (n+63)/64), make([]setID, len(b.Locals))}
+	run := func(bi mir.BlockID, report bool) unionState {
+		s := unionState{
+			append(unionBits(nil), entry[bi].unread...),
+			append([]setID(nil), entry[bi].refs...),
+		}
 		blk := &b.Blocks[bi]
 		for i := range blk.Stmts {
 			c.unionStmt(f, &blk.Stmts[i], s, report)
@@ -83,27 +103,34 @@ func (c *checker) unhandledUnions() {
 	for changed := true; changed; {
 		changed = false
 		for _, bi := range c.rpo {
-			if entry[bi] == nil {
+			if entry[bi].unread == nil {
 				continue
 			}
 			out := run(bi, false)
 			succ = b.Successors(bi, succ[:0])
 			for _, sb := range succ {
-				if entry[sb] == nil {
-					entry[sb] = append(unionBits(nil), out...)
+				e := &entry[sb]
+				if e.unread == nil {
+					e.unread = append(unionBits(nil), out.unread...)
+					e.refs = append([]setID(nil), out.refs...)
 					changed = true
 					continue
 				}
-				for w := range out {
-					if m := entry[sb][w] | out[w]; m != entry[sb][w] {
-						entry[sb][w], changed = m, true
+				for w, word := range out.unread {
+					if m := e.unread[w] | word; m != e.unread[w] {
+						e.unread[w], changed = m, true
+					}
+				}
+				for l, refs := range out.refs {
+					if m := c.sets.meet(e.refs[l], refs); m != e.refs[l] {
+						e.refs[l], changed = m, true
 					}
 				}
 			}
 		}
 	}
 	for _, bi := range c.rpo {
-		if entry[bi] != nil {
+		if entry[bi].unread != nil {
 			run(bi, true)
 		}
 	}
@@ -128,20 +155,31 @@ func narrowCopy(st *mir.Statement) (from, to mir.LocalID, ok bool) {
 }
 
 // unionStmt is one statement's transfer: its reads, then its def.
-func (c *checker) unionStmt(f *unionFlow, st *mir.Statement, s unionBits, report bool) {
+func (c *checker) unionStmt(f *unionFlow, st *mir.Statement, s unionState, report bool) {
 	switch st.Kind {
 	case mir.StAssign:
 		if _, _, ok := narrowCopy(st); ok {
+			s.refs[st.Place.Local] = s.refs[st.Rvalue.A.Place.Local]
 			return // the binding and its narrowed copy are one
 		}
 		c.unionRvalue(f, &st.Rvalue, s)
+		refs := c.unionRefs(f, &st.Rvalue, s)
 		if rv := &st.Rvalue; (rv.Kind == mir.RvRef || rv.Kind == mir.RvSlice) && rv.Borrow == mir.Exclusive && !c.hasDeref(rv.Place) {
 			// A mut borrow may write the binding (a fn literal's capture
 			// assigns it): it may overwrite the value, and leaves one.
-			c.unionDef(f, rv.Place.Local, st.Span, s, report, "borrowed `mut`")
+			c.unionDef(f, rv.Place.Local, st.Span, s.unread, report, "borrowed `mut`")
+			s.refs[rv.Place.Local] = emptySet
 		}
-		if st.Place.Proj.Len == 0 {
-			c.unionDef(f, st.Place.Local, st.Span, s, report, "assigned")
+		if !c.hasDeref(st.Place) {
+			l := st.Place.Local
+			s.refs[l] = emptySet
+			if st.Place.Proj.Len == 0 {
+				c.unionDef(f, l, st.Span, s.unread, report, "assigned")
+				s.refs[l] = refs
+				if l == 0 {
+					c.unionHandOff(refs, s.unread)
+				}
+			}
 		}
 	case mir.StAsm:
 		ops := c.body.Asms[st.Asm].Operands
@@ -154,18 +192,22 @@ func (c *checker) unionStmt(f *unionFlow, st *mir.Statement, s unionBits, report
 		for _, op := range ops {
 			switch op.Kind {
 			case mir.AsmOut, mir.AsmLateOut, mir.AsmInOut, mir.AsmInLateOut:
-				if op.Out.Local != mir.NoLocal && op.Out.Proj.Len == 0 {
-					c.unionDef(f, op.Out.Local, st.Span, s, report, "assigned")
+				if op.Out.Local != mir.NoLocal && !c.hasDeref(op.Out) {
+					s.refs[op.Out.Local] = emptySet
+					if op.Out.Proj.Len == 0 {
+						c.unionDef(f, op.Out.Local, st.Span, s.unread, report, "assigned")
+					}
 				}
 			}
 		}
 	case mir.StScopeEnd:
 		l := st.Local
+		s.refs[l] = emptySet
 		i := f.index[l]
-		if i < 0 || f.owner[l] != l || !s.has(i) {
+		if i < 0 || f.owner[l] != l || !s.unread.has(i) {
 			return // a narrowed copy's scope end is not its binding's
 		}
-		s.clear(i)
+		s.unread.clear(i)
 		if report {
 			name := c.rootName(rootID(l))
 			c.errAt(diag.E0802, c.body.Locals[l].Span, "`%s` may still hold an error that no `try`, `else`, `match` or `.Must()` has read when its scope ends", name).
@@ -202,7 +244,7 @@ func (c *checker) unionDef(f *unionFlow, l mir.LocalID, at mir.SpanID, s unionBi
 	s.set(i)
 }
 
-func (c *checker) unionRvalue(f *unionFlow, rv *mir.Rvalue, s unionBits) {
+func (c *checker) unionRvalue(f *unionFlow, rv *mir.Rvalue, s unionState) {
 	switch rv.Kind {
 	case mir.RvUse, mir.RvUnary, mir.RvCast, mir.RvRepeat:
 		c.unionOperand(f, rv.A, s)
@@ -212,9 +254,6 @@ func (c *checker) unionRvalue(f *unionFlow, rv *mir.Rvalue, s unionBits) {
 	case mir.RvLen, mir.RvDiscriminant:
 		c.unionRead(f, rv.Place, s)
 	case mir.RvRef, mir.RvSlice:
-		if rv.Borrow != mir.Exclusive {
-			c.unionRead(f, rv.Place, s) // a mut borrow is unionStmt's
-		}
 		if rv.Kind == mir.RvRef {
 			return
 		}
@@ -231,31 +270,89 @@ func (c *checker) unionRvalue(f *unionFlow, rv *mir.Rvalue, s unionBits) {
 	}
 }
 
-func (c *checker) unionOperand(f *unionFlow, o mir.Operand, s unionBits) {
+func (c *checker) unionOperand(f *unionFlow, o mir.Operand, s unionState) {
 	if o.Kind == mir.OpCopy || o.Kind == mir.OpMove {
 		c.unionRead(f, o.Place, s)
 	}
 }
 
-// unionRead is a read of place p's value: its binding's, unless p goes
-// through a deref (the value of another place).
-func (c *checker) unionRead(f *unionFlow, p mir.Place, s unionBits) {
-	if int(p.Local) < len(f.index) && f.index[p.Local] >= 0 && !c.hasDeref(p) {
-		s.clear(f.index[p.Local])
+// unionRead clears a binding's obligation on a read of it, whether the
+// place names it directly or dereferences a known reference to it.
+func (c *checker) unionRead(f *unionFlow, p mir.Place, s unionState) {
+	if c.hasDeref(p) {
+		if c.unionRefType(p.Local) && c.body.Projections[p.Proj.Start].Kind == mir.ProjDeref {
+			c.unionHandOff(s.refs[p.Local], s.unread)
+		}
+	} else if i := f.index[p.Local]; i >= 0 {
+		s.unread.clear(i)
 	}
 }
 
-func (c *checker) unionTerm(f *unionFlow, t *mir.Terminator, s unionBits, report bool) {
+// unionRefType distinguishes a reference to a union from a reference to
+// something that merely holds loans of unions. Reading one field of the
+// latter does not read all the unions.
+func (c *checker) unionRefType(l mir.LocalID) bool {
+	t := c.tab.Get(c.body.Locals[l].Type)
+	return t.Kind == types.KRef && c.tab.Kind(t.Elem) == types.KErrorUnion
+}
+
+func unionOperandRefs(o mir.Operand, s unionState) setID {
+	if (o.Kind == mir.OpCopy || o.Kind == mir.OpMove) && o.Place.Proj.Len == 0 {
+		return s.refs[o.Place.Local]
+	}
+	return emptySet
+}
+
+// unionRefs follows whole-place copies and aggregates, including a literal's
+// captures. A projection of an aggregate cannot stand for all its loans.
+func (c *checker) unionRefs(f *unionFlow, rv *mir.Rvalue, s unionState) setID {
+	switch rv.Kind {
+	case mir.RvUse, mir.RvRepeat:
+		return unionOperandRefs(rv.A, s)
+	case mir.RvRef:
+		if rv.Borrow != mir.Exclusive {
+			p := rv.Place
+			switch {
+			case p.Proj.Len == 0:
+				if i := f.index[p.Local]; i >= 0 {
+					return c.sets.of(uint32(i))
+				}
+				return s.refs[p.Local]
+			case p.Proj.Len == 1 && c.body.Projections[p.Proj.Start].Kind == mir.ProjDeref:
+				return s.refs[p.Local] // reborrow of the entire referent
+			}
+		}
+	case mir.RvAggregate:
+		var refs setID
+		for _, o := range c.body.Operands[rv.Ops.Start:rv.Ops.End()] {
+			refs = c.sets.unite(refs, unionOperandRefs(o, s))
+		}
+		return refs
+	}
+	return emptySet
+}
+
+func (c *checker) unionHandOff(refs setID, s unionBits) {
+	for _, i := range c.sets.get(refs) {
+		s.clear(int(i))
+	}
+}
+
+func (c *checker) unionTerm(f *unionFlow, t *mir.Terminator, s unionState, report bool) {
 	switch t.Kind {
 	case mir.TermCall, mir.TermTailCall:
 		for _, a := range c.body.Args[t.Args.Start:t.Args.End()] {
 			c.unionOperand(f, a.Operand, s)
+			c.unionHandOff(unionOperandRefs(a.Operand, s), s.unread)
 		}
 		if t.Callee.Kind == mir.CallValue {
 			c.unionOperand(f, t.Callee.Value, s)
 		}
-		if t.Kind == mir.TermCall && t.Dest.Proj.Len == 0 {
-			c.unionDef(f, t.Dest.Local, t.Span, s, report, "assigned")
+		if t.Kind == mir.TermCall && !c.hasDeref(t.Dest) {
+			s.refs[t.Dest.Local] = emptySet
+			if t.Dest.Proj.Len == 0 {
+				c.unionDef(f, t.Dest.Local, t.Span, s.unread, report, "assigned")
+			}
 		}
 	case mir.TermSwitch:
 		c.unionOperand(f, t.On, s)

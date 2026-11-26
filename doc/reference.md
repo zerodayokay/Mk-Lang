@@ -5536,7 +5536,7 @@ export Main(sys: &System): WriteError!void {
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
 - An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. The same holds for a stored one: as an argument, a construction's field, an array, record or repeat element, `some(..)`'s argument, or assigned into a field, an element or through a reference (`h.r = r`, `xs[i] = r`, `*p = r`), or inside a `fn` literal to a binding the literal captures, it is E0802. Assigned to such a binding, `r = Root(m)` or `r = s`, it is kept. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
-- Such a binding must be handled before it is assigned again and before its scope ends, on every path, as a call's result must be where it is made (E0802, checked with moves and loans): `try`, `else`, `match` or `.Must()` reads it; returning it as a value, assigning it to another such binding (which then holds it) and borrowing it (what reads through the reference handles it) hand it on. Assigning it, or borrowing it `mut`, while it may still hold a value nothing has read is E0802 at that line, and a scope end so is E0802 at its declaration, a `try` or `fail` exit included. A binding never read at all is E0208. A local of a type parameter is not such a binding, whatever its instance: generic code may drop any `T`.
+- Such a binding must be handled before it is assigned again and before its scope ends, on every path, as a call's result must be where it is made (E0802, checked with moves and loans). `try`, `else`, `match` or `.Must()` reads it. Returning it as a value or assigning it to another such binding hands it on. A shared borrow leaves it unread until it is read through a reference known to name it, or a value known to carry its reference is passed to another function or returned. A caller checks the handoff against the signature alone. Assigning the binding or borrowing it `mut` while its value may be unread is E0802 at that line. A scope ending with its value unread is E0802 at its declaration, a `try` or `fail` exit included. A binding never read at all is E0208. A local of a type parameter is not such a binding, whatever its instance: generic code may drop any `T`.
 - A stored `E!T` is handled as a call's is: `try`, `else`, `match` and `.Must()` read it once and take its payload or its error. It is such a binding, a global or a const, or a field or element of a value that holds one, which `mem.Zeroed` or a generic's `T` can make. `.Must()` also reads one through a reference (`p.Must()` for a `p: &(Negative!int)`); the others take `*p`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
@@ -5574,10 +5574,10 @@ Copy[T: Plain](x: &T): T {
 }
 
 export Main(sys: &System): WriteError!void {
-    var a: Negative!int = Root(4)
-    var b: Negative!int = Root(-4)
-    for r in [&a, &b] {
-        v := Copy(r) else e { // Copy cannot fail: else handles the E!T it returns
+    for n in [4, -4] {
+        var r: Negative!int = Root(n)
+
+        v := Copy(&r) else e { // Copy cannot fail: else handles the E!T it returns
             try sys.Print("{e}\n", (e: e))
             continue
         }

@@ -1,6 +1,6 @@
 // verdict: ok
 // rule: MKH-933
-// note: a binding that writes an E!T type, handled before it is assigned again and before its scope ends on every path: by try, else, match or .Must(), returned as a value, handed to another such binding, or borrowed
+// note: a binding that writes an E!T type is handled on every path, including through a shared reference
 error Bad
 
 Get(n: int): Bad!int {
@@ -72,4 +72,11 @@ Loop(n: int): int {
 Borrowed(n: int): int {
     var r: Bad!int = Get(n)
     return Copy(&r) else { 11 }
+}
+
+ThroughAlias(n: int): int {
+    var r: Bad!int = Get(n)
+    p := &r
+    q := p
+    return *q else { 12 }
 }

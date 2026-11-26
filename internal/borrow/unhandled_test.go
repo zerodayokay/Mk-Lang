@@ -87,14 +87,14 @@ func TestUnhandledUnion(t *testing.T) {
 			m.ret(mir.ExitNormal)
 			return built{m, nil}
 		}},
-		{"a shared borrow hands it on", func(t *testing.T) built {
+		{"an unused shared borrow leaves it unread", func(t *testing.T) built {
 			k, m, u, c := setup(t)
 			m.set(c, use(cp(m.local(1))))
 			r := m.temp(k.tab.Ref(u))
 			m.set(r, ref(m.local(c)))
 			m.end(r, c)
 			m.ret(mir.ExitNormal)
-			return built{m, nil}
+			return built{m, []any{diag.E0802, m.b.Locals[c].Span}}
 		}},
 		{"a mut borrow of an unread value", func(t *testing.T) built {
 			k, m, u, c := setup(t)

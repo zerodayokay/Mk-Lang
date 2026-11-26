@@ -49,6 +49,7 @@ var corpusExcepted = map[string]string{
 	"codes/E0406.mk":                                       "a move of a value a defer uses is borrow's E0406; check's is a defer pending at a become",
 	"codes/E0802_binding_overwritten.mk":                   "a typed E!T binding assigned while unread is borrow's E0802 (flow group, borrow's TestUnhandledUnion)",
 	"codes/E0802_binding_scope_end.mk":                     "a typed E!T binding ending its scope unread is borrow's E0802 (flow group, borrow's TestUnhandledUnion)",
+	"codes/E0802_binding_unused_shared_loan.mk":            "a shared loan that never reads its typed E!T binding is borrow's E0802 (flow group, borrow's TestUnhandledUnion)",
 	"examples.md: become raw.Compare(a, b, n) // <- E0314": "std.raw's Compare, the intrinsic become refuses (E0314), is not in this harness's prelude (mk corpus passes it; TestLangE0314's intrinsic case)",
 	"codes/E0313_packed.mk":                                "rule 4 asks the driver's ABI classifier (Config.ParamClass), which this harness has not; mk corpus and TestBecome_PackedArgumentPerTarget judge it",
 	"codes/E1101_vm.mk":                                    "the unsafe doors are std.vm's, std.runtime's and std.mem's exports, which this harness's prelude does not load; mk corpus judges it",
