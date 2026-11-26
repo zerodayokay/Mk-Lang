@@ -135,6 +135,33 @@ test "string kernels: random lengths up to 5,000: vector forms equal the scalar 
     }
 }
 
+test "string kernels: unfinished sequences at the end and before an ASCII block" {
+    scalars: [3][4]u8 = [[0xC3, 0xA9, 0, 0], [0xE2, 0x82, 0xAC, 0], [0xF0, 0x9F, 0x98, 0x80]]
+    for n in [63, 64, 65, 127, 128, 129, 255, 256, 257] {
+        for j in 0..3 {
+            width := j + 2
+            for prefix in 1..width {
+                var buf: [513]u8 = [0x61; 513]
+                start := n - prefix
+                for k in 0..prefix {
+                    buf[start + k] = scalars[j][k]
+                }
+                for end in [n, n + 256] {
+                    s := buf[..end]
+                    Assert(!ValidUtf8(s) && !ValidUtf8N[16](s) && !ValidUtf8N[32](s) && !ValidUtf8N[64](s))
+                    Assert(TsWtf8All(s, false))
+                }
+                for k in prefix..width {
+                    buf[start + k] = scalars[j][k]
+                }
+                s := buf[..start + width]
+                Assert(ValidUtf8(s) && ValidUtf8N[16](s) && ValidUtf8N[32](s) && ValidUtf8N[64](s))
+                Assert(TsWtf8All(s, true))
+            }
+        }
+    }
+}
+
 // TsValid fills buf with valid UTF-8 by kind: 0 all 😀, 1 all €, 2 a mix
 // of the four lengths; a tail too short for the next scalar is ASCII.
 TsValid(buf: mut []u8, kind: int) {

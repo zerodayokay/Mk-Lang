@@ -143,7 +143,7 @@ TbyFromShape(n: int, shape: int, calls: int): int {
 // an earlier gate re-added with one change each, and g0, that gate itself):
 //   255 bytes, one é: 23,745 and 23,795; ValidUtf8's threshold lowered to
 //     128 bytes (t128).
-//   256 bytes, one é: 24,095 and 30,545 (std.simd's form, 1.27 times); the
+//   256 bytes, one é: 24,095 and 30,675 (std.simd's form, 1.27 times); the
 //     fork removed, so std.simd's word form runs on x86_64-freestanding
 //     (fsu), and std.simd's word forms on x86_64-windows (std-words).
 //   255 bytes, two-byte scalars: 98,858 and 98,878; the earlier gate, g0 and
