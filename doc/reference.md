@@ -4180,7 +4180,7 @@ See also: [the memory model](memory.md#r4-places-and-moves-out-of-them) for move
 
 ### Optionals, results and errors
 
-`some(p)` and `none` match an optional. `ok(p)` and `err(p)` match the result of a call that can fail. Inside them, `p` is any pattern.
+`some(p)` and `none` match an optional. `ok(p)` and `err(p)` match the result of a call that can fail, or an `E!T` value. Inside them, `p` is any pattern.
 
 ```mk
 // verdict: ok
@@ -4269,6 +4269,45 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - In a `match` on an error-set value, the members are written without `err`: `NotFound(id) { ... }`.
+- `ok(p)` and `err(p)` nest like any pattern wherever an `E!T` value sits: in the ok payload of an `E!(F!T)`, which a generic whose result is its type parameter returns ([results](#results-et)), as `ok(ok(n))` and `ok(err(F))`, and in a `some`, a field or a variant's payload. An alternative may join both sides: `ok(0) | err(_)`.
+
+```mk
+// verdict: ok
+error Late
+error Empty(slot: int)
+
+Read(n: int): Empty!int {
+    if n < 0 {
+        fail Empty(slot: -n)
+    }
+    return n
+}
+
+Fetch[T: Plain](x: &T, late: bool): Late!T {
+    if late {
+        fail Late
+    }
+    return *x
+}
+
+Show(n: int, late: bool): int {
+    var r: Empty!int = Read(n)
+    return match Fetch(&r, late) {
+        ok(ok(0)) | err(_) { 0 }
+        ok(ok(v)) { v }
+        ok(err(Empty(slot))) { 100 + slot }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    try sys.Print("{a} {b} {c} {d}\n", (a: Show(5, false), b: Show(-2, false), c: Show(5, true), d: Show(0, false)))
+}
+```
+
+```text
+5 102 0 0
+```
+
 - `ok` and `err` exist only as pattern heads.
 - [`match` on a result](#match-on-a-result) shows `ok` and `err` arms in a full example.
 
