@@ -44,7 +44,10 @@ export PageSize(): int {
 
 /// Reserved address space: size bytes from Base, with no access until
 /// Commit. It is linear: end it with Release, which gives back the whole
-/// range.
+/// range. Send and Share, derived from its fields: the reservation is the
+/// process's, its commit bitmap is read and written atomically, and two
+/// tasks that commit, decommit or protect overlapping ranges at once exclude
+/// each other themselves.
 export linear struct Region {
     at: uint
     n: int
@@ -336,6 +339,10 @@ export enum Prot {
 ///
 /// A region from New is committed whole; one from Reserve has no page
 /// committed until Commit takes it. Linear: end it with Release.
+///
+/// Send and Share: a task may own it, edit it and release it, and several
+/// tasks may run its code through a & while none edits. A CodeWriter is
+/// neither, so it stays on the task that opened it.
 export linear struct CodeRegion {
     c: sys.VmCode
     n: int
@@ -346,6 +353,20 @@ export linear struct CodeRegion {
     bitn: int
 }
 
+// A CodeRegion owns its OS mapping, which belongs to the process and not to a
+// thread on any target, so whichever task holds it may Commit, Edit and
+// Release it: Send. Only its raw view pointers (sys.VmCode's w and x) stop the
+// derivation. Its only methods on &self, Size and Entry, read fields that never
+// change after New or Reserve, and every change takes mut self or self: Share.
+// CodeProtect and CodeSealAll take a & but change protections only for Edit,
+// under its mut self, and for Done, under the writer's exclusive loan. The one
+// per-thread state, arm64 macOS's JIT write mode, is the thread's, not the
+// region's: a thread is in execute mode outside a window (New puts its own
+// back there), and only a CodeWriter switches it. A CodeWriter holds a raw
+// pointer, so it is neither Send nor Share.
+unsafe impl Send for CodeRegion {}
+unsafe impl Share for CodeRegion {}
+
 /// An open exclusive write window into a CodeRegion, returned by
 /// CodeRegion.Edit. It borrows the CodeRegion mutably while live, so no
 /// concurrent Edit, Commit, Entry or Release can touch the region until Done
@@ -355,7 +376,12 @@ export linear struct CodeRegion {
 /// Linear: every path must close it with Done (use `defer w.Done()`). Do not
 /// hold a CodeWriter across an Io wait or task suspension: on arm64 macOS
 /// JIT write protection belongs to the calling OS thread, so resuming on
-/// another carrier would leave the original carrier write-enabled.
+/// another carrier would leave the original carrier write-enabled. For the
+/// same reason it is neither Send nor Share (its raw pointer to the region
+/// asserts nothing), so it never passes to another task. The checker lets
+/// its Bytes go to a task, but the scope's join, a wait, then comes before
+/// Done, and on arm64 macOS with MAP_JIT a write from a thread other than
+/// the one that opened the window faults: write them on this task.
 export linear view struct CodeWriter {
     r: *CodeRegion
     off: int
