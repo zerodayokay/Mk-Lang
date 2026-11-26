@@ -123,13 +123,73 @@ Conn.ServerReadDeadline(&self, nc: Io, preface_start: time.Instant, cont_start: 
     return some(core.DurationOf(min_ns))
 }
 
+/// Current count of open (not closed or idle) streams on this connection.
+/// O(1); allocates nothing.
+export Conn.OpenStreams(&self): int {
+    nc := core.IoMasked(rt.NativeIo())
+    g := self.Core().st.Lock(nc).Must()
+    n := g.Ref().streams.open
+    g.Unlock()
+    return n
+}
+
+// EndServe marks the server reader finished and wakes Writer to drain remaining frames.
+// O(1); allocates nothing.
+Conn.EndServe(&self, io: Io) {
+    nc := io.NoCancel()
+    core_ := self.Core()
+    var sg := core_.st.Lock(nc).Must()
+    sg.Mut().reader_done = true
+    sg.Unlock()
+    core_.wr_wake.NotifyOne()
+}
+
+// ServeReadBatch runs one ServerReadDeadline + ReadAndDispatch step for Serve/ServeInto.
+Conn.ServeReadBatch(&self, io: Io, preface_start: time.Instant, cont_start: mut ?time.Instant, accs: mut HeapList[ServerAcc], ready: mut HeapList[int]): Error!bool {
+    nc := io.NoCancel()
+    core_ := self.Core()
+    dl := self.ServerReadDeadline(nc, preface_start, cont_start) else e {
+        match e {
+            Violation(code, stream: _) { self.FailConn(nc, e, some(code), false) }
+            time.TimedOut { self.FailConn(nc, e, some(NoError), false) }
+            _ { self.FailConn(nc, e, none, true) }
+        }
+        fail e
+    }
+    more := self.ReadAndDispatch(io, nc, dl, accs, ready) else e {
+        match e {
+            time.TimedOut {
+                is_idle := self.CheckAndQueueIdleGoaway(nc)
+                if is_idle {
+                    core_.wr_wake.NotifyOne()
+                    return false
+                }
+                return true
+            }
+            Canceled {
+                var sg := core_.st.Lock(nc).Must()
+                st := mut *sg.Mut()
+                if st.fault.IsNone() {
+                    st.owed.QueueGoaway(st.last_processed_id, NoError)
+                }
+                sg.Unlock()
+                core_.wr_wake.NotifyOne()
+                fail Canceled
+            }
+            _ {
+                fail e
+            }
+        }
+    }
+    return more
+}
+
 /// The server reader loop: reads frames until the connection ends, admitting
 /// request bodies and passing each complete Request to deliver (which must
 /// not wait). Errors: net.Error, Violation, OutOfMemory.
 export Conn.Serve[C: Share](&self, io: Io, c: &C, deliver: fn(c: &C, conn: &Conn, r: Request): void): Error!void {
     nc := io.NoCancel()
     a := self.heap.Alloc()
-    core_ := self.Core()
     preface_start := time.Now(nc)
     var cont_start: ?time.Instant = none
     var accs := HeapList[ServerAcc].New(a)
@@ -137,46 +197,46 @@ export Conn.Serve[C: Share](&self, io: Io, c: &C, deliver: fn(c: &C, conn: &Conn
     defer {
         accs.Free(a)
         ready.Free(a)
-        var sg := core_.st.Lock(nc).Must()
-        st := mut *sg.Mut()
-        st.reader_done = true
-        sg.Unlock()
-        core_.wr_wake.NotifyOne()
+        self.EndServe(io)
     }
     for {
-        dl := self.ServerReadDeadline(nc, preface_start, mut cont_start) else e {
-            match e {
-                Violation(code, stream: _) { self.FailConn(nc, e, some(code), false) }
-                time.TimedOut { self.FailConn(nc, e, some(NoError), false) }
-                _ { self.FailConn(nc, e, none, true) }
-            }
-            fail e
-        }
-        more := self.ReadAndDispatch(io, nc, dl, mut accs, mut ready) else e {
-            match e {
-                time.TimedOut {
-                    is_idle := self.CheckAndQueueIdleGoaway(nc)
-                    if is_idle {
-                        core_.wr_wake.NotifyOne()
-                        return
-                    }
-                    continue
+        more := try self.ServeReadBatch(io, preface_start, mut cont_start, mut accs, mut ready)
+        for i in 0..ready.Len() {
+            idx := ready.Items()[i]
+            acc := mut accs.ItemsMut()[idx]
+            if acc.ready {
+                acc.ready = false
+                rhead := core.Replace(mut acc.head, none).Must()
+                rbody := match core.Replace(mut acc.body, none) {
+                    some(b) { b }
+                    none { HeapList[u8].New(a) }
                 }
-                Canceled {
-                    var sg := core_.st.Lock(nc).Must()
-                    st := mut *sg.Mut()
-                    if st.fault.IsNone() {
-                        st.owed.QueueGoaway(st.last_processed_id, NoError)
-                    }
-                    sg.Unlock()
-                    core_.wr_wake.NotifyOne()
-                    fail Canceled
-                }
-                _ {
-                    fail e
-                }
+                deliver(c, self, Request(stream: StreamRef(index: idx, gen_: acc.gen_), head: rhead, body: rbody))
             }
         }
+        ready.Clear()
+        if !more {
+            return
+        }
+    }
+}
+
+/// Like Conn.Serve, allowing deliver to store each received Request into c
+/// (such as a Chan[Request] referenced by c). Errors: net.Error, Violation, OutOfMemory.
+export Conn.ServeInto[C: Share](&self, io: Io, c: &C, deliver: fn(c: &C, conn: &Conn, r: Request into c): void): Error!void {
+    nc := io.NoCancel()
+    a := self.heap.Alloc()
+    preface_start := time.Now(nc)
+    var cont_start: ?time.Instant = none
+    var accs := HeapList[ServerAcc].New(a)
+    var ready := HeapList[int].New(a)
+    defer {
+        accs.Free(a)
+        ready.Free(a)
+        self.EndServe(io)
+    }
+    for {
+        more := try self.ServeReadBatch(io, preface_start, mut cont_start, mut accs, mut ready)
         for i in 0..ready.Len() {
             idx := ready.Items()[i]
             acc := mut accs.ItemsMut()[idx]
@@ -232,13 +292,13 @@ export Conn.Writer(&self, io: Io): Error!void {
                 break
             }
         }
+        var wg := core_.wr.Lock(nc).Must()
         var sg := core_.st.Lock(nc).Must()
         st := &*sg.Ref()
-        var wg := core_.wr.Lock(nc).Must()
         empty := wg.Ref().cur.Len() == 0 && st.owed.Empty()
-        wg.Unlock()
         done := empty && (st.reader_done || st.fault.IsSome())
         sg.Unlock()
+        wg.Unlock()
         if done {
             return
         }
@@ -457,8 +517,8 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
                 }
                 slot.send_win.Take(k).Must()
                 st.conn_send_win.Take(k).Must()
-                slot.send_gate.SentData()
-                st.conn_send_gate.SentData()
+                slot.send_gate.SentBytes(k)
+                st.conn_send_gate.SentBytes(k)
                 slot.progress.Pending(now)
                 slot.progress.Moved(k)
                 slot.dribble_since = none

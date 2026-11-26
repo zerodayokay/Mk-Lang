@@ -22,8 +22,14 @@
 // response held, even behind a shared reference.
 
 import std.core
+import std.http.h2
 import std.net
 import std.time
+
+struct H2FlushTarget {
+    conn: &h2.Conn
+    stream: h2.StreamRef
+}
 
 /// A ServeWith handler's handle on the connection its request came on.
 /// Response.Flush writes through it, and Takeover takes the connection
@@ -31,12 +37,20 @@ import std.time
 /// response, never inside it, so nothing a handler stores into its
 /// response reaches the connection.
 export view struct Link {
-    cell: &Mutex[?net.Conn]
+    version: HttpVersion
+    cell: ?&Mutex[?net.Conn]
+    h2: ?H2FlushTarget
     io: Io
     rest: []u8
     // pace: the longest a piece of a Flush may wait for the client to take
     // it (Paced).
     pace: time.Duration
+}
+
+/// The HTTP version of the connection this link's request came on. O(1);
+/// allocates nothing.
+export Link.Version(&self): HttpVersion {
+    return self.version
 }
 
 // CellLock locks the cell; it never waits (one task), and the mask is taken
