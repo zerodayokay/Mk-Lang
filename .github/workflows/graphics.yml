@@ -250,10 +250,23 @@ jobs:
           dir="$RUNNER_TEMP/intel-graphics"
           chmod +x "$dir/scene" "$dir/sketch"
           "$dir/sketch" check-script Dogfoods/sketch/cases/scripts/close.script
+          run_native() {
+            local rc=0
+            "$dir/scene" "$@" || rc=$?
+            if (( rc == 0 )); then
+              return 0
+            fi
+            echo '::group::Intel macOS Vulkan native backtrace' >&2
+            xcrun lldb --batch -o 'settings set target.disable-aslr false' \
+              -o "settings set target.env-vars \"DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH\" \"VK_DRIVER_FILES=$VK_DRIVER_FILES\"" \
+              -o run -k 'thread backtrace all' -- "$dir/scene" "$@" >&2 || true
+            echo '::endgroup::' >&2
+            return "$rc"
+          }
           scene=Dogfoods/scene/cases/scenes/shadow.scene
-          "$dir/scene" probe --backend vulkan --list
-          "$dir/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
+          run_native probe --backend vulkan --list
+          run_native render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
           test -s "$RUNNER_TEMP/shadow.png"
-          output=$("$dir/scene" view "$scene" --backend vulkan --frames 3)
+          output=$(run_native view "$scene" --backend vulkan --frames 3)
           printf '%s\n' "$output"
           grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"
