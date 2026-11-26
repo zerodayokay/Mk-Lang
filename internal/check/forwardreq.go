@@ -283,37 +283,6 @@ func (u *unit) requireRestated(e ast.Node, clause demand) {
 	u.requireRestatedWhy(e, clause, "")
 }
 
-// requireRestatedNarrowed is requireRestated for clause ct of sig restated
-// over the caller's bare type parameter. When that parameter
-// is narrowed here by `if U is X`, the callee's clause is still read over
-// U, not X, so the demand says to write X in the call (the const analogue
-// `if M == 2 { G[M]() }` is refused the same way). It offers no fix:
-// stating the clause would bind every instance, and one whose branch is
-// not taken would then panic at the entry check. When the clause also
-// reads an open type parameter no branch narrows (`G[U, V]()`), writing X
-// for U would still leave a clause over V, whose statement binds every
-// instance too: the message
-// says so and offers neither remedy. An interface impl method gets
-// requireRestatedWhy's message, as any other demand.
-func (u *unit) requireRestatedNarrowed(e ast.Node, d demand, sig *types.Signature, gargs []types.GenericArg, ct types.Contract) {
-	param, as, other, ok := u.narrowedArg(sig, gargs, ct)
-	owner, _ := u.ownerSig()
-	if !ok || u.restateMet(d) || owner != nil && u.m.ifaceImplMethod(owner.ID) || d.why != "" {
-		u.requireRestated(e, d)
-		return
-	}
-	clause := d.text
-	what := "the callee requires `" + clause + "` here"
-	if u.naming != nil && e == u.naming {
-		what = "the function named here requires `" + clause + "`"
-	}
-	why := "so write `" + as + "` for `" + param + "` here"
-	if other != "" {
-		why = "and it also reads `" + other + "`, so it cannot be judged in this branch"
-	}
-	u.err(diag.E0706, e.Span(), what+": `"+param+"` is `"+as+"` in this branch, but `if "+param+" is "+as+"` does not narrow the callee's clause, "+why).Text("clause", clause)
-}
-
 // requireRestatedWhy is requireRestated with why, when not empty, saying in
 // the message why the clause could not be judged here (finiteRequires'
 // limit). A demand no caller can write (demand.why) is E0706 "cannot be
