@@ -1,0 +1,4 @@
+h2->h1 requested=1 completed=1 canceled=0 resets=0 active=0
+origin=1 uploaded=32768 downloaded=32768 invalid=0
+copy-buffer=8192 response-cap=65536 h2-window=8192
+retained-payload-peak=65536
