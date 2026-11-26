@@ -65,7 +65,7 @@ A package that links a DLL with `kind: "lazy"` ([linking libraries](../reference
 - A failed load is not remembered: a later `Present` or call tries again.
 - Calling a lazily bound function that is not present panics with `unresolved function`, naming the function and the DLL.
 
-The program below names a newer Windows function. A lazily bound function of an optional DLL is asked the same way, and there the answer comes at run time:
+The program below asks about kernel32's `SetThreadDescription`, which is bound eagerly: there `Present` is `true` when the program is built, and a Windows that lacks the function would not start the program at all. A function of a lazily bound DLL is asked the same way, and there the answer comes at run time:
 
 ```mk
 // verdict: ok
@@ -377,9 +377,9 @@ Present reports whether f, a bodiless extern function named directly
 (`dl.Present(io, GetThing)`), can be called. For a function of a lazily
 bound library (pkg.Link kind "lazy") it loads the library if it is not
 loaded yet, running its initializers on the carrier's system stack and
-blocking the carrier as Open does, and finds the function, without
-calling it; a later call of f then costs one indirect call. For any
-other extern it is true when the program is built, since the loader
+blocking the carrier as Open does (it cannot be cancelled), and finds
+the function without calling it; a later call of f then costs one
+indirect call. For any other extern it is true when the program is built, since the loader
 resolved the function before Main. Naming f here needs no unsafe:
 Present never calls it. A failed load is not remembered: asking again
 loads again. Calling a lazily bound function that is not present panics

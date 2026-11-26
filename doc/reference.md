@@ -9966,10 +9966,15 @@ const Package = pkg.Package(
 - A name an archive defines wins over any DLL. A library enters the executable only when a name it supplies is used.
 - Only functions resolve through links. An `extern var` in a DLL or a shared object is E0001.
 - Windows looks for a linked DLL only in KnownDLLs, the executable's directory and System32, never in the current directory or `PATH`. Ship a third-party DLL beside the executable. A lazy DLL is searched the same way (`LoadLibraryExW` with `LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`).
+- An archive must be built with no C runtime: `-ffreestanding -fno-stack-protector` for Clang or GCC, `/GS- /Zl` for MSVC. A symbol it needs that nothing supplies is E0001, naming the member and the symbol.
+- An archive member that holds static constructors or thread-local storage is E0001: a Mk program never sets them up.
+- A Linux bin with a dynamic link loads the system C library ([system-libc mode](std/libc.md#system-libc-mode-on-linux)).
+- To open a library while the program runs, use [std.dl](std/dl.md).
 
 **Lazy libraries.** A program can name a function of a DLL that some machines lack, such as an optional system component, and still start on every machine. A hard import of a missing DLL ends the process before `Main`. A lazy DLL is not in the import table:
 
 - Each function of it the program uses is called through a slot. The first call loads the DLL, once per DLL, and finds the function. The library's initializer runs on the carrier's system stack when the caller is a task, so a task's small stack is enough. The call then continues with its arguments intact.
+- The first call may come from any thread, one Mk did not start included, and from C code. Two first calls at once both succeed. A load that fails is not remembered: a later call or `dl.Present` tries again.
 - Later calls jump through the slot: one indirect call, what an import-table call costs.
 - [`dl.Present(io, f)`](std/dl.md#present) tells whether `f` can be called, loading the DLL if needed, without calling it. For a function that is not lazily bound it is `true` at compile time.
 - Calling a lazy function whose DLL cannot be loaded, or which the DLL does not export, panics with `unresolved function`. The report names the function and the DLL.
@@ -9985,10 +9990,6 @@ const Package = pkg.Package(
     links: [pkg.Link(name: "d3d12.dll", kind: "lazy", path: "d3d12.def", target: "x86_64-windows")],
 )
 ```
-- An archive must be built with no C runtime: `-ffreestanding -fno-stack-protector` for Clang or GCC, `/GS- /Zl` for MSVC. A symbol it needs that nothing supplies is E0001, naming the member and the symbol.
-- An archive member that holds static constructors or thread-local storage is E0001: a Mk program never sets them up.
-- A Linux bin with a dynamic link loads the system C library ([system-libc mode](std/libc.md#system-libc-mode-on-linux)).
-- To open a library while the program runs, use [std.dl](std/dl.md).
 
 ### CPU features
 

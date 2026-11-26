@@ -112,9 +112,9 @@ export Library.Symbol(&self, name: str): ?*u8 {
 /// (`dl.Present(io, GetThing)`), can be called. For a function of a lazily
 /// bound library (pkg.Link kind "lazy") it loads the library if it is not
 /// loaded yet, running its initializers on the carrier's system stack and
-/// blocking the carrier as Open does, and finds the function, without
-/// calling it; a later call of f then costs one indirect call. For any
-/// other extern it is true when the program is built, since the loader
+/// blocking the carrier as Open does (it cannot be cancelled), and finds
+/// the function without calling it; a later call of f then costs one
+/// indirect call. For any other extern it is true when the program is built, since the loader
 /// resolved the function before Main. Naming f here needs no unsafe:
 /// Present never calls it. A failed load is not remembered: asking again
 /// loads again. Calling a lazily bound function that is not present panics
