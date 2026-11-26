@@ -184,9 +184,10 @@ DrainUnixRequests() {
     for {
         req := PopReq()
         if req.addr == 0 {
-            return
+            break
         }
         ProcessUnixRequest(req.addr, req.bits)
         ReleaseWindowRecRef(req.addr)
     }
+    RunUnixVulkanRequest()
 }

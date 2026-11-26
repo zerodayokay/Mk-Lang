@@ -9,53 +9,33 @@
 import c.vulkan
 import c.windows
 import std.core
-import std.dl
 import std.mem
 import std.raw
 import std.rt
+import std.window
 
 CreateWindowSurface(gipa: vulkan.PfnVkGetInstanceProcAddr, inst: vulkan.VkInstance, window_handle: uint, window_instance: uint): Error!u64 {
     if Target.os == core.Os.Windows {
         return try CreateWin32Surface(gipa, inst, window_instance, window_handle)
     }
     if Target.os == core.Os.Linux || Target.os == core.Os.Macos {
-        return try CreateGlfwSurface(inst, window_handle)
+        return try CreateGlfwSurface(gipa, inst, window_handle)
     }
     fail Unsupported
 }
 
 // GLFW's Vulkan bridge handles Xlib, XCB, Wayland and Cocoa window surfaces.
 // The window module keeps its GLFWwindow alive while the swapchain uses it.
-CreateGlfwSurface(inst: vulkan.VkInstance, window_handle: uint): Error!u64 {
+CreateGlfwSurface(gipa: vulkan.PfnVkGetInstanceProcAddr, inst: vulkan.VkInstance, window_handle: uint): Error!u64 {
     if window_handle == 0 {
         fail SurfaceLost
     }
-    io := rt.NativeIo()
-    lib := OpenGlfwSurfaceLibrary(io) else { fail Unsupported }
-    defer lib.Close(io)
-    entry := lib.Symbol("glfwCreateWindowSurface") else { fail Unsupported }
-    unsafe "GLFW owns window_handle for the lifetime of the Surface and the VkInstance is live" {
-        create := raw.FnFromAddr[fn(vulkan.VkInstance, *void, *vulkan.VkAllocationCallbacks, *vulkan.VkSurfaceKhr): i32](raw.Addr(entry))
-        var surface: vulkan.VkSurfaceKhr = raw.Null[vulkan.VkSurfaceKhrT]()
-        code := create(inst, raw.FromAddr[void](window_handle), raw.Null[vulkan.VkAllocationCallbacks](), raw.OfMut(mut surface))
-        if code != vulkan.VkSuccess {
-            fail MapVkError(code, CallCreateSwapchain)
-        }
-        return HandleAddr(surface)
+    loader := LoadInstanceProcAddr(gipa, raw.Null[vulkan.VkInstanceT](), "vkGetInstanceProcAddr\x00")
+    (code, surface) := window.CreateUnixVulkanSurface(rt.NativeIo(), window_handle, raw.Addr(inst), loader) else { fail Unsupported }
+    if code != vulkan.VkSuccess {
+        fail MapVkError(code, CallCreateSwapchain)
     }
-}
-
-OpenGlfwSurfaceLibrary(io: Io): dl.Error!dl.Library {
-    if Target.os == core.Os.Linux {
-        return try dl.Open(io, "libglfw.so.3", dl.Search.System)
-    }
-    return dl.Open(io, "libglfw.3.dylib", dl.Search.Application) else {
-        dl.Open(io, "libglfw.3.dylib", dl.Search.System) else {
-            dl.Open(io, "/opt/homebrew/lib/libglfw.3.dylib", dl.Search.Path) else {
-                try dl.Open(io, "/usr/local/lib/libglfw.3.dylib", dl.Search.Path)
-            }
-        }
-    }
+    return Cast[u64](surface)
 }
 
 CreateWin32Surface(gipa: vulkan.PfnVkGetInstanceProcAddr, inst: vulkan.VkInstance, hinstance: uint, hwnd: uint): Error!u64 {

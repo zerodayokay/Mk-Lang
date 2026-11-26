@@ -57,6 +57,8 @@ struct GlfwDispatch {
     set_input_mode: fn(uint, i32, i32)
     get_cursor_pos: fn(uint, *f64, *f64)
     get_key_name: fn(i32, i32): *u8
+    get_instance_proc_address: uint
+    create_window_surface: uint
     set_window_close_callback: fn(uint, GlfwClose): GlfwClose
     set_framebuffer_size_callback: fn(uint, GlfwPairI): GlfwPairI
     set_window_pos_callback: fn(uint, GlfwPairI): GlfwPairI
@@ -142,6 +144,8 @@ BindGlfw(lib: uint): Unsupported!GlfwDispatch {
             set_input_mode: raw.FnFromAddr[fn(uint, i32, i32)](try GlfwSymbol(lib, "glfwSetInputMode")),
             get_cursor_pos: raw.FnFromAddr[fn(uint, *f64, *f64)](try GlfwSymbol(lib, "glfwGetCursorPos")),
             get_key_name: raw.FnFromAddr[fn(i32, i32): *u8](try GlfwSymbol(lib, "glfwGetKeyName")),
+            get_instance_proc_address: GlfwSymbol(lib, "glfwGetInstanceProcAddress") else { 0 },
+            create_window_surface: GlfwSymbol(lib, "glfwCreateWindowSurface") else { 0 },
             set_window_close_callback: raw.FnFromAddr[fn(uint, GlfwClose): GlfwClose](try GlfwSymbol(lib, "glfwSetWindowCloseCallback")),
             set_framebuffer_size_callback: raw.FnFromAddr[fn(uint, GlfwPairI): GlfwPairI](try GlfwSymbol(lib, "glfwSetFramebufferSizeCallback")),
             set_window_pos_callback: raw.FnFromAddr[fn(uint, GlfwPairI): GlfwPairI](try GlfwSymbol(lib, "glfwSetWindowPosCallback")),

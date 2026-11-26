@@ -15,7 +15,7 @@ var MainServiceHook: raw.Atomic[uint] = raw.Atomic[uint].New(0)
 /// Installs the process's main-thread service once on macOS. The hook runs
 /// on the initial OS thread's system stack and must not suspend. It answers
 /// true to request periodic polling while active. Returns false outside a
-/// native standalone macOS program or if another hook was installed.
+/// standalone macOS program with the task scheduler, or when a hook is installed.
 /// O(1); allocates nothing.
 export MainThreadService(f: fn(): bool): bool {
     if Target.os == Os.Macos && MainServiceEnabled.Load() != 0 {
@@ -31,10 +31,11 @@ export MainThreadService(f: fn(): bool): bool {
     return false
 }
 
-/// Schedules the installed hook once on the initial macOS thread. The
-/// caller publishes its requests before waking. O(1); allocates nothing.
+/// Schedules the installed hook once on the initial macOS thread. Before
+/// installation it does nothing. The caller publishes its requests before
+/// waking. O(1); allocates nothing.
 export WakeMainThreadService() {
-    if Target.os == Os.Macos {
+    if Target.os == Os.Macos && MainServiceHook.Load() != 0 {
         sys.PollWakeMain()
     }
 }

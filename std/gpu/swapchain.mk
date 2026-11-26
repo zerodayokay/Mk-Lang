@@ -93,7 +93,7 @@ PresentModeFromU8(m: u8): PresentMode {
 
 /// Makes a swapchain on w's client area at its current size. Errors:
 /// Unsupported (format), SurfaceLost (the window is closed), DeviceLost.
-/// Runs on the system stack. Counts as a user of w's native window.
+/// May wait for the native window thread. Counts as a user of w's native window.
 export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOptions): Error!Swapchain {
     try self.CheckAlive()
     if !IsSwapchainFormat(o.format) {

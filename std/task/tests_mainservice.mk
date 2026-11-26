@@ -16,7 +16,10 @@ var MainServiceTestArm: raw.Atomic[u32] = raw.Atomic[u32].New(0)
 
 TestMainService(): bool {
     var marker: int = 0
-    if rt.SysStackOf(raw.Addr(raw.Of(&marker))) != 0 || !raw.IsNull(Current()) {
+    // On Darwin, std's pthreads have registered bounds and the initial
+    // thread is recognized by libSystem's pthread_main_np.
+    (lo, hi) := sys.ThreadStackBounds()
+    if lo != 0 || hi != 0 || rt.SysStackOf(raw.Addr(raw.Of(&marker))) != 0 || !raw.IsNull(Current()) {
         MainServiceOffStack.Store(1)
     }
     _ = MainServiceCalls.Add(1)
@@ -33,6 +36,8 @@ test "RT-MainThreadService dispatches on carrier zero and polls while active" (s
     if Target.os != Os.Macos {
         return
     }
+    WakeMainThreadService()
+    Assert(!sys.PollTakeMainWake())
     Assert(MainThreadService(TestMainService))
     for _ in 0..200 {
         if MainServiceCalls.Load() > 0 {
