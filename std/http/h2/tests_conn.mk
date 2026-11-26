@@ -285,6 +285,28 @@ test "H2 server half closes after a fault GOAWAY and drains pending input" (sys:
     }
 }
 
+test "H2 server keeps a closed-stream reset when the handler releases its slot" (sys: &System) {
+    a := sys.heap.Alloc()
+    now := time.Now(sys.io)
+    var st := NewState(a, TestDefaultLimits(), false, 0, now).Must()
+    defer st.Free(a)
+
+    id: u32 = 1
+    idx := st.streams.AllocSlot(a, id, InitialWindow, InitialWindow, InitialWindow).Must().Must()
+    st.streams.EndRemote(idx)
+    Assert(st.streams.slots.Items()[idx].state == StHalfRemote)
+    // The handler finishes while the reader decodes the headers.
+    st.streams.EndLocal(idx)
+    st.streams.ReleaseSlot(idx, a)
+
+    _ = QueueClosedHeaderReset(a, mut st, idx, id, now).Must()
+    Assert(st.owed.stream_head == -1 && st.owed.resets.Len() == 1)
+    reset := st.owed.resets.Items()[0]
+    Assert(reset.stream == id && reset.code == StreamClosed)
+    Assert(!QueueClosedHeaderReset(a, mut st, idx, id, now).Must())
+    Assert(st.owed.resets.Len() == 1)
+}
+
 test "H2 server rejects bad preface and non-SETTINGS first frame with PROTOCOL_ERROR" (sys: &System) {
     a := sys.heap.Alloc()
     (a: srv_c, b: cli_c) := pipe.ConnPair(sys.heap, 65536).Must()

@@ -139,11 +139,13 @@ Conn.DispatchServerHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         try DecodeDiscard(mut rp.dec, a, block)
         var sg := self.Core().st.Lock(nc).Must()
         st := mut *sg.Mut()
-        MarkStreamError(a, st, existing_idx, StreamClosed, now) else e {
+        retained := QueueClosedHeaderReset(a, st, existing_idx, stream, now) else e {
             sg.Unlock()
             fail e
         }
-        self.WakeStream(existing_idx)
+        if retained {
+            self.WakeStream(existing_idx)
+        }
         sg.Unlock()
         self.Core().wr_wake.NotifyOne()
         return
@@ -379,6 +381,21 @@ Conn.DispatchServerHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         some(old) { old.Free(a) }
         none {}
     }
+}
+
+// HPACK decoding releases st, so the handler can retire the known closed slot.
+QueueClosedHeaderReset(a: &Alloc into st, st: mut State, idx: int, stream: u32, now: time.Instant): Error!bool {
+    if st.reset_set.Has(stream) {
+        return false
+    }
+    if st.streams.slots.Items()[idx].id == stream {
+        try MarkStreamError(a, st, idx, StreamClosed, now)
+        return true
+    }
+    try ChargeReset(st, now)
+    try st.owed.QueueReset(a, stream, StreamClosed)
+    st.reset_set.Add(stream)
+    return false
 }
 
 SetupServerSlotFields(a: &Alloc into st, st: mut State, idx: int, stream: u32, cl_val: ?i64, is_head: bool, expect_100: bool, end_stream: bool, lim_win: int, body_bytes: int, now: time.Instant): OutOfMemory!(need_owed: bool, gen_: u32) {
