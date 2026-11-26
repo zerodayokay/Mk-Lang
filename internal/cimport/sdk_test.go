@@ -94,8 +94,9 @@ func TestCImport_WindowsSDK(t *testing.T) {
 // first system views name (windows.h, windowsx.h, d3d12.h,
 // d3d12sdklayers.h, dxgi1_6.h, dxgidebug.h, d3dcompiler.h) translates in
 // one import with no Clang error, and so does the ucrt's stdlib.h alone;
-// wchar.h alone fails, naming the setjmp.h mk does not supply (Clang's
-// intrin.h includes it).
+// wchar.h, process.h and crtdbg.h alone fail, each naming the toolset
+// header mk does not supply (setjmp.h, which Clang's intrin.h includes;
+// vcruntime_startup.h; vcruntime_new_debug.h).
 func TestCImport_WindowsSDKHeaders(t *testing.T) {
 	dirs := sdkInclude(t)
 	tl, rd := clangFor(t)
@@ -122,9 +123,11 @@ func TestCImport_WindowsSDKHeaders(t *testing.T) {
 		st := res.Stats[0]
 		t.Logf("%v: bound %d of %d (%s)", hs, st.Bound(), st.Decls, pct(st.Bound(), st.Decls))
 	}
-	_, err = run("wchar.h")
-	ce, ok := err.(*Error)
-	if !ok || !strings.Contains(ce.Stderr, "'setjmp.h' file not found") {
-		t.Errorf("wchar.h alone: %v, want an error naming setjmp.h", err)
+	for h, missing := range map[string]string{"wchar.h": "setjmp.h", "process.h": "vcruntime_startup.h", "crtdbg.h": "vcruntime_new_debug.h"} {
+		_, err = run(h)
+		ce, ok := err.(*Error)
+		if !ok || !strings.Contains(ce.Stderr, "'"+missing+"' file not found") {
+			t.Errorf("%s alone: %v, want an error naming %s", h, err, missing)
+		}
 	}
 }
