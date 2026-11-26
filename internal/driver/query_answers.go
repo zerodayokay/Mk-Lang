@@ -119,8 +119,8 @@ func (qx *queryIndex) sigLine(display string, s *types.Signature) string {
 		b.WriteString(", ...")
 	}
 	b.WriteByte(')')
-	if r := tab.ReturnType(s.Result, s.Errors); r != types.Void {
-		b.WriteString(": " + tab.TypeString(r, s.Generics))
+	if r := tab.ResultString(s.Result, s.Errors, s.Generics); r != "" {
+		b.WriteString(": " + r)
 	}
 	if f := qx.flowClauses(s); f != "" {
 		b.WriteString(" " + f)

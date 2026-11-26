@@ -5555,7 +5555,7 @@ Twice(n: int): Negative!int {
 }
 ```
 
-A function can fail only when its signature names an error set, as a result written `E!T` does. A generic whose result is its type parameter, called with an `E!T` for it, cannot fail, and neither can a function whose result is an alias of an `E!T`: each returns the `E!T` as a value, which the caller handles with `try`, `else` or `match` as any other. So does an interface method whose result is such a type parameter or alias, and an `impl` method must fail exactly when its interface method can (E0707).
+A function can fail only when its signature names an error set, as a result written `E!T` does. A generic whose result is its type parameter, called with an `E!T` for it, cannot fail, and neither can a function whose result is an alias of an `E!T`: each returns the `E!T` as a value, which the caller handles with `try`, `else` or `match` as any other. So does an interface method whose result is such a type parameter or alias, and an `impl` method must fail exactly when its interface method can (E0707). Such a result has no spelling of its own in a written type, since `E!T` written as a result fails, so diagnostics, `mk query sig`, hover and `mk apidiff` print it as the union followed by `(cannot fail)`: `Copy[Negative!int]` is `fn(&(Negative!int)): Negative!int (cannot fail)`, and `fn(&(Negative!int)): Negative!int` is one that can fail. The mark is not source: to write such a type, name the alias or the type parameter.
 
 ```mk
 // verdict: ok

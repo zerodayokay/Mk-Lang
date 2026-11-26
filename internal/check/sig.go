@@ -510,8 +510,8 @@ func (c *Checker) sigHead(s *types.Signature) string {
 		}
 	}
 	out += ")"
-	if r := tab.ReturnType(s.Result, s.Errors); r != types.Void {
-		out += ": " + tab.TypeString(r, s.Generics)
+	if r := tab.ResultString(s.Result, s.Errors, s.Generics); r != "" {
+		out += ": " + r
 	}
 	return out
 }
