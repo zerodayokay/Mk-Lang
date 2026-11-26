@@ -78,6 +78,7 @@ linear view struct State {
     writer_done: bool
     reader_done: bool
     drive_idle_since: ?time.Instant
+    drive_idle_limit: time.Duration
     drive_stop: bool
 }
 
@@ -132,6 +133,10 @@ Conn.NetConn(&self): &net.Conn {
     Panic("h2.Conn: missing transport")
 }
 
+TableCap(streams: int): int {
+    return streams + (if streams < 32 { 32 } else { streams })
+}
+
 /// A client connection: sends the preface and SETTINGS. O(streams) setup plus
 /// one socket write. Errors: net.Error, time.TimedOut, OutOfMemory.
 export Conn.Client(h: &Heap, io: Io, conn: net.Conn into h, l: Limits): Error!Box[Conn] from h, conn {
@@ -142,7 +147,7 @@ export Conn.Client(h: &Heap, io: Io, conn: net.Conn into h, l: Limits): Error!Bo
     onerr rd.Free(a)
     var wr := try WriteState.New(a)
     onerr wr.Free(a)
-    party_count := 1 + 2 * lim.streams
+    party_count := 1 + 2 * TableCap(lim.streams)
     var st := try NewState(a, lim, true, party_count, now)
     onerr st.Free(a)
     var parties := HeapList[sync.Notify].New(a)
@@ -292,7 +297,7 @@ SanitizeLimits(l: Limits): Limits {
 }
 
 NewState(a: &Alloc, lim: Limits, is_client: bool, party_count: int, now: time.Instant): OutOfMemory!State {
-    var streams := try StreamTable.New(a, lim.streams)
+    var streams := try StreamTable.New(a, TableCap(lim.streams))
     onerr streams.Free(a)
     var token := try lead.Token.New(a, party_count)
     onerr token.Free(a)
@@ -325,6 +330,7 @@ NewState(a: &Alloc, lim: Limits, is_client: bool, party_count: int, now: time.In
         writer_done: false,
         reader_done: false,
         drive_idle_since: some(now),
+        drive_idle_limit: core.DurationOf(0),
         drive_stop: false,
     )
 }
@@ -358,7 +364,7 @@ export Conn.Usable(&self): bool {
     g := self.Core().st.Lock(nc).Must()
     st := g.Ref()
     cap := EffectiveMaxStreams(&st.peer_settings, self.lim.streams)
-    ok := st.fault.IsNone() && !st.goaway_recvd && st.next_stream_id <= MaxStreamId && st.streams.active < cap
+    ok := st.fault.IsNone() && !st.goaway_recvd && st.next_stream_id <= MaxStreamId && st.streams.open < cap
     g.Unlock()
     return ok
 }
@@ -427,13 +433,13 @@ ResetStreamSlot(st: mut State, idx: int, gen_: u32, code: u32, admitted_ids: mut
     }
     sid := slot.id
     slot.owed_reset = some(code)
-    slot.state = StClosed
     slot.progress.Idle()
     reserve := slot.admit_reserve
     was_admitted := slot.admitted
     slot.admit_reserve = 0
     slot.admitted = false
     st.reset_set.Add(sid)
+    st.streams.CloseSlot(idx)
     if reserve > 0 {
         if was_admitted {
             return st.admission.Return(reserve, admitted_ids)
@@ -537,11 +543,35 @@ EnqueueOwedStream(st: mut State, idx: int) {
     slot.owed_next = -1
     if st.owed.stream_tail >= 0 {
         prev := st.owed.stream_tail
+        slot.owed_prev = prev
         st.streams.slots.ItemsMut()[prev].owed_next = idx
         st.owed.stream_tail = idx
     } else {
+        slot.owed_prev = -1
         st.owed.stream_head = idx
         st.owed.stream_tail = idx
+    }
+}
+
+UnlinkOwedStream(st: mut State, idx: int) {
+    slot := mut st.streams.slots.ItemsMut()[idx]
+    if !slot.in_owed {
+        return
+    }
+    pv := slot.owed_prev
+    nx := slot.owed_next
+    slot.in_owed = false
+    slot.owed_prev = -1
+    slot.owed_next = -1
+    if pv >= 0 {
+        st.streams.slots.ItemsMut()[pv].owed_next = nx
+    } else {
+        st.owed.stream_head = nx
+    }
+    if nx >= 0 {
+        st.streams.slots.ItemsMut()[nx].owed_prev = pv
+    } else {
+        st.owed.stream_tail = pv
     }
 }
 

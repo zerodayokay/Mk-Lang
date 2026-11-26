@@ -171,7 +171,7 @@ ValidateResponseFields[F: fields.Field](a: &Alloc, wr: mut WriteState, status: i
 
 // ValidateRequestFields validates request pseudo-headers and fields before
 // allocating a stream id or mutating HPACK state.
-ValidateRequestFields[F: fields.Field](a: &Alloc, wr: mut WriteState, pseudo: &fields.Pseudo, list: []F, max_list: int): Error!int {
+ValidateRequestFields[F: fields.Field](a: &Alloc, wr: mut WriteState, pseudo: &fields.Pseudo, list: []F, max_list: ?int): Error!int {
     if pseudo.method.Len() == 0 || pseudo.scheme.Len() == 0 || pseudo.path.Len() == 0 {
         fail BadField
     }
@@ -188,8 +188,10 @@ ValidateRequestFields[F: fields.Field](a: &Alloc, wr: mut WriteState, pseudo: &f
     if pseudo.authority.Len() > 0 {
         list_size += fields.EntryOverhead + 10 + pseudo.authority.Len()
     }
-    if list_size > max_list {
-        fail TooLarge
+    if m := max_list {
+        if list_size > m {
+            fail TooLarge
+        }
     }
     var bound := wr.enc.StartBound()
     bound += wr.enc.FieldBound(":method".AsBytes(), pseudo.method.AsBytes())
@@ -212,8 +214,10 @@ ValidateRequestFields[F: fields.Field](a: &Alloc, wr: mut WriteState, pseudo: &f
             fail BadField
         }
         entry := fields.EntryOverhead + n.Len() + v.Len()
-        if entry > max_list - list_size {
-            fail TooLarge
+        if m := max_list {
+            if entry > m - list_size {
+                fail TooLarge
+            }
         }
         list_size += entry
         bound += wr.enc.FieldBound(n, v)
@@ -291,6 +295,8 @@ EmitOwed(a: &Alloc into st, wr: mut WriteState, st: mut State, wout: mut HeapLis
         try AppendFixedWindowUpdate(a, wout, 0, Trunc[u32](grant))
     }
     mf := st.peer_settings.max_frame
+    var deferred_rst := HeapList[(sid: u32, code: u32)].New(a)
+    onerr deferred_rst.Free(a)
     for st.owed.stream_head >= 0 {
         idx := st.owed.stream_head
         (sid, do_100, credit, rst, recycle) := PopOwedStreamItem(st, idx)
@@ -308,13 +314,21 @@ EmitOwed(a: &Alloc into st, wr: mut WriteState, st: mut State, wout: mut HeapLis
         }
         if code := rst {
             if sid != 0 {
-                try AppendFixedRst(a, wout, sid, code)
+                try deferred_rst.Push(a, (sid: sid, code: code))
             }
         }
         if recycle {
             st.streams.ReleaseSlot(idx, a)
         }
     }
+    if wr.cur.Len() > 0 {
+        try wout.Extend(a, wr.cur.Items())
+        wr.cur.Clear()
+    }
+    for dr in deferred_rst.Items() {
+        try AppendFixedRst(a, wout, dr.sid, dr.code)
+    }
+    deferred_rst.Free(a)
     for r in st.owed.resets.Items() {
         try AppendFixedRst(a, wout, r.stream, r.code)
     }
@@ -324,19 +338,13 @@ EmitOwed(a: &Alloc into st, wr: mut WriteState, st: mut State, wout: mut HeapLis
         st.owed.goaway = none
         st.owed.goaway_sent = true
     }
-    if wr.cur.Len() > 0 {
-        try wout.Extend(a, wr.cur.Items())
-        wr.cur.Clear()
-    }
 }
 
 PopOwedStreamItem(st: mut State, idx: int): (sid: u32, do_100: bool, credit: int, rst: ?u32, recycle: bool) {
     slot := mut st.streams.slots.ItemsMut()[idx]
-    st.owed.stream_head = slot.owed_next
-    if st.owed.stream_head < 0 {
-        st.owed.stream_tail = -1
-    }
+    nx := slot.owed_next
     slot.owed_next = -1
+    slot.owed_prev = -1
     slot.in_owed = false
     sid := slot.id
     do_100 := slot.owed_100
@@ -348,6 +356,12 @@ PopOwedStreamItem(st: mut State, idx: int): (sid: u32, do_100: bool, credit: int
     recycle := slot.state == StClosed && slot.refs == 0
     if rst.IsSome() || slot.state == StClosed || slot.state == StHalfRemote {
         credit = 0
+    }
+    st.owed.stream_head = nx
+    if nx >= 0 {
+        st.streams.slots.ItemsMut()[nx].owed_prev = -1
+    } else {
+        st.owed.stream_tail = -1
     }
     return (sid: sid, do_100: do_100, credit: credit, rst: rst, recycle: recycle)
 }
@@ -392,9 +406,10 @@ Conn.WriteTurnLocked(&self, io: Io, close_mode: bool): Error!bool {
     wg.Unlock()
     var write_err: ?Error = none
     var expired := false
-    scope s := io.Scope() {
+    wio := if close_mode { io } else { nc }
+    scope s := wio.Scope() {
         s.CancelAfter(limit)
-        self.NetConn().WriteAll(io, wout.Items()) else e {
+        self.NetConn().WriteAll(wio, wout.Items()) else e {
             write_err = some(e)
             canceled := match e {
                 Canceled { true }

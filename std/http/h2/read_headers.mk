@@ -122,7 +122,7 @@ Conn.DispatchServerHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         }
     } else {
         st0.highest_peer_id = stream
-        if st0.streams.active >= self.lim.streams {
+        if st0.streams.open >= self.lim.streams {
             mode = 4
         }
     }
@@ -191,6 +191,7 @@ Conn.DispatchServerHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
                     st.last_processed_id = tslot.id
                 }
                 tslot.srv_dispatched = true
+                tslot.refs = 1
             }
         }
         if !ok {
@@ -310,10 +311,14 @@ Conn.DispatchServerHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
     var sg := self.Core().st.Lock(nc).Must()
     st := mut *sg.Mut()
     init_recv := if st.our_settings_acked || self.lim.window >= InitialWindow { self.lim.window } else { InitialWindow }
-    oidx := st.streams.AllocSlot(a, stream, st.peer_settings.initial_window, init_recv, self.lim.window) else oe {
-        sg.Unlock()
-        head_blk.Free(a)
-        fail oe
+    oidx := if st.streams.open >= self.lim.streams {
+        none
+    } else {
+        st.streams.AllocSlot(a, stream, st.peer_settings.initial_window, init_recv, self.lim.window) else oe {
+            sg.Unlock()
+            head_blk.Free(a)
+            fail oe
+        }
     }
     idx := oidx else {
         sg.Unlock()
@@ -382,7 +387,7 @@ SetupServerSlotFields(a: &Alloc into st, st: mut State, idx: int, stream: u32, c
         admitted = try st.admission.Ask(a, stream, reserve)
     }
     slot := mut st.streams.slots.ItemsMut()[idx]
-    slot.refs = 1
+    slot.refs = if end_stream { 1 } else { 0 }
     slot.content_length = cl_val
     slot.head_method = is_head
     slot.expect_100 = expect_100
@@ -523,8 +528,9 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
             }
             if ok {
                 slot.cli_eof = true
-                slot.state = if slot.state == StHalfLocal { StClosed } else { StHalfRemote }
-                if slot.state == StClosed && slot.refs == 0 && !slot.in_owed {
+                st.streams.EndRemote(idx)
+                slot2 := &st.streams.slots.Items()[idx]
+                if slot2.state == StClosed && slot2.refs == 0 && !slot2.in_owed {
                     st.streams.ReleaseSlot(idx, a)
                 }
             }
@@ -613,8 +619,8 @@ MarkClientHeadTooLarge(st: mut State, idx: int, stream: u32) {
     slot := mut st.streams.slots.ItemsMut()[idx]
     slot.cli_head_too_large = true
     slot.owed_reset = some(Cancel)
-    slot.state = StClosed
     slot.progress.Idle()
+    st.streams.CloseSlot(idx)
     st.reset_set.Add(stream)
     EnqueueOwedStream(st, idx)
 }
@@ -649,6 +655,6 @@ StoreClientHead(a: &Alloc into st, st: mut State, idx: int, blk_bytes: int, stat
     slot.content_length = cl
     if end_stream {
         slot.cli_eof = true
-        slot.state = if slot.state == StHalfLocal { StClosed } else { StHalfRemote }
+        st.streams.EndRemote(idx)
     }
 }

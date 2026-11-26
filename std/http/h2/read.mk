@@ -249,13 +249,13 @@ MarkSlotReset(st: mut State, idx: int, code: u32, admitted_ids: mut []u32): int 
     sid := slot.id
     slot.owed_reset = some(code)
     slot.reset = some(code)
-    slot.state = StClosed
     slot.progress.Idle()
     reserve := slot.admit_reserve
     was_admitted := slot.admitted
     slot.admit_reserve = 0
     slot.admitted = false
     st.reset_set.Add(sid)
+    st.streams.CloseSlot(idx)
     if reserve > 0 {
         if was_admitted {
             return st.admission.Return(reserve, admitted_ids)
@@ -643,13 +643,17 @@ Conn.HandleGoaway(&self, nc: Io, last: u32, code: u32) {
     st.goaway_code = code
     if self.is_client {
         for i in 0..st.streams.slots.Len() {
+            var close_it := false
             var recycle := false
             slot := mut st.streams.slots.ItemsMut()[i]
             if slot.state != StIdle && slot.state != StClosed && Unprocessed(slot.id, st.goaway_last) {
                 slot.unprocessed = true
-                slot.state = StClosed
                 slot.progress.Idle()
+                close_it = true
                 recycle = slot.refs == 0 && !slot.in_owed
+            }
+            if close_it {
+                st.streams.CloseSlot(i)
             }
             if recycle {
                 st.streams.ReleaseSlot(i, a)
@@ -662,7 +666,7 @@ Conn.HandleGoaway(&self, nc: Io, last: u32, code: u32) {
 
 CheckSlotWindowUpdate(st: mut State, idx: int, increment: u32, now: time.Instant): Violation!int {
     slot := mut st.streams.slots.ItemsMut()[idx]
-    if slot.state == StClosed || slot.state == StHalfRemote {
+    if slot.state == StClosed || slot.state == StHalfLocal {
         return 0
     }
     if slot.send_gate.Charge(int(increment)) {
@@ -794,25 +798,35 @@ ApplyRstStream(st: mut State, idx: int, code: u32, is_client: bool): (recycle: b
     sid := slot.id
     if is_client && code == NoError && slot.cli_head_ready && slot.cli_eof {
         slot.send_stopped = true
-        slot.state = StClosed
         slot.progress.Idle()
     } else {
         slot.reset = some(code)
-        slot.state = StClosed
         slot.progress.Idle()
     }
+    st.streams.CloseSlot(idx)
+    var unlink_owed := false
+    slot2 := mut st.streams.slots.ItemsMut()[idx]
     var admitted_ids: [16]u32 = [0; 16]
     var admitted_n := 0
-    if slot.admit_reserve > 0 {
-        if slot.admitted {
-            admitted_n = st.admission.Return(slot.admit_reserve, mut admitted_ids[..])
+    if slot2.admit_reserve > 0 {
+        if slot2.admitted {
+            admitted_n = st.admission.Return(slot2.admit_reserve, mut admitted_ids[..])
         } else {
             st.admission.Cancel(sid)
         }
-        slot.admit_reserve = 0
-        slot.admitted = false
+        slot2.admit_reserve = 0
+        slot2.admitted = false
     }
-    return (recycle: slot.refs == 0 && !slot.in_owed, admitted_n: admitted_n, admitted_ids: admitted_ids)
+    if !is_client && slot2.in_owed && slot2.owed_reset.IsNone() {
+        slot2.owed_100 = false
+        slot2.owed_credit = 0
+        unlink_owed = true
+    }
+    if unlink_owed {
+        UnlinkOwedStream(st, idx)
+    }
+    slot3 := &st.streams.slots.Items()[idx]
+    return (recycle: slot3.refs == 0 && !slot3.in_owed, admitted_n: admitted_n, admitted_ids: admitted_ids)
 }
 
 CheckDataSlotInner(st: mut State, idx: int, data_len: int, wire_len: int, end: bool, is_client: bool, body_limit: int): (rc: int, gen_: u32) {
@@ -837,8 +851,9 @@ CheckDataSlotInner(st: mut State, idx: int, data_len: int, wire_len: int, end: b
         var eof_recycle := false
         if end {
             slot.cli_eof = true
-            slot.state = if slot.state == StHalfLocal { StClosed } else { StHalfRemote }
-            eof_recycle = slot.state == StClosed && slot.refs == 0 && !slot.in_owed
+            st.streams.EndRemote(idx)
+            slot2 := &st.streams.slots.Items()[idx]
+            eof_recycle = slot2.state == StClosed && slot2.refs == 0 && !slot2.in_owed
         }
         return (rc: if eof_recycle { 7 } else { 6 }, gen_: sgen)
     }
@@ -859,6 +874,7 @@ CheckDataSlotInner(st: mut State, idx: int, data_len: int, wire_len: int, end: b
             st.last_processed_id = slot.id
         }
         slot.srv_dispatched = true
+        slot.refs = 1
     }
     return (rc: 0, gen_: sgen)
 }
@@ -879,7 +895,6 @@ CheckDataSlot(a: &Alloc into st, st: mut State, idx: int, data: []u8, wire_len: 
 
 ReleaseAdmissionOn413(st: mut State, idx: int, stream: u32, end: bool): (admitted_n: int, admitted_ids: [16]u32) {
     slot := mut st.streams.slots.ItemsMut()[idx]
-    slot.state = StClosed
     slot.progress.Idle()
     var admitted_ids: [16]u32 = [0; 16]
     var admitted_n := 0
@@ -896,6 +911,7 @@ ReleaseAdmissionOn413(st: mut State, idx: int, stream: u32, end: bool): (admitte
         slot.owed_reset = some(NoError)
         st.reset_set.Add(stream)
     }
+    st.streams.CloseSlot(idx)
     return (admitted_n: admitted_n, admitted_ids: admitted_ids)
 }
 
@@ -914,6 +930,7 @@ Conn.HandleData(&self, nc: Io, stream: u32, data: []u8, padded: int, end: bool, 
     inc := st.conn_recv_credit.Owed()
     if inc > 0 {
         st.owed.AddConnCredit(inc)
+        st.conn_recv_win.Grow(inc) else {}
         wake_writer = true
     }
     if IsIdleStream(&*st, self.is_client, stream) {
@@ -996,6 +1013,17 @@ Conn.HandleData(&self, nc: Io, stream: u32, data: []u8, padded: int, end: bool, 
         }
         self.SendInlineStatus(nc, stream, 413, true) else {}
         return
+    }
+    if self.is_client && padded > 0 {
+        slot := mut st.streams.slots.ItemsMut()[idx]
+        slot.recv_credit.Buffered(padded)
+        sinc := slot.recv_credit.Owed()
+        if sinc > 0 && slot.state != StClosed && slot.state != StHalfRemote {
+            slot.owed_credit += sinc
+            slot.recv_win.Grow(sinc) else {}
+            EnqueueOwedStream(st, idx)
+            wake_writer = true
+        }
     }
     sg.Unlock()
     if self.is_client {

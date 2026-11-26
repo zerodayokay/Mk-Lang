@@ -139,6 +139,7 @@ linear view struct Stream {
     dribble_since: ?time.Instant
     in_owed: bool
     owed_next: int
+    owed_prev: int
     owed_credit: int
     owed_reset: ?u32
     owed_100: bool
@@ -180,6 +181,7 @@ Stream.New(a: &Alloc, next_free: int): Stream {
         dribble_since: none,
         in_owed: false,
         owed_next: -1,
+        owed_prev: -1,
         owed_credit: 0,
         owed_reset: none,
         owed_100: false,
@@ -232,6 +234,7 @@ linear view struct StreamTable {
     cap_limit: int
     free_head: int
     active: int
+    open: int
 }
 
 HashId(id: u32, mask: int): int {
@@ -261,7 +264,7 @@ StreamTable.New(a: &Alloc, limit: int): OutOfMemory!StreamTable {
     for _ in 0..map_cap {
         try map.Push(a, IdEntry(id: IdEmpty, idx: -1))
     }
-    return StreamTable(slots: slots, map: map, map_used: 0, cap_limit: lim, free_head: 0, active: 0)
+    return StreamTable(slots: slots, map: map, map_used: 0, cap_limit: lim, free_head: 0, active: 0, open: 0)
 }
 
 impl Free for StreamTable {
@@ -411,6 +414,9 @@ StreamTable.AllocSlot(mut self, a: &Alloc into self, id: u32, send_init: int, re
     s.owed_credit = 0
     s.owed_reset = none
     s.owed_100 = false
+    s.in_owed = false
+    s.owed_next = -1
+    s.owed_prev = -1
     s.admitted = false
     s.admitted_win = 0
     s.admit_reserve = 0
@@ -430,7 +436,36 @@ StreamTable.AllocSlot(mut self, a: &Alloc into self, id: u32, send_init: int, re
     s.cli_head_cl = none
     s.cli_eof = false
     self.active += 1
+    self.open += 1
     return some(idx)
+}
+
+StreamTable.CloseSlot(mut self, idx: int) {
+    s := mut self.slots.ItemsMut()[idx]
+    if s.state != StIdle && s.state != StClosed {
+        s.state = StClosed
+        self.open -= 1
+    }
+}
+
+StreamTable.EndLocal(mut self, idx: int) {
+    s := mut self.slots.ItemsMut()[idx]
+    if s.state == StHalfRemote {
+        s.state = StClosed
+        self.open -= 1
+    } else if s.state == StOpen {
+        s.state = StHalfLocal
+    }
+}
+
+StreamTable.EndRemote(mut self, idx: int) {
+    s := mut self.slots.ItemsMut()[idx]
+    if s.state == StHalfLocal {
+        s.state = StClosed
+        self.open -= 1
+    } else if s.state == StOpen {
+        s.state = StHalfRemote
+    }
 }
 
 StreamTable.AppendClientData(mut self, a: &Alloc into self, idx: int, data: []u8): OutOfMemory!void {
@@ -510,6 +545,9 @@ StreamTable.ReleaseSlot(mut self, idx: int, a: &Alloc) {
     s.gen_ +%= 1
     if s.gen_ == 0 {
         s.gen_ = 1
+    }
+    if s.state != StIdle && s.state != StClosed {
+        self.open -= 1
     }
     s.state = StIdle
     s.next_free = self.free_head

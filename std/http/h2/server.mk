@@ -321,7 +321,7 @@ export Conn.Respond[F: fields.Field](&self, io: Io, s: StreamRef, status: int, l
     }
     sid := slot.id
     if end {
-        slot.state = if slot.state == StHalfRemote { StClosed } else { StHalfLocal }
+        st.streams.EndLocal(s.index)
     }
     sg.Unlock()
     blen := EncodeResponseBlock(a, wr, status, list, bound) else e {
@@ -424,8 +424,9 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
             send_empty_end = true
             slot.progress.Idle()
             slot.dribble_since = none
-            slot.state = if slot.state == StHalfRemote { StClosed } else { StHalfLocal }
-            if self.is_client && slot.state == StClosed && slot.refs == 0 && !slot.in_owed {
+            st.streams.EndLocal(s.index)
+            slot2 := &st.streams.slots.Items()[s.index]
+            if self.is_client && slot2.state == StClosed && slot2.refs == 0 && !slot2.in_owed {
                 st.streams.ReleaseSlot(s.index, a)
             }
         } else {
@@ -466,7 +467,7 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
                 is_end := end && (off + k == data.Len())
                 if is_end {
                     slot.progress.Idle()
-                    slot.state = if slot.state == StHalfRemote { StClosed } else { StHalfLocal }
+                    st.streams.EndLocal(s.index)
                 }
                 // Append DATA frame inside wr+st lock.
                 d_off := wr.cur.Len()
@@ -476,15 +477,16 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
                     fail oe
                 }
                 _ = WriteData(mut wr.cur.ItemsMut()[d_off..d_off + 9 + k], sid, data[off..off + k], is_end).Must()
-                if is_end && self.is_client && slot.state == StClosed && slot.refs == 0 && !slot.in_owed {
+                slot2 := &st.streams.slots.Items()[s.index]
+                if is_end && self.is_client && slot2.state == StClosed && slot2.refs == 0 && !slot2.in_owed {
                     st.streams.ReleaseSlot(s.index, a)
                 }
             } else {
                 slot.progress.Pending(now)
                 if slot.progress.Starved(now, self.lim.write_limit, ProgressFloor) {
                     slot.owed_reset = some(Cancel)
-                    slot.state = StClosed
                     slot.progress.Idle()
+                    st.streams.CloseSlot(s.index)
                     st.reset_set.Add(sid)
                     if !self.is_client {
                         _ = st.reset_bucket.Take(now)
@@ -590,10 +592,11 @@ DoneSlotUpdate(
     was_open := slot.state != StClosed
     if was_open {
         slot.owed_reset = some(Cancel)
-        slot.state = StClosed
         slot.progress.Idle()
+        st.streams.CloseSlot(idx)
     }
-    release := slot.state == StClosed && slot.refs == 0 && !slot.in_owed
+    slot2 := &st.streams.slots.Items()[idx]
+    release := slot2.state == StClosed && slot2.refs == 0 && !slot2.in_owed
     return (matched: true, sid: sid, admit_reserve: reserve, admitted: admitted, was_open: was_open, release: release)
 }
 
@@ -626,7 +629,7 @@ export Conn.Done(&self, s: StreamRef, var head: fields.FieldBlock, var body: Hea
             EnqueueOwedStream(st, s.index)
             wake_writer = true
         }
-        if release {
+        if !was_open && release {
             st.streams.ReleaseSlot(s.index, a)
         }
     }
@@ -634,12 +637,4 @@ export Conn.Done(&self, s: StreamRef, var head: fields.FieldBlock, var body: Hea
     if wake_writer {
         core_.wr_wake.NotifyOne()
     }
-}
-
-Conn.WaitWriteTurnOrSpace(&self, io: Io, idx: int): Error!void {
-    try self.Core().wr_space_wake.Wait(io)
-}
-
-Conn.WaitSendWindow(&self, io: Io, idx: int, wait_ns: i64): Error!void {
-    try self.Core().wr_space_wake.Wait(io)
 }

@@ -257,6 +257,81 @@ Hh2RunServer(sys: &System, w: mut Writer, input: []u8): WriteError|OutOfMemory!v
     try w.Str("ok server\n")
 }
 
+Hh2CliDriveTask(io: Io, cli: &h2.Conn) {
+    cli.Drive(io, core.DurationOf(20_000_000)) else {}
+}
+
+Hh2CliReqTask(io: Io, h: &Heap, cli: &h2.Conn) {
+    p := fields.Pseudo(method: "GET", scheme: "https", authority: "example.com", path: "/")
+    var hs: [0]Hh2Field = []
+    ms := cli.TryOpen(io, &p, hs[..], true) else { return }
+    sr := ms else { return }
+    var ar := Arena.New(h) else {
+        cli.Release(sr)
+        return
+    }
+    defer ar.Free()
+    _ = cli.Head(&ar, io, sr) else {
+        cli.Release(sr)
+        return
+    }
+    var buf: [512]u8 = [0; 512]
+    for _ in 0..8 {
+        n := cli.Read(io, sr, mut buf[..]) else { break }
+        if n == 0 {
+            break
+        }
+    }
+    cli.Release(sr)
+}
+
+Hh2RunClient(sys: &System, w: mut Writer, input: []u8): WriteError|OutOfMemory!void {
+    if input.Len() < 1 {
+        try w.Str("short\n")
+        return
+    }
+    a := sys.heap.Alloc()
+    (a: srv_c, b: cli_c) := try pipe.ConnPair(sys.heap, 16384)
+    lim := h2.Limits(
+        streams: 8,
+        window: 65535,
+        header_bytes: 1024,
+        body_bytes: 4096,
+        write_limit: core.DurationOf(100_000_000),
+        close_limit: core.DurationOf(50_000_000),
+        idle_limit: core.DurationOf(20_000_000),
+    )
+    cli_box := h2.Conn.Client(sys.heap, sys.io, cli_c, lim) else {
+        srv_c.Abandon()
+        cli_c.Abandon()
+        try w.Str("err open\n")
+        return
+    }
+    scope s := sys.io.Scope() {
+        s.CancelAfter(core.DurationOf(200_000_000))
+        s.go Hh2SrvDrainTask(sys.io, &srv_c)
+        if (input[0] & 2) != 0 {
+            s.go Hh2CliDriveTask(sys.io, cli_box.Ref())
+        } else {
+            s.go Hh2CliReqTask(sys.io, sys.heap, cli_box.Ref())
+        }
+        if (input[0] & 1) == 0 {
+            var sbuf: [64]u8 = [0; 64]
+            init_s := h2.InitialSettings
+            sn := h2.WriteSettings(mut sbuf[..], &init_s).Must()
+            an := h2.WriteSettingsAck(mut sbuf[sn..]).Must()
+            srv_c.WriteAll(sys.io, sbuf[0..sn + an]) else {}
+        }
+        if input.Len() > 1 {
+            srv_c.WriteAll(sys.io, input[1..]) else {}
+        }
+        srv_c.Shutdown(sys.io, net.Shutdown.Write) else {}
+    }
+    srv_c.Abandon()
+    cli_box.Take(a).Abandon()
+    try w.Str("ok client\n")
+}
+
 /// Serves HTTP/2 frame and server fuzz inputs on standard input until EOF.
 export H2FuzzMain(sys: &System): WriteError|OutOfMemory|ReadError|Utf8Error|ParseError!void {
     var inp := sys.Stdin()
@@ -268,10 +343,10 @@ export H2FuzzMain(sys: &System): WriteError|OutOfMemory|ReadError|Utf8Error|Pars
         if k == 0 {
             return
         }
-        var is_srv := false
+        var mode: u8 = 0
         var start := 0
-        if k >= 2 && head[0] == b'S' {
-            is_srv = true
+        if k >= 2 && (head[0] == b'S' || head[0] == b'C') {
+            mode = head[0]
             start = 1
         }
         line := try str.From(head[start..k - 1])
@@ -279,8 +354,10 @@ export H2FuzzMain(sys: &System): WriteError|OutOfMemory|ReadError|Utf8Error|Pars
         got := try inp.ReadAll(mut data[0..n])
         var ar := try Arena.New(sys.heap)
         defer ar.Free()
-        if is_srv {
+        if mode == b'S' {
             try Hh2RunServer(sys, mut out, data[0..got])
+        } else if mode == b'C' {
+            try Hh2RunClient(sys, mut out, data[0..got])
         } else {
             try Hh2Run(&ar, mut out, data[0..got])
         }
@@ -447,6 +524,31 @@ func FuzzStdHttpH2_Server(f *testing.F) {
 		for _, l := range hh2AskMode(t, "S", in) {
 			if l != "short" && l != "ok server" && l != "err open" {
 				t.Fatalf("server input %x: answer %q", in, l)
+			}
+		}
+	})
+}
+
+var hh2CliSeeds = []string{
+	"00 000003 01 05 00000001 88",                                                       // 200 END_STREAM
+	"00 000002 01 04 00000001 0803313030 000003 01 05 00000001 88",                      // 100 then 200
+	"00 00000c 05 04 00000001 00000002 82868441",                                        // PUSH_PROMISE after ACK
+	"02 000008 06 00 00000000 0102030405060708 000008 07 00 00000000 00000001 00000000", // Drive PING + GOAWAY
+	"01 485454502f312e3120323030",                                                       // HTTP/1.1 garbage
+}
+
+func FuzzStdHttpH2_Client(f *testing.F) {
+	f.Cleanup(hh2Stop)
+	for _, s := range hh2CliSeeds {
+		f.Add(hh2Unhex(s))
+	}
+	f.Fuzz(func(t *testing.T, in []byte) {
+		if len(in) > 32768 {
+			in = in[:32768]
+		}
+		for _, l := range hh2AskMode(t, "C", in) {
+			if l != "short" && l != "ok client" && l != "err open" {
+				t.Fatalf("client input %x: answer %q", in, l)
 			}
 		}
 	})
