@@ -141,3 +141,43 @@ func TestCImport_ShimUnusedMacro(t *testing.T) {
 		t.Errorf("shim:\n%s", ci.shim)
 	}
 }
+
+// TestCImport_ShimHeaderImplementation: a header that defines symbols under
+// a preprocessor define (such as X_IMPLEMENTATION) and also has an unused
+// static inline still compiles those definitions into the kept shim when no
+// inline wrapper is used.
+func TestCImport_ShimHeaderImplementation(t *testing.T) {
+	needTools(t)
+	h := "extern int h_g;\nint h_fn(void);\nstatic inline int h_unused(void) { return 1; }\n#ifdef H_IMPLEMENTATION\nint h_g = 7;\nint h_fn(void) { return 11; }\n#endif\n"
+	files := cBin("shi", h, "", cMain("", "        n := k.h_g + k.h_fn()\n", "{n}", "n: n"))
+	files["pkg.mk"] = strings.Replace(files["pkg.mk"], "defines: []", `defines: ["H_IMPLEMENTATION"]`, 1)
+	dir := writeTree(t, files)
+	out, ci := shimBuild(t, dir, t.TempDir())
+	if out != "18\n" {
+		t.Errorf("printed %q, want 18", out)
+	}
+	if !strings.Contains(ci.shim, "#define H_IMPLEMENTATION 1") || strings.Contains(ci.shim, "__mk_inline_") {
+		t.Errorf("shim:\n%s", ci.shim)
+	}
+}
+
+// TestCImport_ShimInitGuid: a header that defines selectany GUID constants
+// under INITGUID still compiles them into the kept shim when no inline
+// wrapper is used.
+func TestCImport_ShimInitGuid(t *testing.T) {
+	needTools(t)
+	h := "typedef struct K_GUID { unsigned int data1; unsigned short data2; } K_GUID;\n" +
+		"#ifdef INITGUID\n#define K_DEFINE_GUID(name, l, w) extern const K_GUID __declspec(selectany) name = { l, w }\n" +
+		"#else\n#define K_DEFINE_GUID(name, l, w) extern const K_GUID name\n#endif\n" +
+		"K_DEFINE_GUID(IID_K, 42, 7);\nstatic inline int k_unused(void) { return 1; }\n"
+	files := cBin("sig", h, "", cMain("", "        d := k.IID_K.data1\n", "{d}", "d: d"))
+	files["pkg.mk"] = strings.Replace(files["pkg.mk"], "defines: []", `defines: ["INITGUID"]`, 1)
+	dir := writeTree(t, files)
+	out, ci := shimBuild(t, dir, t.TempDir())
+	if out != "42\n" {
+		t.Errorf("printed %q, want 42", out)
+	}
+	if !strings.Contains(ci.shim, "#define INITGUID 1") || strings.Contains(ci.shim, "__mk_inline_") {
+		t.Errorf("shim:\n%s", ci.shim)
+	}
+}

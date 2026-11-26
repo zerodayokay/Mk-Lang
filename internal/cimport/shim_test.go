@@ -47,8 +47,11 @@ func TestCImport_KeptShim(t *testing.T) {
 			t.Errorf("kept shim has %q:\n%s", bad, got)
 		}
 	}
-	if s := KeptShim(imports, fs, Want{"a": {}, "b": {}}); s != "" {
-		t.Errorf("nothing used, shim %q", s)
+	if s := KeptShim(imports, fs, Want{"a": {}, "b": {}}); !strings.Contains(s, "#define A_X 1\n#include <a.h>\n#include <b.h>\n") || strings.Contains(s, "__mk_inline_") || strings.Contains(s, "__mk_macro_") {
+		t.Errorf("nothing used, expected defines+includes with no wrappers, got %q", s)
+	}
+	if s := KeptShim(imports, []ShimFunc{}, Want{"a": {}}); s != "" {
+		t.Errorf("no shim functions, expected empty shim, got %q", s)
 	}
 	if s := KeptShim(imports, fs, Want{"b": {"b_in": true}}); !strings.Contains(s, "int b_in(void)") || strings.Contains(s, "a_in") {
 		t.Errorf("b_in named from b: %q", s)
