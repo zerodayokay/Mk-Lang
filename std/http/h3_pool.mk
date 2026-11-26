@@ -105,7 +105,8 @@ CloseH3(a: &Alloc, p: *H3Conn, io: Io, limit: time.Duration, code: u64) {
 // of a retired slot leaves. Indices remain stable while borrowed.
 Client.H3PutBack(&self, io: Io, idx: int, driver: bool, retire: bool): *H3Conn {
     nc := io.NoCancel()
-    var g := self.H3State().Must().pool.Lock(nc).Must()
+    state := self.H3State().Must()
+    var g := state.pool.Lock(nc).Must()
     s := mut (*g.Mut())[idx]
     if driver {
         s.driving = false
@@ -120,8 +121,7 @@ Client.H3PutBack(&self, io: Io, idx: int, driver: bool, retire: bool): *H3Conn {
         *s = EmptyH3Slot()
     }
     g.Unlock()
-    self.h3_wake.NotifyAll()
-    self.h3_wake.NotifyOne()
+    state.WakeClaims(io)
     return p
 }
 
@@ -233,14 +233,21 @@ DialH3Conn(h: &Heap, io: Io, lim: &ClientLimits, dialer: &net.MuxDialer, host: s
 struct H3ClientState {
     pool: Mutex[[16]H3Slot]
     routes: Mutex[[64]AltOrigin]
+    epoch: raw.Atomic[u32]
 }
 
 NewH3ClientState(): H3ClientState {
-    return H3ClientState(pool: Mutex[[16]H3Slot].New(NewH3Slots()), routes: Mutex[[64]AltOrigin].New([NoAltOrigin; 64]))
+    return H3ClientState(pool: Mutex[[16]H3Slot].New(NewH3Slots()), routes: Mutex[[64]AltOrigin].New([NoAltOrigin; 64]), epoch: raw.Atomic[u32].New(0))
+}
+
+// Keep a pool change visible to every task between checking and parking.
+H3ClientState.WakeClaims(&self, io: Io) {
+    _ = self.epoch.Add(1)
+    core.SyncWake(io, &self.epoch, true)
 }
 
 FreeH3ClientState(a: &Alloc, p: *H3ClientState) {
-    H3ClientState(pool, routes) := H3Take(a, p)
+    H3ClientState(pool, routes, epoch: _) := H3Take(a, p)
     _ = routes.Into()
     slots := pool.Into()
     for sl in &slots[..] {
@@ -265,7 +272,7 @@ Client.EnsureH3State(&self): OutOfMemory!&H3ClientState from self {
     a := self.heap.Alloc()
     state := NewH3ClientState()
     p := H3Store(a, state) else {
-        H3ClientState(pool, routes) := state
+        H3ClientState(pool, routes, epoch: _) := state
         _ = pool.Into()
         _ = routes.Into()
         fail OutOfMemory
@@ -293,7 +300,11 @@ Client.ClaimH3(&self, io: Io, key: Origin, host: str, port: int): Error!?H3Claim
     }
     state := try self.EnsureH3State()
     nc := io.NoCancel()
-    for self.H3Running() {
+    for {
+        epoch := state.epoch.Load()
+        if !self.H3Running() {
+            return none
+        }
         try CancelCheck(io)
         var g := state.pool.Lock(nc).Must()
         routes := self.H3Routes(io, &key, port)
@@ -336,7 +347,9 @@ Client.ClaimH3(&self, io: Io, key: Origin, host: str, port: int): Error!?H3Claim
         }
         if wait {
             g.Unlock()
-            try self.h3_wake.Wait(io)
+            if core.SyncWait(io, &state.epoch, epoch) {
+                fail Canceled
+            }
             continue
         }
         if empty < 0 || routes.n == 0 {
@@ -380,8 +393,7 @@ Client.ClaimH3(&self, io: Io, key: Origin, host: str, port: int): Error!?H3Claim
             *result = EmptyH3Slot()
         }
         finish.Unlock()
-        self.h3_wake.NotifyAll()
-        self.h3_wake.NotifyOne()
+        state.WakeClaims(io)
         if published {
             self.drive_wake.NotifyOne()
             return some(H3Claim(index: empty, conn: p))
@@ -393,5 +405,4 @@ Client.ClaimH3(&self, io: Io, key: Origin, host: str, port: int): Error!?H3Claim
         }
         return none
     }
-    return none
 }

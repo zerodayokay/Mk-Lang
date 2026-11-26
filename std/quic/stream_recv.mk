@@ -4,7 +4,7 @@
 // 32-gap cap unacknowledged.
 //
 // What: RecvState, OooSeg, OooBuf, and StreamRecv (New, Free, OnStream,
-// OnReset, Stop, Read, CanSendMaxStreamData, OnStopLost, IsTerminal).
+// OnReset, Stop, Read, CanSendMaxStreamData, OnStopLost, IsFinished).
 //
 // How: in-order bytes append directly to a ByteRing for O(1) streaming;
 // out-of-order bytes sit in OooBuf (one backing HeapList[u8] and a fixed
@@ -231,9 +231,10 @@ StreamRecv.Free(self, a: &Alloc) {
     ooo.Free(a)
 }
 
-// Reports whether the receive half has reached a terminal state (DataRead or ResetRead).
-StreamRecv.IsTerminal(&self): bool {
-    return self.state == RecvState.DataRead || self.state == RecvState.ResetRead
+// Reports whether no more bytes can arrive. A released stream need not be read.
+StreamRecv.IsFinished(&self): bool {
+    return self.state == RecvState.DataRecvd || self.state == RecvState.DataRead ||
+        self.state == RecvState.ResetRecvd || self.state == RecvState.ResetRead
 }
 
 // Processes a received STREAM frame (RFC 9000 3.2, 4.1, 4.5).

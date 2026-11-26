@@ -3,6 +3,9 @@
 // What: readiness before and after Stop, and cancellation while waiting.
 // How: start Drive in a scope and wait on the public client method.
 
+import std.core
+import std.time
+
 TestWaitDrivingTask(c: &Client, io: Io) {
     c.Drive(io).Must()
 }
@@ -29,6 +32,25 @@ test "WaitDriving is canceled when no Drive starts in its scope" (sys: &System) 
             err(Canceled) {}
             _ { Assert(false) }
         }
+    }
+}
+
+test "HTTP/3 Stop wakes every slot waiter even when it parks after the wake" (sys: &System) {
+    c := Client.New(sys.heap, DefaultClientLimits)
+    defer c.Close()
+    state := try c.EnsureH3State()
+    io := sys.io
+    var before: u32 = 0
+    scope driving := io.Scope() {
+        driving.go TestWaitDrivingTask(&c, io)
+        Assert(try c.WaitDriving(io))
+        before = state.epoch.Load()
+        c.Stop()
+    }
+    scope waiting := io.Scope() {
+        waiting.CancelAfter(time.Seconds(1))
+        Assert(!core.SyncWait(io, &state.epoch, before))
+        Assert(!core.SyncWait(io, &state.epoch, before))
     }
 }
 

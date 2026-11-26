@@ -289,6 +289,38 @@ test "RFC 9000 3.5: aborting a read sends STOP_SENDING until the stream is done"
     Assert(r3.frames == 0)
 }
 
+test "releasing a canceled stream returns credit after peer FIN or reset without another read" (sys: &System) {
+    h := sys.heap.Alloc()
+    var lim := T3PeerLimits()
+    lim.max_streams_bidi = 1
+    for scenario in 0..3 {
+        var srv := try Streams.New(h, false, &lim)
+        defer srv.Free(h)
+        try srv.OnStream(h, 0, 0, "abc".AsBytes(), scenario == 0)
+        id := srv.Accept(false).Must()
+        srv.Reset(id, 0)
+        srv.Stop(id, 0)
+        var out: [64]u8 = [0; 64]
+        var frames: [4]SentFrame = [T3DummyFrame(); 4]
+        sent := srv.Next(h, mut out[..], out.Len(), mut frames[..])
+        for f in &frames[0..sent.frames] {
+            srv.OnAcked(h, f)
+        }
+        srv.Release(h, id)
+        if scenario != 0 {
+            Assert(srv.map.Get(&id).IsSome() && !srv.max_streams_bidi_pending)
+            if scenario == 1 {
+                try srv.OnStream(h, id, 3, "de".AsBytes(), true)
+            } else {
+                try srv.OnReset(h, id, 0, 5)
+            }
+        }
+        Assert(srv.map.Get(&id).IsNone())
+        Assert(srv.max_streams_bidi_pending && srv.local_max_streams_bidi == 2)
+        Assert(srv.conn_flow.rx_total == (if scenario == 0 { u64(3) } else { u64(5) }))
+    }
+}
+
 test "RFC 9000 19.4, 19.5, 19.8, 19.10, 19.13: stream-state legality checks" (sys: &System) {
     h := sys.heap.Alloc()
     lim := T3PeerLimits()
