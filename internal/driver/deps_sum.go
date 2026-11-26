@@ -4,7 +4,8 @@
 //
 // What: pkgSum and sumLine (parsePkgSum, parseSumLine, get, check, add,
 // keep, sorted, text), checkSumURL, readPkgSum, writePkgSum, mergePkgSum
-// and writeFileAtomic.
+// and writeFileAtomic, and writeSameFile for a file many builds write with
+// the same bytes.
 //
 // How: one line per package version in the build list, test dependencies
 // included:
@@ -28,6 +29,7 @@
 package driver
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"net/url"
@@ -340,6 +342,34 @@ func writeFileAtomic(path string, data []byte) error {
 	}
 	return err
 }
+
+// writeSameFile makes the file p hold data unless it already does, and
+// reports whether this call wrote it. It is for a file that every writer
+// writes with the same bytes, such as a header in a directory named by
+// its content, when builds in this process and in others may write it at
+// once: each writes a temporary of its own and renames it over p, so a
+// reader never sees half the file. On Windows the rename fails while
+// another writer or a reader has p open, so a failed write is retried,
+// briefly, until p holds data, whoever wrote it.
+func writeSameFile(p string, data []byte) (bool, error) {
+	var err error
+	for try := 1; ; try++ {
+		if old, rerr := os.ReadFile(p); rerr == nil && bytes.Equal(old, data) {
+			return false, nil
+		}
+		if err = writeFileAtomic(p, data); err == nil {
+			return true, nil
+		}
+		if try == sameFileTries {
+			return false, err
+		}
+		time.Sleep(time.Duration(try) * time.Millisecond)
+	}
+}
+
+// sameFileTries bounds writeSameFile's attempts: their pauses add up to
+// about a second.
+const sameFileTries = 45
 
 // mergePkgSum writes s's lines into dir's pkg.sum under a lock file, adding
 // every line the file holds now that s lacks: a build writes only what it

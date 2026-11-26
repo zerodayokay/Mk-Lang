@@ -16,8 +16,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // WriteArchive writes out, a GNU archive of objs in order: the symbol
@@ -146,12 +148,38 @@ func WriteArchive(out string, objs []string) error {
 			b.WriteByte('\n')
 		}
 	}
-	tmp := out + ".tmp"
-	if err := os.WriteFile(tmp, b.Bytes(), 0o644); err != nil {
+	// A temporary of this write's own, so two builds writing out at once
+	// never write into one file. On Windows a rename over out fails while
+	// another build renames over it or reads it, so it is retried, briefly.
+	f, err := os.CreateTemp(filepath.Dir(out), "."+filepath.Base(out)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, out)
+	tmp := f.Name()
+	err = f.Chmod(0o644) // a library others may read, as os.WriteFile made it
+	if err == nil {
+		_, err = f.Write(b.Bytes())
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		for try := 1; ; try++ {
+			if err = os.Rename(tmp, out); err == nil || try == renameTries {
+				break
+			}
+			time.Sleep(time.Duration(try) * time.Millisecond)
+		}
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
+
+// renameTries bounds WriteArchive's renames: their pauses add up to about
+// a second.
+const renameTries = 45
 
 // namedData is a file's bytes and the name an error gives it.
 type namedData struct {

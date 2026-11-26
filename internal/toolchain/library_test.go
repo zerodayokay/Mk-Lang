@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -191,6 +192,32 @@ func TestLibraryStaticArchive(t *testing.T) {
 	if !bytes.HasPrefix(b, []byte("!<arch>\n/ ")) || !bytes.Contains(b, []byte("_start\x00")) || bytes.Contains(b, []byte("a-member-with-a-long-name")) || !bytes.Contains(b, []byte("o0001.o/        0 ")) {
 		// Members are named by index, never by file.
 		t.Errorf("archive layout: % .200q", b)
+	}
+	// Writers of one archive at once, as two builds of a package are,
+	// all succeed and leave the whole archive and no temporary.
+	shared := filepath.Join(t.TempDir(), "libsmoke.a")
+	for round := 0; round < 10; round++ {
+		var wg sync.WaitGroup
+		errs := make(chan error, 8)
+		for range 8 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs <- WriteArchive(shared, []string{other, smoke})
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		got, err := os.ReadFile(shared)
+		ents, _ := os.ReadDir(filepath.Dir(shared))
+		if err != nil || !bytes.Equal(got, b) || len(ents) != 1 {
+			t.Fatalf("round %d: the archive (%d bytes, %v) is not the one written alone, or temporaries are left: %d entries", round, len(got), err, len(ents))
+		}
 	}
 	dummy := compileLL(t, tl, triple, dir, "dummy", "@dummy = global i32 0\n")
 	exe := filepath.Join(dir, "smoke")
