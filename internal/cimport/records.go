@@ -4,7 +4,7 @@
 //
 // What: record, which binds a C record as a transparent Mk struct when its
 // layout matches (transparent) and as an opaque struct otherwise (opaque,
-// opaqueBits); pointerOnly and markSSE, which mark the records that may
+// opaqueBits, opaqueSpanBits); pointerOnly and markSSE, which mark the records that may
 // not be used by value; unalias, and signedOf for signed bitfields.
 //
 // How: a transparent struct's layout is checked against Clang's (natural,
@@ -13,7 +13,8 @@
 // Mk cannot express, is an opaque struct of the record's size and alignment
 // with an accessor pair per member, through std.raw: a member or a
 // bitfield unit the record's alignment does not align is loaded and stored
-// at align 1 (memberAccess).
+// at align 1 (memberAccess), and a bitfield no aligned unit inside the
+// record holds through its own bytes.
 
 package cimport
 
@@ -615,7 +616,8 @@ func (e *emitter) unalignedKind(f *field) string {
 // the smallest integer unit at an aligned offset that holds its bits,
 // read through std.raw (unaligned when the unit is wider than the
 // record's alignment), and set by a load, a mask and a store of the unit
-// (both align 1 in that case).
+// (both align 1 in that case). When no such unit fits in the record (a
+// 20-bit field at byte 3 of a 6-byte packed record), opaqueSpanBits.
 func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *nameScope) {
 	f := &d.fields[i]
 	fl := l.fields[i]
@@ -629,7 +631,7 @@ func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *name
 		}
 	}
 	if size == 0 {
-		e.skipped(d.imp, "bitfield of an opaque record")
+		e.opaqueSpanBits(d, name, l, i, sc)
 		return
 	}
 	ut := uintOf(size)
@@ -666,6 +668,59 @@ func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *name
 		name, s, vt, f.name, ut, off, name, mptr, store, load, clear, val, mask, shift)
 }
 
+// opaqueSpanBits writes the accessor pair of bitfield i of an opaque
+// record that no aligned unit inside the record holds: its bytes alone
+// (from its first bit's byte to its last's) are copied into a u64 and
+// back at align 1, so neither accessor touches a byte of another member
+// (a wider unit at an unaligned start would load and store the
+// neighbour's bytes, which C's own code does not). The getter's type is
+// the smallest unsigned integer that holds those bytes, or the field's
+// signed type. A field spanning more than 8 bytes (a 64-bit field off a
+// byte boundary) gets no accessor.
+func (e *emitter) opaqueSpanBits(d *decl, name string, l *recLayout, i int, sc *nameScope) {
+	f := &d.fields[i]
+	fl := l.fields[i]
+	lo, hi := fl.bit, fl.bit+int64(fl.width)
+	off, end := lo/8, (hi+7)/8
+	n := end - off
+	if n > 8 || end > l.size {
+		e.skipped(d.imp, "bitfield of an opaque record")
+		return
+	}
+	size := int64(1)
+	for size < n {
+		size *= 2
+	}
+	ut := uintOf(size)
+	shift := lo - off*8
+	mask := uint64(1)<<uint(fl.width) - 1
+	if fl.width >= 64 {
+		mask = ^uint64(0)
+	}
+	clear := ^(mask << uint(shift))
+	e.mods[d.imp].needRaw = true
+	w := &e.mods[d.imp].items
+	at := func(of string) string {
+		return fmt.Sprintf("raw.Offset(raw.PtrCast[%s, u8](%s(self)), %d)", name, of, off)
+	}
+	load := fmt.Sprintf("        var b := u64(0)\n        raw.Copy[u8](raw.PtrCast[u64, u8](raw.OfMut(mut b)), %s, %d)\n", at("raw.Of"), n)
+	g := sc.fresh(pascal(f.name), "Bits")
+	fmt.Fprintf(w, "\n// C: bitfield %s, %d bits at bit %d of its %d bytes at byte %d\n", f.name, fl.width, shift, n, off)
+	vt, read, val := ut, fmt.Sprintf("(b >> %d) & %#x", shift, mask), "u64(v)"
+	if size < 8 {
+		read = "Trunc[" + ut + "](" + read + ")"
+	}
+	if st := e.signedOf(f.t); st != "" {
+		vt, read, val = st, signedGet("b", 64, int(shift), fl.width, st), signedSet("v", st, "u64")
+	}
+	fmt.Fprintf(w, "export %s.%s(&self): %s {\n    unsafe \"the C bitfield %s is in the %d bytes at byte %d of %s\" {\n%s        return %s\n    }\n}\n",
+		name, g, vt, f.name, n, off, name, load, read)
+	set := strings.Replace(load, at("raw.Of"), "p", 1)
+	s := sc.fresh("Set"+pascal(f.name), "Bits")
+	fmt.Fprintf(w, "export %s.%s(mut self, v: %s) {\n    unsafe \"the C bitfield %s is in the %d bytes at byte %d of %s\" {\n        p := %s\n%s        b = (b & %#x) | ((%s & %#x) << %d)\n        raw.Copy[u8](p, raw.PtrCast[u64, u8](raw.Of(&b)), %d)\n    }\n}\n",
+		name, s, vt, f.name, n, off, name, at("raw.OfMut"), set, clear, val, mask, shift, n)
+}
+
 // signedOf is the Mk signed integer type a bitfield of declared type t
 // reads as, "" when t is unsigned: C reads a signed bitfield sign-extended
 // (C11 6.7.2.1). Plain char is u8 in a binding, so unsigned here.
@@ -680,6 +735,11 @@ func (e *emitter) signedOf(t *ctype) string {
 		m, _, _ = e.builtin(r.name)
 	case tEnum:
 		if d := e.tagDecl(r); d != nil {
+			if d.fixed != nil {
+				// Its fixed type's, through any typedef (enumInt spells
+				// an alias by its Mk name).
+				return e.signedOf(d.fixed)
+			}
 			m = e.enumInt(d)
 		}
 	}

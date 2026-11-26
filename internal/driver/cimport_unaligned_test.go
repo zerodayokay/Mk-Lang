@@ -23,8 +23,8 @@ import (
 // of wide (byte 4) overlaps value's top byte; B's signed top ends at the
 // top bit of its u32 unit; Q holds a float, a double, a pointer, a fn
 // pointer and, at even offsets of an align 1 record, a struct and an array
-// of align 2. Q's bitfield w only makes Q opaque (its unit straddles an
-// 8-byte line, so it has no accessors).
+// of align 2. Q's bitfield w only makes Q opaque (no aligned unit holds
+// it, so its accessors copy its own bytes).
 const unalignedHeader = `struct In { short a; char b; };
 #pragma pack(push, 1)
 struct P { unsigned char tag; int value; unsigned wide : 20; };
