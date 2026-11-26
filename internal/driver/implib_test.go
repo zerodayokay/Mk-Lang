@@ -227,3 +227,27 @@ func TestImplib_RealSDK(t *testing.T) {
 		}
 	}
 }
+
+func TestImplib_MalformedArchive(t *testing.T) {
+	badHeader := "!<arch>\n" + arHeader("m1", 2)
+	badHeader = badHeader[:len(badHeader)-2] + "XXab"
+	hugeSize := "!<arch>\n" + arHeader("m1", 0)[:48] + "1844674407`\n" + "ab"
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"negative BSD name", []byte("!<arch>\n" + arHeader("#1/-1", 4) + "abcd")},
+		{"oversized BSD name", []byte("!<arch>\n" + arHeader("#1/99", 4) + "abcd")},
+		{"negative long name", []byte("!<arch>\n" + arHeader("//", 4) + "a/\nb" + arHeader("/-1", 2) + "ab")},
+		{"oob long name", []byte("!<arch>\n" + arHeader("//", 4) + "a/\nb" + arHeader("/99", 2) + "ab")},
+		{"uint64 overflow size", []byte(hugeSize)},
+		{"truncated trailing header", []byte("!<arch>\n" + arHeader("m1", 2) + "ab" + "partial")},
+		{"bad header magic", []byte(badHeader)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := readImplib(tc.data); err == nil {
+				t.Fatalf("readImplib accepted malformed archive (%s)", tc.name)
+			}
+		})
+	}
+}

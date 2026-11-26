@@ -281,3 +281,31 @@ func TestSysview_Drop(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSysview_BoundsErrors(t *testing.T) {
+	// Corrupt fold table referencing an out-of-range item index must fail Open.
+	v := fakeViews()[0]
+	rawIdx := make([]byte, 12+4*2+4*2+8*1)
+	binary.LittleEndian.PutUint32(rawIdx[0:], 1) // nStr
+	binary.LittleEndian.PutUint32(rawIdx[4:], 1) // nItem
+	binary.LittleEndian.PutUint32(rawIdx[8:], 1) // nFold
+	binary.LittleEndian.PutUint32(rawIdx[12+4:], 0)
+	binary.LittleEndian.PutUint32(rawIdx[12+8+4:], 0)
+	binary.LittleEndian.PutUint32(rawIdx[12+8+8:], 0)     // fold strIdx=0
+	binary.LittleEndian.PutUint32(rawIdx[12+8+8+4:], 999) // fold itemIdx OOB
+	if (&Archive{}).index(rawIdx) {
+		t.Fatal("index accepted OOB fold item index")
+	}
+	if _, _, err := DropItems([]View{v}, map[string]map[int]string{"base": {-1: "neg"}}); err == nil {
+		t.Fatal("DropItems accepted negative item index")
+	}
+	badViews := fakeViews()
+	badViews[0].Items[0].Deps = []Ref{{View: -1, Item: 0}}
+	if _, _, err := DropItems(badViews, nil); err == nil {
+		t.Fatal("DropItems accepted negative Ref.View")
+	}
+	badViews[0].Items[0].Deps = []Ref{{View: 0, Item: 999}}
+	if _, _, err := DropItems(badViews, nil); err == nil {
+		t.Fatal("DropItems accepted out-of-range Ref.Item")
+	}
+}

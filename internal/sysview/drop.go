@@ -42,15 +42,21 @@ func DropItems(views []View, drop map[string]map[int]string) ([]View, []Dropped,
 	type ref struct{ v, i int }
 	target := func(v int, r Ref) (ref, error) {
 		if r.View == 0 {
+			if r.Item < 0 || r.Item >= len(views[v].Items) {
+				return ref{}, fmt.Errorf("sysview: view %s refers to item %d of %d", views[v].Meta.Name, r.Item, len(views[v].Items))
+			}
 			return ref{v, r.Item}, nil
 		}
 		req := views[v].Meta.Requires
-		if r.View > len(req) {
+		if r.View < 0 || r.View > len(req) {
 			return ref{}, fmt.Errorf("sysview: view %s refers to required view %d of %d", views[v].Meta.Name, r.View, len(req))
 		}
 		w, ok := byName[req[r.View-1]]
 		if !ok {
 			return ref{}, fmt.Errorf("sysview: view %s requires %s, which is not generated", views[v].Meta.Name, req[r.View-1])
+		}
+		if r.Item < 0 || r.Item >= len(views[w].Items) {
+			return ref{}, fmt.Errorf("sysview: view %s refers to %s item %d of %d", views[v].Meta.Name, req[r.View-1], r.Item, len(views[w].Items))
 		}
 		return ref{w, r.Item}, nil
 	}
@@ -84,6 +90,9 @@ func DropItems(views []View, drop map[string]map[int]string) ([]View, []Dropped,
 		}
 		slices.Sort(idx)
 		for _, i := range idx {
+			if i < 0 || i >= len(views[v].Items) {
+				return nil, nil, fmt.Errorf("sysview: view %s has no item %d to drop", n, i)
+			}
 			r := ref{v, i}
 			if _, done := why[r]; !done {
 				why[r] = drop[n][i]

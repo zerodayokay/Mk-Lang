@@ -100,8 +100,8 @@ func Open(data []byte) (*Archive, error) {
 		return nil, errCorrupt
 	}
 	if flags&flagFlateIndex != 0 {
-		raw, err := io.ReadAll(io.LimitReader(flate.NewReader(bytes.NewReader(idx)), maxChunk))
-		if err != nil {
+		raw, err := io.ReadAll(io.LimitReader(flate.NewReader(bytes.NewReader(idx)), maxChunk+1))
+		if err != nil || len(raw) > maxChunk {
 			return nil, errCorrupt
 		}
 		idx = raw
@@ -125,9 +125,14 @@ func (a *Archive) index(idx []byte) bool {
 	if len(idx) < 12 {
 		return false
 	}
-	a.nStr = int(binary.LittleEndian.Uint32(idx))
-	a.nItem = int(binary.LittleEndian.Uint32(idx[4:]))
-	a.nFold = int(binary.LittleEndian.Uint32(idx[8:]))
+	nStr := binary.LittleEndian.Uint32(idx)
+	nItem := binary.LittleEndian.Uint32(idx[4:])
+	nFold := binary.LittleEndian.Uint32(idx[8:])
+	maxU := uint32(len(idx) / 4)
+	if nStr > maxU || nItem > maxU || nFold > maxU/2 {
+		return false
+	}
+	a.nStr, a.nItem, a.nFold = int(nStr), int(nItem), int(nFold)
 	r := &reader{b: idx[12:]}
 	a.strOff = r.take(4 * (a.nStr + 1))
 	a.itemOff = r.take(4 * (a.nItem + 1))
@@ -137,7 +142,15 @@ func (a *Archive) index(idx []byte) bool {
 	}
 	a.strs = r.take(int(a.u32(a.strOff, a.nStr)))
 	a.items = r.b
-	return !r.bad && int(a.u32(a.itemOff, a.nItem)) == len(a.items)
+	if r.bad || int(a.u32(a.itemOff, a.nItem)) != len(a.items) {
+		return false
+	}
+	for k := 0; k < a.nFold; k++ {
+		if int(a.u32(a.folds, 2*k)) >= a.nStr || int(a.u32(a.folds, 2*k+1)) >= a.nItem {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Archive) u32(tab []byte, i int) uint32 { return binary.LittleEndian.Uint32(tab[4*i:]) }
@@ -184,18 +197,33 @@ func (a *Archive) record(i int) (record, error) {
 	r := &reader{b: a.items[lo:hi]}
 	var e record
 	e.name, e.kind = r.uvarint(), r.uvarint()
+	if e.name >= a.nStr || e.kind >= a.nStr {
+		return record{}, errCorrupt
+	}
 	nd := r.uvarint()
 	for k := 0; k < nd && !r.bad; k++ {
-		e.defs = append(e.defs, r.uvarint())
+		d := r.uvarint()
+		if d >= a.nStr {
+			return record{}, errCorrupt
+		}
+		e.defs = append(e.defs, d)
 	}
 	np := r.uvarint()
 	for k := 0; k < np && !r.bad; k++ {
 		v := r.uvarint()
-		e.deps = append(e.deps, Ref{View: v, Item: r.uvarint()})
+		item := r.uvarint()
+		if v > len(a.meta.Requires) || (v == 0 && item >= a.nItem) {
+			return record{}, errCorrupt
+		}
+		e.deps = append(e.deps, Ref{View: v, Item: item})
 	}
 	e.chunk, e.off, e.n, e.flags = r.uvarint(), r.uvarint(), r.uvarint(), r.uvarint()
 	e.lib = r.uvarint()
-	if r.bad || e.chunk >= len(a.chunks) || e.off+e.n > a.chunks[e.chunk].raw {
+	if r.bad || e.lib > a.nStr || e.chunk < 0 || e.chunk >= len(a.chunks) {
+		return record{}, errCorrupt
+	}
+	raw := a.chunks[e.chunk].raw
+	if e.off < 0 || e.n < 0 || e.off > raw || e.n > raw-e.off {
 		return record{}, errCorrupt
 	}
 	return e, nil

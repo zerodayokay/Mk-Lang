@@ -1011,10 +1011,16 @@ func arMembers(b []byte) ([]arMember, error) {
 	}
 	var out []arMember
 	var longNames []byte
-	for off := len(magic); off+60 <= len(b); {
+	for off := len(magic); off < len(b); {
+		if off+60 > len(b) {
+			return nil, errors.New("bad member header")
+		}
 		hdr := b[off : off+60]
+		if hdr[58] != '`' || hdr[59] != '\n' {
+			return nil, errors.New("bad member header")
+		}
 		size, err := strconv.ParseUint(strings.TrimSpace(string(hdr[48:58])), 10, 64)
-		if err != nil || uint64(off+60)+size > uint64(len(b)) {
+		if err != nil || size > uint64(len(b)-(off+60)) {
 			return nil, errors.New("bad member header")
 		}
 		name := strings.TrimRight(string(hdr[0:16]), " ")
@@ -1031,13 +1037,13 @@ func arMembers(b []byte) ([]arMember, error) {
 			continue
 		case strings.HasPrefix(name, "#1/"):
 			n, err := strconv.Atoi(name[3:])
-			if err != nil || n > len(data) {
+			if err != nil || n < 0 || n > len(data) {
 				return nil, errors.New("bad BSD member name")
 			}
 			name, data = strings.TrimRight(string(data[:n]), "\x00"), data[n:]
 		case strings.HasPrefix(name, "/"):
 			n, err := strconv.Atoi(name[1:])
-			if err != nil || n >= len(longNames) {
+			if err != nil || n < 0 || n >= len(longNames) {
 				return nil, errors.New("bad long member name")
 			}
 			// A GNU entry ends "/\n"; a COFF entry ends in NUL. Either may
