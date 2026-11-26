@@ -3,9 +3,10 @@
 // would change the compile once it appears.
 // What: TestCImport_HasIncludeAdded, TestCImport_DotDotShadow (a header
 // that appears rebuilds the binding, the shim and the C source, while an
-// unchanged second check hits), and TestCObj_ProbeCandidate (a C object's
-// candidate keeps such negatives; a lookup through a macro leaves it
-// uncached).
+// unchanged second check hits), TestCImport_DefinedLookup (the same through
+// a macro the manifest's defines and flags define), TestCObj_ProbeCandidate
+// (a C object's candidate keeps such negatives; a lookup through a macro
+// leaves it uncached) and TestCObj_DefineLines.
 // How: packages built twice against one cache; cobjKey over a fake
 // dependency file.
 
@@ -142,5 +143,39 @@ func TestCObj_ProbeCandidate(t *testing.T) {
 	}
 	if _, _, ok := cobjKey(dh, base, depFile, src, []string{a, b}, []string{src}); ok {
 		t.Error("a lookup through a macro left the object cached")
+	}
+}
+
+// TestCImport_DefinedLookup: lib/k.h looks opt.h up through HAS, a macro
+// that no file defines: the C import's defines give it to the translation
+// and the shim, the C source's flags to its own compile. Adding a/inc/opt.h
+// rebuilds all three.
+func TestCImport_DefinedLookup(t *testing.T) {
+	needTools(t)
+	files := probeBin("deflook", "#ifdef HAS\n#if HAS(\"opt.h\")\n#include \"opt.h\"\n#endif\n#endif")
+	files["pkg.mk"] = strings.Replace(files["pkg.mk"], "defines: []", `defines: ["HAS=__has_include"]`, 1)
+	files["pkg.mk"] = strings.Replace(files["pkg.mk"], "flags: []", `flags: ["-DHAS=__has_include"]`, 1)
+	dir := writeTree(t, files)
+	cache := t.TempDir()
+	if out := buildRun(t, dir, cache); out != "0 0 0\n" {
+		t.Fatalf("first build printed %q, want 0 0 0", out)
+	}
+	if !checkHits(t, dir, cache) {
+		t.Error("an unchanged check missed the translation")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a", "inc", "opt.h"), []byte("#define OPT_V 7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := buildRun(t, dir, cache); out != "7 7 7\n" {
+		t.Errorf("after adding a/inc/opt.h printed %q, want 7 7 7", out)
+	}
+}
+
+// TestCObj_DefineLines: each -D form as the #define Clang reads.
+func TestCObj_DefineLines(t *testing.T) {
+	got := defineLines([]string{"-c", "-DA", "-DB=2", "-D", "C=x y", "-DF(x)=g(x)", "-UA", "-D"})
+	want := []string{"#define A 1\n", "#define B 2\n", "#define C x y\n", "#define F(x) g(x)\n"}
+	if !slices.Equal(got, want) {
+		t.Errorf("defineLines = %q, want %q", got, want)
 	}
 }

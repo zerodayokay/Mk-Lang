@@ -240,11 +240,13 @@ func (d *DepHasher) Save() {
 // not modelled.
 //
 // __has_include and its kin (probes) leave no trace in -MD when the file
-// is absent, so every file of the unit is read for them: each name is a
-// negative under every directory its lookup could search (a found one is
-// a dependency, which a later lookup in a header may not shadow
-// unnoticed: its directory is searched too).
-func Negatives(deps, dirs, roots []string) ([]string, bool) {
+// is absent, so every file of the unit is read for them, with texts, what
+// the compile reads that no file of deps or roots holds (the unit mk
+// writes, its -D definitions): each name is a negative under every
+// directory its lookup could search (a found one is a dependency, which a
+// later lookup in a header may not shadow unnoticed: its directory is
+// searched too), and an absolute name is its own.
+func Negatives(deps, dirs, roots []string, texts ...string) ([]string, bool) {
 	var out []string
 	// A path the unit read is no negative: #include_next reads a header
 	// under a later directory after the one under an earlier (Clang's
@@ -329,7 +331,7 @@ func Negatives(deps, dirs, roots []string) ([]string, bool) {
 			}
 		}
 	}
-	texts := make([]string, 0, len(roots)+len(deps))
+	texts = slices.Clone(texts)
 	for _, f := range append(slices.Clone(roots), deps...) {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -346,7 +348,16 @@ func Negatives(deps, dirs, roots []string) ([]string, bool) {
 		// lookup searches after its file's directory, an angled one skips
 		// the includers, so this is more than each searches, which only
 		// adds a miss when such a file appears.
-		through(len(dirs), p.name)
+		switch {
+		case filepath.IsAbs(p.name):
+			add("", p.name) // the path itself, wherever the lookup is
+		case filepath.VolumeName(p.name) != "" || os.IsPathSeparator(p.name[0]):
+			// A rooted (\x.h) or drive-relative (C:x.h) Windows name: not
+			// under any directory, and not one path either.
+			return nil, false
+		default:
+			through(len(dirs), p.name)
+		}
 	}
 	return out, true
 }
@@ -441,7 +452,7 @@ func Save(st *cache.Store, key source.Hash, res *Result) {
 	if st == nil {
 		return
 	}
-	neg, ok := Negatives(res.Deps, res.SearchDirs, nil)
+	neg, ok := Negatives(res.Deps, res.SearchDirs, nil, res.Unit)
 	if !ok {
 		return // it read in a way a candidate cannot describe
 	}

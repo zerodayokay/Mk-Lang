@@ -696,7 +696,13 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 		if !j.shim {
 			roots = []string{j.in}
 		}
-		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in, dirs, roots)
+		// The lookups of text no dependency holds: the command line's
+		// macros, and the shim, which is no root.
+		texts := defineLines(args)
+		if j.shim {
+			texts = append(texts, string(src))
+		}
+		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in, dirs, roots, texts...)
 		if !ok || !modelled {
 			// An object not cached may have read what its key does not name
 			// (a file a flag names, a header the -MD list leaves out or names
@@ -774,11 +780,12 @@ func cobjCandidate(dh *cimport.DepHasher, cands []cimport.Cand, base source.Hash
 // cobjKey reads the dependency file a compile wrote (none for a plain .s
 // file, whose only input is the source) and returns the object's key and
 // its candidate, with the negative lookups of dirs, the compile's ordered
-// header search path (cobjSearchDirs), and of the directories of roots
-// (cimport.Negatives); false when a dependency cannot be read or the
+// header search path (cobjSearchDirs), and of the directories of roots,
+// with texts the lookups' text no dependency holds (cimport.Negatives);
+// false when a dependency cannot be read or the
 // compile reads in a way Negatives does not model (the object is then not
 // stored).
-func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dirs, roots []string) (source.Hash, cimport.Cand, bool) {
+func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dirs, roots []string, texts ...string) (source.Hash, cimport.Cand, bool) {
 	var c cimport.Cand
 	if depFile != "" {
 		var deps []string
@@ -803,13 +810,38 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dir
 			c.Deps = append(c.Deps, cimport.Dep{Path: p, Hash: h})
 			deps = append(deps, raw)
 		}
-		neg, ok := cimport.Negatives(deps, dirs, roots)
+		neg, ok := cimport.Negatives(deps, dirs, roots, texts...)
 		if !ok {
 			return base, c, false
 		}
 		c.Neg = neg
 	}
 	return cobjObjKey(base, c), c, true
+}
+
+// defineLines are the macros a command line defines (-DNAME, -DNAME=VALUE,
+// -D NAME), each as the #define line Clang reads it as.
+func defineLines(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		d, ok := strings.CutPrefix(args[i], "-D")
+		if !ok {
+			continue
+		}
+		if d == "" && i+1 < len(args) {
+			i++
+			d = args[i]
+		}
+		if d == "" {
+			continue
+		}
+		name, val, has := strings.Cut(d, "=")
+		if !has {
+			val = "1"
+		}
+		out = append(out, "#define "+name+" "+val+"\n")
+	}
+	return out
 }
 
 // cobjSearchDirs is the ordered header search path of the compile cj, as

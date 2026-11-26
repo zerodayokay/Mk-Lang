@@ -73,6 +73,9 @@ type Result struct {
 	// Clang's order; SearchDirs the ordered header search path.
 	Deps       []string
 	SearchDirs []string
+	// Unit is the text of the unit mk wrote (tu.c: the defines and the
+	// #includes), which Deps leave out; the cache reads its lookups.
+	Unit string
 	// Steps are the wall times of the translation's steps (measurement
 	// only; never part of a cache entry or a binding).
 	Steps []Step
@@ -357,7 +360,7 @@ func Translate(ctx context.Context, cl Clang, resourceDir string, r Request) (*R
 	mark("emit", start)
 	steps = append(steps, Step{"total", time.Since(t0)})
 	return &Result{Modules: mods, Shim: shimText(r.Imports, e.shims), Stats: e.stats, Deps: deps,
-		SearchDirs: SearchDirs(r, resourceDir), Steps: steps}, nil
+		SearchDirs: SearchDirs(r, resourceDir), Unit: tu, Steps: steps}, nil
 }
 
 // macroType is the Mk type of a macro whose probe variable has type t: an
@@ -435,11 +438,13 @@ func firstError(stderr string, err error) string {
 	return err.Error()
 }
 
-// parseDepFile reads the unit's dependency file, without the unit itself.
+// parseDepFile reads the unit's dependency file, without the unit itself,
+// which Clang names as its command line does: a header that is also named
+// tu.c is a dependency.
 func parseDepFile(s string) []string {
 	var deps []string
 	for _, d := range ParseDepFile(s) {
-		if filepath.Base(d) != "tu.c" {
+		if d != "tu.c" {
 			deps = append(deps, d)
 		}
 	}
