@@ -46,8 +46,13 @@ export Device.MapRead(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Mapp
             try s.WaitSerial(wait_target)
             st.serials.Complete(wait_target)
         }
-        .Dx(d: _) {
-            fail Unsupported
+        .Dx(d) {
+            d.WaitSerial(io, wait_target) else e {
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            st.serials.Complete(wait_target)
         }
         .Vk(v) {
             v.WaitSerial(io, wait_target) else e {
@@ -76,8 +81,8 @@ export Mapped.Bytes(&self): []u8 from self {
             idx := Cast[int](nh - 1)
             return s.buf_mems[idx].bytes.Items()[self.at..(self.at + self.n)]
         }
-        .Dx(d: _) {
-            Panic("gpu: mapped bytes on unimplemented backend")
+        .Dx(d) {
+            return d.BufferMappedSlice(nh, self.at, self.n)
         }
         .Vk(v) {
             return v.MapBytes(nh, self.at, self.n)
@@ -111,8 +116,13 @@ export Device.MapWrite(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Map
             try s.WaitSerial(wait_target)
             st.serials.Complete(wait_target)
         }
-        .Dx(d: _) {
-            fail Unsupported
+        .Dx(d) {
+            d.WaitSerial(io, wait_target) else e {
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            st.serials.Complete(wait_target)
         }
         .Vk(v) {
             v.WaitSerial(io, wait_target) else e {
@@ -141,8 +151,8 @@ export MappedMut.Bytes(mut self): mut []u8 from self {
             idx := Cast[int](nh - 1)
             return mut s.buf_mems[idx].bytes.ItemsMut()[self.at..(self.at + self.n)]
         }
-        .Dx(d: _) {
-            Panic("gpu: mapped bytes on unimplemented backend")
+        .Dx(d) {
+            return d.BufferMappedSliceMut(nh, self.at, self.n)
         }
         .Vk(v) {
             return v.MapBytesMut(nh, self.at, self.n)

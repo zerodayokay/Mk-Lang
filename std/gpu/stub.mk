@@ -3,11 +3,12 @@
 // native GPU hardware.
 //
 // What: StubDevice, StubConfig, OpenStub, OpenStubWith, and Native dispatch
-// helpers for package-internal testing.
+// helpers for resource, pipeline, and swapchain creation/destruction.
 //
 // How: tracks live native handles, submitted opcodes, backing buffer bytes,
-// and optional fault/outdated injection on the device's heap.
+// and dispatches Device.Native* / Native.Destroy* calls to Stub, Dx, or Vk.
 
+import std.gpu.dx
 import std.gpu.vk
 
 struct StubConfig {
@@ -178,9 +179,6 @@ OpenStub(heap: &Heap, o: DeviceOptions): Error!Device from heap {
 
 OpenStubWith(heap: &Heap, o: DeviceOptions, cfg: StubConfig): Error!Device from heap {
     try ValidateDeviceOptions(&o)
-    if o.features.texture_compression_bc && !cfg.features.texture_compression_bc {
-        // Stub allows requested features unless overridden; test overrides can deny them.
-    }
     a := heap.Alloc()
     var caps: [44]FormatCaps = [NoCaps; 44]
     for i in 0..TextureFormatCount {
@@ -208,7 +206,9 @@ OpenStubWith(heap: &Heap, o: DeviceOptions, cfg: StubConfig): Error!Device from 
         limits: cfg.limits,
         features: o.features,
         backend: Backend.Auto,
+        debug_mode: 0,
         native: Native.Stub(s: StubDevice.New(a)),
+        adapter_name_bytes: HeapList[u8].New(a),
         sticky_err: none,
         lost: false,
         depth_bias_clamp_ok: cfg.depth_bias_clamp_ok,
@@ -236,6 +236,9 @@ OpenStubWith(heap: &Heap, o: DeviceOptions, cfg: StubConfig): Error!Device from 
         render_pipes: SlotTable[RenderPipelineEntry].New(a),
         compute_pipes: SlotTable[ComputePipelineEntry].New(a),
         swapchains: SlotTable[SwapchainEntry].New(a),
+        dx_chunks: HeapList[dx.ChunkSpan].New(a),
+        dx_barriers: HeapList[dx.BarrierSpec].New(a),
+        dx_passes: HeapList[dx.PassReplaySpec].New(a),
     )
     box := Box[DeviceState].New(a, st) else e {
         _ = st.FreeAll(a)
@@ -250,32 +253,35 @@ Native.CloseAll(self, a: &Alloc): int {
             d.Close()
             return 0
         }
-        .Vk(v) {
-            return v.Close()
-        }
-        .Stub(s) {
-            return s.CloseAll(a)
-        }
+        .Vk(v) { return v.Close() }
+        .Stub(s) { return s.CloseAll(a) }
     }
-}
-
-Device.RecordNativeVkError(mut self, e: vk.Error): Error {
-    match e {
-        vk.DeviceLost(reason: r) {
-            st := self.state.Mut()
-            st.lost = true
-            st.sticky_err = some(DeviceLost(reason: MapVkLossReason(r)))
-        }
-        _ {}
-    }
-    return MapVkErr(e)
 }
 
 Device.NativeCreateBuffer(mut self, size: int, u: &BufferUsage, label: str): Error!u64 {
     a := self.heap.Alloc()
-    match mut self.state.Mut().native {
+    st := self.state.Mut()
+    match mut st.native {
         .Stub(s) { return try s.CreateBuffer(a, size) }
-        .Dx(d: _) { fail Unsupported }
+        .Dx(d) {
+            spec := dx.BufferSpec(
+                size: size,
+                uniform_dynamic: u.uniform_dynamic,
+                uniform: u.uniform,
+                storage: u.storage,
+                map_read: u.map_read,
+                map_write: u.map_write,
+                label: label,
+            )
+            nh := d.CreateBuffer(&spec) else e {
+                SyncDxMessages(a, st)
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            SyncDxMessages(a, st)
+            return nh
+        }
         .Vk(v) {
             bd := vk.BufferDesc(
                 size: size,
@@ -298,7 +304,7 @@ Device.NativeCreateBuffer(mut self, size: int, u: &BufferUsage, label: str): Err
 Native.DestroyBuffer(mut self, a: &Alloc, id: u64) {
     match mut self {
         .Stub(s) { s.DestroyBuffer(a, id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroyBuffer(id) }
         .Vk(v) { v.DestroyBuffer(id) }
     }
 }
@@ -306,56 +312,85 @@ Native.DestroyBuffer(mut self, a: &Alloc, id: u64) {
 Device.NativeCreateShader(mut self, code: ShaderCode, stage: Stage, entry: str, label: str): Error!u64 {
     _ = stage
     _ = entry
-    match mut self.state.Mut().native {
+    st := self.state.Mut()
+    match mut st.native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
-        .Vk(v) {
-            return v.CreateShader(code.spirv, label) else e { fail self.RecordNativeVkError(e) }
-        }
+        .Dx(d) { return d.CreateShader(code.dxil) else e { fail MapDxError(e) } }
+        .Vk(v) { return v.CreateShader(code.spirv, label) else e { fail self.RecordNativeVkError(e) } }
     }
 }
 
 Native.DestroyShader(mut self, id: u64) {
     match mut self {
         .Stub(s) { s.FreeHandle(id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroyShader(id) }
         .Vk(v) { v.DestroyShader(id) }
     }
 }
 
-Device.NativeCreateTexture(mut self, d: &TextureDesc): Error!u64 {
-    match mut self.state.Mut().native {
+Device.NativeCreateTexture(mut self, td: &TextureDesc): Error!u64 {
+    a := self.heap.Alloc()
+    st := self.state.Mut()
+    row := RowOf(td.format)
+    match mut st.native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
-        .Vk(v) {
-            row := RowOf(d.format)
-            var vfs: [4]i32 = [0; 4]
-            vcnt := if d.view_formats.Len() > 4 { 4 } else { d.view_formats.Len() }
-            for vi in 0..vcnt {
-                vfs[vi] = RowOf(d.view_formats[vi]).vk_format
+        .Dx(d) {
+            spec := dx.TextureSpec(
+                dxgi_res: row.dxgi_res,
+                dxgi_rtv_dsv: row.dxgi_rtv_dsv,
+                width: td.width,
+                height: td.height,
+                layers: td.layers,
+                mips: td.mips,
+                samples: td.samples,
+                sampled: td.usage.sampled,
+                render_target: td.usage.render_target,
+                is_depth: IsDepthStencilFormat(td.format),
+                copy_src: td.usage.copy_src,
+                copy_dst: td.usage.copy_dst,
+                block_bytes: int(row.block_bytes),
+                block_w: int(row.block_w),
+                block_h: int(row.block_h),
+                planes: PlaneCount(td.format),
+                label: td.label,
+            )
+            nh := d.CreateTexture(&spec) else e {
+                SyncDxMessages(a, st)
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
             }
-            td := vk.TextureDesc(
-                format_idx: FormatIndex(d.format),
+            SyncDxMessages(a, st)
+            return nh
+        }
+        .Vk(v) {
+            var vfs: [4]i32 = [0; 4]
+            vcnt := if td.view_formats.Len() > 4 { 4 } else { td.view_formats.Len() }
+            for vi in 0..vcnt {
+                vfs[vi] = RowOf(td.view_formats[vi]).vk_format
+            }
+            vtd := vk.TextureDesc(
+                format_idx: FormatIndex(td.format),
                 vk_format: row.vk_format,
-                width: d.width,
-                height: d.height,
-                layers: d.layers,
-                mips: d.mips,
-                samples: d.samples,
-                copy_src: d.usage.copy_src,
-                copy_dst: d.usage.copy_dst,
-                sampled: d.usage.sampled,
-                render_target: d.usage.render_target,
-                is_depth: IsDepthStencilFormat(d.format),
-                has_stencil: HasStencilAspect(d.format),
+                width: td.width,
+                height: td.height,
+                layers: td.layers,
+                mips: td.mips,
+                samples: td.samples,
+                copy_src: td.usage.copy_src,
+                copy_dst: td.usage.copy_dst,
+                sampled: td.usage.sampled,
+                render_target: td.usage.render_target,
+                is_depth: IsDepthStencilFormat(td.format),
+                has_stencil: HasStencilAspect(td.format),
                 is_compressed: row.is_compressed,
                 block_w: int(row.block_w),
                 block_h: int(row.block_h),
                 block_bytes: int(row.block_bytes),
                 view_formats: vfs[0..vcnt],
-                label: d.label,
+                label: td.label,
             )
-            return v.CreateTexture(td) else e { fail self.RecordNativeVkError(e) }
+            return v.CreateTexture(vtd) else e { fail self.RecordNativeVkError(e) }
         }
     }
 }
@@ -363,34 +398,46 @@ Device.NativeCreateTexture(mut self, d: &TextureDesc): Error!u64 {
 Native.DestroyTexture(mut self, id: u64) {
     match mut self {
         .Stub(s) { s.FreeHandle(id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroyTexture(id) }
         .Vk(v) { v.DestroyTexture(id) }
     }
 }
 
-VkViewDimCode(dim: ViewDimension): int {
-    return match dim {
-        .D2 { 0 }
-        .D2Array { 1 }
-        .Cube { 2 }
-        .CubeArray { 3 }
-    }
-}
-
-VkAspectCode(a: Aspect): int {
-    return match a {
-        .All { 0 }
-        .Depth { 1 }
-        .Stencil { 2 }
-    }
-}
-
-Device.NativeCreateView(mut self, tex_nh: u64, ve: &ViewEntry): Error!u64 {
-    match mut self.state.Mut().native {
+Device.NativeCreateView(mut self, ve: &ViewEntry): Error!u64 {
+    a := self.heap.Alloc()
+    st := self.state.Mut()
+    tex_nh := if ve.tex_slot != 0 { st.textures.Get(ve.tex_slot).native_handle } else { u64(0) }
+    row := RowOf(ve.format)
+    match mut st.native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
+        .Dx(d) {
+            spec := dx.ViewSpec(
+                tex_nh: tex_nh,
+                dxgi_rtv_dsv: row.dxgi_rtv_dsv,
+                dxgi_srv: row.dxgi_srv,
+                dxgi_stencil_srv: row.dxgi_stencil_srv,
+                dim: Cast[u8](VkViewDimCode(ve.dim)),
+                aspect: Cast[u8](VkAspectCode(ve.aspect)),
+                first_mip: ve.first_mip,
+                mip_count: ve.mip_count,
+                first_layer: ve.first_layer,
+                layer_count: ve.layer_count,
+                samples: ve.samples,
+                render_target: ve.usage.render_target,
+                sampled: ve.usage.sampled,
+                is_depth: IsDepthStencilFormat(ve.format),
+                has_stencil: HasStencilAspect(ve.format),
+            )
+            nh := d.CreateView(&spec) else e {
+                SyncDxMessages(a, st)
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            SyncDxMessages(a, st)
+            return nh
+        }
         .Vk(v) {
-            row := RowOf(ve.format)
             vd := vk.ViewDesc(
                 tex_id: tex_nh,
                 vk_format: row.vk_format,
@@ -420,55 +467,54 @@ Device.NativeCreateSwapView(mut self): Error!u64 {
 Native.DestroyView(mut self, id: u64) {
     match mut self {
         .Stub(s) { s.FreeHandle(id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroyView(id) }
         .Vk(v) { v.DestroyView(id) }
     }
 }
 
-VkAddressCode(a: Address): int {
-    return match a {
-        .Repeat { 0 }
-        .MirrorRepeat { 1 }
-        .ClampToEdge { 2 }
-    }
-}
-
-VkCompareCode(c: Compare): int {
-    return match c {
-        .Never { 0 }
-        .Less { 1 }
-        .Equal { 2 }
-        .LessEqual { 3 }
-        .Greater { 4 }
-        .NotEqual { 5 }
-        .GreaterEqual { 6 }
-        .Always { 7 }
-    }
-}
-
-Device.NativeCreateSampler(mut self, d: &SamplerDesc): Error!u64 {
-    match mut self.state.Mut().native {
+Device.NativeCreateSampler(mut self, sd: &SamplerDesc): Error!u64 {
+    st := self.state.Mut()
+    match mut st.native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
+        .Dx(d) {
+            (has: has_cmp, cmp: cmp_u) := match sd.compare {
+                some(c) { (has: true, cmp: MapGpuCmp(c)) }
+                none { (has: false, cmp: u8(0)) }
+            }
+            spec := dx.SamplerSpec(
+                min_linear: sd.min == Filter.Linear,
+                mag_linear: sd.mag == Filter.Linear,
+                mip_linear: sd.mip == Filter.Linear,
+                addr_u: MapGpuAddr(sd.address_u),
+                addr_v: MapGpuAddr(sd.address_v),
+                addr_w: MapGpuAddr(sd.address_w),
+                lod_min: sd.lod_min,
+                lod_max: sd.lod_max,
+                anisotropy: sd.anisotropy,
+                has_compare: has_cmp,
+                compare: cmp_u,
+            )
+            return d.CreateSampler(&spec) else e { fail MapDxError(e) }
+        }
         .Vk(v) {
-            cmp_code := match d.compare {
+            cmp_code := match sd.compare {
                 some(c) { VkCompareCode(c) }
                 none { 7 }
             }
-            sd := vk.SamplerDesc(
-                min_linear: d.min == Filter.Linear,
-                mag_linear: d.mag == Filter.Linear,
-                mip_linear: d.mip == Filter.Linear,
-                addr_u: VkAddressCode(d.address_u),
-                addr_v: VkAddressCode(d.address_v),
-                addr_w: VkAddressCode(d.address_w),
-                lod_min: d.lod_min,
-                lod_max: d.lod_max,
-                anisotropy: d.anisotropy,
-                has_compare: d.compare.IsSome(),
+            vsd := vk.SamplerDesc(
+                min_linear: sd.min == Filter.Linear,
+                mag_linear: sd.mag == Filter.Linear,
+                mip_linear: sd.mip == Filter.Linear,
+                addr_u: VkAddressCode(sd.address_u),
+                addr_v: VkAddressCode(sd.address_v),
+                addr_w: VkAddressCode(sd.address_w),
+                lod_min: sd.lod_min,
+                lod_max: sd.lod_max,
+                anisotropy: sd.anisotropy,
+                has_compare: sd.compare.IsSome(),
                 compare: cmp_code,
             )
-            return v.CreateSampler(sd) else e { fail self.RecordNativeVkError(e) }
+            return v.CreateSampler(vsd) else e { fail self.RecordNativeVkError(e) }
         }
     }
 }
@@ -476,47 +522,20 @@ Device.NativeCreateSampler(mut self, d: &SamplerDesc): Error!u64 {
 Native.DestroySampler(mut self, id: u64) {
     match mut self {
         .Stub(s) { s.FreeHandle(id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroySampler(id) }
         .Vk(v) { v.DestroySampler(id) }
     }
 }
 
 Device.NativeCreateBindGroupLayout(mut self, entries: []LayoutEntry, label: str): Error!u64 {
+    match &self.state.Ref().native {
+        .Stub(s: _) {}
+        .Dx(d: _) { return 0 }
+        .Vk(v: _) { return try self.VkCreateBindGroupLayout(entries, label) }
+    }
     match mut self.state.Mut().native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
-        .Vk(v) {
-            var vk_es: [16]vk.BgLayoutEntry = [vk.BgLayoutEntry(binding: 0, vis_vs: false, vis_fs: false, vis_cs: false, kind: 0, dynamic: false, read_only: false); 16]
-            cnt := if entries.Len() > 16 { 16 } else { entries.Len() }
-            for i in 0..cnt {
-                e := &entries[i]
-                var k := 0
-                var dyn := false
-                var ro := false
-                match e.kind {
-                    .Uniform(dynamic, min_size: _) {
-                        k = 0
-                        dyn = dynamic
-                    }
-                    .Storage(read_only, min_size: _, stride: _) {
-                        k = 1
-                        ro = read_only
-                    }
-                    .Texture(sample: _, dimension: _, multisampled: _) { k = 2 }
-                    .Sampler(comparison: _) { k = 3 }
-                }
-                vk_es[i] = vk.BgLayoutEntry(
-                    binding: e.binding,
-                    vis_vs: e.visibility.vertex,
-                    vis_fs: e.visibility.fragment,
-                    vis_cs: e.visibility.compute,
-                    kind: k,
-                    dynamic: dyn,
-                    read_only: ro,
-                )
-            }
-            return v.CreateBindGroupLayout(vk_es[0..cnt], label) else e { fail self.RecordNativeVkError(e) }
-        }
+        _ { fail Unsupported }
     }
 }
 
@@ -528,319 +547,82 @@ Native.DestroyBindGroupLayout(mut self, id: u64) {
     }
 }
 
-Device.NativeCreatePipelineLayout(mut self, bg_nhs: []u64, immediates: int, label: str): Error!u64 {
+Device.NativeCreatePipelineLayout(mut self, groups: []&BindGroupLayout, immediates: int, label: str): Error!u64 {
+    match &self.state.Ref().native {
+        .Stub(s: _) {}
+        .Dx(d: _) { return try self.DxCreatePipelineLayout(groups, immediates, label) }
+        .Vk(v: _) { return try self.VkCreatePipelineLayout(groups, immediates, label) }
+    }
     match mut self.state.Mut().native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
-        .Vk(v) {
-            return v.CreatePipelineLayout(bg_nhs, immediates, label) else e { fail self.RecordNativeVkError(e) }
-        }
+        _ { fail Unsupported }
     }
 }
 
 Native.DestroyPipelineLayout(mut self, id: u64) {
     match mut self {
         .Stub(s) { s.FreeHandle(id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroyRootSignature(id) }
         .Vk(v) { v.DestroyPipelineLayout(id) }
     }
 }
 
-BuildVkBgEntries(st: &DeviceState, entries: []BindEntry, cnt: int): [16]vk.BgBindEntry {
-    var vk_es: [16]vk.BgBindEntry = [vk.BgBindEntry(binding: 0, kind: 0, buf_id: 0, offset: 0, size: 0, view_id: 0, sampler_id: 0); 16]
-    for i in 0..cnt {
-        be := &entries[i]
-        match be.bound {
-            .Buffer(b, offset, size) {
-                is_sto := !st.buffers.Get(b.slot).usage.uniform && !st.buffers.Get(b.slot).usage.uniform_dynamic
-                vk_es[i] = vk.BgBindEntry(
-                    binding: be.binding,
-                    kind: if is_sto { 1 } else { 0 },
-                    buf_id: st.buffers.Get(b.slot).native_handle,
-                    offset: offset,
-                    size: size,
-                    view_id: 0,
-                    sampler_id: 0,
-                )
-            }
-            .View(v: vw) {
-                vk_es[i] = vk.BgBindEntry(
-                    binding: be.binding,
-                    kind: 2,
-                    buf_id: 0,
-                    offset: 0,
-                    size: 0,
-                    view_id: st.views.Get(vw.slot).native_handle,
-                    sampler_id: 0,
-                )
-            }
-            .Sampler(s: smp) {
-                vk_es[i] = vk.BgBindEntry(
-                    binding: be.binding,
-                    kind: 3,
-                    buf_id: 0,
-                    offset: 0,
-                    size: 0,
-                    view_id: 0,
-                    sampler_id: st.samplers.Get(smp.slot).native_handle,
-                )
-            }
-        }
+Device.NativeCreateBindGroup(mut self, layout_slot: u32, entries: []BindEntry, label: str): Error!u64 {
+    match &self.state.Ref().native {
+        .Stub(s: _) {}
+        .Dx(d: _) { return try self.DxCreateBindGroup(layout_slot, entries) }
+        .Vk(v: _) { return try self.VkCreateBindGroup(layout_slot, entries, label) }
     }
-    return vk_es
-}
-
-Device.NativeCreateBindGroup(mut self, layout_nh: u64, entries: []BindEntry, label: str): Error!u64 {
-    cnt := if entries.Len() > 16 { 16 } else { entries.Len() }
-    vk_es := BuildVkBgEntries(self.state.Ref(), entries, cnt)
     match mut self.state.Mut().native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
-        .Vk(v) {
-            return v.CreateBindGroup(layout_nh, vk_es[0..cnt], label) else e { fail self.RecordNativeVkError(e) }
-        }
+        _ { fail Unsupported }
     }
 }
 
 Native.DestroyBindGroup(mut self, id: u64) {
     match mut self {
         .Stub(s) { s.FreeHandle(id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroyBindGroup(id) }
         .Vk(v) { v.DestroyBindGroup(id) }
     }
 }
 
-VkTopologyCode(t: Topology): int {
-    return match t {
-        .PointList { 0 }
-        .LineList { 1 }
-        .LineStrip { 2 }
-        .TriangleList { 3 }
-        .TriangleStrip { 4 }
+Device.NativeCreateRenderPipeline(
+    mut self,
+    io: Io,
+    layout_slot: u32,
+    vs_slot: u32,
+    fs_slot: u32,
+    d: &RenderPipelineDesc,
+): Error!u64 {
+    match &self.state.Ref().native {
+        .Stub(s: _) {}
+        .Dx(d: _) { return try self.DxCreateRenderPipeline(io, layout_slot, vs_slot, fs_slot, d) }
+        .Vk(v: _) { return try self.VkCreateRenderPipeline(io, layout_slot, vs_slot, fs_slot, d) }
     }
-}
-
-VkCullCode(c: Cull): int {
-    return match c {
-        .None { 0 }
-        .Front { 1 }
-        .Back { 2 }
-    }
-}
-
-VkBlendFactorCode(f: BlendFactor): int {
-    return match f {
-        .Zero { 0 }
-        .One { 1 }
-        .Src { 2 }
-        .OneMinusSrc { 3 }
-        .SrcAlpha { 4 }
-        .OneMinusSrcAlpha { 5 }
-        .Dst { 6 }
-        .OneMinusDst { 7 }
-        .DstAlpha { 8 }
-        .OneMinusDstAlpha { 9 }
-        .Constant { 10 }
-        .OneMinusConstant { 11 }
-    }
-}
-
-VkBlendOpCode(op: BlendOp): int {
-    return match op {
-        .Add { 0 }
-        .Subtract { 1 }
-        .ReverseSubtract { 2 }
-        .Min { 3 }
-        .Max { 4 }
-    }
-}
-
-VkStencilOpCode(op: StencilOp): int {
-    return match op {
-        .Keep { 0 }
-        .Zero { 1 }
-        .Replace { 2 }
-        .IncrementClamp { 3 }
-        .DecrementClamp { 4 }
-        .Invert { 5 }
-        .IncrementWrap { 6 }
-        .DecrementWrap { 7 }
-    }
-}
-
-VkStencilFaceFrom(f: StencilFace): vk.StencilFaceDesc {
-    return vk.StencilFaceDesc(
-        compare: VkCompareCode(f.compare),
-        on_fail: VkStencilOpCode(f.on_fail),
-        on_depth_fail: VkStencilOpCode(f.on_depth_fail),
-        on_pass: VkStencilOpCode(f.on_pass),
-    )
-}
-
-Device.NativeCreateRenderPipeline(mut self, io: Io, layout_nh: u64, vs_nh: u64, fs_nh: u64, vs_entry: str, fs_entry: str, d: &RenderPipelineDesc): Error!u64 {
     match mut self.state.Mut().native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
-        .Vk(v) {
-            var attrs_flat: [32]vk.VertexAttrDesc = [vk.VertexAttrDesc(location: 0, vk_format: 0, offset: 0); 32]
-            var ac := 0
-            var vl_starts: [16]int = [0; 16]
-            var vl_ends: [16]int = [0; 16]
-            var vl_strides: [16]int = [0; 16]
-            var vl_inst: [16]bool = [false; 16]
-            vbc := if d.vertex_layouts.Len() > 16 { 16 } else { d.vertex_layouts.Len() }
-            for bi in 0..vbc {
-                vl := &d.vertex_layouts[bi]
-                start := ac
-                for ai in 0..vl.attributes.Len() {
-                    if ac < 32 {
-                        at := &vl.attributes[ai]
-                        attrs_flat[ac] = vk.VertexAttrDesc(location: at.location, vk_format: VertexInfoOf(at.format).vk_format, offset: at.offset)
-                        ac += 1
-                    }
-                }
-                vl_starts[bi] = start
-                vl_ends[bi] = ac
-                vl_strides[bi] = vl.stride
-                vl_inst[bi] = vl.step == StepMode.Instance
-            }
-            var vls: [16]vk.VertexLayoutDesc = [vk.VertexLayoutDesc(stride: 0, step_instance: false, attrs: attrs_flat[0..0]); 16]
-            for bi in 0..vbc {
-                vls[bi] = vk.VertexLayoutDesc(stride: vl_strides[bi], step_instance: vl_inst[bi], attrs: attrs_flat[vl_starts[bi]..vl_ends[bi]])
-            }
-            var tgts: [8]vk.ColorTargetDesc = [vk.ColorTargetDesc(vk_format: 0, format_idx: 0, blend_enable: false, src_color: 1, dst_color: 0, op_color: 0, src_alpha: 1, dst_alpha: 0, op_alpha: 0, write_mask: 0xF); 8]
-            tcnt := if d.targets.Len() > 8 { 8 } else { d.targets.Len() }
-            for ti in 0..tcnt {
-                ct := &d.targets[ti]
-                var wm: u8 = 0
-                if ct.write.r { wm |= 1 }
-                if ct.write.g { wm |= 2 }
-                if ct.write.b { wm |= 4 }
-                if ct.write.a { wm |= 8 }
-                var ben := false
-                var sc := 1
-                var dc := 0
-                var oc := 0
-                var sa := 1
-                var da := 0
-                var oa := 0
-                match ct.blend {
-                    some(bl) {
-                        ben = true
-                        sc = VkBlendFactorCode(bl.color.src)
-                        dc = VkBlendFactorCode(bl.color.dst)
-                        oc = VkBlendOpCode(bl.color.op)
-                        sa = VkBlendFactorCode(bl.alpha.src)
-                        da = VkBlendFactorCode(bl.alpha.dst)
-                        oa = VkBlendOpCode(bl.alpha.op)
-                    }
-                    none {}
-                }
-                tgts[ti] = vk.ColorTargetDesc(
-                    vk_format: RowOf(ct.format).vk_format,
-                    format_idx: FormatIndex(ct.format),
-                    blend_enable: ben,
-                    src_color: sc,
-                    dst_color: dc,
-                    op_color: oc,
-                    src_alpha: sa,
-                    dst_alpha: da,
-                    op_alpha: oa,
-                    write_mask: wm,
-                )
-            }
-            var has_d := false
-            var dfmt_vk: i32 = 0
-            var dfmt_idx := 0
-            var dwrite := false
-            var dcmp := 7
-            var has_st := false
-            def_face := vk.StencilFaceDesc(compare: 7, on_fail: 0, on_depth_fail: 0, on_pass: 0)
-            var sfront := def_face
-            var sback := def_face
-            var srmask: u8 = 0
-            var swmask: u8 = 0
-            var bconst: i32 = 0
-            var bslope: f32 = 0.0
-            var bclamp: f32 = 0.0
-            match d.depth {
-                some(ds) {
-                    has_d = true
-                    dfmt_vk = RowOf(ds.format).vk_format
-                    dfmt_idx = FormatIndex(ds.format)
-                    dwrite = ds.write
-                    dcmp = VkCompareCode(ds.compare)
-                    bconst = ds.bias.constant
-                    bslope = ds.bias.slope
-                    bclamp = ds.bias.clamp
-                    match ds.stencil {
-                        some(st) {
-                            has_st = true
-                            sfront = VkStencilFaceFrom(st.front)
-                            sback = VkStencilFaceFrom(st.back)
-                            srmask = st.read_mask
-                            swmask = st.write_mask
-                        }
-                        none {}
-                    }
-                }
-                none {}
-            }
-            vk_d := vk.RenderPipelineDesc(
-                layout_id: layout_nh,
-                vs_id: vs_nh,
-                has_fs: fs_nh != 0,
-                fs_id: fs_nh,
-                vertex_layouts: vls[0..vbc],
-                topology: VkTopologyCode(d.topology),
-                has_strip_idx: d.strip_index_format.IsSome(),
-                cull: VkCullCode(d.cull),
-                front_cw: d.front == FrontFace.Cw,
-                targets: tgts[0..tcnt],
-                has_depth: has_d,
-                depth_vk_format: dfmt_vk,
-                depth_format_idx: dfmt_idx,
-                depth_write: dwrite,
-                depth_compare: dcmp,
-                has_stencil: has_st,
-                stencil_front: sfront,
-                stencil_back: sback,
-                stencil_read_mask: srmask,
-                stencil_write_mask: swmask,
-                bias_const: bconst,
-                bias_slope: bslope,
-                bias_clamp: bclamp,
-                samples: d.samples,
-                alpha_to_coverage: d.alpha_to_coverage,
-            )
-            return v.CreateRenderPipeline(io, vk_d, vs_entry, fs_entry, d.label) else e { fail self.RecordNativeVkError(e) }
-        }
+        _ { fail Unsupported }
     }
 }
 
-Device.NativeCreateComputePipeline(mut self, io: Io, layout_nh: u64, cs_nh: u64, cs_entry: str, label: str): Error!u64 {
+Device.NativeCreateComputePipeline(mut self, io: Io, layout_slot: u32, cs_slot: u32, label: str): Error!u64 {
+    match &self.state.Ref().native {
+        .Stub(s: _) {}
+        .Dx(d: _) { return try self.DxCreateComputePipeline(io, layout_slot, cs_slot, label) }
+        .Vk(v: _) { return try self.VkCreateComputePipeline(io, layout_slot, cs_slot, label) }
+    }
     match mut self.state.Mut().native {
         .Stub(s) { return s.AllocHandle() }
-        .Dx(d: _) { fail Unsupported }
-        .Vk(v) {
-            return v.CreateComputePipeline(io, layout_nh, cs_nh, cs_entry, label) else e { fail self.RecordNativeVkError(e) }
-        }
+        _ { fail Unsupported }
     }
 }
 
 Native.DestroyPipeline(mut self, id: u64) {
     match mut self {
         .Stub(s) { s.FreeHandle(id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroyPipeline(id) }
         .Vk(v) { v.DestroyPipeline(id) }
-    }
-}
-
-VkPresentModeCode(m: PresentMode): int {
-    return match m {
-        .Fifo { vk.ModeFifo }
-        .Mailbox { vk.ModeMailbox }
-        .Immediate { vk.ModeImmediate }
     }
 }
 
@@ -869,7 +651,7 @@ Native.DestroySwapchain(mut self, a: &Alloc, id: u64) {
     _ = a
     match mut self {
         .Stub(s) { s.FreeHandle(id) }
-        .Dx(d: _) {}
+        .Dx(d) { d.DestroySwapchain(id) }
         .Vk(v) { v.DestroySwapchain(id) }
     }
 }

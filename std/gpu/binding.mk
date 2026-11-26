@@ -352,8 +352,7 @@ ReadBgLayoutNhs(st: &DeviceState, groups: []&BindGroupLayout): [4]u64 {
 export Device.NewPipelineLayout(mut self, groups: []&BindGroupLayout, immediates: int, label: str): Error!PipelineLayout {
     try self.CheckAlive()
     var entry := try ValidatePipelineLayoutGroups(self.state.Ref(), self.serial, groups, immediates)
-    bg_nhs := ReadBgLayoutNhs(self.state.Ref(), groups)
-    nh := try self.NativeCreatePipelineLayout(bg_nhs[0..groups.Len()], immediates, label)
+    nh := try self.NativeCreatePipelineLayout(groups, immediates, label)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().pipe_layouts.Alloc(a, entry) {
@@ -653,8 +652,7 @@ export Device.NewBindGroup(mut self, layout: &BindGroupLayout, entries: []BindEn
     }
     a := self.heap.Alloc()
     var entry := try BuildBindGroupEntry(a, self.state.Ref(), self.serial, layout, entries)
-    layout_nh := self.state.Ref().bg_layouts.Get(layout.slot).native_handle
-    nh := self.NativeCreateBindGroup(layout_nh, entries, label) else e {
+    nh := self.NativeCreateBindGroup(layout.slot, entries, label) else e {
         entry.Free(a)
         fail e
     }

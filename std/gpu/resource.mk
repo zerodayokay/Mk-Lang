@@ -79,7 +79,18 @@ export Device.NewBuffer(mut self, size: int, usage: BufferUsage, label: str): Er
     fixed_st := if usage.map_read { ResCopyDst } else if usage.map_write { ResCopySrc } else { ResCommon }
     entry := BufferEntry(size: size, usage: usage, state: BufState.New(fixed, fixed_st), native_handle: nh)
     match self.state.Mut().buffers.Alloc(a, entry) {
-        .Ok(slot, gen_) { return Buffer(slot: slot, generation: gen_, device: self.serial) }
+        .Ok(slot, gen_) {
+            st := self.state.Mut()
+            match &st.native {
+                .Dx(d) {
+                    if d.HasPendingPreSubmit() {
+                        st.buffers.StampUse(slot, st.serials.next)
+                    }
+                }
+                _ {}
+            }
+            return Buffer(slot: slot, generation: gen_, device: self.serial)
+        }
         .Oom(val: _) {
             self.state.Mut().native.DestroyBuffer(a, nh)
             fail OutOfMemory
@@ -275,7 +286,18 @@ export Device.NewTexture(mut self, d: TextureDesc): Error!Texture {
         native_handle: nh,
     )
     match self.state.Mut().textures.Alloc(a, entry) {
-        .Ok(slot, gen_) { return Texture(slot: slot, generation: gen_, device: self.serial) }
+        .Ok(slot, gen_) {
+            st := self.state.Mut()
+            match &st.native {
+                .Dx(d: dx_dev) {
+                    if dx_dev.HasPendingPreSubmit() {
+                        st.textures.StampUse(slot, st.serials.next)
+                    }
+                }
+                _ {}
+            }
+            return Texture(slot: slot, generation: gen_, device: self.serial)
+        }
         .Oom(val) {
             val.Free(a)
             self.state.Mut().native.DestroyTexture(nh)
@@ -490,8 +512,7 @@ export Device.NewView(mut self, t: &Texture, d: ViewDesc): Error!TextureView {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     var entry := try ValidateViewDesc(self.state.Ref(), t, &d)
-    tex_nh := self.state.Ref().textures.Get(t.slot).native_handle
-    nh := try self.NativeCreateView(tex_nh, &entry)
+    nh := try self.NativeCreateView(&entry)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().views.Alloc(a, entry) {

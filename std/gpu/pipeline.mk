@@ -11,8 +11,6 @@
 // How: checks vertex layouts, target/depth capabilities, workgroup limits,
 // and SPIR-V shader bindings/blocks/inputs against the pipeline layout.
 
-import std.rt
-
 /// How a vertex buffer steps.
 export open enum StepMode {
     Vertex
@@ -485,10 +483,7 @@ export Device.NewRenderPipeline(mut self, io: Io, layout: &PipelineLayout, vs: &
         none { u32(0) }
     }
     var entry := try ValidateRenderPipelineDesc(self.state.Ref(), self.serial, layout, vs, fs, fs_slot, &d)
-    var hs := ResolveRenderPipeHandles(self.state.Ref(), layout.slot, vs.slot, fs_slot)
-    vs_entry := rt.StrFrom(hs.vs_ebuf[0..hs.vs_elen]) else { "main" }
-    fs_entry := rt.StrFrom(hs.fs_ebuf[0..hs.fs_elen]) else { "" }
-    nh := try self.NativeCreateRenderPipeline(io, hs.pl_nh, hs.vs_nh, hs.fs_nh, vs_entry, fs_entry, &d)
+    nh := try self.NativeCreateRenderPipeline(io, layout.slot, vs.slot, fs_slot, &d)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().render_pipes.Alloc(a, entry) {
@@ -610,9 +605,7 @@ export Device.NewComputePipeline(mut self, io: Io, layout: &PipelineLayout, cs: 
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     var entry := try ValidateComputePipelineDesc(self.state.Ref(), layout, cs)
-    var hs := ResolveComputePipeHandles(self.state.Ref(), layout.slot, cs.slot)
-    cs_entry := rt.StrFrom(hs.cs_ebuf[0..hs.cs_elen]) else { "main" }
-    nh := try self.NativeCreateComputePipeline(io, hs.pl_nh, hs.cs_nh, cs_entry, label)
+    nh := try self.NativeCreateComputePipeline(io, layout.slot, cs.slot, label)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().compute_pipes.Alloc(a, entry) {

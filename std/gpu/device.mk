@@ -11,6 +11,7 @@
 
 import std.gpu.dx
 import std.gpu.vk
+import std.mem
 import std.rt
 
 /// Limits the portable layer enforces: the smaller of the adapter's and
@@ -56,6 +57,146 @@ export struct AdapterInfo {
     export features: Features
 }
 
+MapDxCall(c: u8): Call {
+    return match c {
+        0 { Call.CreateFactory }
+        1 { Call.EnumAdapters }
+        2 { Call.CreateDevice }
+        3 { Call.CreateHeap }
+        4 { Call.CreateResource }
+        5 { Call.CreateRootSignature }
+        6 { Call.CreatePipeline }
+        7 { Call.CreateSwapchain }
+        8 { Call.ResizeBuffers }
+        9 { Call.Present }
+        10 { Call.ExecuteCommandLists }
+        11 { Call.Signal }
+        _ { Call.Map }
+    }
+}
+
+MapDxErrKindToLoss(k: dx.ErrKind): LossReason {
+    return match k {
+        .DeviceLostHung { LossReason.Hung }
+        .DeviceLostReset { LossReason.Reset }
+        .DeviceLostRemoved { LossReason.Removed }
+        .DeviceLostInternal { LossReason.DriverInternal }
+        .DeviceLostOom { LossReason.OutOfMemory }
+        _ { LossReason.Unknown }
+    }
+}
+
+MapDxError(e: dx.Error): Error {
+    return match e {
+        dx.Unsupported { Unsupported }
+        OutOfMemory { OutOfMemory }
+        Canceled { Canceled }
+        dx.DxFail(kind, code, call, at) {
+            if kind == dx.ErrKind.Unsupported {
+                Unsupported
+            } else if kind == dx.ErrKind.NoAdapter {
+                NoAdapter
+            } else if kind == dx.ErrKind.MissingBc {
+                Missing(feature: Feature.TextureCompressionBc)
+            } else if kind == dx.ErrKind.MissingDepthClip {
+                Missing(feature: Feature.DepthClipControl)
+            } else if kind == dx.ErrKind.MissingF32Filter {
+                Missing(feature: Feature.Float32Filterable)
+            } else if kind == dx.ErrKind.MissingAniso {
+                Missing(feature: Feature.SamplerAnisotropy)
+            } else if kind == dx.ErrKind.MissingDebugLayer {
+                Missing(feature: Feature.DebugLayer)
+            } else if kind == dx.ErrKind.DeviceLostHung || kind == dx.ErrKind.DeviceLostReset || kind == dx.ErrKind.DeviceLostRemoved || kind == dx.ErrKind.DeviceLostInternal || kind == dx.ErrKind.DeviceLostOom || kind == dx.ErrKind.DeviceLostUnknown {
+                DeviceLost(reason: MapDxErrKindToLoss(kind))
+            } else if kind == dx.ErrKind.OutOfDeviceMemory {
+                OutOfDeviceMemory
+            } else if kind == dx.ErrKind.LimitExceeded {
+                Invalid(misuse: Misuse.LimitExceeded, at: at)
+            } else if kind == dx.ErrKind.SurfaceLost {
+                SurfaceLost
+            } else if kind == dx.ErrKind.DebugLayer {
+                Invalid(misuse: Misuse.DebugLayer, at: at)
+            } else {
+                Driver(code: code, call: MapDxCall(call))
+            }
+        }
+    }
+}
+
+RecordDxFailure(st: mut DeviceState, err: Error) {
+    match err {
+        DeviceLost(reason) {
+            st.lost = true
+            match st.sticky_err {
+                none { st.sticky_err = some(DeviceLost(reason: reason)) }
+                some(_) {}
+            }
+        }
+        Invalid(misuse, at) {
+            if misuse == Misuse.DebugLayer {
+                match st.sticky_err {
+                    none { st.sticky_err = some(Invalid(misuse: Misuse.DebugLayer, at: at)) }
+                    some(_) {}
+                }
+            }
+        }
+        _ {}
+    }
+}
+
+SyncDxMessages(a: &Alloc, st: mut DeviceState) {
+    match mut st.native {
+        .Dx(d) {
+            (errors: errs, warnings: warns) := d.MessageCounts()
+            st.err_count = errs
+            st.warn_count = warns
+            var ar := Arena.NewIn(a) else { return }
+            defer ar.Free()
+            ms := d.TakeMessages(&ar) else { return }
+            for i in 0..ms.Len() {
+                if st.messages.Len() >= 256 {
+                    break
+                }
+                m := &ms[i]
+                sev := if m.severity == 2 {
+                    Severity.Error
+                } else if m.severity == 1 {
+                    Severity.Warning
+                } else {
+                    Severity.Info
+                }
+                off := st.msg_bytes.Len()
+                st.msg_bytes.Extend(a, m.text.AsBytes()) else { break }
+                tlen := st.msg_bytes.Len() - off
+                st.messages.Push(a, StoredMessage(severity: sev, id: m.id, text_off: off, text_len: tlen)) else { break }
+            }
+            if errs > 0 || (st.debug_mode == 2 && warns > 0) {
+                RecordDxFailure(st, Invalid(misuse: Misuse.DebugLayer, at: -1))
+            }
+        }
+        .Stub(s: _) | .Vk(v: _) {}
+    }
+}
+
+BuildFormatTables(triples: mut [132]u32, guar: mut [44]dx.FormatRowCaps) {
+    for i in 0..TextureFormatCount {
+        row := RowOf(FormatByIndex(i))
+        triples[i * 3] = row.dxgi_res
+        triples[i * 3 + 1] = row.dxgi_rtv_dsv
+        triples[i * 3 + 2] = row.dxgi_srv
+        g := row.guaranteed
+        guar[i] = dx.FormatRowCaps(
+            sampled: g.sampled,
+            filterable: g.filterable,
+            render_target: g.render_target,
+            blendable: g.blendable,
+            multisample: g.multisample,
+            resolve: g.resolve,
+            depth_stencil: g.depth_stencil,
+        )
+    }
+}
+
 /// Lists the adapters of backend (Auto: every backend present), best first.
 /// An adapter missing a requirement or a guaranteed format capability is
 /// not listed. Errors: Unsupported off Windows; Canceled while queued.
@@ -63,197 +204,50 @@ export struct AdapterInfo {
 /// the list and the names in a.
 export Adapters(a: &Arena, io: Io, backend: Backend): Error!List[AdapterInfo] from a {
     var out := List[AdapterInfo].New(a)
-    if backend == Backend.D3d12 {
-        fail Unsupported
+    if backend == Backend.D3d12 || backend == Backend.Auto {
+        var triples: [132]u32 = [0; 132]
+        var guar: [44]dx.FormatRowCaps = [mem.Zeroed[dx.FormatRowCaps](); 44]
+        BuildFormatTables(mut triples, mut guar)
+        dxs := dx.Adapters(a, io, triples[..], guar[..]) else e {
+            if backend == Backend.D3d12 {
+                fail MapDxError(e)
+            }
+            List[dx.AdapterInfo].New(a)
+        }
+        for i in 0..dxs.Len() {
+            ad := &dxs[i]
+            var lim := DefaultPortableLimits
+            lim.max_texture_size = ad.max_texture_size
+            try out.Push(AdapterInfo(
+                id: AdapterId(backend: Backend.D3d12, luid: ad.luid),
+                name: ad.name,
+                vendor: ad.vendor,
+                device: ad.device,
+                kind: if ad.is_software { AdapterKind.Software } else { AdapterKind.Discrete },
+                limits: lim,
+                features: Features(texture_compression_bc: true, depth_clip_control: true, float32_filterable: true, sampler_anisotropy: true, sealed: 0),
+            ))
+        }
     }
-    if backend == Backend.Vulkan && !vk.IsAvailable(io) {
-        fail Unsupported
-    }
-    if backend == Backend.Auto || backend == Backend.Vulkan {
+    if backend == Backend.Vulkan || backend == Backend.Auto {
         if vk.IsAvailable(io) {
             vk_list := vk.EnumAdapters(a, io) else e {
-                fail MapVkErr(e)
+                if backend == Backend.Vulkan {
+                    fail MapVkErr(e)
+                }
+                List[vk.AdapterDesc].New(a)
             }
             for i in 0..vk_list.Len() {
                 try out.Push(AdapterInfoFromVk(&vk_list[i], Backend.Vulkan))
             }
+        } else if backend == Backend.Vulkan {
+            fail Unsupported
         }
     }
-    if out.Len() == 0 && !vk.IsAvailable(io) {
+    if out.Len() == 0 {
         fail Unsupported
     }
     return out
-}
-
-MapVkFeature(f: int): Feature {
-    return match f {
-        0 { Feature.TextureCompressionBc }
-        1 { Feature.DepthClipControl }
-        2 { Feature.Float32Filterable }
-        3 { Feature.SamplerAnisotropy }
-        _ { Feature.DebugLayer }
-    }
-}
-
-MapVkLossReason(r: int): LossReason {
-    return match r {
-        0 { LossReason.Hung }
-        1 { LossReason.Reset }
-        2 { LossReason.Removed }
-        3 { LossReason.DriverInternal }
-        4 { LossReason.OutOfMemory }
-        _ { LossReason.Unknown }
-    }
-}
-
-MapVkCall(c: int): Call {
-    if c == vk.CallCreateInstance { return Call.CreateInstance }
-    if c == vk.CallEnumPhysicalDevices { return Call.EnumeratePhysicalDevices }
-    if c == vk.CallCreateDevice { return Call.CreateDevice }
-    if c == vk.CallAllocateMemory { return Call.AllocateMemory }
-    if c == vk.CallCreateImage { return Call.CreateImage }
-    if c == vk.CallCreateBuffer { return Call.CreateBuffer }
-    if c == vk.CallCreateDescriptorPool { return Call.CreateDescriptorPool }
-    if c == vk.CallCreateSemaphore { return Call.CreateSemaphore }
-    if c == vk.CallCreatePipeline { return Call.CreatePipeline }
-    if c == vk.CallCreateSwapchain { return Call.CreateSwapchain }
-    if c == vk.CallAcquireNextImage { return Call.AcquireNextImage }
-    if c == vk.CallQueueSubmit { return Call.QueueSubmit }
-    if c == vk.CallQueuePresent { return Call.QueuePresent }
-    if c == vk.CallWaitSemaphores { return Call.WaitSemaphores }
-    if c == vk.CallMap { return Call.Map }
-    return Call.ExecuteCommandLists
-}
-
-MapVkErr(e: vk.Error): Error {
-    return match e {
-        vk.Unsupported { Unsupported }
-        vk.NoAdapter { NoAdapter }
-        vk.Missing(feature: f) { Missing(feature: MapVkFeature(f)) }
-        vk.DeviceLost(reason: r) { DeviceLost(reason: MapVkLossReason(r)) }
-        vk.OutOfDeviceMemory { OutOfDeviceMemory }
-        OutOfMemory { OutOfMemory }
-        vk.SurfaceLost { SurfaceLost }
-        vk.Driver(code, call) { Driver(code: code, call: MapVkCall(call)) }
-        Canceled { Canceled }
-    }
-}
-
-LimitsFromVk(l: &vk.VkLimits): DeviceLimits {
-    return DeviceLimits(
-        max_texture_size: l.max_texture_size,
-        max_texture_layers: l.max_texture_layers,
-        max_bind_groups: l.max_bind_groups,
-        max_bindings_per_group: l.max_bindings_per_group,
-        max_dynamic_uniforms: l.max_dynamic_uniforms,
-        max_immediates: l.max_immediates,
-        max_vertex_buffers: l.max_vertex_buffers,
-        max_vertex_attributes: l.max_vertex_attributes,
-        max_vertex_stride: l.max_vertex_stride,
-        max_color_targets: l.max_color_targets,
-        uniform_offset_align: l.uniform_offset_align,
-        storage_offset_align: l.storage_offset_align,
-        max_uniform_binding: l.max_uniform_binding,
-        max_storage_binding: l.max_storage_binding,
-        max_buffer_size: l.max_buffer_size,
-        max_uniforms_per_stage: l.max_uniforms_per_stage,
-        max_storage_per_stage: l.max_storage_per_stage,
-        max_textures_per_stage: l.max_textures_per_stage,
-        max_samplers_per_stage: l.max_samplers_per_stage,
-        max_sampler_descriptors: l.max_sampler_descriptors,
-        max_workgroup_size_x: l.max_workgroup_size_x,
-        max_workgroup_size_y: l.max_workgroup_size_y,
-        max_workgroup_size_z: l.max_workgroup_size_z,
-        max_workgroup_invocations: l.max_workgroup_invocations,
-        max_workgroups_per_dimension: l.max_workgroups_per_dimension,
-        max_workgroup_storage: l.max_workgroup_storage,
-        sealed: 0,
-    )
-}
-
-FeaturesFromVk(f: &vk.VkFeatures): Features {
-    return Features(
-        texture_compression_bc: f.texture_compression_bc,
-        depth_clip_control: f.depth_clip_control,
-        float32_filterable: f.float32_filterable,
-        sampler_anisotropy: f.sampler_anisotropy,
-        sealed: 0,
-    )
-}
-
-CapsFromVk(vc: &[44]vk.VkFormatCaps): [44]FormatCaps {
-    var caps: [44]FormatCaps = [NoCaps; 44]
-    for i in 0..44 {
-        c := vc[i]
-        caps[i] = FormatCaps(
-            sampled: c.sampled,
-            filterable: c.filterable,
-            render_target: c.render_target,
-            blendable: c.blendable,
-            multisample: c.multisample,
-            resolve: c.resolve,
-            depth_stencil: c.depth_stencil,
-            sealed: 0,
-        )
-    }
-    return caps
-}
-
-KindFromVk(k: int): AdapterKind {
-    if k == vk.KindDiscrete { return AdapterKind.Discrete }
-    if k == vk.KindIntegrated { return AdapterKind.Integrated }
-    if k == vk.KindSoftware { return AdapterKind.Software }
-    return AdapterKind.Other
-}
-
-AdapterInfoFromVk(d: &vk.AdapterDesc, backend: Backend): AdapterInfo {
-    return AdapterInfo(
-        id: AdapterId(backend: backend, luid: d.luid),
-        name: d.name,
-        vendor: d.vendor,
-        device: d.device_id,
-        kind: KindFromVk(d.kind),
-        limits: LimitsFromVk(&d.limits),
-        features: FeaturesFromVk(&d.features),
-    )
-}
-
-VkOpenOptsFromGpu(o: &DeviceOptions): vk.OpenOptions {
-    pwr := match o.power {
-        .Default { vk.PowerDefault }
-        .HighPerformance { vk.PowerHighPerformance }
-        .LowPower { vk.PowerLowPower }
-    }
-    dbg := match o.debug {
-        .Off { vk.DebugOff }
-        .Validate { vk.DebugValidate }
-        .Strict { vk.DebugStrict }
-    }
-    var has_luid := false
-    var luid: u64 = 0
-    match o.adapter {
-        some(aid) {
-            has_luid = true
-            luid = aid.luid
-        }
-        none {}
-    }
-    return vk.OpenOptions(
-        power: pwr,
-        software: o.software,
-        has_luid: has_luid,
-        luid: luid,
-        debug_mode: dbg,
-        frames_in_flight: o.frames_in_flight,
-        features: vk.VkFeatures(
-            texture_compression_bc: o.features.texture_compression_bc,
-            depth_clip_control: o.features.depth_clip_control,
-            float32_filterable: o.features.float32_filterable,
-            sampler_anisotropy: o.features.sampler_anisotropy,
-            debug_layer: o.debug == DebugMode.Strict,
-        ),
-        descriptors: o.descriptors,
-    )
 }
 
 OpenVkDevice(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
@@ -272,7 +266,9 @@ OpenVkDevice(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
         limits: limits,
         features: o.features,
         backend: Backend.Vulkan,
+        debug_mode: 0,
         native: Native.Vk(v: vdev),
+        adapter_name_bytes: HeapList[u8].New(a),
         sticky_err: none,
         lost: false,
         depth_bias_clamp_ok: vad.depth_bias_clamp_ok,
@@ -300,6 +296,9 @@ OpenVkDevice(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
         render_pipes: SlotTable[RenderPipelineEntry].New(a),
         compute_pipes: SlotTable[ComputePipelineEntry].New(a),
         swapchains: SlotTable[SwapchainEntry].New(a),
+        dx_chunks: HeapList[dx.ChunkSpan].New(a),
+        dx_barriers: HeapList[dx.BarrierSpec].New(a),
+        dx_passes: HeapList[dx.PassReplaySpec].New(a),
     )
     box := Box[DeviceState].New(a, st) else e {
         vk.FreeOpenAdapterName(heap, info.name)
@@ -328,7 +327,9 @@ struct DeviceState {
     limits: DeviceLimits
     features: Features
     backend: Backend
+    debug_mode: u8
     native: Native
+    adapter_name_bytes: HeapList[u8]
     sticky_err: ?Error
     lost: bool
     depth_bias_clamp_ok: bool
@@ -356,6 +357,9 @@ struct DeviceState {
     render_pipes: SlotTable[RenderPipelineEntry]
     compute_pipes: SlotTable[ComputePipelineEntry]
     swapchains: SlotTable[SwapchainEntry]
+    dx_chunks: HeapList[dx.ChunkSpan]
+    dx_barriers: HeapList[dx.BarrierSpec]
+    dx_passes: HeapList[dx.PassReplaySpec]
 }
 
 /// A device and its one queue. Linear: end it with Close. Send, not Share.
@@ -405,6 +409,127 @@ ValidateDeviceOptions(o: &DeviceOptions): Error!void {
     }
 }
 
+OpenD3d12(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
+    a := heap.Alloc()
+
+    var triples: [132]u32 = [0; 132]
+    var guar: [44]dx.FormatRowCaps = [mem.Zeroed[dx.FormatRowCaps](); 44]
+    BuildFormatTables(mut triples, mut guar)
+
+    (has: has_luid, luid: target_luid) := match o.adapter {
+        some(aid) {
+            if aid.backend != Backend.D3d12 && aid.backend != Backend.Auto {
+                fail NoAdapter
+            }
+            (has: true, luid: aid.luid)
+        }
+        none { (has: false, luid: u64(0)) }
+    }
+    dbg_u := match o.debug {
+        .Off { u8(0) }
+        .Validate { u8(1) }
+        .Strict { u8(2) }
+    }
+    pwr_u := match o.power {
+        .Default { u8(0) }
+        .HighPerformance { u8(1) }
+        .LowPower { u8(2) }
+    }
+    dx_opts := dx.OpenOptions(
+        power: pwr_u,
+        software: o.software,
+        has_luid: has_luid,
+        target_luid: target_luid,
+        debug: dbg_u,
+        frames_in_flight: o.frames_in_flight,
+        descriptors: o.descriptors,
+        req_bc: o.features.texture_compression_bc,
+        req_depth_clip: o.features.depth_clip_control,
+        req_f32_filter: o.features.float32_filterable,
+        req_aniso: o.features.sampler_anisotropy,
+    )
+    (dev: dx_dev0, info: dx_info, caps: dx_caps) := dx.Open(heap, io, dx_opts, triples[..], guar[..]) else e {
+        fail MapDxError(e)
+    }
+    var dx_dev := dx_dev0
+    onerr dx_dev.Close()
+
+    var caps: [44]FormatCaps = [NoCaps; 44]
+    for i in 0..44 {
+        c := &dx_caps[i]
+        caps[i] = FormatCaps(
+            sampled: c.sampled,
+            filterable: c.filterable,
+            render_target: c.render_target,
+            blendable: c.blendable,
+            multisample: c.multisample,
+            resolve: c.resolve,
+            depth_stencil: c.depth_stencil,
+            sealed: 0,
+        )
+    }
+    var lim := DefaultPortableLimits
+    lim.max_texture_size = dx_info.max_texture_size
+    info := AdapterInfo(
+        id: AdapterId(backend: Backend.D3d12, luid: dx_info.luid),
+        name: dx_info.name,
+        vendor: dx_info.vendor,
+        device: dx_info.device,
+        kind: if dx_info.is_software { AdapterKind.Software } else { AdapterKind.Discrete },
+        limits: lim,
+        features: o.features,
+    )
+    var st := DeviceState(
+        info: info,
+        caps: caps,
+        limits: lim,
+        features: o.features,
+        backend: Backend.D3d12,
+        debug_mode: dbg_u,
+        native: Native.Dx(d: dx_dev),
+        adapter_name_bytes: HeapList[u8].New(a),
+        sticky_err: none,
+        lost: false,
+        depth_bias_clamp_ok: true,
+        draw_params_ok: true,
+        serials: SerialTracker.New(),
+        deferred: DeferredQueue.New(a),
+        chunk_pool: ChunkPool.New(a),
+        stream: CommandStream.New(a),
+        pre_submit: CommandStream.New(a),
+        encoder_active: false,
+        pass_shadow: PassShadow.New(a),
+        messages: HeapList[StoredMessage].New(a),
+        msg_bytes: HeapList[u8].New(a),
+        err_count: 0,
+        warn_count: 0,
+        planted_bug: PlantedBug.None,
+        buffers: SlotTable[BufferEntry].New(a),
+        textures: SlotTable[TextureEntry].New(a),
+        views: SlotTable[ViewEntry].New(a),
+        samplers: SlotTable[SamplerEntry].New(a),
+        bg_layouts: SlotTable[BindGroupLayoutEntry].New(a),
+        pipe_layouts: SlotTable[PipelineLayoutEntry].New(a),
+        bind_groups: SlotTable[BindGroupEntry].New(a),
+        shaders: SlotTable[ShaderEntry].New(a),
+        render_pipes: SlotTable[RenderPipelineEntry].New(a),
+        compute_pipes: SlotTable[ComputePipelineEntry].New(a),
+        swapchains: SlotTable[SwapchainEntry].New(a),
+        dx_chunks: HeapList[dx.ChunkSpan].New(a),
+        dx_barriers: HeapList[dx.BarrierSpec].New(a),
+        dx_passes: HeapList[dx.PassReplaySpec].New(a),
+    )
+    // Serial 1 was used during Open to zero the device zero-buffer; align SerialTracker.
+    st.serials.next = 2
+    st.serials.completed = 1
+    SyncDxMessages(a, mut st)
+    box := Box[DeviceState].New(a, st) else e {
+        _ = st.FreeAll(a)
+        fail e
+    }
+    return Device(heap: heap, serial: 1, state: box, cell: Cell[u8].New(0))
+}
+
 /// Makes a device by o. Errors: Unsupported (target), NoAdapter,
 /// Missing(feature), DeviceLost, OutOfDeviceMemory, OutOfMemory, Canceled
 /// (only while queued). Runs creation and the format queries through
@@ -413,14 +538,19 @@ export Open(heap: &Heap, io: Io, o: DeviceOptions): Error!Device from heap {
     try ValidateDeviceOptions(&o)
     match o.backend {
         .D3d12 {
-            _ = dx.Open() else { fail Unsupported }
+            return try OpenD3d12(heap, io, &o)
         }
         .Vulkan {
             return try OpenVkDevice(heap, io, &o)
         }
         .Auto {
-            _ = dx.Open() else {
-                return try OpenVkDevice(heap, io, &o)
+            return OpenD3d12(heap, io, &o) else e {
+                match e {
+                    Unsupported | NoAdapter {
+                        return try OpenVkDevice(heap, io, &o)
+                    }
+                    _ { fail e }
+                }
             }
         }
     }
@@ -463,8 +593,12 @@ export Device.WaitIdle(mut self, io: Io): Error!void {
         .Stub(s) {
             try s.WaitSerial(last)
         }
-        .Dx(d: _) {
-            fail Unsupported
+        .Dx(d) {
+            d.WaitQueueIdle(io) else e {
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
         }
         .Vk(v) {
             v.WaitSerial(io, last) else e {
@@ -549,7 +683,9 @@ DeviceState.FreeAll(self, a: &Alloc): int {
         limits: _,
         features: _,
         backend: _,
+        debug_mode: _,
         native,
+        adapter_name_bytes,
         sticky_err: _,
         lost: _,
         depth_bias_clamp_ok: _,
@@ -577,6 +713,9 @@ DeviceState.FreeAll(self, a: &Alloc): int {
         render_pipes: render_pipes0,
         compute_pipes: compute_pipes0,
         swapchains: swapchains0,
+        dx_chunks,
+        dx_barriers,
+        dx_passes,
     ) := self
 
     stream.FreeAll(a)
@@ -586,18 +725,22 @@ DeviceState.FreeAll(self, a: &Alloc): int {
     pass_shadow.FreeAll(a)
     messages.Free(a)
     msg_bytes.Free(a)
+    adapter_name_bytes.Free(a)
+    dx_chunks.Free(a)
+    dx_barriers.Free(a)
+    dx_passes.Free(a)
 
     var nat := native
     var swapchains := swapchains0
     for {
         match swapchains.DrainPop(a) {
             some(e) {
-                SwapchainEntry(info: _, view_slot: _, view_gen: _, native_handle, surf) := e
-                match surf {
-                    some(sf) { sf.Close() }
+                SwapchainEntry(info: _, view_slot: _, view_gen: _, native_handle, surface, handed_out: _) := e
+                nat.DestroySwapchain(a, native_handle)
+                match surface {
+                    some(surf) { surf.Close() }
                     none {}
                 }
-                nat.DestroySwapchain(a, native_handle)
             }
             none { break }
         }
@@ -715,12 +858,27 @@ DeviceState.FreeAll(self, a: &Alloc): int {
     return nat.CloseAll(a)
 }
 
+WaitBeforeClose(dev: mut Device, io: Io) {
+    st := dev.state.Mut()
+    if !st.lost {
+        last := st.serials.LastSubmitted()
+        match mut st.native {
+            .Stub(s) { _ = s.WaitSerial(last) else {} }
+            .Dx(d) { _ = d.WaitQueueIdle(io) else {} }
+            .Vk(v: _) {}
+        }
+        st.serials.Complete(last)
+        SyncDxMessages(dev.heap.Alloc(), st)
+    }
+}
+
 /// Waits for the GPU (not cancellable; after device loss the wait ends
 /// at once), releases every object the device still owns, and the
 /// device. O(objects); never fails.
 export Device.Close(self, io: Io): Leaks {
     var dev := self
-    _ = dev.WaitIdle(io) else {}
+    _ = dev.FlushPreSubmit() else {}
+    WaitBeforeClose(mut dev, io)
     Device(heap, serial: _, state, cell: _) := dev
     a := heap.Alloc()
     st := state.Take(a)
@@ -772,21 +930,29 @@ Device.SetLost(mut self, reason: LossReason) {
 
 Device.FlushPreSubmit(mut self): Error!void {
     st := self.state.Mut()
-    var has_native_pre := false
-    match &st.native {
-        .Vk(v) { has_native_pre = v.HasPendingPreSubmit() }
-        _ {}
+    has_native_pre := match &st.native {
+        .Dx(d) { d.HasPendingPreSubmit() }
+        .Vk(v) { v.HasPendingPreSubmit() }
+        .Stub(s: _) { false }
     }
     if st.pre_submit.IsEmpty() && !has_native_pre {
         return
     }
     serial := st.serials.Advance()
+    a := self.heap.Alloc()
     match mut st.native {
         .Stub(s) {
             try s.SubmitStream(&st.pre_submit, serial)
         }
-        .Dx(d: _) {
-            fail Unsupported
+        .Dx(d) {
+            d.FlushPreSubmit(serial) else e {
+                SyncDxMessages(a, st)
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                st.pre_submit.RecycleToPool(a, mut st.chunk_pool, serial, false)
+                fail ge
+            }
+            SyncDxMessages(a, st)
         }
         .Vk(v) {
             v.FlushPreSubmit(serial) else e {
@@ -801,7 +967,6 @@ Device.FlushPreSubmit(mut self): Error!void {
             }
         }
     }
-    a := self.heap.Alloc()
     st.pre_submit.RecycleToPool(a, mut st.chunk_pool, serial, false)
 }
 

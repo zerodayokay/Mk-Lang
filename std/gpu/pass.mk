@@ -2,290 +2,13 @@
 // hold their encoder exclusively, deduplicate redundant state, and flush
 // barriers and dirty state only at draws and dispatches.
 //
-// What: Load, LoadDepth, LoadStencil, Store, ColorAttachment,
-// DepthAttachment, PassDesc, RenderPass, PassShadow, and all render pass
-// commands.
+// What: RenderPass, PassShadow, and all render pass commands.
 //
 // How: shadow state lives inside DeviceState.pass_shadow so RenderPass stays
 // a thin linear view; RenderPass.End resolves merged texture uses and patches
 // OpBarrierRef at pass begin.
 
 import std.mem
-
-/// What a colour attachment holds when the pass begins. Clear values are
-/// f64 so every R32Uint and R32Sint value clears exactly.
-export enum Load {
-    Clear(r: f64, g: f64, b: f64, a: f64)
-    Keep
-    DontCare
-}
-
-/// What a depth aspect holds when the pass begins.
-export enum LoadDepth {
-    Clear(depth: f32)
-    Keep
-    DontCare
-}
-
-/// What a stencil aspect holds when the pass begins.
-export enum LoadStencil {
-    Clear(value: u32)
-    Keep
-    DontCare
-}
-
-/// What an attachment keeps when the pass ends.
-export enum Store {
-    Store
-    Discard
-}
-
-/// One colour attachment of a pass.
-export struct ColorAttachment {
-    export target: &TextureView
-    export resolve: ?&TextureView
-    export load: Load
-    export store: Store
-}
-
-/// The depth-stencil attachment of a pass. read_only: depth and stencil
-/// are only tested, so the same view may also be bound for sampling.
-export struct DepthAttachment {
-    export target: &TextureView
-    export depth_load: LoadDepth
-    export depth_store: Store
-    export stencil_load: LoadStencil
-    export stencil_store: Store
-    export read_only: bool
-}
-
-/// The attachments of a render pass; all share one extent.
-export struct PassDesc {
-    export colors: []ColorAttachment
-    export depth: ?DepthAttachment
-    export label: str
-}
-
-const DirtyPipeline: u32 = 1 << 0
-const DirtyGroup0: u32 = 1 << 1
-const DirtyGroup1: u32 = 1 << 2
-const DirtyGroup2: u32 = 1 << 3
-const DirtyGroup3: u32 = 1 << 4
-const DirtyImmediates: u32 = 1 << 5
-const DirtyVertexBase: u32 = 1 << 6
-const DirtyIndex: u32 = 1 << 22
-const DirtyViewport: u32 = 1 << 23
-const DirtyScissor: u32 = 1 << 24
-const DirtyBlend: u32 = 1 << 25
-const DirtyStencil: u32 = 1 << 26
-
-struct PassAttachRec {
-    tex_slot: u32
-    first_mip: int
-    mip_count: int
-    first_layer: int
-    layer_count: int
-    plane_mask: u8
-    state: u16
-    is_read_only_depth: bool
-}
-
-struct PassTexUse {
-    tex_slot: u32
-    first_mip: int
-    mip_count: int
-    first_layer: int
-    layer_count: int
-    plane_mask: u8
-    state: u16
-}
-
-struct PassShadow {
-    barrier_loc: StreamLoc
-    extent_w: int
-    extent_h: int
-    color_count: int
-    color_formats: [8]TextureFormat
-    depth_format: ?TextureFormat
-    samples: int
-    attaches: [9]PassAttachRec
-    attach_count: int
-    tex_uses: HeapList[PassTexUse]
-    pipeline_slot: u32
-    layout_slot: u32
-    layout_group_count: int
-    layout_group_fps: [4]u64
-    layout_immediates: int
-    dirty: u32
-    groups: [4]u32
-    dyn_counts: [4]int
-    dyn_offsets: [16]u32
-    immediates: [128]u8
-    vb_slots: [16]u32
-    vb_offsets: [16]int
-    vb_sizes: [16]int
-    pipe_vb_count: int
-    pipe_vb_strides: [16]int
-    ib_slot: u32
-    ib_offset: int
-    ib_size: int
-    ib_fmt: IndexFormat
-    vp_x: f32
-    vp_y: f32
-    vp_w: f32
-    vp_h: f32
-    vp_min: f32
-    vp_max: f32
-    sc_x: int
-    sc_y: int
-    sc_w: int
-    sc_h: int
-    blend_r: f32
-    blend_g: f32
-    blend_b: f32
-    blend_a: f32
-    stencil_ref: u32
-    prev_compute_write: bool
-}
-
-PassShadow.New(a: &Alloc): PassShadow {
-    return PassShadow(
-        barrier_loc: StreamLoc(chunk_idx: -1, word_idx: -1),
-        extent_w: 0,
-        extent_h: 0,
-        color_count: 0,
-        color_formats: [TextureFormat.Rgba8Unorm; 8],
-        depth_format: none,
-        samples: 1,
-        attaches: [mem.Zeroed[PassAttachRec](); 9],
-        attach_count: 0,
-        tex_uses: HeapList[PassTexUse].New(a),
-        pipeline_slot: 0,
-        layout_slot: 0,
-        layout_group_count: 0,
-        layout_group_fps: [0; 4],
-        layout_immediates: 0,
-        dirty: 0,
-        groups: [0; 4],
-        dyn_counts: [0; 4],
-        dyn_offsets: [0; 16],
-        immediates: [0; 128],
-        vb_slots: [0; 16],
-        vb_offsets: [0; 16],
-        vb_sizes: [0; 16],
-        pipe_vb_count: 0,
-        pipe_vb_strides: [0; 16],
-        ib_slot: 0,
-        ib_offset: 0,
-        ib_size: 0,
-        ib_fmt: IndexFormat.Uint16,
-        vp_x: 0.0,
-        vp_y: 0.0,
-        vp_w: 0.0,
-        vp_h: 0.0,
-        vp_min: 0.0,
-        vp_max: 1.0,
-        sc_x: 0,
-        sc_y: 0,
-        sc_w: 0,
-        sc_h: 0,
-        blend_r: 0.0,
-        blend_g: 0.0,
-        blend_b: 0.0,
-        blend_a: 0.0,
-        stencil_ref: 0,
-        prev_compute_write: false,
-    )
-}
-
-PassShadow.Reset(mut self, w: int, h: int) {
-    self.extent_w = w
-    self.extent_h = h
-    self.color_count = 0
-    self.depth_format = none
-    self.samples = 1
-    self.attach_count = 0
-    self.tex_uses.Clear()
-    self.pipeline_slot = 0
-    self.layout_slot = 0
-    self.layout_group_count = 0
-    self.layout_group_fps = [0; 4]
-    self.layout_immediates = 0
-    self.dirty = 0
-    self.groups = [0; 4]
-    self.dyn_counts = [0; 4]
-    self.dyn_offsets = [0; 16]
-    self.immediates = [0; 128]
-    self.vb_slots = [0; 16]
-    self.vb_offsets = [0; 16]
-    self.vb_sizes = [0; 16]
-    self.pipe_vb_count = 0
-    self.pipe_vb_strides = [0; 16]
-    self.ib_slot = 0
-    self.ib_offset = 0
-    self.ib_size = 0
-    self.vp_x = 0.0
-    self.vp_y = 0.0
-    self.vp_w = Cast[f32](w)
-    self.vp_h = Cast[f32](h)
-    self.vp_min = 0.0
-    self.vp_max = 1.0
-    self.sc_x = 0
-    self.sc_y = 0
-    self.sc_w = w
-    self.sc_h = h
-    self.blend_r = 0.0
-    self.blend_g = 0.0
-    self.blend_b = 0.0
-    self.blend_a = 0.0
-    self.stencil_ref = 0
-    self.prev_compute_write = false
-}
-
-PassShadow.FreeAll(self, a: &Alloc) {
-    PassShadow(
-        barrier_loc: _, extent_w: _, extent_h: _, color_count: _, color_formats: _, depth_format: _, samples: _, attaches: _, attach_count: _,
-        tex_uses,
-        pipeline_slot: _, layout_slot: _, layout_group_count: _, layout_group_fps: _, layout_immediates: _, dirty: _, groups: _, dyn_counts: _, dyn_offsets: _, immediates: _,
-        vb_slots: _, vb_offsets: _, vb_sizes: _, pipe_vb_count: _, pipe_vb_strides: _, ib_slot: _, ib_offset: _, ib_size: _, ib_fmt: _,
-        vp_x: _, vp_y: _, vp_w: _, vp_h: _, vp_min: _, vp_max: _, sc_x: _, sc_y: _, sc_w: _, sc_h: _, blend_r: _, blend_g: _, blend_b: _, blend_a: _, stencil_ref: _, prev_compute_write: _,
-    ) := self
-    tex_uses.Free(a)
-}
-
-RangesOverlap(a0: int, ac: int, b0: int, bc: int): bool {
-    return a0 < b0 + bc && b0 < a0 + ac
-}
-
-PassTexUseOverlaps(a: &PassAttachRec, b: &BoundTexRec): bool {
-    if a.tex_slot != b.tex_slot {
-        return false
-    }
-    if (a.plane_mask & b.plane_mask) == 0 {
-        return false
-    }
-    return RangesOverlap(a.first_mip, a.mip_count, b.first_mip, b.mip_count) && RangesOverlap(a.first_layer, a.layer_count, b.first_layer, b.layer_count)
-}
-
-PassShadow.RecordTexUse(mut self, a: &Alloc, u: PassTexUse): Invalid!void {
-    for i in 0..self.tex_uses.Len() {
-        ex := mut self.tex_uses[i]
-        if ex.tex_slot == u.tex_slot && ex.first_mip == u.first_mip && ex.mip_count == u.mip_count && ex.first_layer == u.first_layer && ex.layer_count == u.layer_count && ex.plane_mask == u.plane_mask {
-            match MergeTexReadStates(ex.state, u.state) {
-                some(m) {
-                    ex.state = m
-                    return
-                }
-                none {
-                    fail Invalid(misuse: Misuse.AttachmentAlsoBound, at: -1)
-                }
-            }
-        }
-    }
-    self.tex_uses.Push(a, u) else {
-        fail Invalid(misuse: Misuse.LimitExceeded, at: -1)
-    }
-}
 
 ApplyLayoutChangeGroups(st: mut DeviceState, new_layout: u32, group_count: int, group_fps: [4]u64, immediates: int) {
     sh := mut st.pass_shadow
@@ -464,7 +187,7 @@ export linear view struct RenderPass {
     dirty: u32
 }
 
-SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &PassDesc): Invalid!(w: int, h: int) {
+SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &PassDesc): Invalid!(w: int, h: int, pass_idx: u32) {
     lim := st.limits
     if d.colors.Len() > lim.max_color_targets || (d.colors.Len() == 0 && d.depth.IsNone()) {
         fail Invalid(misuse: if d.colors.Len() > lim.max_color_targets { Misuse.LimitExceeded } else { Misuse.ExtentMismatch }, at: -1)
@@ -472,6 +195,8 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
     var w := -1
     var h := -1
     var samples := -1
+    var prec := mem.Zeroed[PassStreamRec]()
+    prec.color_count = d.colors.Len()
     for ci in 0..d.colors.Len() {
         ca := &d.colors[ci]
         if ca.target.device != serial || !st.views.IsLive(ca.target.slot, ca.target.generation) {
@@ -481,6 +206,7 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
         ve_fmt := ve.format
         ve_samples := ve.samples
         ve_tex := ve.tex_slot
+        ve_nh := ve.native_handle
         ve_fm := ve.first_mip
         ve_mc := ve.mip_count
         ve_fl := ve.first_layer
@@ -512,7 +238,12 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
             is_read_only_depth: false,
         )
         st.pass_shadow.attach_count += 1
+        var c_tex_nh: u64 = 0
+        var c_sub: u32 = 0
         if ve_tex != 0 {
+            te := st.textures.Get(ve_tex)
+            c_tex_nh = te.native_handle
+            c_sub = Cast[u32](ve_fm + ve_fl * te.mips)
             try st.pass_shadow.RecordTexUse(a, PassTexUse(
                 tex_slot: ve_tex,
                 first_mip: ve_fm,
@@ -526,6 +257,9 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
         }
         st.views.StampUse(ca.target.slot, st.serials.next)
 
+        var r_vnh: u64 = 0
+        var r_tnh: u64 = 0
+        var r_sub: u32 = 0
         match ca.resolve {
             some(rv) {
                 if rv.device != serial || !st.views.IsLive(rv.slot, rv.generation) {
@@ -541,7 +275,11 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
                 if FormatIndex(rve.format) != FormatIndex(ve_fmt) {
                     fail Invalid(misuse: Misuse.FormatMismatch, at: ci)
                 }
+                r_vnh = rve.native_handle
                 if rve.tex_slot != 0 {
+                    rte := st.textures.Get(rve.tex_slot)
+                    r_tnh = rte.native_handle
+                    r_sub = Cast[u32](rve.first_mip + rve.first_layer * rte.mips)
                     try st.pass_shadow.RecordTexUse(a, PassTexUse(
                         tex_slot: rve.tex_slot,
                         first_mip: rve.first_mip,
@@ -557,6 +295,30 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
             }
             none {}
         }
+        (op: lop, r: cr, g: cg, b: cb, a: ca_v) := match ca.load {
+            .Clear(r, g, b, a: av) { (op: u8(0), r: Cast[f32](r), g: Cast[f32](g), b: Cast[f32](b), a: Cast[f32](av)) }
+            .Keep { (op: u8(1), r: f32(0.0), g: f32(0.0), b: f32(0.0), a: f32(0.0)) }
+            .DontCare { (op: u8(2), r: f32(0.0), g: f32(0.0), b: f32(0.0), a: f32(0.0)) }
+        }
+        sop := match ca.store {
+            .Store { u8(0) }
+            .Discard { u8(1) }
+        }
+        prec.colors[ci] = PassColorStreamRec(
+            view_nh: ve_nh,
+            tex_nh: c_tex_nh,
+            subresource: c_sub,
+            resolve_view_nh: r_vnh,
+            resolve_tex_nh: r_tnh,
+            resolve_sub: r_sub,
+            dxgi_format: RowOf(ve_fmt).dxgi_rtv_dsv,
+            load_op: lop,
+            store_op: sop,
+            clear_r: cr,
+            clear_g: cg,
+            clear_b: cb,
+            clear_a: ca_v,
+        )
     }
     match d.depth {
         some(da) {
@@ -564,8 +326,9 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
                 fail Invalid(misuse: Misuse.StaleHandle, at: -1)
             }
             dve := st.views.Get(da.target.slot)
-            if !dve.usage.render_target || dve.layer_count != 1 || !IsDepthStencilFormat(dve.format) {
-                fail Invalid(misuse: if !IsDepthStencilFormat(dve.format) { Misuse.FormatMismatch } else { Misuse.BadUsage }, at: -1)
+            dve_fmt := dve.format
+            if !dve.usage.render_target || dve.layer_count != 1 || !IsDepthStencilFormat(dve_fmt) {
+                fail Invalid(misuse: if !IsDepthStencilFormat(dve_fmt) { Misuse.FormatMismatch } else { Misuse.BadUsage }, at: -1)
             }
             if w >= 0 && (dve.width != w || dve.height != h) {
                 fail Invalid(misuse: Misuse.ExtentMismatch, at: -1)
@@ -579,7 +342,7 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
                 samples = dve.samples
             }
             d_state := if da.read_only { ResDepthRead } else { ResDepthWrite }
-            st.pass_shadow.depth_format = some(dve.format)
+            st.pass_shadow.depth_format = some(dve_fmt)
             st.pass_shadow.attaches[st.pass_shadow.attach_count] = PassAttachRec(
                 tex_slot: dve.tex_slot,
                 first_mip: dve.first_mip,
@@ -591,22 +354,66 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
                 is_read_only_depth: da.read_only,
             )
             st.pass_shadow.attach_count += 1
-            if dve.tex_slot != 0 {
+            dve_nh := dve.native_handle
+            dve_tex := dve.tex_slot
+            dve_fm := dve.first_mip
+            dve_mc := dve.mip_count
+            dve_fl := dve.first_layer
+            dve_lc := dve.layer_count
+            dve_pm := dve.plane_mask
+            st.views.StampUse(da.target.slot, st.serials.next)
+            if dve_tex != 0 {
                 try st.pass_shadow.RecordTexUse(a, PassTexUse(
-                    tex_slot: dve.tex_slot,
-                    first_mip: dve.first_mip,
-                    mip_count: dve.mip_count,
-                    first_layer: dve.first_layer,
-                    layer_count: dve.layer_count,
-                    plane_mask: dve.plane_mask,
+                    tex_slot: dve_tex,
+                    first_mip: dve_fm,
+                    mip_count: dve_mc,
+                    first_layer: dve_fl,
+                    layer_count: dve_lc,
+                    plane_mask: dve_pm,
                     state: d_state,
                 ))
-                st.textures.StampUse(dve.tex_slot, st.serials.next)
+                st.textures.StampUse(dve_tex, st.serials.next)
             }
-            st.views.StampUse(da.target.slot, st.serials.next)
+            (op: dlop, val: dclr) := match da.depth_load {
+                .Clear(depth) { (op: u8(0), val: depth) }
+                .Keep { (op: u8(1), val: f32(0.0)) }
+                .DontCare { (op: u8(2), val: f32(0.0)) }
+            }
+            (op: slop, val: sclr) := match da.stencil_load {
+                .Clear(value) { (op: u8(0), val: Trunc[u8](value)) }
+                .Keep { (op: u8(1), val: u8(0)) }
+                .DontCare { (op: u8(2), val: u8(0)) }
+            }
+            dsop := match da.depth_store {
+                .Store { u8(0) }
+                .Discard { u8(1) }
+            }
+            ssop := match da.stencil_store {
+                .Store { u8(0) }
+                .Discard { u8(1) }
+            }
+            prec.depth = PassDepthStreamRec(
+                has_depth: true,
+                view_nh: dve_nh,
+                read_only: da.read_only,
+                depth_load: dlop,
+                depth_store: dsop,
+                stencil_load: slop,
+                stencil_store: ssop,
+                depth_clear: dclr,
+                stencil_clear: sclr,
+                has_stencil: (RowOf(dve_fmt).aspects & AspectBitStencil) != 0,
+            )
         }
         none {}
     }
+    prec.width = w
+    prec.height = h
+    st.stream.passes.Push(a, prec) else {
+        fail Invalid(misuse: Misuse.LimitExceeded, at: -1)
+    }
+    pidx := Cast[u32](st.stream.passes.Len() - 1)
+    st.pass_shadow.pass_idx = pidx
     st.pass_shadow.extent_w = w
     st.pass_shadow.extent_h = h
     st.pass_shadow.color_count = d.colors.Len()
@@ -615,7 +422,7 @@ SetupRenderPassAttachments(a: &Alloc, st: mut DeviceState, serial: u32, d: &Pass
     st.pass_shadow.vp_h = Cast[f32](h)
     st.pass_shadow.sc_w = w
     st.pass_shadow.sc_h = h
-    return (w: w, h: h)
+    return (w: w, h: h, pass_idx: pidx)
 }
 
 /// Begins a render pass; viewport and scissor are the attachments' extent,
@@ -630,7 +437,7 @@ export Encoder.RenderPass(mut self, d: &PassDesc): RenderPass from self {
     if st.stream.HasError() {
         return RenderPass(enc: self, pipeline: 0, dirty: 0)
     }
-    (w, h) := SetupRenderPassAttachments(a, st, self.dev.serial, d) else e {
+    (w, h, pass_idx) := SetupRenderPassAttachments(a, st, self.dev.serial, d) else e {
         st.stream.RecordError(e.misuse, st.stream.cmd_count)
         return RenderPass(enc: self, pipeline: 0, dirty: 0)
     }
@@ -639,6 +446,16 @@ export Encoder.RenderPass(mut self, d: &PassDesc): RenderPass from self {
         return RenderPass(enc: self, pipeline: 0, dirty: 0)
     }
     st.pass_shadow.barrier_loc = loc
+    is_dx := match &st.native {
+        .Dx(d: _) { true }
+        _ { false }
+    }
+    if is_dx {
+        _ = st.stream.Write2(a, mut st.chunk_pool, PackHdr(OpBeginRendering, 2, Cast[u16](d.colors.Len()), pass_idx), PackU32Pair(Cast[u32](w), Cast[u32](h))) else {
+            st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
+        }
+        return RenderPass(enc: self, pipeline: 0, dirty: 0)
+    }
     cc := d.colors.Len()
     has_d := d.depth.IsSome()
     var words: [60]u64 = [0; 60]
@@ -1043,7 +860,13 @@ RenderPass.FlushDraw(mut self, need_index: bool): bool {
                 }
             }
             for bi in 0..bg.bufs.Len() {
-                st.buffers.StampUse(bg.bufs[bi].buf_slot, st.serials.next)
+                bb := &bg.bufs[bi]
+                st.buffers.StampUse(bb.buf_slot, st.serials.next)
+                bst := if bb.is_storage { ResShaderRead } else { ResUniform }
+                sh.RecordBufUse(a, bb.buf_slot, bst) else e {
+                    st.stream.RecordError(e.misuse, st.stream.cmd_count)
+                    return false
+                }
             }
             if !EmitSetGroupRecord(a, &*sh, mut st.stream, mut st.chunk_pool, gi, bg.native_handle) {
                 return false
@@ -1057,6 +880,10 @@ RenderPass.FlushDraw(mut self, need_index: bool): bool {
     }
     for vi in 0..sh.pipe_vb_count {
         if (sh.dirty & (DirtyVertexBase << Cast[u32](vi))) != 0 {
+            sh.RecordBufUse(a, sh.vb_slots[vi], ResVertex) else e {
+                st.stream.RecordError(e.misuse, st.stream.cmd_count)
+                return false
+            }
             nh := st.buffers.Get(sh.vb_slots[vi]).native_handle
             _ = st.stream.Write3(a, mut st.chunk_pool, PackHdr(OpSetVertexBuffers, 3, Cast[u16](vi), Cast[u32](sh.pipe_vb_strides[vi])), nh, PackU32Pair(Cast[u32](sh.vb_offsets[vi]), Cast[u32](sh.vb_sizes[vi]))) else {
                 st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
@@ -1065,6 +892,10 @@ RenderPass.FlushDraw(mut self, need_index: bool): bool {
         }
     }
     if (sh.dirty & DirtyIndex) != 0 && sh.ib_slot != 0 {
+        sh.RecordBufUse(a, sh.ib_slot, ResIndex) else e {
+            st.stream.RecordError(e.misuse, st.stream.cmd_count)
+            return false
+        }
         nh := st.buffers.Get(sh.ib_slot).native_handle
         fmt_u := if sh.ib_fmt == IndexFormat.Uint32 { u16(1) } else { u16(0) }
         _ = st.stream.Write3(a, mut st.chunk_pool, PackHdr(OpSetIndexBuffer, 3, fmt_u, Cast[u32](sh.ib_size)), nh, Cast[u64](sh.ib_offset)) else {
@@ -1182,6 +1013,7 @@ export RenderPass.End(self) {
     if !st.stream.HasError() {
         bstart := st.stream.barriers.Len()
         bug := st.planted_bug
+        serial := st.serials.next
         for i in 0..st.pass_shadow.tex_uses.Len() {
             u := &st.pass_shadow.tex_uses[i]
             tex := st.textures.GetMut(u.tex_slot)
@@ -1190,9 +1022,17 @@ export RenderPass.End(self) {
                 break
             }
         }
+        for i in 0..st.pass_shadow.buf_uses.Len() {
+            bu := &st.pass_shadow.buf_uses[i]
+            buf := st.buffers.GetMut(bu.buf_slot)
+            TransitionBuffer(a, bu.buf_slot, mut buf.state, serial, bu.state, mut st.stream.barriers, mut st.stream.undo, bug) else {
+                st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
+                break
+            }
+        }
         bcnt := st.stream.barriers.Len() - bstart
         st.stream.PatchBarrierRef(mut st.chunk_pool, st.pass_shadow.barrier_loc, Cast[u32](bstart), Cast[u32](bcnt), 0)
-        _ = st.stream.Write1(a, mut st.chunk_pool, PackHdr(OpEndRendering, 1, 0, 0)) else {
+        _ = st.stream.Write1(a, mut st.chunk_pool, PackHdr(OpEndRendering, 1, 0, st.pass_shadow.pass_idx)) else {
             st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
         }
     }
