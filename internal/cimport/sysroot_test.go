@@ -3,7 +3,7 @@
 // does not name a Microsoft SDK: its cache key and its Clang command line
 // must stay what they were.
 // What: TestCImport_KeyUnchanged, _SysrootFlavour, _MicrosoftHeaders,
-// _FlavourTriple and _MSVCVersion.
+// _FlavourTriple, _MSVCVersion and _MicrosoftTypes.
 // How: a fixed request over fixed paths, its key and its shared Clang
 // flags compared with the values the importer gave before the flavour
 // existed; fake SDK and mingw-w64 trees written by the test (no SDK is
@@ -320,5 +320,45 @@ func TestCImport_MSVCVersion(t *testing.T) {
 	wantLines(t, res.Modules[0], "export const FakeOld: i32 = 1933")
 	if strings.Contains(res.Modules[0], "FakeNew") {
 		t.Errorf("the headers were read for Visual C++ 19.50:\n%s", res.Modules[0])
+	}
+}
+
+// TestCImport_MicrosoftTypes: mk's toolset headers declare each
+// pointer-sized and wide-character type as Clang's own headers do for the
+// MSVC triple (a typedef that differs from stddef.h's or stdint.h's is a
+// Clang error), so they bind as on every other target, and the exception
+// disposition and filter results have their documented values. A wrong
+// typedef here would change thousands of SDK bindings; this runs without
+// an SDK.
+func TestCImport_MicrosoftTypes(t *testing.T) {
+	tl, rd := clangFor(t)
+	sdk := fakeTree(t, map[string]string{
+		"um/windows.h": "#include <vcruntime.h>\n#include <excpt.h>\n#include <stdarg.h>\n#include <stddef.h>\n#include <stdint.h>\n#include <winnt.h>\n",
+		"um/winnt.h":   "int fake_va(va_list ap);\n",
+		"shared/sal.h": "",
+	})
+	sys, err := SystemFor("x86_64-windows", []string{filepath.Join(sdk, "um"), filepath.Join(sdk, "shared")}, t.TempDir())
+	if err != nil || sys.Flavour != FlavourMicrosoft {
+		t.Fatalf("system %+v, %v", sys, err)
+	}
+	res, err := Translate(context.Background(), tl, rd, Request{Target: "x86_64-windows", Triple: sys.Triple,
+		Imports: []Import{{Name: "w", Headers: []string{"windows.h"}}}, Include: []string{t.TempDir()}, Sysroot: sys.Dirs,
+		WorkDir: filepath.Join(t.TempDir(), "w")})
+	if err != nil {
+		if ce, ok := err.(*Error); ok {
+			t.Fatalf("%v\n%s", ce, ce.Stderr)
+		}
+		t.Fatal(err)
+	}
+	view := res.Modules[0]
+	for _, want := range []string{"export type SizeT = uint\n", "export type PtrdiffT = int\n", "export type IntptrT = int\n",
+		"export type UintptrT = uint\n", "export type WcharT = u16\n",
+		"export const ExceptionContinueExecution: ExceptionDisposition = 0\n", "export const ExceptionContinueSearch: ExceptionDisposition = 1\n",
+		"export const ExceptionNestedException: ExceptionDisposition = 2\n", "export const ExceptionCollidedUnwind: ExceptionDisposition = 3\n",
+		"export const ExceptionExecuteHandler: i32 = 1\n", "export const ExceptionContinueSearchConst: i32 = 0\n",
+		"export const ExceptionContinueExecutionConst: i32 = -1\n"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the view lacks %q:\n%s", want, view)
+		}
 	}
 }

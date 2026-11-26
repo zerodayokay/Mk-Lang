@@ -3,16 +3,20 @@
 // breaks the link; the rule must hold for inline functions and declared
 // macros alike, per import, and must not follow what the pruned bindings
 // keep for other reasons.
-// What: TestCImport_KeptShim and TestCImport_KeptShimTranslated.
+// What: TestCImport_KeptShim, _KeptShimTranslated and _ShimCache.
 // How: KeptShim over hand-written functions and names, then over a real
 // translation whose pruned binding keeps more functions than the program
-// names.
+// names; Save and Load of entries with and without the functions.
 
 package cimport
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+
+	"mk/internal/cache"
+	"mk/internal/source"
 )
 
 // TestCImport_KeptShim: KeptShim keeps a function exactly when the program
@@ -106,4 +110,32 @@ func cloneWantForTest(w Want) Want {
 		}
 	}
 	return out
+}
+
+// TestCImport_ShimCache: a translation's cache entry keeps the shim's
+// functions one by one, so a build that hits it still defines only those
+// it names; an entry with a shim but no functions (as one saved without
+// them would be) is a miss, never a shim of nothing; an entry with no
+// shim is a hit.
+func TestCImport_ShimCache(t *testing.T) {
+	st, err := cache.Open(t.TempDir(), cache.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := []ShimFunc{{Import: 0, Name: "k_in", Inline: true, Def: "#undef k_in\nint k_in(void) { return __mk_inline_k_in(); }\n"}}
+	key := source.HashBytes("test", []byte("with functions"))
+	Save(st, key, &Result{Modules: []string{"m"}, Shim: "shim", ShimFuncs: fs})
+	if res, ok := Load(st, key); !ok || !reflect.DeepEqual(res.ShimFuncs, fs) || res.Shim != "shim" {
+		t.Errorf("entry with functions: hit %v, %+v", ok, res)
+	}
+	old := source.HashBytes("test", []byte("without functions"))
+	Save(st, old, &Result{Modules: []string{"m"}, Shim: "shim"})
+	if _, ok := Load(st, old); ok {
+		t.Error("an entry with a shim and no functions hit")
+	}
+	plain := source.HashBytes("test", []byte("no shim"))
+	Save(st, plain, &Result{Modules: []string{"m"}})
+	if _, ok := Load(st, plain); !ok {
+		t.Error("an entry with no shim missed")
+	}
 }
