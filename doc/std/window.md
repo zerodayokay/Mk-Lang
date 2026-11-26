@@ -166,6 +166,21 @@ Variants:
 - `Back`
 - `Forward`
 
+### `CreateUnixVulkanSurface`
+
+```
+export CreateUnixVulkanSurface(io: Io, handle: uint, instance: uint, loader: uint): Unsupported!(code: i32, surface: uint)
+```
+
+- Errors: Unsupported
+
+Creates a Vulkan surface for a GLFW handle from a live Surface. An
+integration supplies a live VkInstance address and its Vulkan 1.3
+loader's vkGetInstanceProcAddr address. The caller owns the resulting
+VkSurfaceKHR on success. Returns Unsupported outside native Unix or
+if the loader differs, and otherwise returns GLFW's VkResult and handle.
+O(1) besides the owner wait and native call. Allocates nothing.
+
 ### `Cursor`
 
 ```
@@ -451,7 +466,7 @@ The OS's handles for a window.
 Variants:
 
 - `Win32(hwnd: uint, hinstance: uint)`
-- `Unix(handle: uint)` (a live `GLFWwindow` address)
+- `Unix(handle: uint)`: Address of a live GLFWwindow on Linux and macOS.
 
 ### `Open`
 
