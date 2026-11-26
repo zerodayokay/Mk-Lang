@@ -2,8 +2,8 @@
 // follow the sysroot's flavour, and nothing may change for a package that
 // does not name a Microsoft SDK: its cache key and its Clang command line
 // must stay what they were.
-// What: TestCImport_KeyUnchanged, _SysrootFlavour, _MicrosoftHeaders and
-// _FlavourTriple.
+// What: TestCImport_KeyUnchanged, _SysrootFlavour, _MicrosoftHeaders,
+// _FlavourTriple and _MSVCVersion.
 // How: a fixed request over fixed paths, its key and its shared Clang
 // flags compared with the values the importer gave before the flavour
 // existed; fake SDK and mingw-w64 trees written by the test (no SDK is
@@ -15,6 +15,7 @@ package cimport
 import (
 	"context"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -266,5 +267,58 @@ func TestCImport_FlavourTriple(t *testing.T) {
 	}
 	if !strings.Contains(res.Modules[0], "export const FakeMingw: i32 = 1") || strings.Contains(res.Modules[0], "FakeMsvc") {
 		t.Errorf("mingw-w64 triple:\n%s", res.Modules[0])
+	}
+}
+
+// newerClang stands in for a Clang that would compile for a newer Visual
+// C++, as it does when it finds a newer Visual Studio installed: it names
+// 19.50 first on every command line, so only a version mk names after it
+// decides.
+type newerClang struct{ Clang }
+
+func (c newerClang) RunClang(ctx context.Context, args []string, dir string) ([]byte, []byte, error) {
+	return c.Clang.RunClang(ctx, append([]string{"-fms-compatibility-version=19.50"}, args...), dir)
+}
+
+func (c newerClang) StreamClang(ctx context.Context, args []string, dir string, read func(io.Reader) error) ([]byte, error) {
+	return c.Clang.StreamClang(ctx, append([]string{"-fms-compatibility-version=19.50"}, args...), dir, read)
+}
+
+// TestCImport_MSVCVersion: under the MSVC triple every Clang run of the
+// importer names Visual C++ 19.33, the version Clang assumes with no Visual
+// Studio, and no other triple gets a flag; so a Clang that would compile
+// for a newer Visual C++ still reads a header that tests _MSC_VER >= 1950
+// (as the SDK's ucrt does to stop making its inline functions static) as
+// 19.33, on every machine.
+func TestCImport_MSVCVersion(t *testing.T) {
+	if got := TripleFlags("x86_64-pc-windows-msvc"); !slices.Equal(got, []string{"-fms-compatibility-version=19.33"}) {
+		t.Errorf("MSVC triple flags %q", got)
+	}
+	for _, tr := range []string{"x86_64-w64-windows-gnu", "x86_64-linux-musl", "arm64-apple-macos"} {
+		if got := TripleFlags(tr); got != nil {
+			t.Errorf("%s flags %q, want none", tr, got)
+		}
+	}
+	if args := baseArgs(Request{Triple: "x86_64-pc-windows-msvc"}, `C:\clang`); !slices.Contains(args, "-fms-compatibility-version=19.33") {
+		t.Errorf("MSVC args %q", args)
+	}
+	tl, rd := clangFor(t)
+	sdk := fakeTree(t, map[string]string{
+		"um/windows.h": "#include <winnt.h>\n#if _MSC_VER >= 1950\n#define FAKE_NEW 1\n#else\n#define FAKE_OLD _MSC_VER\n#endif\n",
+		"um/winnt.h":   "typedef unsigned long FAKE_DWORD;\n",
+	})
+	sys, err := SystemFor("x86_64-windows", []string{filepath.Join(sdk, "um")}, t.TempDir())
+	if err != nil || sys.Triple != "x86_64-pc-windows-msvc" {
+		t.Fatalf("system %+v, %v", sys, err)
+	}
+	res, err := Translate(context.Background(), newerClang{tl}, rd, Request{Target: "x86_64-windows", Triple: sys.Triple,
+		Imports: []Import{{Name: "w", Headers: []string{"windows.h"}}}, Include: []string{t.TempDir()}, Sysroot: sys.Dirs,
+		WorkDir: filepath.Join(t.TempDir(), "w")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLines(t, res.Modules[0], "export const FakeOld: i32 = 1933")
+	if strings.Contains(res.Modules[0], "FakeNew") {
+		t.Errorf("the headers were read for Visual C++ 19.50:\n%s", res.Modules[0])
 	}
 }

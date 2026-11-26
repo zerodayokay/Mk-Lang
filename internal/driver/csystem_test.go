@@ -5,7 +5,8 @@
 // How: cRequest for a package written in a temporary directory, with no
 // sysroot variable, with each spelling of MK_SYSROOT_x86_64-windows naming
 // plain headers, and with a fake SDK tree; compared field by field and by
-// key with the request built the way mk built it before the flavour.
+// key with the request built the way mk built it before the flavour; and
+// the flags the shim and the C sources get beside it (cImportsOf).
 
 package driver
 
@@ -51,6 +52,10 @@ func requestSession(t *testing.T) (*Session, *Manifest, string, []cimport.Import
 	return s, man, dir, []cimport.Import{{Name: "k", Headers: []string{"k.h"}, Defines: []string{"K=1"}}}
 }
 
+// cSourcesOnly is a manifest with one C source and no C import: cImportsOf
+// gives its system setup without running Clang.
+var cSourcesOnly = &Manifest{CSources: []CSource{{Path: "k.c"}}}
+
 // TestCImport_RequestUnchanged: with no sysroot, and with a sysroot of
 // plain headers named by either spelling of the variable, the request
 // (triple, search directories) and its cache key are byte-identical to the
@@ -90,6 +95,9 @@ func TestCImport_RequestUnchanged(t *testing.T) {
 			if m, _ := filepath.Glob(filepath.Join(s.cacheDir(), "*", "msvch")); len(m) > 0 {
 				t.Error("mk's Windows SDK headers were written for a sysroot that is no SDK")
 			}
+			if ci, ds := s.cImportsOf(nil, cSourcesOnly, dir, "", ""); len(ds) > 0 || ci.sysFlags != nil {
+				t.Errorf("C sources' system flags %q (%v), want none", ci.sysFlags, ds)
+			}
 		})
 	}
 }
@@ -118,6 +126,12 @@ func TestCImport_RequestMicrosoft(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(got.Sysroot[0], n)); err != nil {
 			t.Error(err)
 		}
+	}
+	// The shim and the C sources compile for the same Visual C++ as the
+	// headers are read for.
+	if ci, ds := s.cImportsOf(nil, cSourcesOnly, dir, "", ""); len(ds) > 0 || !slices.Equal(ci.sysFlags, cimport.TripleFlags(got.Triple)) ||
+		len(ci.sysFlags) == 0 || !slices.Equal(ci.sysdir, got.Sysroot) {
+		t.Errorf("C sources' system flags %q and directories %q (%v)", ci.sysFlags, ci.sysdir, ds)
 	}
 	// The Linux target ignores a Windows SDK.
 	if lin, _ := s.cRequest(imports, man, dir, "x86_64-linux"); lin.Triple != cimport.ParseTriple("x86_64-linux") {

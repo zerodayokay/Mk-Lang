@@ -144,6 +144,9 @@ type cImports struct {
 	man    *Manifest
 	hit    bool
 	sysdir []string
+	// sysFlags are the Clang flags the headers' triple fixes
+	// (cimport.TripleFlags), for the shim and the C sources.
+	sysFlags []string
 	// names, full and trees: each import's name, its whole binding, and
 	// the memory tree its module reads, which prune fills before the read step.
 	names []string
@@ -235,7 +238,7 @@ func (s *Session) cImportsOf(stdB *build, man *Manifest, osRoot, dep, treePrefix
 	if d != nil {
 		return nil, []*diag.Diagnostic{d}
 	}
-	ci.sysdir = sys.Dirs
+	ci.sysdir, ci.sysFlags = sys.Dirs, cimport.TripleFlags(sys.Triple)
 	if len(man.CImports) == 0 {
 		// Only c_sources or asm_sources: nothing to translate, objects to
 		// compile (cObjects).
@@ -655,8 +658,9 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 		cj := toolchain.CJob{Triple: triple, Input: j.in, Output: out, Opt: opt, ResourceDir: rd,
 			Include: include, System: system, Sysroot: sysroot, Flags: j.flags, Hosted: j.shim}
 		if !j.asm {
-			// The bin's target flags come before the manifest's own (cTargetFlags).
-			cj.Flags = append(append([]string{}, cflags...), j.flags...)
+			// The bin's target flags (cTargetFlags), then those the headers'
+			// triple fixes, come before the manifest's own.
+			cj.Flags = append(append(append([]string{}, cflags...), ci.sysFlags...), j.flags...)
 		}
 		src, err := os.ReadFile(j.in)
 		if err != nil {

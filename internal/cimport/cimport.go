@@ -139,6 +139,7 @@ func SearchDirs(r Request, resourceDir string) []string {
 func baseArgs(r Request, resourceDir string) []string {
 	args := []string{"--target=" + r.Triple, "-nostdinc", "-x", "c", "-std=gnu11", "-fno-caret-diagnostics",
 		"-fmacro-backtrace-limit=0", "-ferror-limit=0", "-Wno-everything", "-fno-color-diagnostics"}
+	args = append(args, TripleFlags(r.Triple)...)
 	if len(r.Sysroot) > 0 {
 		args = append(args, "--sysroot="+r.Sysroot[0])
 	}

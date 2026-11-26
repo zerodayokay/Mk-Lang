@@ -4,8 +4,9 @@
 // as before, so the choice follows what the sysroot holds, never what else
 // is installed.
 //
-// What: Flavour, SysrootFlavour, HeaderTriple and System, the system
-// header directories and the header triple of one target's C imports.
+// What: Flavour, SysrootFlavour, HeaderTriple, MSVCVersion, TripleFlags
+// and System, the system header directories, the header triple and its
+// fixed flags of one target's C imports.
 //
 // How: the sysroot's directories, in search order, are looked at for a few
 // file names: a _mingw.h anywhere is mingw-w64; else the first directory
@@ -13,7 +14,9 @@
 // x86_64-windows target looks; any other target, no sysroot, or no
 // windows.h keeps ParseTriple's triple. A Microsoft SDK also gets mk's
 // headers for the four MSVC toolset headers it includes (msvch.go), first
-// among the system directories.
+// among the system directories, and a fixed Visual C++ version on every
+// Clang command line, so Clang never takes one from an installed Visual
+// Studio.
 
 package cimport
 
@@ -77,6 +80,26 @@ func HeaderTriple(target string, f Flavour) string {
 		return "x86_64-pc-windows-msvc"
 	}
 	return ParseTriple(target)
+}
+
+// MSVCVersion is the Visual C++ version Clang compiles for under the MSVC
+// triple: the one Clang assumes when it finds no Visual Studio. Without the
+// flag Clang takes _MSC_VER from an installed Visual Studio (found through
+// the environment, the Visual Studio setup API or the registry), and the
+// SDK's headers branch on it: from 1950 the ucrt's inline functions are no
+// longer static, so a binding would follow what else is installed.
+const MSVCVersion = "19.33"
+
+// TripleFlags are the Clang flags that fix what triple would otherwise
+// take from the host: for the MSVC triple, the Visual C++ version
+// (MSVCVersion); none for any other triple, whose command lines stay as
+// they were. The C imports' runs, the shim and the C sources of a package
+// whose headers are read for the MSVC triple all take them.
+func TripleFlags(triple string) []string {
+	if triple == "x86_64-pc-windows-msvc" {
+		return []string{"-fms-compatibility-version=" + MSVCVersion}
+	}
+	return nil
 }
 
 // System is the system header setup of one target's C imports, its C
