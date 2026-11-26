@@ -1087,7 +1087,11 @@ func (b *build) externalReads(m *modNode, world iface.World) ([]types.Read, stri
 func (b *build) ownInstance(m *modNode, t types.TypeID) bool {
 	tab := b.w.tab
 	ty := tab.Get(t)
-	if ty.Kind != types.KNamed || b.w.items.Get(ty.Item).Module == m.id {
+	if ty.Kind != types.KNamed {
+		return false
+	}
+	it := b.w.items.Get(ty.Item)
+	if it.Module == m.id || !it.Exported {
 		return false
 	}
 	own, foreign := false, false

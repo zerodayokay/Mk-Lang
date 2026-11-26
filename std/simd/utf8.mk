@@ -122,9 +122,12 @@ Utf8LookupN[const N: int](s: []u8, const wtf: bool): bool
         TooShort, TooShort, TooShort, TooShort])
     high := Vec[u8, N].Splat(0x80)
     zero := Vec[u8, N].Zero()
+    // The last three lanes allow only leads with room for their sequence.
+    // Build the limit once, in reverse order to keep the lane indices literal.
+    end_max := Vec[u8, N].Splat(255).With(0, 0xC0 - 1).With(1, 0xE0 - 1).With(2, 0xF0 - 1).Reverse()
     var err := zero
     var prev := zero
-    var pending := zero // Utf8Incomplete of the last vector checked
+    var pending := zero // unfinished sequence flags from the last vector checked
     var i := 0
     for i + 4 * N <= n {
         w := s[i..i + 4 * N]
@@ -138,7 +141,7 @@ Utf8LookupN[const N: int](s: []u8, const wtf: bool): bool
             if wtf {
                 err = err | Wtf8Pair[N](v0, prev) | Wtf8Pair[N](v1, v0) | Wtf8Pair[N](v2, v1) | Wtf8Pair[N](v3, v2)
             }
-            pending = Utf8Incomplete[N](v3)
+            pending = v3.SubSat(end_max)
         } else {
             err = err | pending
             pending = zero
@@ -152,7 +155,7 @@ Utf8LookupN[const N: int](s: []u8, const wtf: bool): bool
         if wtf {
             err = err | Wtf8Pair[N](v, prev)
         }
-        pending = Utf8Incomplete[N](v)
+        pending = v.SubSat(end_max)
         prev = v
         i += N
     }
@@ -181,7 +184,7 @@ Utf8LookupN[const N: int](s: []u8, const wtf: bool): bool
         if wtf {
             err = err | Wtf8Pair[N](v, w.Reverse())
         }
-        pending = Utf8Incomplete[N](v)
+        pending = v.SubSat(end_max)
     }
     return (err | pending).ReduceOr() == 0
 }
@@ -216,17 +219,6 @@ Wtf8Pair[const N: int](v: Vec[u8, N], prev: Vec[u8, N]): Vec[u8, N]
     pair := (v >= Vec[u8, N].Splat(0xB0)) & (v.Slide(prev, 1) == ed) & (v.Slide(prev, 4) == ed) &
         (p3 >= Vec[u8, N].Splat(0xA0)) & (p3 <= Vec[u8, N].Splat(0xAF))
     return pair.Select(Vec[u8, N].Splat(1), Vec[u8, N].Zero())
-}
-
-// Utf8Incomplete is nonzero when v ends inside a sequence: a lead of four
-// bytes in one of its last three lanes, of three in its last two, or of two
-// in its last.
-Utf8Incomplete[const N: int](v: Vec[u8, N]): Vec[u8, N]
-    requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64
-    requires N == 16 || N == 32 || N == 64 {
-    last := Vec[u8, N].Zero().With(0, 0xC0 - 1).With(1, 0xE0 - 1).With(2, 0xF0 - 1).Reverse()
-    max := (Vec[u8, N].Iota().Reverse() >= Vec[u8, N].Splat(3)).Select(Vec[u8, N].Splat(255), last)
-    return v.SubSat(max)
 }
 
 // ValidUtf8Scalar is table 3-7 one sequence at a time: the reference the

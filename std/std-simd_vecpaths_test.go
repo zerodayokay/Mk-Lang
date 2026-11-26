@@ -291,7 +291,7 @@ func TestStd_SimdTestBlocks(t *testing.T) {
 				args = append(args, "--release")
 			}
 			out, status := mkCmd(t, root, stdDir, args...)
-			if status != 0 || !strings.Contains(out, "6 passed, 0 failed") {
+			if status != 0 || !strings.Contains(out, "7 passed, 0 failed") {
 				t.Fatalf("mk test: exit %d\n%s", status, out)
 			}
 		})
