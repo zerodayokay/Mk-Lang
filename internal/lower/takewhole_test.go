@@ -1,10 +1,11 @@
 // Why: a by-value match that takes a linear struct of plain fields apart
 // copies its bindings, so lower adds one move out of it for the loan
 // checker to see the struct consumed; that move should copy a scalar, not
-// an array, and alternatives of the same shape must make it too. A struct
-// with no fields has nothing to move, so StConsume ends it.
-// What: TestTakeWholeScalarField, TestTakeAltsSameShape, TestTakeWholeNoFields,
-// TestDestructureNoFields and scrutinee.
+// an array, and each alternative must make it on its own edge, whatever
+// the others' shape. A struct with no fields has nothing to move, so
+// StConsume ends it.
+// What: TestTakeWholeScalarField, TestTakeAltsSameShape, TestTakeAltsMixedVariant,
+// TestTakeWholeNoFields, TestDestructureNoFields and scrutinee.
 // How: the printed MIR of small matches, read for the move.
 
 package lower
@@ -49,8 +50,26 @@ Use(o: ?T): int {
 `)
 	got := l.print("Use")
 	x := scrutinee(t, got)
-	if n := strings.Count(got, "= move ("+x+" as some).0.0"); n != 2 {
-		t.Errorf("want a take in the alternative's arm and in some(T(id)), got %d:\n%s", n, got)
+	if n := strings.Count(got, "= move ("+x+" as some).0.0"); n != 3 {
+		t.Errorf("want a take on each alternative's edge and in some(T(id)), got %d:\n%s", n, got)
+	}
+}
+
+func TestTakeAltsMixedVariant(t *testing.T) {
+	l := lowerSrc(t, `linear struct T {
+	id: int
+}
+Use(o: ?T): int {
+	return match o {
+		some(T(id: 1)) | none { 0 }
+		some(T(id)) { id }
+	}
+}
+`)
+	got := l.print("Use")
+	x := scrutinee(t, got)
+	if n := strings.Count(got, "= move ("+x+" as some).0"); n != 2 {
+		t.Errorf("want a take on the some alternative's edge and in some(T(id)), got %d:\n%s", n, got)
 	}
 }
 

@@ -15,9 +15,9 @@ Discarded(e: ?Empty): int {
     }
 }
 
-Alternative(e: Empty): int {
+Alternative(e: ?Empty): int {
     return match e { // <- E0402
-        Empty() | _ { 1 }
+        none | some(_) { 1 }
     }
 }
 

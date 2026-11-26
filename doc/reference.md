@@ -3397,7 +3397,7 @@ rect 3 by 4
 - The arms cover every value of the type (E0306). See [exhaustiveness](#exhaustiveness).
 - Each arm is a pattern and a block, one arm per line. There is no fall-through between arms and no guard: test a condition inside the arm.
 - `match e` moves a value that is not plain, and `match &e` and `match mut e` do not. See [what a binding holds](#what-a-binding-holds).
-- On a linear value, each arm of `match e` consumes all of it: every linear part is bound, taken apart by a struct pattern (`some(Res(id))`, or `some(Token())` for a struct with no fields), or tested to a variant that holds nothing linear. `_`, also inside a constructor (`some(_)`, `ok(_)`), consumes nothing, so an arm that leaves a linear part is E0402 ([R2](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)).
+- On a linear value, each arm of `match e` consumes all of it: every linear part is bound, taken apart by a struct pattern (`some(Res(id))`, or `some(Token())` for a struct with no fields), or tested to a variant that holds nothing linear; in an arm of [alternatives](#alternatives), by the side that matched. `_`, also inside a constructor (`some(_)`, `ok(_)`), consumes nothing, so an arm that leaves a linear part is E0402 ([R2](memory.md#r2-linear-values-are-consumed-exactly-once-on-every-path)).
 - A `match` on a result or an error set is in [section 9](#match-on-a-result).
 
 A match that moves its scrutinee:
@@ -4076,6 +4076,7 @@ Bucket(n: int): int {
 `A | B` matches when either pattern does. Alternatives may appear at any depth: `some(1 | 2)`.
 
 - Alternatives bind no names (E0101). To share code between variants that carry data, call a function from each arm.
+- In a by-value `match` on a linear value, an arm whose pattern is an alternative consumes the value as the side that matched would alone: `some(Ticket(id: 1)) | none` takes the `Ticket` apart on the `some` side. An alternative inside a field or payload is taken apart only when its sides have the same shape (`S(a: some(Ticket(id: 1)) | some(Ticket(id: 2)), n: 5)`), since a later test of the arm can still fail after a side matched. One whose sides differ, `S(a: some(Ticket(id: 1)) | none, n: 5)`, is E0402: write the alternatives at the top of the arm, `S(a: some(Ticket(id: 1)), n: 5) | S(a: none, n: 5)`.
 
 ```mk
 // verdict: reject E0101

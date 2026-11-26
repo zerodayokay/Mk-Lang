@@ -3,10 +3,11 @@
 // binding modes, pattern tests) is large enough for a file of its own.
 //
 // What: matchStmt, matchUnion and matchCall (match F(x) with ok and err
-// arms), unionArms for their two sides; test, rangeTest and subTests for
-// pattern tests; bindPat for bindings, with takeWhole for a linear struct
-// of plain fields and takeAlts for alternatives of struct patterns; arms
-// for the sequential fallback.
+// arms), unionArms for their two sides; test, rangeTest, subTests and
+// altTests for pattern tests; bindPat for bindings, with takeWhole for a
+// linear struct of plain fields and takeAlts for alternatives of struct
+// patterns; arms for the sequential fallback, where an arm of alternatives
+// takes each apart on its own edge.
 //
 // How: arms are compiled by the decision tree of decision.go or, past its
 // size guard, by sequential testing: the first matching arm in source order,
@@ -146,9 +147,17 @@ func (bl *builder) arms(arms []*ast.Arm, p mir.Place, mode BindMode, join mir.Bl
 			break
 		}
 		next := bl.newBlock()
-		bl.test(pat(a), p, next)
-		bl.openScope(scopePlain)
-		bl.bindPat(pat(a), p, mode)
+		q := pat(a)
+		if alts := bl.flatAlts(q); alts != nil && mode == ByValue {
+			// The arm has matched where one of its alternatives has: each
+			// takes p apart there, as it would alone, before they join.
+			bl.altTests(alts, p, next, q.Span(), func(x ast.Pattern) { bl.takeAlts([]ast.Pattern{x}, p) })
+			bl.openScope(scopePlain)
+		} else {
+			bl.test(q, p, next)
+			bl.openScope(scopePlain)
+			bl.bindPat(q, p, mode)
+		}
 		bl.armStmts(a.Body)
 		bl.closeScope(closeBrace(a.Body))
 		reached = bl.joinTo(join, a.Span()) || reached
@@ -225,24 +234,55 @@ func (bl *builder) test(q ast.Pattern, p mir.Place, fail mir.BlockID) {
 			}
 		}
 	case PAlt:
-		ok := bl.newBlock()
-		alts := q.(*ast.AltPattern).Alts
-		for i, a := range alts {
-			nf := fail
-			if i < len(alts)-1 {
-				nf = bl.newBlock()
-			}
-			bl.test(a, p, nf)
-			bl.gotoBlock(ok, at)
-			bl.cur = nf
-			if i == len(alts)-1 {
-				bl.cur = mir.NoBlock
-			}
-		}
-		bl.cur = ok
+		bl.altTests(q.(*ast.AltPattern).Alts, p, fail, at, nil)
 	default:
 		source.ICEf(at, "lower: pattern %T (kind %d) in a match", q, pk.Kind)
 	}
+}
+
+// altTests tests the alternatives alts against p in order: control
+// continues in the current block when one matches, and goes to fail when
+// none does. on, when set, runs on each alternative's own success edge,
+// before the edges join.
+func (bl *builder) altTests(alts []ast.Pattern, p mir.Place, fail mir.BlockID, at source.Span, on func(ast.Pattern)) {
+	ok := bl.newBlock()
+	for i, a := range alts {
+		nf := fail
+		if i < len(alts)-1 {
+			nf = bl.newBlock()
+		}
+		bl.test(a, p, nf)
+		if on != nil {
+			on(a)
+		}
+		bl.gotoBlock(ok, at)
+		bl.cur = nf
+		if i == len(alts)-1 {
+			bl.cur = mir.NoBlock
+		}
+	}
+	bl.cur = ok
+}
+
+// flatAlts is the alternatives of q, nested alternatives flattened in
+// order, or nil when q is not an alternative.
+func (bl *builder) flatAlts(q ast.Pattern) []ast.Pattern {
+	if _, ok := q.(*ast.AltPattern); !ok || bl.in.Pattern(q.ID()).Kind != PAlt {
+		return nil
+	}
+	var flat []ast.Pattern
+	var walk func(q ast.Pattern)
+	walk = func(q ast.Pattern) {
+		if a, ok := q.(*ast.AltPattern); ok && bl.in.Pattern(q.ID()).Kind == PAlt {
+			for _, x := range a.Alts {
+				walk(x)
+			}
+			return
+		}
+		flat = append(flat, q)
+	}
+	walk(q)
+	return flat
 }
 
 // rangeTest tests the integer or char place p against the range q:
@@ -510,21 +550,17 @@ func (bl *builder) bindPat(q ast.Pattern, p mir.Place, mode BindMode) {
 // that variant on every path, so its payload fields are taken apart the
 // same way, each field every alternative has a pattern for. Alternatives
 // that differ (`some(..) | none`, a literal) leave p as it is: a payload
-// may not be there on every path.
+// may not be there on every path. An arm whose whole pattern is an
+// alternative, tested arm by arm, calls takeAlts on each alternative alone
+// on its own success edge instead (arms).
 func (bl *builder) takeAlts(alts []ast.Pattern, p mir.Place) {
 	var flat []ast.Pattern
-	var walk func(q ast.Pattern)
-	walk = func(q ast.Pattern) {
-		if a, ok := q.(*ast.AltPattern); ok && bl.in.Pattern(q.ID()).Kind == PAlt {
-			for _, x := range a.Alts {
-				walk(x)
-			}
-			return
-		}
-		flat = append(flat, q)
-	}
 	for _, a := range alts {
-		walk(a)
+		if f := bl.flatAlts(a); f != nil {
+			flat = append(flat, f...)
+		} else {
+			flat = append(flat, a)
+		}
 	}
 	if len(flat) == 0 {
 		return
