@@ -9578,7 +9578,7 @@ std's system layer for macOS calls libSystem. Arguments, the environment, memory
 - A child that holds a `Pty` as its controlling terminal does not end until its output has been read, so read a `Pty` while you wait for its children. Output that a child without one leaves unread is discarded shortly after it exits. A child's terminal mode starts from the defaults each time a new child first opens the `Pty`; its size is kept.
 - A child inherits the raised descriptor limit: `posix_spawn` runs nothing in the child that could restore the original one.
 - A Unix-socket dial to a listener whose backlog is full is `SysErr.Refused`, not a wait. A send buffer (`SocketOption`) must be at least 1 byte.
-- `runtime.WriteDump` and the platform certificate verifier answer `SysErr.Unsupported`, as on Linux; `std.x509` checks chains itself.
+- As on Linux, `runtime.WriteDump` returns `runtime.Unsupported` and the platform certificate verifier answers `SysErr.Unsupported`. `std.x509` checks chains itself.
 
 All of it is checked and linked here, and none of it has run on a Mac yet.
 
