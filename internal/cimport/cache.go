@@ -3,8 +3,8 @@
 // including a new header that would now shadow one found before.
 //
 // What: Key (Clang identity, target, defines, sysroot hash, ordered search
-// paths), the cached entry with Load and Save, and DepHasher, which hashes
-// the -MD dependency files through a stat memo.
+// paths), the cached entry with Load and Save, Negatives, and DepHasher,
+// which hashes the -MD dependency files through a stat memo.
 //
 // How: an entry holds the bindings, the shim, the dependency files with
 // their content hashes, and the negative lookups: for each dependency found

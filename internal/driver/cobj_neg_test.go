@@ -1,8 +1,9 @@
 // Why: a C object's cache entry must notice a header added to an earlier
 // directory of the search path, which shadows the one the compile read,
-// as the translation's entry does (MKH-408).
+// as the translation's entry does.
 // What: tests that a C object's candidate keeps its negative lookups and
-// misses once one exists, and that a shadowing header added between two
+// misses once one exists, that a path that existed when the candidate was
+// saved is no negative, and that a shadowing header added between two
 // builds rebuilds the shim and the C source's objects, not only the
 // binding.
 // How: cobjKey and cobjCandidate over a store with a fake dependency
@@ -68,6 +69,45 @@ func TestCObj_NegativeLookups(t *testing.T) {
 	}
 	if _, ok := cobjCandidate(st, dh, base); ok {
 		t.Error("a header shadowing a dependency still hit the candidate")
+	}
+}
+
+// TestCObj_ExistingIsNoNegative: a path under an earlier directory that
+// exists when the candidate is saved was not picked by the compile (a
+// quoted include found beside its includer), so it is no negative and the
+// candidate hits.
+func TestCObj_ExistingIsNoNegative(t *testing.T) {
+	st, err := cache.Open(t.TempDir(), cache.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	src, dep, other := filepath.Join(root, "x.c"), filepath.Join(b, "bar.h"), filepath.Join(a, "bar.h")
+	for _, p := range []string{src, dep, other} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("int x;\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	depFile := filepath.Join(root, "x.d")
+	if err := os.WriteFile(depFile, []byte("obj: "+src+" "+dep+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dh := cimport.NewDepHasher(st)
+	base := source.HashBytes("test", []byte("base"))
+	key, cand, ok := cobjKey(dh, base, depFile, src, []string{a, b})
+	if !ok {
+		t.Fatal("cobjKey failed")
+	}
+	if len(cand.Neg) != 0 {
+		t.Fatalf("negatives %q, want none", cand.Neg)
+	}
+	saveCobjCandidate(st, base, cand)
+	if got, ok := cobjCandidate(st, dh, base); !ok || got != key {
+		t.Errorf("hit %v, key %v, want %v", ok, got, key)
 	}
 }
 

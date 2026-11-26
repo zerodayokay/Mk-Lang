@@ -6,14 +6,16 @@
 // directories of a package's C), cImports and cImportsOf (the
 // translated imports of one package), prune, translateC and vendoredViews,
 // the C object builds (cObjects, cObjectsOf, asmSourcesFor) with their
-// cache keys (cobjObjKey, cobjCandidate, saveCobjCandidate), and
-// Session.CImports for the tools.
+// cache keys (cobjObjKey, cobjCandidate, saveCobjCandidate,
+// cobjSearchDirs), and Session.CImports for the tools.
 //
 // How: the package's C imports are translated once per target
 // (internal/cimport) into one memory build whose modules are c.<name>; the
 // readable binding is written to gen/<target>/c/<name>.mk, and the shim,
 // the C sources and the assembly sources become objects of the link. A C
-// object's key covers the content hash of every header its -MD file lists.
+// object's key covers the content hash of every header its -MD file lists,
+// and its cache entry the negative lookups a translation's entry keeps:
+// a header added earlier on the search path is a miss.
 // The translation, the shim and the C sources search the same -I
 // directories: the package root, then every C import's include_dirs (the
 // package's C imports are one translation unit, so they share one path).
@@ -749,8 +751,8 @@ func cobjObjKey(base source.Hash, c cobjCand) source.Hash {
 
 // cobjListKey is the KindManifest key of a C object's candidates.
 func cobjListKey(base source.Hash) source.Hash {
-	// v2: candidates carry their negative lookups; a v1 list, which has
-	// none, is never read.
+	// The domain names the candidates' format, which carries negative
+	// lookups: a list written without them is never read.
 	h := source.NewHasher("mk.driver.cobj.cands.v2")
 	h.Hash(base)
 	return h.Sum()
@@ -813,7 +815,15 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dir
 			c.Deps = append(c.Deps, cobjDep{Path: p, Hash: h})
 			deps = append(deps, p)
 		}
-		c.Neg = cimport.Negatives(deps, dirs)
+		// A negative that exists now was not picked by this compile (a
+		// quoted include found beside its includer first, which Negatives
+		// does not model): it shadows nothing, and keeping it would make
+		// the candidate miss on every build.
+		for _, n := range cimport.Negatives(deps, dirs) {
+			if _, err := os.Stat(n); err != nil {
+				c.Neg = append(c.Neg, n)
+			}
+		}
 	}
 	return cobjObjKey(base, c), c, true
 }
