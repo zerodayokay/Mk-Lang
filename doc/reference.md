@@ -4416,7 +4416,7 @@ export Main(sys: &System): WriteError!void {
 - Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct. Each nested struct pattern consumes the linear struct it names, including when its bindings copy plain fields.
 - `var` before the pattern makes every binding `var`.
 - A pattern that can fail, such as a literal, is E0306. Use `match`.
-- Only a record, a struct or an array pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
+- Only a record, a struct or an array pattern destructures. A variant, an error's, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`. An error is read by its fields (`e.code`) or taken apart with `match e { Bad(code) { ... } }`. When the value may be one of several errors, `match` is the only form, with an arm for each of them or `_`.
 - Outside the struct's module, a struct with private fields cannot be destructured (E0204).
 - A `for` loop may destructure each element with a record pattern: `for (key, value) in m.Iter()`. A struct pattern there is E0101. See [`for`](#for-loops).
 
@@ -5639,7 +5639,8 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
-- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later, and a field or element of a [zeroed](#zero-valid-types) array, record or struct holds one, `ok` of its zero. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later, and a field or element of a [zeroed](#zero-valid-types) array, record or struct holds one, `ok` of its zero. The same holds for a stored one: as an argument, a construction's field, an array, record or repeat element, `some(..)`'s argument, or assigned into a field, an element or through a reference (`h.r = r`, `xs[i] = r`, `*p = r`), or inside a `fn` literal to a binding the literal captures, it is E0802. Assigned to such a binding, `r = Root(m)` or `r = s`, it is kept. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- Such a binding must be handled before it is assigned again and before its scope ends, on every path, as a call's result must be where it is made (E0802, checked with moves and loans). `try`, `else`, `match` or `.Must()` reads it. Returning it as a value or assigning it to another such binding hands it on. A shared borrow leaves it unread until it is read through a reference known to name it, or a value known to carry its reference is passed to another function or returned. A caller checks the handoff against the signature alone. Assigning the binding or borrowing it `mut` while its value may be unread is E0802 at that line. A scope ending with its value unread is E0802 at its declaration, a `try` or `fail` exit included. A binding never read at all is E0208. A local of a type parameter is not such a binding, whatever its instance: generic code may drop any `T`.
 - A stored `E!T` is handled as a call's is: `try`, `else`, `match` and `.Must()` read it once and take its payload or its error. It is such a binding, a global or a const, or a field or element of a value that holds one, which `mem.Zeroed` or a generic's `T` can make. `.Must()` also reads one through a reference (`p.Must()` for a `p: &(Negative!int)`); the others take `*p`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
@@ -5659,7 +5660,7 @@ Twice(n: int): Negative!int {
 }
 ```
 
-A function can fail only when its signature names an error set, as a result written `E!T` does. A generic whose result is its type parameter, called with an `E!T` for it, cannot fail, and neither can a function whose result is an alias of an `E!T`: each returns the `E!T` as a value, which the caller handles with `try`, `else` or `match` as any other. So does an interface method whose result is such a type parameter or alias, and an `impl` method must fail exactly when its interface method can (E0707).
+A function can fail only when its signature names an error set, as a result written `E!T` does. A generic whose result is its type parameter, called with an `E!T` for it, cannot fail, and neither can a function whose result is an alias of an `E!T`: each returns the `E!T` as a value, which the caller handles with `try`, `else` or `match` as any other. So does an interface method whose result is such a type parameter or alias, and an `impl` method must fail exactly when its interface method can (E0707). Such a result has no spelling of its own in a written type, since `E!T` written as a result fails, so diagnostics, `mk query sig`, hover and `mk apidiff` print it as the union followed by `(cannot fail)`: `Copy[Negative!int]` is `fn(&(Negative!int)): Negative!int (cannot fail)`, and `fn(&(Negative!int)): Negative!int` is one that can fail. Source-spelled query signatures retain aliases in the other positions. The mark is not source: to write such a type, name the alias or the type parameter.
 
 ```mk
 // verdict: ok
@@ -5677,10 +5678,10 @@ Copy[T: Plain](x: &T): T {
 }
 
 export Main(sys: &System): WriteError!void {
-    var a: Negative!int = Root(4)
-    var b: Negative!int = Root(-4)
-    for r in [&a, &b] {
-        v := Copy(r) else e { // Copy cannot fail: else handles the E!T it returns
+    for n in [4, -4] {
+        var r: Negative!int = Root(n)
+
+        v := Copy(&r) else e { // Copy cannot fail: else handles the E!T it returns
             try sys.Print("{e}\n", (e: e))
             continue
         }
@@ -6484,7 +6485,7 @@ See also: [`mk query panics`](tools.md#51-member-wide-panic-sites), which lists 
 | E0704 | impl-conflict | `impl Format` for an error ([printing](#how-errors-print)) |
 | E0706 | requires-failed | An error with no `Format` in a format string ([printing](#how-errors-print)) |
 | E0801 | error-not-in-set | A `fail` or `try` whose error is not in the function's set ([`fail`](#fail), [`try`](#try)) |
-| E0802 | error-unhandled | An `E!T` used without `try`, `else` or `match` ([results](#results-et)) |
+| E0802 | error-unhandled | An `E!T` used without `try`, `else` or `match`, or stored in a field or element, by construction or assignment ([results](#results-et)) |
 | E0803 | else-falls-through | [`else`](#else) |
 | E0804 | try-on-non-error | `try` on a value that cannot fail, such as a `?T` ([`try`](#try)) |
 | E0806 | try-in-defer | `try`, `fail`, `return`, `break` or `continue` out of a `defer` or `onerr` body ([`onerr`](#cleanup-on-the-error-path-onerr)) |
@@ -7082,6 +7083,8 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - The compiler checks both branches when it checks the generic, not per instance.
+- A type written `T` inside the branch is `X` as well, in every type position: a type argument (`Id[T](x)` is `Id[u32](x)`), a local's declared type, a conversion `T(n)` or `Cast[T](n)`, the arguments of a nested generic or a generic owner (`Box[T]`), and the signature and body of a `fn` literal written in the branch (`fn(y: T): T { .. }` there is a `fn(u32): u32`, and a value of type `T` it captures is a `u32`). `T` written as a value is not `X`: `T.Make()` is E0301, and so is `T(x: 1)` for a struct `X`; write `X`. The `else` branch keeps `T` opaque.
+- A branch that narrows `T` to another parameter follows that parameter's own narrowing: inside `if T is U { if U is u32 { ... } }` `T` is `u32`, its values and the types written `T` alike. Between the two tests `T` is `U`.
 - A value whose type is plain inside the branch needs no consuming there: it ends at the branch's end.
 - `if T is` names one type and takes `else` and `else if T is` like any `if`; `||` and `&&` are E0101.
 
@@ -8072,6 +8075,8 @@ These types are in the prelude, so a generator module needs no import for them. 
 | `m.Name()`, `m.Receiver()`, `m.Params()`, `m.Result()`, `m.Generic()`, `m.Signature()` | A method's signature. `m.Flows()` and `m.HasFlows()` give its `from`, `into` and `ends` clauses |
 | `fl.Kind()`, `fl.Param()`, `fl.Path()`, `fl.Field()` | One `Flow` of `m.Flows()`: its `FlowKind` (`From`, `Into`, `Ends`, or `Store` for `*q into p`); the destination (`result` for `From`, the receiving parameter for `Into` and `Store`, the ended parameter for `Ends`, `self` for the receiver); the source as written, `""` for `Ends`; the result field of a per-field clause, else `""`. `m.Flows()` lists one entry per source, by kind, field, parameter and path |
 | `p.Name()`, `p.Type()`, `p.Const()` | A parameter |
+
+A `fn` type or a method whose result is an error union held as a value (`fn(&R): R` with `type R = Bad!int`, a function that cannot fail) has no spelling in generated code: a written `E!T` result is one that fails. `t.Name()`, a `Type` splice and `m.Signature()` of one stop the run with E0901 at the `gen` line, naming the type or method, and the line emits nothing.
 
 A generator reports bad input with `Fail`. This one refuses a type that is not a struct:
 

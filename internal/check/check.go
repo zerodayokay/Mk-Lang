@@ -155,6 +155,9 @@ type Module struct {
 	// possible sources, by literal item: written in stage 5 (runFlows),
 	// read only by the literal's enclosing unit (fnLit).
 	litE0601 map[types.ItemID][]*diag.Diagnostic
+	// litNarrow is the narrowing of the `if T is X` branches that hold
+	// each fn literal (litnarrow.go): written in step 4, read-only after.
+	litNarrow map[types.ItemID][]types.TypeID
 	// deferred are the early consts not handed to Prepare (early.go).
 	deferred []types.ItemID
 	main     types.ItemID

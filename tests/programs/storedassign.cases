@@ -1,0 +1,3 @@
+# A typed E!T local assigned a call's E!T and another local's, each handled once.
+case ok
+stdout storedassign.out

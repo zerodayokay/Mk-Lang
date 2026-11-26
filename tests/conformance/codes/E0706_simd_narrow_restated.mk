@@ -1,5 +1,5 @@
 // verdict: reject E0706
-// note: std.simd's NarrowSat inside `if U is u8` in a generic over a bare lane type parameter: the narrowed U passes check's lane rule, and the clause 2 * SizeOf[U]() == SizeOf[T]() reads the caller's own type parameter, so the caller restates it
+// note: std.simd's NarrowSat inside `if U is u8` in a generic over a bare lane type parameter: U written in the branch is u8, so the clause 2 * SizeOf[U]() == SizeOf[T]() is judged at u8 and u32, where it is false, as for NarrowSat[u8, 8]
 import std.simd
 
 N[U: simd.Lane](a: simd.Vec[u32, 4], b: simd.Vec[u32, 4]): int {

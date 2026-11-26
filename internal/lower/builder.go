@@ -90,6 +90,11 @@ type builder struct {
 	// armDest maps each arm block of the value constructs being lowered to
 	// its destination; armStmts reads it.
 	armDest map[*ast.Block]mir.Place
+	// dropped is the expression an expression statement is lowering, whose
+	// value is dropped: `o.Must()` and `o else { }` on a ?T move a payload
+	// that is not plain into a T temporary only then (okTemp), so a bound
+	// value takes no extra move.
+	dropped ast.Expr
 	// valueDests counts the value constructs being lowered into each local
 	// (a binding's own local): typeTest does not narrow a destination
 	// that no arm has assigned yet.

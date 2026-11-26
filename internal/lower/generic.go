@@ -67,6 +67,7 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 			// arm's value is retyped to it by armAssign instead.
 			continue
 		}
+		orig := l
 		l = bl.remapped(l)
 		lt := bl.b.Locals[l].Type
 		nt := bl.substParam(lt, uint32(param), x)
@@ -74,6 +75,16 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 			continue
 		}
 		loc := bl.b.Locals[l]
+		if !bl.mentionsOutsideFn(lt, uint32(param)) {
+			// T is only in fn types of lt: the value is copied at X only
+			// when the branch names it, as one it never calls needs none.
+			if named == nil {
+				named = namesIn(s.Then)
+			}
+			if !named[loc.Name] {
+				continue
+			}
+		}
 		plainBefore := bl.plain(lt, c.Span())
 		plainAfter := bl.plain(nt, c.Span())
 		if !plainBefore && !plainAfter {
@@ -85,6 +96,7 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 			// with a loan of its referent the source holds.
 			if bl.tab.Kind(lt) == types.KMut && named[loc.Name] {
 				bl.narrowReborrow(l, lt, nt, c.Span())
+				bl.remap[orig] = bl.remap[l]
 			}
 			continue
 		}
@@ -98,6 +110,7 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 		sc.locals = append(sc.locals, n)
 		sc.narrowed = append(sc.narrowed, narrowRec{orig: l, narrowed: n, writeBack: plainBefore && loc.Var && writes[loc.Name]})
 		bl.remap[l] = n
+		bl.remap[orig] = n // a name reads orig: a chain of narrowings ends at n
 	}
 	bl.armStmts(s.Then)
 	bl.closeScope(closeBrace(s.Then))
@@ -242,6 +255,37 @@ func (bl *builder) substArgs(t types.TypeID, args []types.GenericArg) types.Type
 	return t
 }
 
+// mentionsOutsideFn reports whether KParam(i) occurs in t outside every fn
+// type, where substParam changes t without looking into a fn type.
+func (bl *builder) mentionsOutsideFn(t types.TypeID, i uint32) bool {
+	ty := bl.tab.Get(t)
+	switch ty.Kind {
+	case types.KParam:
+		return ty.Index == i
+	case types.KRef, types.KMut, types.KSlice, types.KMutSlice, types.KRawPtr, types.KOptional, types.KErrorUnion:
+		return bl.mentionsOutsideFn(ty.Elem, i)
+	case types.KArray:
+		return bl.mentionsOutsideFn(ty.Elem, i) || ty.Len.Kind == types.CASizeOf && bl.mentionsOutsideFn(ty.Len.Type, i)
+	case types.KNamed:
+		for _, a := range ty.Args {
+			if a.IsConst {
+				if a.Const.Kind == types.CASizeOf && bl.mentionsOutsideFn(a.Const.Type, i) {
+					return true
+				}
+			} else if bl.mentionsOutsideFn(a.Type, i) {
+				return true
+			}
+		}
+	case types.KRecord:
+		for _, f := range ty.Fields {
+			if bl.mentionsOutsideFn(f.Type, i) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // substParam replaces KParam(i) by x throughout t.
 func (bl *builder) substParam(t types.TypeID, i uint32, x types.TypeID) types.TypeID {
 	ty := bl.tab.Get(t)
@@ -250,23 +294,33 @@ func (bl *builder) substParam(t types.TypeID, i uint32, x types.TypeID) types.Ty
 		if ty.Index == i {
 			return x
 		}
-	case types.KRef, types.KMut, types.KSlice, types.KMutSlice, types.KRawPtr, types.KOptional, types.KArray, types.KErrorUnion:
+	case types.KRef, types.KMut, types.KSlice, types.KMutSlice, types.KRawPtr, types.KOptional, types.KErrorUnion:
 		e := bl.substParam(ty.Elem, i, x)
 		if e != ty.Elem {
 			n := *ty
 			n.Elem = e
 			return bl.tab.Intern(n)
 		}
+	case types.KArray:
+		e := bl.substParam(ty.Elem, i, x)
+		n := bl.narrowConst(ty.Len, i, x)
+		if e != ty.Elem || n != ty.Len {
+			return bl.tab.Array(n, e)
+		}
 	case types.KNamed:
 		var args []types.GenericArg
 		for k, a := range ty.Args {
-			if !a.IsConst {
-				if na := bl.substParam(a.Type, i, x); na != a.Type {
-					if args == nil {
-						args = append([]types.GenericArg(nil), ty.Args...)
-					}
-					args[k].Type = na
+			na := a
+			if a.IsConst {
+				na.Const = bl.narrowConst(a.Const, i, x)
+			} else {
+				na.Type = bl.substParam(a.Type, i, x)
+			}
+			if a != na {
+				if args == nil {
+					args = append([]types.GenericArg(nil), ty.Args...)
 				}
+				args[k] = na
 			}
 		}
 		if args != nil {
@@ -285,8 +339,31 @@ func (bl *builder) substParam(t types.TypeID, i uint32, x types.TypeID) types.Ty
 		if fs != nil {
 			return bl.tab.Record(fs)
 		}
+	case types.KFn:
+		fn := *ty.Fn
+		changed := false
+		fn.Params = append([]types.FnParam(nil), ty.Fn.Params...)
+		for k, p := range fn.Params {
+			if np := bl.substParam(p.Type, i, x); np != p.Type {
+				fn.Params[k].Type, changed = np, true
+			}
+		}
+		if r := bl.substParam(fn.Result, i, x); r != fn.Result {
+			fn.Result, changed = r, true
+		}
+		if changed {
+			return bl.tab.Fn(fn)
+		}
 	}
 	return t
+}
+
+// narrowConst retypes the measured type without folding the layout fact.
+func (bl *builder) narrowConst(a types.ConstArg, i uint32, x types.TypeID) types.ConstArg {
+	if a.Kind == types.CASizeOf {
+		a.Type = bl.substParam(a.Type, i, x)
+	}
+	return a
 }
 
 // fieldsLoop is for name, value in fields(&x). The base place is

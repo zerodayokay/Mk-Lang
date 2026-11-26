@@ -138,6 +138,9 @@ func (bl *builder) elseExpr(x *ast.ElseExpr) mir.Rvalue {
 	if r != mir.NoLocal {
 		return bl.elseValueJoin(x, ok, r, value)
 	}
+	if bl.dropped == ast.Expr(x) {
+		ok, value = bl.okTemp(p, ok, value, x.X.Span())
+	}
 	return bl.elseJoin(x, ok, value)
 }
 
@@ -176,7 +179,7 @@ func (bl *builder) elseUnion(x *ast.ElseExpr, r mir.LocalID) mir.Rvalue {
 
 // okTemp is the success edge of the statement form, whose value may be
 // dropped (`_ = r else { }`, `r else { return }` on an E!Res): a
-// payload that is not plain moves out of the E!T temporary into a T
+// payload that is not plain moves out of the E!T (or ?T) temporary into a T
 // temporary of its own, as a call's success edge leaves it in the call's T
 // destination, and the value is read from there. A payload left unconsumed
 // is then a T for borrow's E0402, with that type's release facts, not the

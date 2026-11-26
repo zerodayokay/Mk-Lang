@@ -1,0 +1,3 @@
+# A fn literal written inside if T is X sees the narrowing, in every instance of the generic.
+case ok
+stdout narrowlit.out

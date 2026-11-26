@@ -84,8 +84,8 @@ func TestImplGenericCallee(t *testing.T) {
 // TestTypeRestatedValueArg: the restatement of a
 // clause that also reads a const value parameter: the parameter is spelled
 // as the call's folded argument, never by the callee's own name, which the
-// caller could match by text while meaning its own parameter; `if T is
-// u32` narrows nothing the restatement reads.
+// caller could match by text while meaning its own parameter. Inside `if T
+// is u32`, H[T] is H[u32], judged at its closed argument.
 func TestTypeRestatedValueArg(t *testing.T) {
 	t.Parallel()
 	const v = "V[T](const n: int): int\n\trequires n < SizeOf[T]() {\n\treturn n\n}\n\n" // lines 1-5
@@ -94,7 +94,7 @@ func TestTypeRestatedValueArg(t *testing.T) {
 		{"folded argument", v + "K[U](): int {\n\treturn V[U](3)\n}\n", "E0706@7:9", "3 < SizeOf[U]()"},
 		{"own n, matched by the callee's name", v + "K[U](const n: int): int\n\trequires n < SizeOf[U]() {\n\treturn V[U](3)\n}\n", "E0706@8:9", "3 < SizeOf[U]()"},
 		{"stated", v + "K[U](): int\n\trequires 3 < SizeOf[U]() {\n\treturn V[U](3)\n}\n", "", ""},
-		{"narrowed", v + h + "K[T](): int {\n\tif T is u32 {\n\t\treturn H[T]()\n\t}\n\treturn 0\n}\n", "E0706@13:10", "SizeOf[T]() > 0"},
+		{"narrowed", v + h + "K[T](): int {\n\tif T is u32 {\n\t\treturn H[T]()\n\t}\n\treturn 0\n}\n", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -174,27 +174,23 @@ func TestImportedForwardedValue(t *testing.T) {
 	}
 }
 
-// TestNarrowedBranch: inside `if U is u16`, a callee's
-// clause over U is not narrowed, so the call is E0706 as anywhere else in
-// the generic (an accepted cost, as for the const analogue), and the
-// demand says to write u16 in the call, with no fix:
-// stating the clause would bind the instances whose branch is not taken.
-// Spelled, the call is judged at its closed argument. Outside a branch the
-// demand and its fix are unchanged.
+// TestNarrowedBranch: inside `if U is u16`, U written in a call is u16, so
+// G[U] is judged at its closed argument as G[u16] is; a clause that also
+// reads another open parameter is restated over it. Outside a branch, and
+// in a fn literal in one, the demand to state the clause and its fix are
+// unchanged.
 func TestNarrowedBranch(t *testing.T) {
 	t.Parallel()
 	const g = "G[T](): int\n\trequires SizeOf[T]() < 4 {\n\treturn 1\n}\n\n" // lines 1-5
 	const g2 = "G[T, S](): int\n\trequires SizeOf[T]() + SizeOf[S]() < 4 {\n\treturn 7\n}\n\n"
 	const gk = "G[T](const k: int): int\n\trequires k < SizeOf[T]() {\n\treturn k\n}\n\n"
-	const spell = "`U` is `u16` in this branch, but `if U is u16` does not narrow the callee's clause, so write `u16` for `U` here"
 	for _, tc := range []struct {
 		name, src, want, msg string
 		fixes                int
 	}{
-		{"narrowed (c2)", g + "K[U](): int {\n\tif U is u16 {\n\t\treturn G[U]()\n\t}\n\treturn 0\n}\n", "E0706@8:10",
-			"the callee requires `SizeOf[U]() < 4` here: " + spell, 0},
-		{"narrowed, a fn value", g + "K[U](): int {\n\tif U is u16 {\n\t\tf := G[U]\n\t\treturn f()\n\t}\n\treturn 0\n}\n", "E0706@8:8",
-			"the function named here requires `SizeOf[U]() < 4`: " + spell, 0},
+		{"narrowed (c2)", g + "K[U](): int {\n\tif U is u16 {\n\t\treturn G[U]()\n\t}\n\treturn 0\n}\n", "", "", 0},
+		{"narrowed, false at the narrowed argument", g + "K[U](): int {\n\tif U is u64 {\n\t\treturn G[U]()\n\t}\n\treturn 0\n}\n", "E0706@8:10", "", 0},
+		{"narrowed, a fn value", g + "K[U](): int {\n\tif U is u16 {\n\t\tf := G[U]\n\t\treturn f()\n\t}\n\treturn 0\n}\n", "", "", 0},
 		{"spelled (c2s)", g + "K[U](): int {\n\tif U is u16 {\n\t\treturn G[u16]()\n\t}\n\treturn 0\n}\n", "", "", 0},
 		{"spelled, false at the closed argument", g + "K[U](): int {\n\tif U is u64 {\n\t\treturn G[u64]()\n\t}\n\treturn 0\n}\n", "E0706@8:10", "", 0},
 		{"narrowed, stated", g + "K[U](): int\n\trequires SizeOf[U]() < 4 {\n\tif U is u16 {\n\t\treturn G[U]()\n\t}\n\treturn 0\n}\n", "", "", 0},
@@ -202,21 +198,19 @@ func TestNarrowedBranch(t *testing.T) {
 			"the callee requires `SizeOf[U]() < 4` here: state it on this function", 1},
 		{"narrowed, another parameter", g + "K[U, V](): int {\n\tif V is u16 {\n\t\treturn G[U]()\n\t}\n\treturn 0\n}\n", "E0706@8:10",
 			"the callee requires `SizeOf[U]() < 4` here: state it on this function", 1},
-		// The clause also reads V, which no branch narrows, so writing u16
-		// for U is no remedy (the demand is a clause over V; stated, it
-		// panics at the dev entry check).
+		// The clause also reads V, which no branch narrows: it is restated
+		// over u16 and V, as for G[u16, V].
 		{"narrowed, a second open parameter (p8)", g2 + "K[U, V](): int {\n\tif U is u16 {\n\t\treturn G[U, V]()\n\t}\n\treturn 1\n}\n", "E0706@8:10",
-			"the callee requires `SizeOf[U]() + SizeOf[V]() < 4` here: `U` is `u16` in this branch, but `if U is u16` does not narrow the callee's clause, and it also reads `V`, so it cannot be judged in this branch", 0},
+			"the callee requires `SizeOf[u16]() + SizeOf[V]() < 4` here: state it on this function", 1},
 		{"spelled, a second open parameter (p9)", g2 + "K[U, V](): int {\n\tif U is u16 {\n\t\treturn G[u16, V]()\n\t}\n\treturn 1\n}\n", "E0706@8:10",
 			"the callee requires `SizeOf[u16]() + SizeOf[V]() < 4` here: state it on this function", 1},
-		// With the same cost: a forwarded const value
-		// and a call inside a fn literal in the branch keep the
-		// demand to state the clause, with its fix, which binds every
-		// instance.
+		// A forwarded const value is restated over the narrowed argument; a
+		// call inside a fn literal in the branch is judged at the narrowed
+		// argument, as one outside the literal is.
 		{"narrowed, a forwarded const value (p2)", gk + "K[U](const j: int): int {\n\tif U is u16 {\n\t\treturn G[U](j)\n\t}\n\treturn 0\n}\n", "E0706@8:10",
-			"the callee requires `j < SizeOf[U]()` here: state it on this function", 1},
-		{"narrowed, in a fn literal (p5)", g + "K[U](): int {\n\tif U is u16 {\n\t\tf := fn(): int { return G[U]() }\n\t\treturn f()\n\t}\n\treturn 1\n}\n", "E0706@8:27",
-			"the callee requires `SizeOf[U]() < 4` here: state it on this function", 1},
+			"the callee requires `j < SizeOf[u16]()` here: state it on this function", 1},
+		{"narrowed, in a fn literal (p5)", g + "K[U](): int {\n\tif U is u16 {\n\t\tf := fn(): int { return G[U]() }\n\t\treturn f()\n\t}\n\treturn 1\n}\n", "", "", 0},
+		{"narrowed, in a fn literal, false at the narrowed argument", g + "K[U](): int {\n\tif U is u64 {\n\t\tf := fn(): int { return G[U]() }\n\t\treturn f()\n\t}\n\treturn 1\n}\n", "E0706@8:27", "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

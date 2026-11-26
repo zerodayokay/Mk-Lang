@@ -181,6 +181,9 @@ func (m *Module) newUnitBase(it *types.Item) *unit {
 	u.x = &tctx{m: m, fx: fx, item: it, gens: gens, rec: recorder{rs: &b.Reads}, sink: &b.Diags, self: types.Poison}
 	u.x.unitEnv = func() *Env { return u.env }
 	u.x.poisoned = b.poisonRead
+	if _, ok := n.(*ast.FnLit); ok {
+		u.literalNarrow()
+	}
 	u.printShapeEnv(it)
 	if u.sig != nil && u.sig.Receiver != types.NoReceiver && len(u.sig.Params) > 0 {
 		self := u.sig.Params[0].Type

@@ -250,6 +250,7 @@ func (c *checker) run() *Result {
 	c.solve()
 	c.report = true
 	c.replay()
+	c.unhandledUnions()
 	c.finish()
 	return c.res
 }

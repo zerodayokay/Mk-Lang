@@ -241,9 +241,9 @@ func (c *checker) sigString(s *types.Signature) string {
 		}
 	}
 	b.WriteByte(')')
-	if rt := s.ReturnType(c.tab); rt != types.Void {
+	if rt := c.tab.ResultString(s.Result, s.Errors, s.Generics); rt != "" {
 		b.WriteString(": ")
-		b.WriteString(c.tab.TypeString(rt, s.Generics))
+		b.WriteString(rt)
 	}
 	if f := c.flowClauses(s); f != "" {
 		b.WriteString(" " + f)

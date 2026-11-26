@@ -385,6 +385,12 @@ func (u *unit) assign(s *ast.AssignStmt) {
 	u.externVarWrite(s.Target, "write") // an extern var is written through a pointer
 	if s.Op == ast.TokAssign {
 		u.expr(s.Value, t)
+		if !u.isBinding(s.Target) {
+			// Only a binding that writes its type keeps an E!T to handle
+			// later; a field, an element or a dereference is E0802, as a
+			// construction's field is.
+			u.storedFallible(s.Value)
+		}
 		return
 	}
 	if v, ok := u.vecOf(t); ok {
@@ -419,6 +425,27 @@ func compoundKind(op ast.TokenKind) (intOnly, shift bool) {
 		return true, true
 	}
 	return false, false
+}
+
+// isBinding reports whether e, already typed, is a local or a global
+// (parentheses allowed): a local is the one place a stored E!T may be
+// assigned to, and a global is never assigned (borrow's E0507). A fn
+// literal's capture is not one: the literal writes the enclosing binding
+// through its environment, where nothing sees whether the value it held
+// was handled.
+func (u *unit) isBinding(e ast.Expr) bool {
+	switch e := e.(type) {
+	case *ast.Ident:
+		switch use := u.b.use(e.ID()); use.Kind {
+		case UseLocal:
+			return int(use.Local) >= len(u.b.Locals) || u.b.Locals[use.Local].Capture == 0
+		case UseGlobal:
+			return true
+		}
+	case *ast.ParenExpr:
+		return u.isBinding(e.X)
+	}
+	return false
 }
 
 // isPlace reports whether e, already typed, is a place: a local

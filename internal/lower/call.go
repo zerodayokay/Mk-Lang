@@ -425,9 +425,9 @@ func (bl *builder) environment(env Env, at source.Span) mir.Operand {
 		var p mir.Place
 		switch s.Kind {
 		case UseLocal:
-			p = bl.b.Place(bl.localOf(s.Binding, at))
+			p = bl.b.Place(bl.remapped(bl.localOf(s.Binding, at))) // inside if T is X, its narrowed copy
 		case UseParam:
-			p = bl.b.Place(mir.LocalID(s.Param))
+			p = bl.b.Place(bl.remapped(mir.LocalID(s.Param)))
 		case UseCapture:
 			p = bl.capturePlace(s.Capture, s.Direct, at)
 		default:
@@ -1074,8 +1074,15 @@ func (bl *builder) builtin(x *ast.CallExpr, c Call) mir.Rvalue {
 		d := bl.discr(p, at)
 		ok := bl.newBlock()
 		bl.switchOn(d, []mir.SwitchCase{{Value: 1, Target: ok}}, bl.panicBlock(types.PanicMust, nil, at), at)
+		value := func() mir.Rvalue { return use(bl.valueOf(bl.somePayload(p), true, at)) }
+		if bl.dropped == ast.Expr(x) {
+			// Dropped, a payload that is not plain moves into a T
+			// temporary (okTemp): a T for borrow's E0402, with T's
+			// release facts, as on an E!T.
+			ok, value = bl.okTemp(p, ok, value, recvExpr(x).Span())
+		}
 		bl.cur = ok
-		return use(bl.valueOf(bl.somePayload(p), true, at))
+		return value()
 	case BResMust:
 		recv := recvExpr(x)
 		inner, ic, isCall := bl.fallibleCall(recv)

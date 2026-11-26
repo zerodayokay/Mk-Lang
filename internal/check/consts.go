@@ -556,10 +556,10 @@ func (u *unit) restatedRequires(e ast.Node, call *ast.CallExpr, rest []types.Par
 				// A const value parameter the clause reads is spelled as the
 				// call's folded argument (`3 < SizeOf[U]()`); at a value,
 				// which supplies none, the clause stays unchecked.
-				// Inside `if U is X` the clause is not narrowed, so the
-				// demand says to write X in the call.
+				// Inside `if U is X` a U written in the call is X, so such
+				// a clause reads only parameters no branch narrows.
 				if vs, ok := u.foldedValueSubs(call, rest, pd, sub); ok {
-					u.requireRestatedNarrowed(e, u.demandOf(ct, sig, vs), sig, gargs, ct)
+					u.requireRestated(e, u.demandOf(ct, sig, vs))
 				}
 			}
 			continue
@@ -647,32 +647,6 @@ func (u *unit) readsOpenParam(sig *types.Signature, gargs []types.GenericArg, ct
 		found = true
 	}
 	return found
-}
-
-// narrowedArg returns the first type generic of sig that clause ct names
-// whose argument in gargs is a type parameter of the caller narrowed by an
-// enclosing `if U is X` (u.env), as U and X, spelled as the caller writes
-// them; ok is false when there is none. other is the first further open
-// argument the clause reads that no branch narrows (`V` in `G[U, V]()`),
-// as the caller writes it, "" when there is none: writing X for U then
-// still leaves a clause over V to state.
-func (u *unit) narrowedArg(sig *types.Signature, gargs []types.GenericArg, ct types.Contract) (param, as, other string, ok bool) {
-	for i, g := range sig.Generics {
-		if g.Const || i >= len(gargs) || gargs[i].IsConst || gargs[i].Type == types.NoType || gargs[i].Type == types.Poison {
-			continue
-		}
-		if !namesWord(ct.Text, u.c.cfg.Interner.Str(g.Name)) || u.tab.Kind(gargs[i].Type) != types.KParam {
-			continue
-		}
-		if n := narrowed(u.c.cfg.Types, u.env, gargs[i].Type); n != gargs[i].Type {
-			if !ok {
-				param, as, ok = u.str(gargs[i].Type), u.str(n), true
-			}
-		} else if other == "" && !u.c.closed(gargs[i].Type) {
-			other = u.str(gargs[i].Type)
-		}
-	}
-	return param, as, other, ok
 }
 
 // soleClause reports whether requires ct of sig names exactly one const

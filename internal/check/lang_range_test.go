@@ -189,11 +189,13 @@ func TestLangE0314Forms(t *testing.T) {
 
 // TestLangBecomeNarrowedAndInLoops: a become inside `if T is X`
 // passing the narrowed parameter, and one inside a for loop over a range
-// and over a slice, check (lowered and run by the driver's tests).
+// and over a slice, check (lowered and run by the driver's tests). G[T]
+// written in the branch is G[int], whose signature is not the generic's
+// (E0312, as G[int] written so).
 func TestLangBecomeNarrowedAndInLoops(t *testing.T) {
 	runBodyCases(t, []bodyCase{
 		{"in a narrowing branch", "H[T](n: int): int {\n\tif T is int {\n\t\tif n > 0 {\n\t\t\tbecome H[T](n - 1)\n\t\t}\n\t}\n\treturn n\n}\n", ""},
-		{"the narrowed parameter is no T", "G[T](x: T, n: int): T {\n\tif T is int {\n\t\tbecome G[T](x, n - 1)\n\t}\n\treturn x\n}\n", "E0301@3:15"},
+		{"T written in the branch is int", "G[T](x: T, n: int): T {\n\tif T is int {\n\t\tbecome G[T](x, n - 1)\n\t}\n\treturn x\n}\n", "E0312@3:10"},
 		{"narrowed to int", "G[T](x: T, n: int): T {\n\tif T is int {\n\t\tbecome G[int](x, n - 1)\n\t}\n\treturn x\n}\n", "E0312@3:10"},
 		{"in a range loop", "F(n: int): int {\n\tfor i in 0..n {\n\t\tif i == 3 {\n\t\t\tbecome F(n - 1)\n\t\t}\n\t}\n\treturn n\n}\n", ""},
 		{"in a slice loop", "F(xs: &[]int, n: int): int {\n\tfor x in xs {\n\t\tif x == n {\n\t\t\tbecome F(xs, n + 1)\n\t\t}\n\t}\n\treturn n\n}\n", ""},

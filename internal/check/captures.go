@@ -253,6 +253,7 @@ func (u *unit) literalCaptures(e *ast.FnLit, it *types.Item, ii *resolve.ItemInf
 			rec.fail(nil)
 			return
 		}
+		orig.typ = u.nt(orig.typ) // a literal in `if T is X` sees X
 		ts[i], origins[i], srcs[i] = orig.typ, orig, use
 	}
 	var ref types.TypeID

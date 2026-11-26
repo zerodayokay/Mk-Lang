@@ -126,6 +126,9 @@ func (r *run) typeName(m *eval.Machine, c *eval.Call) *types.EvalError {
 		return err
 	}
 	ts := r.nameToks(h)
+	if err := r.spellFailed(); err != nil {
+		return err
+	}
 	if err := r.chargeToks(m, len(ts)); err != nil {
 		return err
 	}
@@ -734,8 +737,12 @@ func (r *run) methodSignature(m *eval.Machine, c *eval.Call) *types.EvalError {
 	}
 	ts = append(ts, tok{kind: ast.TokRParen})
 	if s.Result != types.Void || s.Errors != types.EmptyErrors {
+		r.valueResult(s.Result, s.Errors, func() string { return "the method `" + r.sym(s.Name) + "`" })
 		ts = append(ts, tok{kind: ast.TokColon})
 		ts = append(ts, r.typeToks(r.c.Types.ReturnType(s.Result, s.Errors))...)
+	}
+	if err := r.spellFailed(); err != nil {
+		return err
 	}
 	if err := r.chargeToks(m, len(ts)); err != nil {
 		return err
@@ -744,6 +751,26 @@ func (r *run) methodSignature(m *eval.Machine, c *eval.Call) *types.EvalError {
 }
 
 // Spelling a spliced Type as tokens.
+
+// valueResult records, for what's result, that an error union held as a
+// value (result a KErrorUnion, errors empty: an alias's or a type
+// argument's E!T) has no spelling: a written E!T result is one that fails,
+// so the text would read back as another type. The first one fails the
+// run (spellFailed).
+func (r *run) valueResult(result types.TypeID, errs types.ErrorSetID, what func() string) {
+	if r.unspelled != nil || errs != types.EmptyErrors || r.c.Types.Get(result).Kind != types.KErrorUnion {
+		return
+	}
+	r.unspelled = fail("gen: %s has no spelling in generated code: its result `%s` is an error union held as a value, which cannot fail, and a written E!T result is one that fails", what(), r.c.Types.TypeString(result, nil))
+}
+
+// spellFailed is the run's failure for a type spelled since the last call
+// that has no spelling (valueResult), nil when there is none.
+func (r *run) spellFailed() *types.EvalError {
+	err := r.unspelled
+	r.unspelled = nil
+	return err
+}
 
 // nameToks spells a Type handle as a resolved reference.
 func (r *run) nameToks(h hostType) []tok {
@@ -888,6 +915,9 @@ func (r *run) fnToks(fn *types.FnType) []tok {
 	}
 	ts = append(ts, tok{kind: ast.TokRParen})
 	if fn.Result != types.Void || fn.Errors != types.EmptyErrors {
+		r.valueResult(fn.Result, fn.Errors, func() string {
+			return "the fn type `" + r.c.Types.TypeString(r.c.Types.Fn(*fn), nil) + "`"
+		})
 		ts = append(ts, tok{kind: ast.TokColon})
 		ts = append(ts, r.typeToks(r.c.Types.ReturnType(fn.Result, fn.Errors))...)
 	}

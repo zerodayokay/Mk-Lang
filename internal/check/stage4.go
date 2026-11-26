@@ -312,15 +312,30 @@ func (g *gctx) method(it *types.Item, s *ast.Signature, owner []types.GenericPar
 	sig.Variadic = s.Ellipsis.End > s.Ellipsis.Start
 	sig.Flows.Declared = len(s.Flows) > 0
 	if s.Result != nil {
-		r, _ := g.typ(s.Result)
-		if r != types.NoType && tab.Get(r).Kind == types.KErrorUnion {
-			ty := tab.Get(r)
-			sig.Result, sig.Errors = ty.Elem, ty.Errors
-		} else {
-			sig.Result = r
-		}
+		sig.Result, sig.Errors, _ = g.result(s.Result)
 	}
 	return sig
+}
+
+// result translates a result type as check's tctx.result reads it: a
+// written E!T (parenthesized or not) splits into T and its set, a failing
+// result; any other type, an alias of an E!T or a type parameter
+// included, is the result as a value, with no errors.
+func (g *gctx) result(n ast.Type) (types.TypeID, types.ErrorSetID, source.Symbol) {
+	r, un := g.typ(n)
+	if r == types.NoType {
+		return r, types.EmptyErrors, un
+	}
+	e := n
+	if p, ok := e.(*ast.ParenType); ok {
+		e = p.Type
+	}
+	if _, written := e.(*ast.ErrorType); written {
+		if ty := g.v.c.cfg.Types.Get(r); ty.Kind == types.KErrorUnion {
+			return ty.Elem, ty.Errors, 0
+		}
+	}
+	return r, types.EmptyErrors, 0
 }
 
 // typ translates one type expression: the TypeID, or NoType with the bare
@@ -578,15 +593,11 @@ func (g *gctx) fnType(n *ast.FnType) (types.TypeID, source.Symbol) {
 		ft.Params = append(ft.Params, types.FnParam{Type: t})
 	}
 	if n.Result != nil {
-		r, un := g.typ(n.Result)
+		r, errs, un := g.result(n.Result)
 		if r == types.NoType {
 			return types.NoType, un
 		}
-		if ty := tab.Get(r); ty.Kind == types.KErrorUnion {
-			ft.Result, ft.Errors = ty.Elem, ty.Errors
-		} else {
-			ft.Result = r
-		}
+		ft.Result, ft.Errors = r, errs
 	}
 	return tab.Fn(ft), 0
 }
