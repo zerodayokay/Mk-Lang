@@ -19,6 +19,18 @@ Inc(y: u32): u32 {
     return y + 1
 }
 
+struct LaneBox[T: Plain + Ord] {
+    n: T
+}
+
+Bound[T: Plain](x: T): int {
+    if T is u32 {
+        work := fn(a: LaneBox[T]): int { return int(a.n) }
+        return work(LaneBox[u32](n: x))
+    }
+    return -1
+}
+
 Lit[T: Plain](x: T): T {
     if T is u32 {
         h := fn(y: T): T { return Id[T](y) }
@@ -95,4 +107,5 @@ export Main(sys: &System): WriteError!void {
     p := Pick[u32](0)
     q := Pick[i64](0)
     try sys.Print("{a} {b} {c} {d} {e} {f} {g}\n", (a: Els[u8](1), b: Els[int](1), c: p(4), d: q(4), e: Var[u32](3), f: Var[i64](3), g: Param[u32](3, Inc)))
+    try sys.Print("{a} {b}\n", (a: Bound[u32](3), b: Bound[i64](4)))
 }

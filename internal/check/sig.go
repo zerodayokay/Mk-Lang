@@ -301,6 +301,17 @@ func (m *Module) declLiteral(it *types.Item, x *tctx, n *ast.FnLit) {
 	}
 	x.gens = gens
 	fd := &types.FuncDecl{Sig: types.Signature{Item: it.ID, Name: it.Name, Generics: gens, Span: n.Span()}}
+	it.Decl = fd
+	if len(gens) == 0 {
+		x.literalSignature(n, &fd.Sig)
+	} else {
+		m.later(it, func() { m.narrowLiteral(it, *x, n, &fd.Sig) })
+	}
+	m.d.flows = append(m.d.flows, flowJob{it: it, sig: &fd.Sig, x: x, cl: &flowClauses{}, lit: true})
+}
+
+// literalSignature reads the parameters and result in the literal's type context.
+func (x *tctx) literalSignature(n *ast.FnLit, sig *types.Signature) {
 	for _, p := range n.Params {
 		if p == nil {
 			continue
@@ -314,17 +325,13 @@ func (m *Module) declLiteral(it *types.Item, x *tctx, n *ast.FnLit) {
 				pr.Into = types.ParamIndex(r.A)
 			}
 		}
-		fd.Sig.Params = append(fd.Sig.Params, pr)
+		sig.Params = append(sig.Params, pr)
 	}
 	var resOK bool
-	fd.Sig.Result, fd.Sig.Errors, resOK = x.result(n.Result)
+	sig.Result, sig.Errors, resOK = x.result(n.Result)
 	if !resOK {
-		fd.Sig.Result, fd.Sig.Errors = types.Poison, types.EmptyErrors
+		sig.Result, sig.Errors = types.Poison, types.EmptyErrors
 	}
-	it.Decl = fd
-	xc := *x
-	m.later(it, func() { m.narrowLiteral(it, xc, fd) }) // the enclosing `if T is X`
-	m.d.flows = append(m.d.flows, flowJob{it: it, sig: &fd.Sig, x: x, cl: &flowClauses{}, lit: true})
 }
 
 // runFlows is step 5 of Signatures: the flows of every signature, in

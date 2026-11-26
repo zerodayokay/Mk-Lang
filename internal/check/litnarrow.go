@@ -11,8 +11,8 @@
 // after the narrowing of an owner that is itself a literal; each X is typed
 // under the narrowing so far, quietly (the enclosing unit reports its
 // errors), and a branch whose X cannot meet T's bounds narrows nothing, as
-// the enclosing unit then checks no branch. The literal's parameter and
-// result types are substituted once; its unit starts under the narrowing.
+// the enclosing unit then checks no branch. The literal's signature and its
+// unit both read types under the narrowing.
 
 package check
 
@@ -23,23 +23,17 @@ import (
 	"mk/internal/types"
 )
 
-// narrowLiteral narrows the signature of fn literal it, declared by x,
-// to the branches that hold it. It runs in step 4, when facts are final
-// and the owner's generics are known.
-func (m *Module) narrowLiteral(it *types.Item, x tctx, fd *types.FuncDecl) {
-	narrow := m.litNarrowing(it, x)
-	if narrow == nil {
-		return
+// narrowLiteral reads the literal's signature in step 4, when bounds can be
+// judged at the type narrowed by the enclosing branch.
+func (m *Module) narrowLiteral(it *types.Item, x tctx, n *ast.FnLit, sig *types.Signature) {
+	if narrow := m.litNarrowing(it, x); narrow != nil {
+		env := m.c.NewEnv(x.gens)
+		env.view = m
+		copy(env.narrow, narrow)
+		x.unitEnv = func() *Env { return env }
 	}
-	args := narrowArgs(m.c.cfg.Types, x.gens, narrow)
-	for i := range fd.Sig.Params {
-		if t := fd.Sig.Params[i].Type; t != types.Poison {
-			fd.Sig.Params[i].Type = m.c.subst(t, args, types.NoType)
-		}
-	}
-	if fd.Sig.Result != types.Poison {
-		fd.Sig.Result = m.c.subst(fd.Sig.Result, args, types.NoType)
-	}
+	x.sink = &m.Diags
+	x.literalSignature(n, sig)
 }
 
 // litNarrowing is the narrowing in force where literal it is written
