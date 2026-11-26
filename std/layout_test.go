@@ -372,8 +372,10 @@ func TestManifestListsUnsafeModules(t *testing.T) {
 	}
 }
 
-// declarationKind matches an optional declaration modifier in its written order.
-const declarationKind = `(?:(?:linear (?:mut view |view )?|mut view |view |open ))?`
+// declarationKind matches an optional declaration modifier in its written
+// order: linear, view, plain view or mut view, linear before a view, or
+// open.
+const declarationKind = `(?:(?:linear (?:mut view |view )?|mut view |plain view |view |open ))?`
 
 // TestPreludeDeclared: every prelude name is exported by a file of std/core
 // (the module map's prelude list); Path is not reserved. A text

@@ -177,7 +177,12 @@ func TestStdKnownItemsResolve_SeesMissing(t *testing.T) {
 	if declares(planted, "Arena", "Fmt") {
 		t.Error("an unexported Arena.Fmt still counts")
 	}
-	for _, head := range []string{"linear mut view struct Arena", "export mut linear view struct Arena", "export linear mut view struct Arenas"} {
+	for _, head := range []string{"export plain view struct Arena", "export view struct Arena", "export linear view struct Arena"} {
+		if !declares(head+" {\n", "", "Arena") {
+			t.Errorf("%q does not count as an exported Arena", head)
+		}
+	}
+	for _, head := range []string{"linear mut view struct Arena", "export mut linear view struct Arena", "export linear plain view struct Arena", "export linear mut view struct Arenas"} {
 		if declares(head+" {\n", "", "Arena") {
 			t.Errorf("%q counts as an exported Arena", head)
 		}
