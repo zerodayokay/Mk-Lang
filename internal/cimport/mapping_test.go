@@ -1,13 +1,15 @@
 // Why: the mapping from C declarations to Mk is what users read and call, so
 // each C form must map the same way every time and on every target.
 // What: TestCImport_Mapping, _Linux, _Names, _TwoImportsOneIdentity,
-// _Deterministic, _HeaderError, _Negatives and TestCTypeParse.
+// _Deterministic, _HeaderError, _Negatives, _NegativesNested,
+// _NegativesExisting and TestCTypeParse.
 // How: translates sampleHeader through clang and checks the Mk lines, in order.
 
 package cimport
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -175,9 +177,43 @@ func TestCTypeParse(t *testing.T) {
 func TestCImport_Negatives(t *testing.T) {
 	root, res, sys := filepath.FromSlash("/p"), filepath.FromSlash("/r/include"), filepath.FromSlash("/s")
 	deps := []string{filepath.Join(root, "a.h"), filepath.Join(res, "stdint.h"), filepath.Join(sys, "stdint.h"), filepath.Join(sys, "w.h")}
-	got := negatives(deps, []string{root, res, sys})
+	got := Negatives(deps, []string{root, res, sys})
 	want := []string{filepath.Join(root, "stdint.h"), filepath.Join(root, "w.h"), filepath.Join(res, "w.h")}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("negatives %q, want %q", got, want)
+	}
+}
+
+// TestCImport_NegativesNested: where search directories nest, a file
+// counts as found through each directory holding it, by its name under
+// that one: inc/sub/y.h is "sub/y.h" through inc, which root/sub/y.h
+// would shadow, as well as "y.h" through inc/sub.
+func TestCImport_NegativesNested(t *testing.T) {
+	root := filepath.FromSlash("/p")
+	inc, sub := filepath.Join(root, "inc"), filepath.Join(root, "inc", "sub")
+	got := Negatives([]string{filepath.Join(sub, "y.h")}, []string{root, inc, sub})
+	want := []string{filepath.Join(root, "sub", "y.h"), filepath.Join(root, "y.h"), filepath.Join(inc, "y.h")}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("negatives %q, want %q", got, want)
+	}
+}
+
+// TestCImport_NegativesExisting: a path that exists when the negatives are
+// taken was not picked by the unit (b/x.h's quoted "y.h" found beside it
+// before a/y.h), so it is no negative; one that is absent is.
+func TestCImport_NegativesExisting(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	for _, p := range []string{filepath.Join(a, "y.h"), filepath.Join(b, "x.h"), filepath.Join(b, "y.h")} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := Negatives([]string{filepath.Join(b, "x.h"), filepath.Join(b, "y.h")}, []string{a, b})
+	if want := []string{filepath.Join(a, "x.h")}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
 	}
 }

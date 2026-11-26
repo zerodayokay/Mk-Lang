@@ -6,14 +6,16 @@
 // directories of a package's C), cImports and cImportsOf (the
 // translated imports of one package), prune, translateC and vendoredViews,
 // the C object builds (cObjects, cObjectsOf, asmSourcesFor) with their
-// cache keys (cobjObjKey, cobjCandidate, saveCobjCandidate), and
-// Session.CImports for the tools.
+// cache keys (cobjObjKey, cobjCandidate, saveCobjCandidate,
+// cobjSearchDirs), and Session.CImports for the tools.
 //
 // How: the package's C imports are translated once per target
 // (internal/cimport) into one memory build whose modules are c.<name>; the
 // readable binding is written to gen/<target>/c/<name>.mk, and the shim,
 // the C sources and the assembly sources become objects of the link. A C
-// object's key covers the content hash of every header its -MD file lists.
+// object's key covers the content hash of every header its -MD file lists,
+// and its cache entry the negative lookups a translation's entry keeps:
+// a header added earlier on the search path is a miss.
 // The translation, the shim and the C sources search the same -I
 // directories: the package root, then every C import's include_dirs (the
 // package's C imports are one translation unit, so they share one path).
@@ -683,7 +685,7 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 			}
 			return nil, nil, []*diag.Diagnostic{toolErrIn(cerr, "clang", what+" did not compile", work)}
 		}
-		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in)
+		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in, cobjSearchDirs(cj))
 		if st != nil && ok {
 			saveCobjCandidate(st, base, cand)
 			_ = st.PutFile(cache.KindCObj, key, out)
@@ -715,11 +717,15 @@ func asmSourcesFor(man *Manifest, target string) []int {
 }
 
 // cobjCand is one candidate of a C object's KindManifest entry: the files
-// the compile read (-MD), with their content hashes. The object's key is
-// cobjObjKey of the entry's base and these (the content hash of every
-// -MD file).
+// the compile read (-MD), with their content hashes, and the negative
+// lookups (cimport.Negatives over the compile's search path), none of
+// which may exist: a header added to an earlier search directory would
+// shadow a dependency. The object's key is cobjObjKey of the entry's base
+// and the dependencies (the negatives follow from them and the search
+// path, which base holds).
 type cobjCand struct {
 	Deps []cobjDep
+	Neg  []string `json:",omitempty"`
 }
 
 type cobjDep struct {
@@ -745,13 +751,16 @@ func cobjObjKey(base source.Hash, c cobjCand) source.Hash {
 
 // cobjListKey is the KindManifest key of a C object's candidates.
 func cobjListKey(base source.Hash) source.Hash {
-	h := source.NewHasher("mk.driver.cobj.cands.v1")
+	// The domain names the candidates' format, which carries negative
+	// lookups: a list written without them is never read.
+	h := source.NewHasher("mk.driver.cobj.cands.v2")
 	h.Hash(base)
 	return h.Sum()
 }
 
 // cobjCandidate finds, among base's candidates, the first whose every
-// dependency still has its hash, and returns that object's key.
+// dependency still has its hash and whose every negative lookup still
+// finds nothing, and returns that object's key.
 func cobjCandidate(st *cache.Store, dh *cimport.DepHasher, base source.Hash) (source.Hash, bool) {
 	raw, ok, _ := st.Get(cache.KindManifest, cobjListKey(base))
 	if !ok {
@@ -768,6 +777,11 @@ next:
 				continue next
 			}
 		}
+		for _, n := range c.Neg {
+			if dh.Exists(n) {
+				continue next
+			}
+		}
 		return cobjObjKey(base, c), true
 	}
 	return source.Hash{}, false
@@ -775,11 +789,13 @@ next:
 
 // cobjKey reads the dependency file a compile wrote (none for a plain .s
 // file, whose only input is the source) and returns the object's key and
-// its candidate; false when a dependency cannot be read (the object is
-// then not stored).
-func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string) (source.Hash, cobjCand, bool) {
+// its candidate, with the negative lookups of dirs, the compile's ordered
+// header search path (cobjSearchDirs); false when a dependency cannot be
+// read (the object is then not stored).
+func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dirs []string) (source.Hash, cobjCand, bool) {
 	var c cobjCand
 	if depFile != "" {
+		var deps []string
 		text, err := os.ReadFile(depFile)
 		if err != nil {
 			return base, c, false
@@ -797,9 +813,23 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string) (so
 				return base, c, false
 			}
 			c.Deps = append(c.Deps, cobjDep{Path: p, Hash: h})
+			deps = append(deps, p)
 		}
+		c.Neg = cimport.Negatives(deps, dirs)
 	}
 	return cobjObjKey(base, c), c, true
+}
+
+// cobjSearchDirs is the ordered header search path of the compile cj, as
+// Clang searches it under -nostdinc: every -I, then the -isystem
+// directories in command-line order (cArgs: the resource headers first,
+// then cj.System). A directory the manifest's own flags add is not in it.
+func cobjSearchDirs(cj toolchain.CJob) []string {
+	out := append([]string{}, cj.Include...)
+	if cj.ResourceDir != "" {
+		out = append(out, filepath.Join(cj.ResourceDir, "include"))
+	}
+	return append(out, cj.System...)
 }
 
 // saveCobjCandidate puts c first among base's candidates.

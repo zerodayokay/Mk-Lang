@@ -2,7 +2,7 @@
 // unusual alignment, bitfields, SSE unions, missing headers) that must fail
 // cleanly or map correctly.
 // What: TestParseProto, TestCImport_Enum, _PointerOnly, _FuncPtrNullable,
-// _Bitfield, _OpaqueSSE, _HeaderMissing and TestDepHasher.
+// _Bitfield, _OpaqueSSE, _HeaderMissing, TestDepHasher and _Exists.
 // How: small headers through translate, and the cache's dependency hasher.
 
 package cimport
@@ -191,5 +191,25 @@ func TestDepHasher(t *testing.T) {
 	write("int ab;\n")
 	if h, ok := d2.Hash(p); !ok || h == h1 || d2.reads != 1 {
 		t.Errorf("after an edit: ok %v, changed %v, reads %d", ok, h != h1, d2.reads)
+	}
+}
+
+// TestDepHasher_Exists: a DepHasher answers a negative lookup once, so it
+// keeps its answer for the build; the next build's DepHasher sees a file
+// added since.
+func TestDepHasher_Exists(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.h")
+	d := NewDepHasher(nil)
+	if d.Exists(p) {
+		t.Fatal("a missing file exists")
+	}
+	if err := os.WriteFile(p, []byte("\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d.Exists(p) {
+		t.Error("the same DepHasher stat'ed the path again")
+	}
+	if !NewDepHasher(nil).Exists(p) {
+		t.Error("a new DepHasher does not see the added file")
 	}
 }
