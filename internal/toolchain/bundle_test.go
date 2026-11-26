@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -148,34 +149,42 @@ func TestRealPathResolvesLinks(t *testing.T) {
 	exe, _ := bundleTree(t, runtime.GOOS, NameClang, NameLLD)
 	root := filepath.Dir(filepath.Dir(exe))
 	want := RealPath(exe)
-	link := filepath.Join(t.TempDir(), "current")
-	if err := os.Symlink(root, link); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
-	if got := RealPath(filepath.Join(link, "bin", filepath.Base(exe))); got != want {
-		t.Errorf("through a symbolic link: %s, want %s", got, want)
-	}
+	t.Run("symlink", func(t *testing.T) {
+		const privilegeNotHeld = syscall.Errno(1314) // Windows ERROR_PRIVILEGE_NOT_HELD
+		link := filepath.Join(t.TempDir(), "current")
+		if err := os.Symlink(root, link); err != nil {
+			if runtime.GOOS == "windows" && errors.Is(err, privilegeNotHeld) {
+				t.Skipf("symbolic link privilege unavailable: %v", err)
+			}
+			t.Fatalf("symlink: %v", err)
+		}
+		if got := RealPath(filepath.Join(link, "bin", filepath.Base(exe))); got != want {
+			t.Errorf("through a symbolic link: %s, want %s", got, want)
+		}
+	})
 	if runtime.GOOS != "windows" {
 		return
 	}
-	junction := filepath.Join(t.TempDir(), "junction")
-	if out, err := exec.Command("cmd", "/c", "mklink", "/J", junction, root).CombinedOutput(); err != nil {
-		t.Fatalf("mklink /J: %v %s", err, out)
-	}
-	if got := RealPath(filepath.Join(junction, "bin", filepath.Base(exe))); got != want {
-		t.Errorf("through a junction: %s, want %s", got, want)
-	}
-	// The bundle rule through the junction finds the real llvm/bin.
-	o := fakeOpts("windows", map[string]string{}, []string{})
-	je := filepath.Join(junction, "bin", filepath.Base(exe))
-	o.Executable = func() (string, error) { return RealPath(je), nil }
-	tl, err := Discover(o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tl.Found != BundleDir || !strings.HasPrefix(tl.Dir, RealPath(root)) {
-		t.Errorf("through a junction: %s (%s)", tl.Dir, tl.Found)
-	}
+	t.Run("junction", func(t *testing.T) {
+		junction := filepath.Join(t.TempDir(), "junction")
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", junction, root).CombinedOutput(); err != nil {
+			t.Fatalf("mklink /J: %v %s", err, out)
+		}
+		je := filepath.Join(junction, "bin", filepath.Base(exe))
+		if got := RealPath(je); got != want {
+			t.Errorf("through a junction: %s, want %s", got, want)
+		}
+		// The bundle rule through the junction finds the real llvm/bin.
+		o := fakeOpts("windows", map[string]string{}, []string{})
+		o.Executable = func() (string, error) { return RealPath(je), nil }
+		tl, err := Discover(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tl.Found != BundleDir || !strings.HasPrefix(tl.Dir, RealPath(root)) {
+			t.Errorf("through a junction: %s (%s)", tl.Dir, tl.Found)
+		}
+	})
 }
 
 // flavourTools is tl with only lld: the named linkers and llvm-lib
