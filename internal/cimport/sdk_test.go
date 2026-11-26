@@ -78,8 +78,15 @@ func TestCImport_WindowsSDK(t *testing.T) {
 	if n := strings.Count(view, "export extern var IID_ID3D12Device:"); n != 1 {
 		t.Errorf("IID_ID3D12Device bound %d times, want once", n)
 	}
-	if n := st.Skipped["extern var redeclared with another type"]; n != 0 {
-		t.Errorf("%d redeclared extern vars disagree in type", n)
+	seen := map[string]bool{}
+	for _, l := range strings.Split(view, "\n") {
+		if name, ok := strings.CutPrefix(l, "export extern var "); ok {
+			name, _, _ = strings.Cut(name, ":")
+			if seen[name] {
+				t.Errorf("extern var %s bound twice", name)
+			}
+			seen[name] = true
+		}
 	}
 }
 

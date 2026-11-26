@@ -44,9 +44,9 @@ type emitter struct {
 	stats   []Stats
 	emitted map[*decl]bool
 	shims   []shimFunc
-	// vars are the extern variable declarations by C name, in order: C
-	// may declare one variable more than once.
-	vars map[string][]*decl
+	// vars is, by C name, the declaration that binds each extern variable
+	// (varBinders): C may declare one variable more than once.
+	vars map[string]*decl
 	// funcLike are the function-like macros the headers define.
 	funcLike map[string]bool
 }
@@ -488,12 +488,7 @@ func (e *emitter) name() {
 // Emit writes every binding. It returns one text per import.
 func (e *emitter) emit() []string {
 	e.pointerOnly()
-	e.vars = map[string][]*decl{}
-	for _, d := range e.u.decls {
-		if d.kind == dVar && d.extern && d.vt != nil {
-			e.vars[d.name] = append(e.vars[d.name], d)
-		}
-	}
+	e.vars = e.varBinders()
 	for _, d := range e.u.decls {
 		if e.emitted[d] {
 			continue
@@ -683,27 +678,18 @@ func (e *emitter) typedef(d *decl) {
 // A variable that is not extern (a definition in a header), or whose type has
 // no Mk spelling or is a function or void, is skipped with its reason.
 // C may declare an extern variable again (C11 6.2.2p4; the Windows SDK
-// declares many IID_ names twice): it binds once, in the module of its
-// first declaration, and counts as one declaration. When the declarations
-// disagree in type (typedefs followed), it is skipped with the reason
-// "extern var redeclared with another type": no declaration is preferred.
+// declares many IID_ names twice): it binds once, by the declaration
+// varBinders picks, and counts as one declaration.
 func (e *emitter) externVar(d *decl) {
 	if !d.extern || d.vt == nil {
 		e.stats[d.imp].Decls++
 		e.skipped(d.imp, "variable that is not extern")
 		return
 	}
-	all := e.vars[d.name]
-	if len(all) > 0 && all[0] != d {
-		return // a redeclaration: the first declaration binds the variable
+	if b := e.vars[d.name]; b != nil && b != d {
+		return // another declaration binds the variable
 	}
 	e.stats[d.imp].Decls++
-	for _, o := range all[1:] {
-		if !e.sameType(d.vt, o.vt) {
-			e.skipped(d.imp, "extern var redeclared with another type")
-			return
-		}
-	}
 	s, why := e.mkType(d.vt, d.imp)
 	if why == "" && (s == "void" || strings.HasPrefix(s, "fn(")) {
 		why = "extern var of a function or void type"
@@ -716,6 +702,32 @@ func (e *emitter) externVar(d *decl) {
 	fmt.Fprintf(w, "\n// C: extern %s\n", d.name)
 	fmt.Fprintf(w, "export extern var %s: %s\n", d.name, s)
 	e.stats[d.imp].Direct++
+}
+
+// varBinders gives, by C name, the declaration of each extern variable
+// that binds it, in its module and with its type: the first, while every
+// later one has its type (typedefs followed); once one differs, the last.
+// Clang accepts a redeclaration only with a compatible type, and gives each
+// one the composite type of the declarations so far (C11 6.2.7): after
+// `extern int z[];` and `extern int z[3];` the last is `int[3]`, where the
+// first has no Mk spelling. The last is in the latest import, whose module
+// may name the earlier imports' types.
+func (e *emitter) varBinders() map[string]*decl {
+	out := map[string]*decl{}
+	first := map[string]*decl{}
+	for _, d := range e.u.decls {
+		if d.kind != dVar || !d.extern || d.vt == nil {
+			continue
+		}
+		f := first[d.name]
+		switch {
+		case f == nil:
+			first[d.name], out[d.name] = d, d
+		case out[d.name] != f || !e.sameType(f.vt, d.vt):
+			out[d.name] = d
+		}
+	}
+	return out
 }
 
 // sameType reports whether C types a and b are one type once every

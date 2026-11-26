@@ -9906,7 +9906,7 @@ How C declarations appear in Mk:
 | C | Mk |
 |---|---|
 | A function | `export extern`, with its C name: `geom.geom_dist2` |
-| `extern int geom_count;` | `export extern var geom_count: i32`, with its C name. Declared again, it binds once; declared with two types, it is skipped |
+| `extern int geom_count;` | `export extern var geom_count: i32`, with its C name. Declared again, it binds once, with the type the declarations give together: `extern int z[];` then `extern int z[3];` is `[3]i32` |
 | `struct geom_point` | `struct GeomPoint`, its fields in snake_case: `maxCount` is `max_count` |
 | `enum geom_kind` and its constants | `type GeomKind = i32` and `const GeomKindLine: GeomKind = 1` |
 | `union num` | A struct of bytes with a getter and a setter per member: `Num.I`, `Num.SetI` |
