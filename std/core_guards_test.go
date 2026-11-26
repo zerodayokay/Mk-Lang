@@ -20,10 +20,8 @@ import (
 // six the guards were evaluated on in std.core.
 var core11GuardTargets = []string{"x86_64-windows", "x86_64-freestanding", "x86_64-linux", "aarch64-linux", "x86_64-nutshell", "aarch64-nutshell"}
 
-// core11Guards is the guard program: tests_bytes.mk's former guards, their
-// helpers and their test block, as they were in tests_bytes.mk (but for
-// two sentences on where they are checked, and needs measured again on this
-// std), and an empty Main.
+// core11Guards is the guard program: the fuel guards over std.core's byte
+// paths, their helpers and their test block, and an empty Main.
 //
 // The guards live in a user program, not in std/core/tests_bytes.mk: as
 // consts of std.core they read std.simd's layouts at compile time, and the
@@ -42,7 +40,7 @@ const core11Guards = `// The fuel guards over std.core's byte paths (std/core_gu
 // a user program). Those of this std and the reference are checked
 // (core11GuardNeeds); a mutant's was measured on a copy of std with its one
 // change and is not checked. A mutant's need marked "on the 0.5% grid" is a
-// bisection to 0.5% on an earlier std, not measured again on this one. Each
+// bisection to 0.5% on an earlier std. Each
 // guard is evaluated wherever this program is checked, on six targets
 // (TestCore_FuelGuards). On x86_64-freestanding std.core keeps
 // its own forms, which need the reference's steps, so the three guards over 4
@@ -333,15 +331,18 @@ export Main(sys: &System) {
 `
 
 // core11GuardNeeds is each guard's exact need with this std, the least fuel
-// at which mk check of the guard program holds it: on x86_64-windows (each
-// other hosted target needs the same steps), and the reference's, on
+// at which mk check of the guard program holds it: on each hosted target of
+// core11GuardTargets (they need the same steps), and the reference's, on
 // x86_64-freestanding with the guards' freestanding returns turned off, so
 // that every guard runs std.core's own forms there. The comments in
 // core11Guards quote these numbers, and checkGuardNeeds holds both to the
 // steps this std takes; they do not depend on the host, since the evaluator
-// answers Cpu() with the target's baseline. A change that moves a need fails
-// here: find the new need by bisecting that guard's fuel with mk check (clean
-// at the need, E0902 one below), then write it here and in the comments.
+// answers Cpu() with the target's baseline. They are the needs of mk check,
+// which evaluates as a development build does, contracts included; a release
+// build may evaluate the same consts in fewer steps. A change that moves a
+// need fails here: find the new need by bisecting that guard's fuel with mk
+// check (clean at the need, E0902 one below), then write it here and in the
+// comments.
 var core11GuardNeeds = []struct {
 	name                 string
 	hosted, freestanding int
@@ -412,8 +413,9 @@ func commaInt(n int) string {
 
 // checkGuardNeeds holds core11GuardNeeds exact: the guard program checks
 // clean with every fuel at its need and is E0902 at every guard one step
-// below, hosted on x86_64-windows and, with the freestanding returns off, on
-// x86_64-freestanding. The comments must quote every need.
+// below, on each hosted target of core11GuardTargets and, with the
+// freestanding returns off, on x86_64-freestanding. The comments must quote
+// every need.
 func checkGuardNeeds(t *testing.T, root, stdDir string) {
 	t.Helper()
 	for _, g := range core11GuardNeeds {
@@ -427,13 +429,18 @@ func checkGuardNeeds(t *testing.T, root, stdDir string) {
 	if strings.Count(core11Guards, ret) != 5 {
 		t.Fatalf("the guard program holds %q %d times, want 5", ret, strings.Count(core11Guards, ret))
 	}
-	for _, c := range []struct {
+	type leg struct {
 		target, prog string
 		freestanding bool
-	}{
-		{"x86_64-windows", core11Guards, false},
-		{"x86_64-freestanding", strings.ReplaceAll(core11Guards, ret, "if false {"), true},
-	} {
+	}
+	var legs []leg
+	for _, target := range core11GuardTargets {
+		if target != "x86_64-freestanding" {
+			legs = append(legs, leg{target, core11Guards, false})
+		}
+	}
+	legs = append(legs, leg{"x86_64-freestanding", strings.ReplaceAll(core11Guards, ret, "if false {"), true})
+	for _, c := range legs {
 		for _, delta := range []int{0, -1} {
 			prog, lines := withNeeds(t, c.prog, c.freestanding, delta)
 			if err := os.WriteFile(filepath.Join(root, "needs.mk"), []byte(prog), 0o644); err != nil {
