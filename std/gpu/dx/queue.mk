@@ -345,6 +345,18 @@ Device.StampUploadInflight(mut self, serial: u64) {
     }
 }
 
+Device.RecordCommandSubmission(mut self, allocator: int, serial: u64, executed: bool, signaled: bool) {
+    if !executed {
+        return
+    }
+    self.cmd_allocs[allocator].serial = serial
+    self.StampUploadInflight(serial)
+    self.present_pending = !signaled
+    if signaled {
+        self.last_submitted = serial
+    }
+}
+
 /// Copies data into the upload ring now and returns (ID3D12Resource ptr, offset)
 /// for an in-stream Encoder.WriteBuffer record.
 export Device.StageUploadData(mut self, data: []u8): Error!(res_ptr: u64, off: u64) {
@@ -803,12 +815,12 @@ export Device.FlushPreSubmit(mut self, serial: u64): Error!void {
         step: 0,
     )
     SysRun(mut args, FlushPreSys)
-    self.pending_zeros.Clear()
-    self.pending_uploads.Clear()
-    self.cmd_allocs[alloc_idx].serial = serial
-    self.StampUploadInflight(serial)
-    self.last_submitted = serial
-    self.present_pending = false
+    executed := args.step == 2
+    if executed {
+        self.pending_zeros.Clear()
+        self.pending_uploads.Clear()
+    }
+    self.RecordCommandSubmission(alloc_idx, serial, executed, args.hr >= 0)
     has_dbg_err := self.DrainInfoQueue()
     if args.hr < 0 {
         fail MapHrError(self, args.hr, CallExecuteCommandLists)
@@ -841,6 +853,7 @@ struct ReadTexRecordArgs {
     slice_bytes: int
     serial: u64
     hr: windows.Hresult
+    executed: bool
 }
 
 ReadTexRecordSys(arg: *u8) {
@@ -905,6 +918,7 @@ ReadTexRecordSys(arg: *u8) {
         }
         var lists: [1]*d3d12.ID3D12CommandList = [raw.PtrCast[d3d12.ID3D12GraphicsCommandList, d3d12.ID3D12CommandList](cmd)]
         (*(*d).queue).ExecuteCommandLists(1, raw.Of(&lists[0]))
+        (*p).executed = true
         (*p).hr = (*(*d).queue).Signal((*d).fence, (*p).serial)
     }
 }
@@ -1054,17 +1068,23 @@ export Device.ReadTextureSync(
         slice_bytes: slice_bytes,
         serial: serial,
         hr: 0,
+        executed: false,
     )
     SysRun(mut rec_args, ReadTexRecordSys)
-    self.pending_zeros.Clear()
-    self.pending_uploads.Clear()
-    self.cmd_allocs[alloc_idx].serial = serial
-    self.StampUploadInflight(serial)
-    self.last_submitted = serial
-    self.present_pending = false
+    if rec_args.executed {
+        self.pending_zeros.Clear()
+        self.pending_uploads.Clear()
+    }
+    self.RecordCommandSubmission(alloc_idx, serial, rec_args.executed, rec_args.hr >= 0)
     has_dbg_err := self.DrainInfoQueue()
     if rec_args.hr < 0 {
-        fail MapHrError(self, rec_args.hr, CallExecuteCommandLists)
+        e := MapHrError(self, rec_args.hr, CallExecuteCommandLists)
+        if rec_args.executed && !self.lost {
+            // The readback must stay live until the queued copy retires.
+            var retry_serial := serial
+            _ = self.WaitQueueIdle(io.NoCancel(), mut retry_serial) else {}
+        }
+        fail e
     }
     self.WaitSerial(io, serial) else e {
         match e {

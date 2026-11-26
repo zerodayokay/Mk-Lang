@@ -629,10 +629,7 @@ export Device.ReplayAndSubmit(
         step: 0,
     )
     SysRun(mut args, ReplaySys)
-    self.cmd_allocs[alloc_idx].serial = serial
-    self.StampUploadInflight(serial)
-    self.last_submitted = serial
-    self.present_pending = false
+    self.RecordCommandSubmission(alloc_idx, serial, args.step == 2, args.hr >= 0)
     has_dbg_err := self.DrainInfoQueue()
     if args.hr < 0 {
         fail MapHrError(self, args.hr, CallExecuteCommandLists)
