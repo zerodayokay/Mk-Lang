@@ -44,8 +44,8 @@ Client(sys: &System, o: &Options): int *o into sys {
     if o.origin_h3 && o.tls_chain.IsNone() {
         return Fatal(sys, 2, "--origin-h3 needs --tls-chain and --tls-key")
     }
-    if o.h3_only && (o.follow || o.handshake) {
-        return Fatal(sys, 2, "--http3-only cannot be combined with --location or --handshake")
+    if o.h3_only && (o.follow || o.handshake || o.ws_kinds.Len() > 0) {
+        return Fatal(sys, 2, "--http3-only cannot be combined with redirects, a TLS handshake check, or WebSocket")
     }
     if seed := o.seed {
         return Simulated(sys, o, seed)

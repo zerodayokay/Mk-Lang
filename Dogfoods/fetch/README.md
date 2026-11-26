@@ -141,10 +141,17 @@ error BodyNotReplayable
 http.ReadRequest(a: &Arena into a, io: Io, r: mut Reader, limit: int): http.Error!Request from a
 Request.Header(&self, name: str): ?str from self
 Client.New(h: &Heap, l: ClientLimits): Client from h, l
-Client.Do(&self, a: &Arena into a, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
+Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
 Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
-Client.DoStreaming(&self, a: &Arena into a, io: Io, req: &ClientRequest, body: mut Reader, len: ?i64): http.Error!Exchange from a, self
+Client.DoStreaming(&self, a: &Arena, io: Io, req: &ClientRequest, body: mut Reader, len: ?i64): http.Error!Exchange from a, self
+Client.Drive(&self, io: Io): Canceled!void
+Client.Stop(&self)
 Client.Close(self)
+http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+Response.Status(mut self, code: int)
+Response.Header(mut self, name: str, value: str): OutOfMemory!void
+Response.Body(mut self, data: []u8): OutOfMemory!void
+Exchange.Version(&self): HttpVersion
 Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
 Exchange.Close(self, io: Io): http.Error!void
 Exchange.Abandon(self)
@@ -154,6 +161,9 @@ struct ClientLimits {
 struct Header {
 struct Request {
 struct Reply {
+// std.quic
+quic.Connector(c: &Config): net.MuxDialer from c
+quic.Acceptor(c: &Config): net.MuxServer from c
 // std.crypto
 crypto.ParsePrivateKey(der: []u8): crypto.Error!PrivateKey
 // std.compress

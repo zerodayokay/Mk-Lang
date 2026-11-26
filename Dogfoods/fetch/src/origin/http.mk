@@ -1,4 +1,8 @@
-// Serve the normal scripted routes through std.http's multiplexed server.
+// Why: the scripted origin exercises the multiplexed server as well as the
+// client's HTTP/2 and HTTP/3 requests.
+// What: Context, ServeHttp and AnswerHttp.
+// How: use the script's existing route matcher and response builder, then let
+// std.http frame the reply for the selected protocol.
 
 import std.http
 import std.net
