@@ -732,3 +732,28 @@ test "RFC 9114 6.2.2: a push stream at a server is a connection H3_STREAM_CREATI
     }
     Assert(code == H3StreamCreationError)
 }
+
+test "reading an HTTP/3 request does not consume the next stream's incoming notification" (sys: &System) {
+    (client: cm, server: sm) := try pipe.MuxPair(sys.heap, 4096)
+    defer cm.Abandon()
+    defer sm.Abandon()
+    cs := try Session.Client(sys.heap, sys.io, &cm, 4096)
+    defer cs.Free(sys.heap.Alloc())
+    ss := try Session.Server(sys.heap, sys.io, &sm, 4096)
+    defer ss.Free(sys.heap.Alloc())
+    p := hf.Pseudo(method: "GET", scheme: "https", authority: "example.com", path: "/")
+    empty: [0]Kv = []
+    first := try Exchange.Open(cs.Ref(), sys.io, &p, empty[..], true)
+    defer first.Release(cs.Ref())
+    ex := try Exchange.Accept(ss.Ref(), sys.io)
+    defer ex.Release(ss.Ref())
+    second := try Exchange.Open(cs.Ref(), sys.io, &p, empty[..], true)
+    defer second.Release(cs.Ref())
+    a := sys.heap.Alloc()
+    var head := hf.FieldBlock.New(a)
+    defer head.Free(a)
+    try ex.RequestHead(sys.io, mut head)
+    next := (try sm.Accept(sys.io, false, false)).Must()
+    defer sm.Release(next)
+    Assert(next.Id() == second.Id())
+}

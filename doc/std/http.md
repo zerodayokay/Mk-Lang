@@ -700,15 +700,13 @@ export Client.Drive(&self, io: Io): Canceled!void
 
 - Errors: Canceled
 
-Reads every pooled HTTP/2 connection of the client in the background, one
-task per connection, until Stop or a cancel of io: each answers PING and
-SETTINGS while idle and sees a GOAWAY at once, and one idle past
-ClientLimits.idle with no stream is closed with GOAWAY(NO_ERROR). Run it
-as a task of a scope that outlives the requests; then Stop, the scope's
-end, and Close. After Stop it returns at once, so a later Drive of the
-same client returns too. Errors: Canceled when io is cancelled; it
-returns normally after Stop. O(16) per wake; allocates one task per
-connection it drives.
+Runs one reader task per pooled HTTP/2 or HTTP/3 connection until Stop or
+cancellation. The reader processes control frames while idle, and HTTP/3
+keeps QUIC active until the client idle limit. Run Drive in a task of a
+scope that outlives the requests. Use WaitDriving to synchronize startup,
+and then Stop, the scope's end, and Close to shut down. Drive returns
+normally after Stop and fails with Canceled when io is canceled. O(pool
+slots) per wake; allocates one task per connection it drives.
 
 ### `Client.Fetch`
 
@@ -757,11 +755,10 @@ the drive lifecycle. The wait is cancellable and allocates nothing.
 export Client.Stop(&self)
 ```
 
-Makes Drive return: its connection tasks end and leave their connections
-pooled, read from then on by the requests that wait on them. Call it
-before the end of the scope that runs Drive; it is safe to call more than
-once or with no Drive running. Never blocks or fails. O(1); allocates
-nothing.
+Makes Drive return and retires its HTTP/3 connections. HTTP/2 requests
+can read their pooled connections after Drive ends. Call Stop before the
+Drive scope ends. It is safe to call more than once or with no Drive running.
+Never blocks or fails. O(waiters); allocates nothing.
 
 ### `ClientLimits`
 

@@ -81,6 +81,43 @@ HandleLostFrames(e: mut Engine, lost: []SentFrame) {
     }
 }
 
+// Track enough frame notifications for the entire packet-number space.
+// A grouped ACK may acknowledge or declare loss for several packets.
+GrowFrameScratch(a: &Alloc, out: mut HeapList[SentFrame], n: int): OutOfMemory!void {
+    if out.Len() >= n {
+        return
+    }
+    empty: [64]SentFrame = [SentFrame(kind: SentKind.Control(index: 0)); 64]
+    for out.Len() < n {
+        left := n - out.Len()
+        add := if left < empty.Len() { left } else { empty.Len() }
+        try out.Extend(a, empty[0..add])
+    }
+}
+
+ApplyAck(e: mut Engine, space: Space, ranges: []AckRange, delay: time.Duration, largest: i64, now: time.Instant): Error!void {
+    a := e.h.Alloc()
+    n := e.rec.spaces[SpaceIndex(space)].frm_len
+    try GrowFrameScratch(a, mut e.ack_frames, n)
+    try GrowFrameScratch(a, mut e.lost_frames, n)
+    var acked := Replace(mut e.ack_frames, HeapList[SentFrame].New(a))
+    var lost := Replace(mut e.lost_frames, HeapList[SentFrame].New(a))
+    defer {
+        Replace(mut e.ack_frames, acked).Free(a)
+        Replace(mut e.lost_frames, lost).Free(a)
+    }
+    res := try e.rec.OnAck(space, ranges, delay, now, acked.ItemsMut(), lost.ItemsMut())
+    if res.acked > 0 {
+        HandleAckedFrames(e, acked.Items()[0..res.acked])
+        if space == Space.App {
+            e.keys.OnAck1Rtt(largest, now)
+        }
+    }
+    if res.lost > 0 {
+        HandleLostFrames(e, lost.Items()[0..res.lost])
+    }
+}
+
 // Checks whether a frame is permitted in Initial or Handshake packets (QT-83,
 // QT-84, QT-294): only PADDING, PING, ACK, CRYPTO, CONNECTION_CLOSE 0x1c.
 IsAllowedHandshakeFrame(f: &QFrame): (ok: bool, frame_type: u64) {
@@ -188,8 +225,6 @@ ApplyFrames(
     }
 
     a := e.h.Alloc()
-    var acked_buf: [64]SentFrame = [SentFrame(kind: SentKind.Control(index: 0)); 64]
-    var lost_buf: [64]SentFrame = [SentFrame(kind: SentKind.Control(index: 0)); 64]
     var it := FrameIter.New(payload, !e.is_server)
     var ack_eliciting := false
     var non_probing := false
@@ -216,17 +251,7 @@ ApplyFrames(
                 non_probing = true
             }
             .Ack(largest, delay, ranges: rcount) {
-                ack_delay := ScaleAckDelay(delay, peer_exp)
-                res := try e.rec.OnAck(space, ranges[0..rcount], ack_delay, now, mut acked_buf[..], mut lost_buf[..])
-                if res.acked > 0 {
-                    HandleAckedFrames(e, acked_buf[0..res.acked])
-                    if space == Space.App {
-                        e.keys.OnAck1Rtt(largest, now)
-                    }
-                }
-                if res.lost > 0 {
-                    HandleLostFrames(e, lost_buf[0..res.lost])
-                }
+                try ApplyAck(e, space, ranges[0..rcount], ScaleAckDelay(delay, peer_exp), largest, now)
                 non_probing = true
             }
             .Crypto(offset, data) {
@@ -390,14 +415,14 @@ ProcessDatagram(e: mut Engine, io: Io, dgram: mut []u8, from: net.Addr, now: tim
     }
     if e.is_server {
         e.amp_rx_bytes += i64(dgram.Len())
-        var lost_buf: [64]SentFrame = [SentFrame(kind: SentKind.Control(index: 0)); 64]
-        res := e.rec.OnDatagramReceived(now, mut lost_buf[..])
-        if res.lost > 0 {
-            HandleLostFrames(e, lost_buf[0..res.lost])
-        }
-        if res.probes > 0 {
-            e.probe_owed_space = some(e.rec.PtoSpace())
-            e.probe_owed_count = res.probes
+        if e.rec.server_amp_blocked {
+            ApplyRecoveryEvent(e, now, true) else {
+                e.FailTransport(ErrInternal, 0, now)
+                return
+            }
+        } else {
+            var empty: [0]SentFrame = []
+            _ = e.rec.OnDatagramReceived(now, mut empty[..])
         }
     }
     if e.close.phase == ClosePhase.Draining {

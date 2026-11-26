@@ -183,6 +183,20 @@ export H3FuzzMain(sys: &System): WriteError|OutOfMemory|ReadError|Utf8Error|Pars
         defer ar.Free()
         if got < 1 {
             try out.Str("short\n")
+        } else if data[0] == 128 {
+            parsed := match str.From(data[1..got]) {
+                ok(value) { some(value) }
+                err(_) { none }
+            }
+            if field := parsed {
+                if r := ParseAltSvc(field, "example.test", 0) {
+                    Assert(r.n >= 0 && r.n <= AltCount)
+                    for i in 0..r.n {
+                        Assert(r.ports[i].port > 0 && r.ports[i].port <= 65535)
+                        Assert(r.ports[i].age > 0 && r.ports[i].age <= AltMaxAge)
+                    }
+                }
+            }
         } else if (data[0] & 4) == 0 {
             try Hh3RunCodec(&ar, mut out, data[1..got])
         } else {
@@ -322,6 +336,25 @@ func FuzzStdHttpH3_Frames(f *testing.F) {
 			if l != "short" && l != "tail" && l != "trunc" && !strings.HasPrefix(l, "ok ") && !strings.HasPrefix(l, "err ") {
 				t.Fatalf("input %x: answer %q", in, l)
 			}
+		}
+	})
+}
+
+// FuzzStdHttp_AltSvc checks the parser and its bounded output over peer bytes.
+func FuzzStdHttp_AltSvc(f *testing.F) {
+	f.Cleanup(hh3Stop)
+	for _, seed := range []string{
+		"clear", "h3=\":443\"; ma=86400", "h3=\"evil.test:444\"",
+		"h3=\"example.test:9443\"; unknown=\"x,y\"", "h3=\":65536\"", "h3=\"\\",
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		if len(b) > 32768 {
+			b = b[:32768]
+		}
+		if lines := hh3Ask(t, append([]byte{128}, b...)); len(lines) != 0 {
+			t.Fatalf("Alt-Svc parser emitted unexpected lines: %q", lines)
 		}
 	})
 }

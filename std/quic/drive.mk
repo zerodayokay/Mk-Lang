@@ -42,20 +42,33 @@ RunTimersLocked(qc: &QConn, e: mut Engine, now: time.Instant) {
     _ = e.path.OnTimeout(now)
     if rt := e.rec.Timer(now) {
         if rt.Nanos() <= 0 {
-            var lost_buf: [64]SentFrame = [SentFrame(kind: SentKind.Control(index: 0)); 64]
-            res := e.rec.OnTimeout(now, mut lost_buf[..])
-            if res.lost > 0 {
-                HandleLostFrames(e, lost_buf[0..res.lost])
-            }
-            if res.probes > 0 {
-                e.probe_owed_space = some(e.rec.PtoSpace())
-                e.probe_owed_count = res.probes
-                e.path.OnPto()
+            ApplyRecoveryEvent(e, now, false) else {
+                e.FailTransport(ErrInternal, 0, now)
             }
         }
     }
     e.RecomputeTimer(now)
     qc.WakeSatisfied(e)
+}
+
+ApplyRecoveryEvent(e: mut Engine, now: time.Instant, unblocked: bool): OutOfMemory!void {
+    a := e.h.Alloc()
+    space := e.rec.GetLossTimeAndSpace().space
+    n := e.rec.spaces[SpaceIndex(space)].frm_len
+    try GrowFrameScratch(a, mut e.lost_frames, n)
+    var lost := Replace(mut e.lost_frames, HeapList[SentFrame].New(a))
+    defer Replace(mut e.lost_frames, lost).Free(a)
+    res := if unblocked { e.rec.OnDatagramReceived(now, lost.ItemsMut()) } else { e.rec.OnTimeout(now, lost.ItemsMut()) }
+    if res.lost > 0 {
+        HandleLostFrames(e, lost.Items()[0..res.lost])
+    }
+    if res.probes > 0 {
+        e.probe_owed_space = some(e.rec.PtoSpace())
+        e.probe_owed_count = res.probes
+        if !unblocked {
+            e.path.OnPto()
+        }
+    }
 }
 
 // Processes any datagrams already queued in the socket or endpoint inbox without waiting.
