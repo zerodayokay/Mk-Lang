@@ -431,6 +431,7 @@ Conn.HandleParseViolation(&self, nc: Io, rp: &ReadParser, ve: Violation): Error!
             sg.Unlock()
             fail me
         }
+        self.WakeStream(idx)
     } else if !st.reset_set.Has(ve.stream) {
         st.owed.QueueReset(a, ve.stream, ve.code) else oe {
             sg.Unlock()
@@ -439,7 +440,6 @@ Conn.HandleParseViolation(&self, nc: Io, rp: &ReadParser, ve: Violation): Error!
     }
     sg.Unlock()
     self.Core().wr_wake.NotifyOne()
-    self.WakeAll()
 }
 
 Conn.DispatchFrame(&self, nc: Io, hblock: mut HeapList[u8], rp: mut ReadParser, f: Frame, accs: mut HeapList[ServerAcc], ready: mut HeapList[int]): Error!void {
@@ -622,6 +622,7 @@ Conn.HandleSettings(&self, nc: Io, rp: mut ReadParser, ack: bool, entries: []u8,
                 }
             }
         }
+        self.WakeBlockedWriters(&*st, BlockWindow)
     }
     st.owed.QueueSettingsAck(st.peer_settings.table_bytes) else qe {
         sg.Unlock()
@@ -629,7 +630,6 @@ Conn.HandleSettings(&self, nc: Io, rp: mut ReadParser, ack: bool, entries: []u8,
     }
     sg.Unlock()
     self.Core().wr_wake.NotifyOne()
-    self.WakeAll()
 }
 
 Conn.HandleGoaway(&self, nc: Io, last: u32, code: u32) {
@@ -654,14 +654,15 @@ Conn.HandleGoaway(&self, nc: Io, last: u32, code: u32) {
             }
             if close_it {
                 st.streams.CloseSlot(i)
+                self.WakeStream(i)
             }
             if recycle {
                 st.streams.ReleaseSlot(i, a)
             }
         }
+        self.Party(PartyDrive).NotifyOne()
     }
     sg.Unlock()
-    self.WakeAll()
 }
 
 CheckSlotWindowUpdate(st: mut State, idx: int, increment: u32, now: time.Instant): Violation!int {
@@ -699,8 +700,8 @@ Conn.HandleWindowUpdate(&self, nc: Io, stream: u32, increment: u32, now: time.In
             sg.Unlock()
             fail fe
         }
+        self.WakeBlockedWriters(&*st, BlockWindow)
         sg.Unlock()
-        self.WakeAll()
         return
     }
     if IsIdleStream(&*st, self.is_client, stream) {
@@ -722,6 +723,7 @@ Conn.HandleWindowUpdate(&self, nc: Io, stream: u32, increment: u32, now: time.In
                 sg.Unlock()
                 fail me
             }
+            self.WakeStream(widx)
         } else {
             ChargeReset(st, now) else ce {
                 sg.Unlock()
@@ -734,7 +736,6 @@ Conn.HandleWindowUpdate(&self, nc: Io, stream: u32, increment: u32, now: time.In
         }
         sg.Unlock()
         self.Core().wr_wake.NotifyOne()
-        self.WakeAll()
         return
     }
     if st.reset_set.Has(stream) {
@@ -755,15 +756,15 @@ Conn.HandleWindowUpdate(&self, nc: Io, stream: u32, increment: u32, now: time.In
             sg.Unlock()
             fail me
         }
+        self.WakeStream(idx)
         sg.Unlock()
         self.Core().wr_wake.NotifyOne()
-        self.WakeAll()
         return
     }
-    sg.Unlock()
-    if res == 1 {
-        self.WakeAll()
+    if res == 1 && st.streams.slots.Items()[idx].blocked_on == BlockWindow {
+        self.WriterNotify(idx).NotifyOne()
     }
+    sg.Unlock()
 }
 
 Conn.HandleRstStream(&self, nc: Io, stream: u32, code: u32, now: time.Instant): Error!void {
@@ -788,9 +789,10 @@ Conn.HandleRstStream(&self, nc: Io, stream: u32, code: u32, now: time.Instant): 
         if recycle {
             st.streams.ReleaseSlot(idx, a)
         }
+        self.WakeStream(idx)
     }
     sg.Unlock()
-    self.WakeAll()
+    self.Core().wr_wake.NotifyOne()
 }
 
 ApplyRstStream(st: mut State, idx: int, code: u32, is_client: bool): (recycle: bool, admitted_n: int, admitted_ids: [16]u32) {
@@ -879,12 +881,11 @@ CheckDataSlotInner(st: mut State, idx: int, data_len: int, wire_len: int, end: b
     return (rc: 0, gen_: sgen)
 }
 
-CheckDataSlot(a: &Alloc into st, st: mut State, idx: int, data: []u8, wire_len: int, end: bool, now: time.Instant, is_client: bool, body_limit: int): OutOfMemory!(rc: int, gen_: u32) {
+CheckDataSlot(heap: &Heap, st: mut State, idx: int, data: []u8, wire_len: int, end: bool, is_client: bool, body_limit: int): OutOfMemory!(rc: int, gen_: u32) {
     // Returns: 0=ok, 1=client_eof_recycled, 2=err_stream_closed, 3=err_flow, 4=err_proto, 5=too_large_413.
-    _ = now
     (rc, gen_: sgen) := CheckDataSlotInner(st, idx, data.Len(), wire_len, end, is_client, body_limit)
     if rc == 6 || rc == 7 {
-        try st.streams.AppendClientData(a, idx, data)
+        try st.streams.AppendClientData(heap, idx, data)
         if rc == 7 {
             return (rc: 1, gen_: sgen)
         }
@@ -975,14 +976,14 @@ Conn.HandleData(&self, nc: Io, stream: u32, data: []u8, padded: int, end: bool, 
         core_.wr_wake.NotifyOne()
         return
     }
-    (rc, gen_: sgen) := CheckDataSlot(a, st, idx, data, wire_len, end, now, self.is_client, self.lim.body_bytes) else oe {
+    (rc, gen_: sgen) := CheckDataSlot(self.heap, st, idx, data, wire_len, end, self.is_client, self.lim.body_bytes) else oe {
         sg.Unlock()
         fail oe
     }
     if rc == 1 {
         st.streams.ReleaseSlot(idx, a)
         sg.Unlock()
-        self.WakeAll()
+        self.WakeStream(idx)
         return
     }
     if rc == 2 || rc == 3 || rc == 4 {
@@ -996,7 +997,7 @@ Conn.HandleData(&self, nc: Io, stream: u32, data: []u8, padded: int, end: bool, 
             ClearAcc(a, mut accs.ItemsMut()[idx])
         }
         core_.wr_wake.NotifyOne()
-        self.WakeAll()
+        self.WakeStream(idx)
         return
     }
     if rc == 5 {
@@ -1026,12 +1027,12 @@ Conn.HandleData(&self, nc: Io, stream: u32, data: []u8, padded: int, end: bool, 
         }
     }
     sg.Unlock()
-    if self.is_client {
-        self.WakeAll()
-        return
-    }
     if wake_writer {
         core_.wr_wake.NotifyOne()
+    }
+    if self.is_client {
+        self.Party(ReaderParty(idx)).NotifyOne()
+        return
     }
     if idx < accs.Len() {
         acc := mut accs.ItemsMut()[idx]

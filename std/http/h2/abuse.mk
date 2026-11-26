@@ -175,6 +175,24 @@ export Progress.Starved(&self, now: time.Instant, window: time.Duration, floor: 
     return i64(self.moved) < need
 }
 
+// Returns when cumulative throughput can next fall below ProgressFloor.
+Progress.NextCheck(&self, now: time.Instant, window: time.Duration): i64 {
+    if !self.active || window.Nanos() <= 0 {
+        return -1
+    }
+    start := self.since.Must()
+    moved := i64(self.moved)
+    floor := i64(ProgressFloor)
+    secs := moved / floor
+    if secs >= MaxI64 / NsPerSec {
+        return -1
+    }
+    below_floor := secs * NsPerSec + (moved % floor) * NsPerSec / floor + 1
+    deadline_ns := if below_floor > window.Nanos() { below_floor } else { window.Nanos() }
+    elapsed := now.Since(start).Nanos()
+    return if elapsed >= deadline_ns { 0 } else { deadline_ns - elapsed }
+}
+
 /// Tracks DATA octets sent on a stream or connection since previous
 /// WINDOW_UPDATEs, to classify unsolicited or dribble updates (RFC 9113 10.5).
 export struct UpdateGate {

@@ -143,6 +143,7 @@ Conn.DispatchServerHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
             sg.Unlock()
             fail e
         }
+        self.WakeStream(existing_idx)
         sg.Unlock()
         self.Core().wr_wake.NotifyOne()
         return
@@ -200,6 +201,7 @@ Conn.DispatchServerHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
                 fail e
             }
             sg.Unlock()
+            self.WakeStream(existing_idx)
             if existing_idx < accs.Len() {
                 ClearAcc(a, mut accs.ItemsMut()[existing_idx])
             }
@@ -503,7 +505,7 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
             fail e
         }
         sg.Unlock()
-        self.WakeAll()
+        self.WakeStream(idx)
         return
     }
     if is_trailer {
@@ -543,7 +545,7 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
             }
         }
         sg.Unlock()
-        self.WakeAll()
+        self.WakeStream(idx)
         return
     }
     var blk := fields.FieldBlock.New(a)
@@ -557,7 +559,7 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         st := mut *sg.Mut()
         MarkClientHeadTooLarge(st, idx, stream)
         sg.Unlock()
-        self.WakeAll()
+        self.WakeStream(idx)
         return
     }
     resp := fields.CheckResponse(&blk) else {
@@ -570,7 +572,7 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
             fail e
         }
         sg.Unlock()
-        self.WakeAll()
+        self.WakeStream(idx)
         return
     }
     if resp.status >= 100 && resp.status < 200 {
@@ -584,7 +586,7 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
                 fail e
             }
             sg.Unlock()
-            self.WakeAll()
+            self.WakeStream(idx)
         }
         return
     }
@@ -595,7 +597,7 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         MarkClientHeadTooLarge(st, idx, stream)
         sg.Unlock()
         blk.Free(a)
-        self.WakeAll()
+        self.WakeStream(idx)
         return
     }
     bad_cl := CheckClientEndCl(st, idx, end_stream, resp.status, resp.content_length)
@@ -607,12 +609,12 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         }
         sg.Unlock()
         blk.Free(a)
-        self.WakeAll()
+        self.WakeStream(idx)
         return
     }
     StoreClientHead(a, st, idx, blk_bytes, resp.status, resp.content_length, end_stream, blk)
     sg.Unlock()
-    self.WakeAll()
+    self.WakeStream(idx)
 }
 
 MarkClientHeadTooLarge(st: mut State, idx: int, stream: u32) {

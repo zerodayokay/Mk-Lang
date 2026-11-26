@@ -79,8 +79,8 @@ test "StreamTable client DATA appends and drains across multiple 16 KiB pages" (
     for i in 0..chunk.Len() {
         chunk[i] = Trunc[u8]((i * 7 + 3) & 0xFF)
     }
-    tbl.AppendClientData(a, idx, chunk[0..10000]).Must()
-    tbl.AppendClientData(a, idx, chunk[10000..20000]).Must()
+    tbl.AppendClientData(sys.heap, idx, chunk[0..10000]).Must()
+    tbl.AppendClientData(sys.heap, idx, chunk[10000..20000]).Must()
     Assert(tbl.slots.Items()[idx].cli_pages.Read() == 20000)
     var out: [20000]u8 = [0; 20000]
     var got := 0
@@ -91,7 +91,11 @@ test "StreamTable client DATA appends and drains across multiple 16 KiB pages" (
     }
     Assert(tbl.slots.Items()[idx].cli_pages.Read() == 0)
     Assert(core.BytesEqual(out[..], 0, chunk[..]))
+    Assert(tbl.free_pages.Len() == 2)
+    tbl.AppendClientData(sys.heap, idx, chunk[..]).Must()
+    Assert(tbl.free_pages.Len() == 0)
     tbl.ReleaseSlot(idx, a)
+    Assert(tbl.free_pages.Len() == 2)
 }
 
 test "Owed bounds PING and SETTINGS rings to 32 entries and drains FIFO" (sys: &System) {

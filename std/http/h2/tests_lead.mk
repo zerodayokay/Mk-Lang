@@ -14,6 +14,7 @@ import std.http.fields
 import std.net
 import std.net.pipe
 import std.rt
+import std.sync.lead
 import std.time
 
 TestBeU32(b: []u8): u32 {
@@ -155,6 +156,10 @@ test "H2 client Drive exits after idle_limit when idle and stays running while i
         g.Unlock()
         s.Cancel()
     }
+    Assert(cli_box.Ref().Draining())
+    p := fields.Pseudo(method: "GET", scheme: "http", authority: "example.com", path: "/new")
+    var hs: [0]TestField = []
+    Assert(cli_box.Ref().TryOpen(io, &p, hs[..], true).Must().IsNone())
     srv_box.Take(h.Alloc()).Abandon()
     cli_box.Take(h.Alloc()).Abandon()
 
@@ -179,6 +184,41 @@ test "H2 client Drive exits after idle_limit when idle and stays running while i
     g1.Unlock()
     srv_box2.Take(h.Alloc()).Abandon()
     cli_box2.Take(h.Alloc()).Abandon()
+}
+
+test "H2 client retains the stream notification before a follower starts waiting" (sys: &System) {
+    io := sys.io
+    nc := io.NoCancel()
+    (a: cli_conn, b: peer) := pipe.ConnPair(sys.heap, 4096).Must()
+    defer peer.Abandon()
+    cli_box := Conn.Client(sys.heap, io, cli_conn, TestDefaultLimits()).Must()
+    defer cli_box.Take(sys.heap.Alloc()).Abandon()
+    cli := cli_box.Ref()
+    p := fields.Pseudo(method: "GET", scheme: "http", authority: "example.com", path: "/")
+    var hs: [0]TestField = []
+    s := cli.TryOpen(io, &p, hs[..], true).Must().Must()
+    defer cli.Release(s)
+    party := ReaderParty(s.index)
+    match cli.Begin(nc, PartyDrive) {
+        lead.Step.Lead(deadline: _) {}
+        _ { Assert(false) }
+    }
+    match cli.Begin(nc, party) {
+        lead.Step.Wait(deadline: _) {}
+        _ { Assert(false) }
+    }
+
+    cli.HandleRstStream(nc, 1, RefusedStream, time.Now(nc)).Must()
+    scope w := io.Scope() {
+        w.CancelAfter(time.Seconds(1))
+        cli.Party(party).Wait(io).Must()
+    }
+    match cli.Begin(nc, party) {
+        lead.Step.Done {}
+        _ { Assert(false) }
+    }
+    Assert(cli.End(nc, party) == -1)
+    Assert(cli.End(nc, PartyDrive) == -1)
 }
 
 test "H2 client leader handoff on cancel lets 10 waiting streams complete" (sys: &System) {

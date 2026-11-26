@@ -600,6 +600,9 @@ Client.FinishH2Exchange(&self, a: &Arena, io: Io, hm: &Mutex[H2Stream] into a, c
             status = res.status
             cl = res.content_length
             for f in res.list {
+                if f.name == ":status" {
+                    continue
+                }
                 raw_hs.Push(Header(name: f.name, value: f.value)) else oe {
                     err = some(oe)
                     break

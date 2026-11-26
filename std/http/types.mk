@@ -28,8 +28,8 @@ export struct Header {
 /// A request as the server read it: the method, the target split into path
 /// and query, the header fields in the order received, the path parameters
 /// Dispatch matched, and the body. path and query are the bytes received,
-/// never decoded or cleaned. Every string and slice is a view of the
-/// request's arena.
+/// never decoded or cleaned. Its strings and slices are valid for the
+/// duration of the handler.
 export struct Request {
     /// The method, such as "GET".
     export method: str

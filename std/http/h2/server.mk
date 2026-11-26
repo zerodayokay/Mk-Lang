@@ -45,9 +45,8 @@ CheckSlotStarved(st: &State, idx: int, now: time.Instant, lim: time.Duration): (
     if slot.state == StOpen && slot.progress.active {
         if slot.progress.Starved(now, lim, ProgressFloor) {
             starved = true
-        } else if since := slot.progress.since {
-            rem := lim.Nanos() - now.Since(since).Nanos()
-            pleft = if rem < 1_000_000 { 1_000_000 } else { rem }
+        } else {
+            pleft = slot.progress.NextCheck(now, lim)
         }
     }
     return (starved: starved, pleft: pleft)
@@ -102,6 +101,7 @@ Conn.ServerReadDeadline(&self, nc: Io, preface_start: time.Instant, cont_start: 
                 sg.Unlock()
                 fail e
             }
+            self.WakeStream(i)
             wake_writer = true
         } else if pleft > 0 && (min_ns < 0 || pleft < min_ns) {
             min_ns = pleft
@@ -180,6 +180,9 @@ Conn.ServeReadBatch(&self, io: Io, preface_start: time.Instant, cont_start: mut 
                 fail e
             }
         }
+    }
+    if !more {
+        self.FailConn(nc, Closed, none, true)
     }
     return more
 }
@@ -317,46 +320,31 @@ export Conn.Writer(&self, io: Io): Error!void {
 /// dropped) and, when end is true, END_STREAM. Waits if the write buffer is
 /// full. Errors: BadField, TooLarge, net.StreamReset, net.Error, Canceled.
 export Conn.Respond[F: fields.Field](&self, io: Io, s: StreamRef, status: int, list: []F, end: bool): Error!void {
-    nc := io.NoCancel()
+    for {
+        if try self.TryRespond(io.NoCancel(), s, status, list, end) {
+            return
+        }
+        try self.WriterNotify(s.index).Wait(io)
+    }
+}
+
+Conn.TryRespond[F: fields.Field](&self, nc: Io, s: StreamRef, status: int, list: []F, end: bool): Error!bool {
     a := self.heap.Alloc()
     core_ := self.Core()
-    for {
-        wg0 := core_.wr.Lock(nc).Must()
-        full := wg0.Ref().cur.Len() >= WriteFlushCap
-        wg0.Unlock()
-        if !full {
-            break
-        }
-        sg0 := core_.st.Lock(nc).Must()
-        f := sg0.Ref().fault
-        sg0.Unlock()
-        if err := f {
-            fail err
-        }
-        try core_.wr_space_wake.Wait(io)
-    }
     var wg := core_.wr.Lock(nc).Must()
     wr := mut *wg.Mut()
-    sg_lim := core_.st.Lock(nc).Must()
-    st_lim := &*sg_lim.Ref()
-    if f := st_lim.fault {
-        sg_lim.Unlock()
-        wg.Unlock()
-        fail f
-    }
-    max_list := st_lim.peer_settings.max_header_list
-    mf := st_lim.peer_settings.max_frame
-    sg_lim.Unlock()
-    bound := ValidateResponseFields(a, wr, status, list, max_list) else e {
-        wg.Unlock()
-        fail e
-    }
     var sg := core_.st.Lock(nc).Must()
     st := mut *sg.Mut()
     if f := st.fault {
         sg.Unlock()
         wg.Unlock()
         fail f
+    }
+    max_list := st.peer_settings.max_header_list
+    bound := ValidateResponseFields(a, wr, status, list, max_list) else e {
+        sg.Unlock()
+        wg.Unlock()
+        fail e
     }
     if s.index < 0 || s.index >= st.streams.slots.Len() {
         sg.Unlock()
@@ -379,21 +367,33 @@ export Conn.Respond[F: fields.Field](&self, io: Io, s: StreamRef, status: int, l
         wg.Unlock()
         fail Closed
     }
-    sid := slot.id
-    if end {
-        st.streams.EndLocal(s.index)
+    if wr.cur.Len() >= WriteFlushCap {
+        slot.blocked_on = BlockWriteBuf
+        sg.Unlock()
+        wg.Unlock()
+        return false
     }
-    sg.Unlock()
+    slot.blocked_on = BlockNone
+    sid := slot.id
+    mf := st.peer_settings.max_frame
     blen := EncodeResponseBlock(a, wr, status, list, bound) else e {
+        sg.Unlock()
         wg.Unlock()
         fail e
     }
     AppendHeadersFrames(a, mut wr.cur, sid, wr.hbuf.Items()[0..blen], mf, end) else e {
+        sg.Unlock()
         wg.Unlock()
+        self.FailConn(nc, e, none, true)
         fail e
     }
+    if end {
+        st.streams.EndLocal(s.index)
+    }
+    sg.Unlock()
     wg.Unlock()
     core_.wr_wake.NotifyOne()
+    return true
 }
 
 /// Writes response body bytes on s; waits for send window credit and write
@@ -412,26 +412,6 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
     core_ := self.Core()
     var off := 0
     for off < data.Len() || (end && off == data.Len()) {
-        // Wait for write-buffer space when cur is full.
-        for {
-            wg0 := core_.wr.Lock(nc).Must()
-            full := wg0.Ref().cur.Len() >= WriteFlushCap
-            wg0.Unlock()
-            if !full {
-                break
-            }
-            if self.is_client {
-                try self.WaitWriteTurnOrSpace(io, s.index)
-            } else {
-                sg0 := core_.st.Lock(nc).Must()
-                f := sg0.Ref().fault
-                sg0.Unlock()
-                if err := f {
-                    fail err
-                }
-                try core_.wr_space_wake.Wait(io)
-            }
-        }
         rem := data.Len() - off
         var chunk := 0
         var sid: u32 = 0
@@ -478,6 +458,18 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
             wg.Unlock()
             fail Closed
         }
+        if wr.cur.Len() >= WriteFlushCap {
+            slot.blocked_on = BlockWriteBuf
+            sg.Unlock()
+            wg.Unlock()
+            if self.is_client {
+                try self.WaitWriteTurnOrSpace(io)
+            } else {
+                try self.WriterNotify(s.index).Wait(io)
+            }
+            continue
+        }
+        slot.blocked_on = BlockNone
         sid = slot.id
         now := time.Now(nc)
         if rem == 0 {
@@ -507,13 +499,22 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
                 }
             }
             if allow {
-                mf := st.peer_settings.max_frame
+                peer_max := st.peer_settings.max_frame
+                // Keep a turn bounded even if the peer allows very large DATA frames.
+                mf := if peer_max < WriteFlushCap { peer_max } else { WriteFlushCap }
                 var k := avail
                 if rem < k {
                     k = rem
                 }
                 if mf < k {
                     k = mf
+                }
+                is_end := end && (off + k == data.Len())
+                AppendData(a, mut wr.cur, sid, data[off..off + k], is_end) else oe {
+                    sg.Unlock()
+                    wg.Unlock()
+                    self.FailConn(nc, oe, none, true)
+                    fail oe
                 }
                 slot.send_win.Take(k).Must()
                 st.conn_send_win.Take(k).Must()
@@ -522,21 +523,13 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
                 slot.progress.Pending(now)
                 slot.progress.Moved(k)
                 slot.dribble_since = none
-                slot.blocked_on = BlockNone
                 chunk = k
-                is_end := end && (off + k == data.Len())
-                if is_end {
+                if off + k == data.Len() {
                     slot.progress.Idle()
+                }
+                if is_end {
                     st.streams.EndLocal(s.index)
                 }
-                // Append DATA frame inside wr+st lock.
-                d_off := wr.cur.Len()
-                EnsureLen(a, mut wr.cur, d_off + 9 + k) else oe {
-                    sg.Unlock()
-                    wg.Unlock()
-                    fail oe
-                }
-                _ = WriteData(mut wr.cur.ItemsMut()[d_off..d_off + 9 + k], sid, data[off..off + k], is_end).Must()
                 slot2 := &st.streams.slots.Items()[s.index]
                 if is_end && self.is_client && slot2.state == StClosed && slot2.refs == 0 && !slot2.in_owed {
                     st.streams.ReleaseSlot(s.index, a)
@@ -560,30 +553,30 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
                     }
                     fail time.TimedOut
                 }
-                slot.blocked_on = if sw <= 0 { BlockStreamWin } else { BlockConnWin }
+                slot.blocked_on = BlockWindow
+                slot.send_min = min_u
                 // Compute wake time for DribbleWait / progress floor.
-                if since := slot.progress.since {
-                    p_rem := self.lim.write_limit.Nanos() - now.Since(since).Nanos()
+                p_rem := slot.progress.NextCheck(now, self.lim.write_limit)
+                if p_rem >= 0 {
                     wait_ns = if p_rem < 1_000_000 { 1_000_000 } else { p_rem }
                 }
                 if ds := slot.dribble_since {
                     d_rem := DribbleWait.Nanos() - now.Since(ds).Nanos()
                     d_wait := if d_rem < 1_000_000 { 1_000_000 } else { d_rem }
-                    if wait_ns < 0 || d_wait < wait_ns {
+                    if avail > 0 && (wait_ns < 0 || d_wait < wait_ns) {
                         wait_ns = d_wait
                     }
                 }
             }
         }
         if send_empty_end {
-            d_off := wr.cur.Len()
-            EnsureLen(a, mut wr.cur, d_off + 9) else oe {
+            empty: [0]u8 = []
+            AppendData(a, mut wr.cur, sid, empty[..], true) else oe {
                 sg.Unlock()
                 wg.Unlock()
+                self.FailConn(nc, oe, none, true)
                 fail oe
             }
-            empty: [0]u8 = []
-            _ = WriteData(mut wr.cur.ItemsMut()[d_off..d_off + 9], sid, empty[..], true).Must()
         }
         sg.Unlock()
         wg.Unlock()
@@ -597,7 +590,7 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
         if chunk > 0 {
             off += chunk
             core_.wr_wake.NotifyOne()
-            if self.is_client && (off == data.Len() && end) {
+            if self.is_client && off == data.Len() {
                 try self.FlushWrites(io)
             }
             if off == data.Len() {
@@ -608,27 +601,25 @@ Conn.SendDataStream(&self, io: Io, s: StreamRef, data: []u8, end: bool): Error!v
         // Blocked on flow-control window: flush queued frames first and wait.
         if self.is_client {
             try self.FlushWrites(io)
-            try self.WaitSendWindow(io, s.index, wait_ns)
+            try self.WaitSendWindow(io, s.index)
         } else {
             core_.wr_wake.NotifyOne()
             if wait_ns > 0 {
                 scope ws := io.Scope() {
                     ws.CancelAfter(core.DurationOf(wait_ns))
-                    core_.wr_space_wake.Wait(io) else {
+                    self.WriterNotify(s.index).Wait(io) else {
                         if !ws.Expired() {
                             fail Canceled
                         }
                     }
                 }
             } else {
-                try core_.wr_space_wake.Wait(io)
+                try self.WriterNotify(s.index).Wait(io)
             }
         }
     }
 }
 
-/// Returns the request's buffers to the stream's slot and ends the handler's
-/// hold on the stream (the stream stops counting against Streams, and its body
 DoneSlotUpdate(
     st: mut State,
     idx: int,
@@ -660,7 +651,8 @@ DoneSlotUpdate(
     return (matched: true, sid: sid, admit_reserve: reserve, admitted: admitted, was_open: was_open, release: release)
 }
 
-/// admission budget returns to the FIFO). O(admitted streams); allocates nothing.
+/// Releases the request buffers, the handler's hold on the stream, and the
+/// stream's body admission budget. O(admitted streams); allocates nothing.
 export Conn.Done(&self, s: StreamRef, var head: fields.FieldBlock, var body: HeapList[u8]) {
     nc := core.IoMasked(rt.NativeIo())
     a := self.heap.Alloc()

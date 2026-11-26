@@ -144,6 +144,9 @@ MuxFetchOne(io: Io, h: &Heap, cli: &Client, url_str: str, ok: &raw.Atomic[int]) 
     r := cli.Fetch(&ar, io, &req) else {
         return
     }
+    for header in r.headers {
+        Assert(header.name != ":status")
+    }
     if r.status == 200 && CtSame(r.body, "ok") {
         _ = ok.Add(1)
     }

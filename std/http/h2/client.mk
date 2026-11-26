@@ -19,23 +19,31 @@ import std.time
 
 /// Attempts to open a client stream and queue its request HEADERS (id and HPACK
 /// block atomically under wr+st). Returns none without waiting when the peer
-/// stream limit, stream-id space, or received GOAWAY prevents opening. Errors:
+/// stream limit, id space, or a retiring connection prevents opening. Errors:
 /// BadField, TooLarge, net.Error, Canceled, OutOfMemory.
 export Conn.TryOpen[F: fields.Field](&self, io: Io, pseudo: &fields.Pseudo, list: []F, end_stream: bool): Error!?StreamRef {
     nc := io.NoCancel()
     a := self.heap.Alloc()
     core_ := self.Core()
     var wg := core_.wr.Lock(nc).Must()
+    for wg.Ref().cur.Len() >= WriteFlushCap {
+        wg.Unlock()
+        if self.Draining() {
+            return none
+        }
+        self.WaitWriteTurnOrSpace(io) else e {
+            if self.Draining() {
+                return none
+            }
+            fail e
+        }
+        wg = core_.wr.Lock(nc).Must()
+    }
     wr := mut *wg.Mut()
     var sg := core_.st.Lock(nc).Must()
     st := mut *sg.Mut()
-    if f := st.fault {
-        sg.Unlock()
-        wg.Unlock()
-        fail f
-    }
     cap := EffectiveMaxStreams(&st.peer_settings, self.lim.streams)
-    if st.goaway_recvd || st.next_stream_id > MaxStreamId || st.streams.open >= cap {
+    if st.fault.IsSome() || st.drive_stop || st.goaway_recvd || st.next_stream_id > MaxStreamId || st.streams.open >= cap {
         sg.Unlock()
         wg.Unlock()
         return none
@@ -47,14 +55,9 @@ export Conn.TryOpen[F: fields.Field](&self, io: Io, pseudo: &fields.Pseudo, list
         wg.Unlock()
         fail e
     }
-    blen := EncodeRequestBlock(a, wr, pseudo, list, bound) else oe {
-        sg.Unlock()
-        wg.Unlock()
-        fail oe
-    }
-    // Pre-reserve wr.cur worst-case frame headers + block before advancing stream id.
-    frame_cnt := if blen == 0 { 1 } else { (blen + mf - 1) / mf }
-    EnsureLen(a, mut wr.cur, wr.cur.Len() + blen + frame_cnt * 9) else oe {
+    // Reserve HPACK scratch before opening the slot. Encoding must happen
+    // only once a stream is available because it mutates the dynamic table.
+    EnsureLen(a, mut wr.hbuf, bound) else oe {
         sg.Unlock()
         wg.Unlock()
         fail oe
@@ -74,14 +77,12 @@ export Conn.TryOpen[F: fields.Field](&self, io: Io, pseudo: &fields.Pseudo, list
     st.next_stream_id += 2
     st.drive_idle_since = none
     sgen := InitClientSlot(st, idx, pseudo.method == "HEAD", end_stream)
-    // Trim wr.cur back to exact pre-append length and emit HEADERS frames.
-    start_len := wr.cur.Len() - (blen + frame_cnt * 9)
-    for wr.cur.Len() > start_len {
-        _ = wr.cur.Pop()
-    }
+    blen := EncodeRequestBlock(a, wr, pseudo, list, bound).Must()
     AppendHeadersFrames(a, mut wr.cur, sid, wr.hbuf.Items()[0..blen], mf, end_stream) else oe {
         sg.Unlock()
         wg.Unlock()
+        self.FailConn(nc, oe, none, true)
+        self.Release(StreamRef(index: idx, gen_: sgen))
         fail oe
     }
     sg.Unlock()
@@ -321,6 +322,7 @@ export Conn.Release(&self, s: StreamRef) {
             }
             if st.streams.active == 0 && st.drive_idle_since.IsNone() {
                 st.drive_idle_since = some(now)
+                self.Party(PartyDrive).NotifyOne()
             }
         }
     }
@@ -328,7 +330,6 @@ export Conn.Release(&self, s: StreamRef) {
     if wake {
         core_.wr_wake.NotifyOne()
     }
-    self.WakeAll()
 }
 
 ReleaseClientSlot(st: mut State, idx: int, gen_: u32): (matched: bool, sid: u32, was_open: bool, release: bool, dropped_bytes: int) {
@@ -363,7 +364,7 @@ export Conn.Draining(&self): bool {
     nc := core.IoMasked(rt.NativeIo())
     g := self.Core().st.Lock(nc).Must()
     st := g.Ref()
-    d := st.fault.IsSome() || st.goaway_recvd || st.next_stream_id > MaxStreamId
+    d := st.fault.IsSome() || st.drive_stop || st.goaway_recvd || st.next_stream_id > MaxStreamId
     g.Unlock()
     return d
 }

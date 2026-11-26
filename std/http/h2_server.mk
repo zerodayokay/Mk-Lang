@@ -5,8 +5,8 @@
 // What: H2ResField, BuildH2OutHeaders, BuildH2ServerRequest, and ServeH2.
 //
 // How: ServeH2 runs h2.Conn.Writer and on-demand workers (up to h2_streams,
-// each keeping one resettable Arena and exiting when idle with zero open
-// streams) inside one scope alongside h2.Conn.ServeStep.
+// each keeping one resettable Arena while requests are queued) inside one
+// scope alongside h2.Conn.ServeInto.
 
 import std.core
 import std.http.fields
@@ -134,7 +134,7 @@ CopyJoinedCookie(a: &Arena, hb: &fields.FieldBlock): OutOfMemory!?str from a {
     return some(s)
 }
 
-BuildH2ServerRequest(a: &Arena, hb: &fields.FieldBlock, body: &HeapList[u8]): Error!Request from a {
+BuildH2ServerRequest(a: &Arena, hb: &fields.FieldBlock, body: &HeapList[u8]): Error!Request from a, body {
     var method := ""
     var scheme := ""
     var authority := ""
@@ -188,12 +188,8 @@ BuildH2ServerRequest(a: &Arena, hb: &fields.FieldBlock, body: &HeapList[u8]): Er
         }
     }
     rt_target := try ParseTarget(target, method, 0, target.Len(), 0)
-    bcopy := try a.Slice[u8](body.Len())
-    if body.Len() > 0 {
-        (mut bcopy[..]).CopyFrom(body.Items())
-    }
     empty_params := List[Header].New(a).Done()[..]
-    return Request(method: method, path: rt_target.path, query: rt_target.query, headers: headers.Done()[..], params: empty_params, body: bcopy[..])
+    return Request(method: method, path: rt_target.path, query: rt_target.query, headers: headers.Done()[..], params: empty_params, body: body.Items())
 }
 
 SendH2Response(a: &Arena, io: Io, conn: &h2.Conn, s: h2.StreamRef, res: mut Response, is_head: bool, failed: bool) {
@@ -293,55 +289,60 @@ HandleH2Request[C: Share, T: Send](wctx: &H2WorkerCtx[C, T], rh: &Heap into ch, 
     wctx.conn.Done(s, head, body)
 }
 
+NewH2WorkerArena(heap: &Heap): ?Arena {
+    return some(Arena.New(heap) else { return none })
+}
+
 H2Worker[C: Share, T: Send](io: Io, wctx: &H2WorkerCtx[C, T], rh: &Heap into ch, ch: ?&Chan[T]) {
-    var arena := Arena.New(wctx.heap) else {
-        nc := io.NoCancel()
-        var g := wctx.pool.Lock(nc).Must()
-        g.Mut().total -= 1
-        g.Unlock()
-        return
+    var arena := NewH2WorkerArena(wctx.heap)
+    defer {
+        if a := arena {
+            a.Free()
+        }
     }
-    defer arena.Free()
     nc := io.NoCancel()
     for {
-        var exit_now := false
         var pg := wctx.pool.Lock(nc).Must()
         st := pg.Mut()
-        if st.pending == 0 && !wctx.jobs.Ready() && wctx.conn.OpenStreams() == 0 {
+        if st.pending == 0 {
             st.total -= 1
-            exit_now = true
+            pg.Unlock()
+            return
         }
+        st.pending -= 1
+        st.busy += 1
         pg.Unlock()
-        if exit_now {
-            return
+        // pending reserves a job already queued by OnH2Request.
+        rjob := wctx.jobs.Recv(nc).Must()
+        if a := mut arena {
+            HandleH2Request(wctx, rh, ch, &*a, io, rjob)
+            a.Reset()
+        } else {
+            h2.Request(stream: ds, head: dh, body: db) := rjob
+            wctx.conn.Reset(ds, h2.RefusedStream)
+            wctx.conn.Done(ds, dh, db)
         }
-        rjob := wctx.jobs.Recv(io) else {
-            var pg2 := wctx.pool.Lock(nc).Must()
-            pg2.Mut().total -= 1
-            pg2.Unlock()
-            return
-        }
-        var pg3 := wctx.pool.Lock(nc).Must()
-        st3 := pg3.Mut()
-        st3.pending -= 1
-        st3.busy += 1
-        pg3.Unlock()
-        HandleH2Request(wctx, rh, ch, &arena, io, rjob)
-        arena.Reset()
-        var pg4 := wctx.pool.Lock(nc).Must()
-        pg4.Mut().busy -= 1
-        pg4.Unlock()
+        var pg2 := wctx.pool.Lock(nc).Must()
+        pg2.Mut().busy -= 1
+        pg2.Unlock()
     }
 }
 
 struct H2ServeCtx {
+    io: Io
     conn: &h2.Conn
+    pool: &Mutex[H2WorkerState]
     jobs: &Chan[h2.Request]
     spawn_ch: &Chan[int]
 }
 
 OnH2Request(sctx: &H2ServeCtx, conn: &h2.Conn, r: h2.Request into sctx) {
+    var pg := sctx.pool.Lock(sctx.io.NoCancel()).Must()
     unsent := sctx.jobs.TrySend(r).Must()
+    if unsent.IsNone() {
+        pg.Mut().pending += 1
+    }
+    pg.Unlock()
     if drop := unsent {
         h2.Request(stream: ds, head: dh, body: db) := drop
         conn.Reset(ds, h2.RefusedStream)
@@ -388,7 +389,7 @@ ServeH2[C: Share, T: Send](conn: net.Conn, heap: &Heap into conn, io: Io, o: &Se
     }
     pool := Mutex[H2WorkerState].New(H2WorkerState(total: 0, busy: 0, pending: 0, max: streams))
     wctx := H2WorkerCtx[C, T](conn: h2c_box.Ref(), heap: heap, o: o, c: c, plain: plain, relay: relay, jobs: &jobs, pool: &pool, secure: secure)
-    sctx := H2ServeCtx(conn: h2c_box.Ref(), jobs: &jobs, spawn_ch: &spawn_ch)
+    sctx := H2ServeCtx(io: io, conn: h2c_box.Ref(), pool: &pool, jobs: &jobs, spawn_ch: &spawn_ch)
     scope hs := io.Scope() {
         hs.go H2WriterTask(io, h2c_box.Ref())
         hs.go H2ReaderTask(io, &sctx)
@@ -400,7 +401,6 @@ ServeH2[C: Share, T: Send](conn: net.Conn, heap: &Heap into conn, io: Io, o: &Se
             var spawn := false
             var pg := pool.Lock(nc).Must()
             st := pg.Mut()
-            st.pending += 1
             if st.total - st.busy < st.pending && st.total < st.max {
                 st.total += 1
                 spawn = true

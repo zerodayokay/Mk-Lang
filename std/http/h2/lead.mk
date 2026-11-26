@@ -66,34 +66,35 @@ ClientWriterReady(st: &State, idx: int, now: time.Instant, write_lim: time.Durat
     sw := slot.send_win.Avail()
     cw := st.conn_send_win.Avail()
     avail := if sw < cw { sw } else { cw }
-    if avail >= MinDataUnit {
+    if avail >= slot.send_min {
         return true
     }
     if avail > 0 {
         if ds := slot.dribble_since {
-            if now.Since(ds).Nanos() >= DribbleWait.Nanos() {
-                return true
-            }
+            return now.Since(ds).Nanos() >= DribbleWait.Nanos()
         }
+        return true
     }
     return false
 }
 
-MinClientTimeout(st: &State, now: time.Instant, write_lim: time.Duration): ?time.Duration {
+MinClientTimeout(st: &State, now: time.Instant, write_lim: time.Duration, include_due_dribble: bool): ?time.Duration {
     var best: ?i64 = none
-    if st.streams.active == 0 && st.drive_idle_limit.Nanos() > 0 {
+    if !st.drive_stop && st.streams.active == 0 && st.drive_idle_limit.Nanos() > 0 {
         if since := st.drive_idle_since {
             rem := st.drive_idle_limit.Nanos() - now.Since(since).Nanos()
             best = some(if rem < 0 { 0 } else { rem })
         }
     }
+    if st.streams.active == 0 {
+        return if b := best { some(core.DurationOf(b)) } else { none }
+    }
     for i in 0..st.streams.slots.Len() {
         slot := &st.streams.slots.Items()[i]
         if slot.state == StOpen || slot.state == StHalfRemote {
             if slot.progress.active {
-                if since := slot.progress.since {
-                    raw := write_lim.Nanos() - now.Since(since).Nanos()
-                    rem := if raw < 0 { 0 } else { raw }
+                rem := slot.progress.NextCheck(now, write_lim)
+                if rem >= 0 {
                     if b := best {
                         if rem < b {
                             best = some(rem)
@@ -103,15 +104,19 @@ MinClientTimeout(st: &State, now: time.Instant, write_lim: time.Duration): ?time
                     }
                 }
             }
-            if ds := slot.dribble_since {
-                raw := DribbleWait.Nanos() - now.Since(ds).Nanos()
-                rem := if raw < 0 { 0 } else { raw }
-                if b := best {
-                    if rem < b {
-                        best = some(rem)
+            if slot.blocked_on == BlockWindow && slot.send_win.Avail() > 0 && st.conn_send_win.Avail() > 0 {
+                if ds := slot.dribble_since {
+                    raw := DribbleWait.Nanos() - now.Since(ds).Nanos()
+                    if raw > 0 || include_due_dribble {
+                        rem := if raw < 0 { 0 } else { raw }
+                        if b := best {
+                            if rem < b {
+                                best = some(rem)
+                            }
+                        } else {
+                            best = some(rem)
+                        }
                     }
-                } else {
-                    best = some(rem)
                 }
             }
         }
@@ -125,7 +130,7 @@ MinClientTimeout(st: &State, now: time.Instant, write_lim: time.Duration): ?time
     return none
 }
 
-CheckClientTimers(st: mut State, now: time.Instant, write_lim: time.Duration): bool {
+Conn.CheckClientTimers(&self, st: mut State, now: time.Instant, write_lim: time.Duration): bool {
     var wake_writer := false
     for i in 0..st.streams.slots.Len() {
         var starved := false
@@ -142,17 +147,21 @@ CheckClientTimers(st: mut State, now: time.Instant, write_lim: time.Duration): b
             st.reset_set.Add(sid)
             st.streams.CloseSlot(i)
             EnqueueOwedStream(st, i)
+            self.WakeStream(i)
             wake_writer = true
+        } else if slot.blocked_on == BlockWindow && ClientWriterReady(&*st, i, now, write_lim) {
+            self.WriterNotify(i).NotifyOne()
         }
     }
     if st.streams.active == 0 {
         if st.drive_idle_since.IsNone() {
             st.drive_idle_since = some(now)
         }
-        if st.drive_idle_limit.Nanos() > 0 {
+        if !st.drive_stop && st.drive_idle_limit.Nanos() > 0 {
             if since := st.drive_idle_since {
                 if now.Since(since).Nanos() >= st.drive_idle_limit.Nanos() {
                     st.drive_stop = true
+                    self.Party(PartyDrive).NotifyOne()
                 }
             }
         }
@@ -218,12 +227,11 @@ impl lead.Driven for Conn {
         core_ := self.Core()
         var sg := core_.st.Lock(nc).Must()
         now := time.Now(nc)
-        if sg.Ref().fault.IsSome() || sg.Ref().drive_stop {
+        if sg.Ref().fault.IsSome() || (sg.Ref().drive_stop && sg.Ref().streams.active == 0) {
             sg.Unlock()
-            self.WakeAll()
             return
         }
-        var dur := MinClientTimeout(sg.Ref(), now, self.lim.write_limit)
+        var dur := MinClientTimeout(sg.Ref(), now, self.lim.write_limit, true)
         var run_due := false
         if d := dur {
             if d.Nanos() <= 0 {
@@ -231,14 +239,13 @@ impl lead.Driven for Conn {
             }
         }
         if run_due {
-            wake_writer := CheckClientTimers(sg.Mut(), now, self.lim.write_limit)
-            stop_now := sg.Ref().fault.IsSome() || sg.Ref().drive_stop
-            dur = MinClientTimeout(sg.Ref(), now, self.lim.write_limit)
+            wake_writer := self.CheckClientTimers(sg.Mut(), now, self.lim.write_limit)
+            stop_now := sg.Ref().fault.IsSome() || (sg.Ref().drive_stop && sg.Ref().streams.active == 0)
+            dur = MinClientTimeout(sg.Ref(), now, self.lim.write_limit, false)
             sg.Unlock()
             if wake_writer {
                 self.FlushWrites(nc) else {}
             }
-            self.WakeAll()
             if stop_now {
                 return
             }
@@ -276,12 +283,11 @@ impl lead.Driven for Conn {
         now := time.Now(nc)
         var sg := core_.st.Lock(nc).Must()
         st := mut *sg.Mut()
-        wake_writer := CheckClientTimers(st, now, self.lim.write_limit)
+        wake_writer := self.CheckClientTimers(st, now, self.lim.write_limit)
         sg.Unlock()
         if wake_writer {
             self.FlushWrites(nc) else {}
         }
-        self.WakeAll()
     }
 
     End(&self, nc: Io, p: int): int {
@@ -297,49 +303,12 @@ impl lead.Driven for Conn {
     }
 }
 
-Conn.WaitWriteTurnOrSpace(&self, io: Io, idx: int): Error!void {
-    _ = idx
-    nc := io.NoCancel()
-    core_ := self.Core()
-    try core_.wl.Acquire(io, 1)
-    for {
-        wg := core_.wr.Lock(nc).Must()
-        need := wg.Ref().cur.Len() >= WriteFlushCap
-        wg.Unlock()
-        if !need {
-            break
-        }
-        wrote := self.WriteTurnLocked(io, false) else e {
-            core_.wl.Release(1)
-            fail e
-        }
-        if !wrote {
-            break
-        }
-    }
-    // Drain remaining cur/owed before releasing wl so no appender strands bytes.
-    for {
-        var empty := false
-        wg := core_.wr.Lock(nc).Must()
-        sg := core_.st.Lock(nc).Must()
-        if wg.Ref().cur.Len() == 0 && sg.Ref().owed.Empty() {
-            core_.wl.Release(1)
-            empty = true
-        }
-        sg.Unlock()
-        wg.Unlock()
-        if empty {
-            return
-        }
-        _ = self.WriteTurnLocked(io, false) else e {
-            core_.wl.Release(1)
-            fail e
-        }
-    }
+Conn.WaitWriteTurnOrSpace(&self, io: Io): Error!void {
+    try self.Core().wl.Acquire(io, 1)
+    try self.DrainWrites(io)
 }
 
-Conn.WaitSendWindow(&self, io: Io, idx: int, wait_ns: i64): Error!void {
-    _ = wait_ns
+Conn.WaitSendWindow(&self, io: Io, idx: int): Error!void {
     try lead.Wait(self, io, WriterParty(idx))
 }
 
@@ -357,6 +326,11 @@ export Conn.Drive(&self, io: Io, idle: time.Duration): Canceled!void {
         st.drive_idle_since = some(now)
     }
     sg.Unlock()
+    defer {
+        var g := core_.st.Lock(nc).Must()
+        g.Mut().drive_idle_limit = core.DurationOf(0)
+        g.Unlock()
+    }
     self.FlushWrites(io) else {}
     try lead.Wait(self, io, PartyDrive)
 }

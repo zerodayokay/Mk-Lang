@@ -19,6 +19,7 @@ import std.time
 
 const WriteFlushCap: int = 16384
 const ShrinkCapThreshold: int = 65536
+const Zeros: [16384]u8 = [0; 16384]
 
 linear view struct WriteState {
     cur: HeapList[u8]
@@ -48,7 +49,9 @@ WriteState.Free(self, a: &Alloc) {
 
 EnsureLen(a: &Alloc, buf: mut HeapList[u8], need: int): OutOfMemory!void {
     for buf.Len() < need {
-        try buf.Push(a, 0)
+        rem := need - buf.Len()
+        n := if rem < Zeros.Len() { rem } else { Zeros.Len() }
+        try buf.Extend(a, Zeros[0..n])
     }
 }
 
@@ -82,6 +85,12 @@ AppendHeadersFrames(a: &Alloc, dst: mut HeapList[u8], stream: u32, block: []u8, 
         try dst.Extend(a, block[off..off + k])
         off += k
     }
+}
+
+AppendData(a: &Alloc, dst: mut HeapList[u8], stream: u32, data: []u8, end: bool): OutOfMemory!void {
+    flags := if end { FlagEndStream } else { u8(0) }
+    try AppendFrameHead(a, dst, data.Len(), TypeData, flags, stream)
+    try dst.Extend(a, data)
 }
 
 AppendFixedRst(a: &Alloc, dst: mut HeapList[u8], stream: u32, code: u32): OutOfMemory!void {
@@ -273,7 +282,7 @@ EncodeRequestBlock[F: fields.Field](a: &Alloc, wr: mut WriteState, pseudo: &fiel
     return o
 }
 
-// EmitOwed writes all owed frames ahead of wr.cur into wout and clears wr.cur.
+// EmitOwed combines queued frames and protocol replies in wire order.
 EmitOwed(a: &Alloc into st, wr: mut WriteState, st: mut State, wout: mut HeapList[u8]): OutOfMemory!void {
     wout.Clear()
     for {
@@ -384,6 +393,7 @@ Conn.WriteTurnLocked(&self, io: Io, close_mode: bool): Error!bool {
     wr := mut *wg.Mut()
     var sg := core_.st.Lock(nc).Must()
     st := mut *sg.Mut()
+    was_full := wr.cur.Len() >= WriteFlushCap
     EmitOwed(a, wr, st, wout) else e {
         sg.Unlock()
         wg.Unlock()
@@ -391,6 +401,9 @@ Conn.WriteTurnLocked(&self, io: Io, close_mode: bool): Error!bool {
         wog.Unlock()
         self.FailConn(nc, e, none, true)
         fail e
+    }
+    if !self.is_client && was_full {
+        self.WakeBlockedWriters(&*st, BlockWriteBuf)
     }
     if wout.Len() == 0 {
         should_shutdown = st.fault.IsSome()
@@ -435,8 +448,6 @@ Conn.WriteTurnLocked(&self, io: Io, close_mode: bool): Error!bool {
     if should_shutdown {
         self.NetConn().Shutdown(nc, net.Shutdown.Both) else {}
     }
-    core_.wr_space_wake.NotifyAll()
-    self.WakeAll()
     return true
 }
 
@@ -448,6 +459,12 @@ Conn.FlushWrites(&self, io: Io): Error!void {
     if !core_.wl.TryAcquire(1) {
         return
     }
+    try self.DrainWrites(io)
+}
+
+// The holder of wl checks both queues and releases it under wr and st.
+Conn.DrainWrites(&self, io: Io): Error!void {
+    core_ := self.Core()
     nc := io.NoCancel()
     for {
         var done := false
@@ -460,14 +477,10 @@ Conn.FlushWrites(&self, io: Io): Error!void {
         sg.Unlock()
         wg.Unlock()
         if done {
-            core_.wr_space_wake.NotifyAll()
-            self.WakeAll()
             return
         }
         _ = self.WriteTurnLocked(io, false) else e {
             core_.wl.Release(1)
-            core_.wr_space_wake.NotifyAll()
-            self.WakeAll()
             fail e
         }
     }

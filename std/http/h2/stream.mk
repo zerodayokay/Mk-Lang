@@ -12,6 +12,7 @@
 // client DATA uses 16 KiB Pages from a per-connection PagePool capped at 8
 // idle pages.
 
+import std.coll
 import std.core
 import std.http.fields
 import std.time
@@ -25,9 +26,8 @@ const StClosed: u8 = 4
 
 // Blocked-on flags for send flow control and write backpressure.
 const BlockNone: u8 = 0
-const BlockStreamWin: u8 = 1
-const BlockConnWin: u8 = 2
-const BlockWriteBuf: u8 = 3
+const BlockWindow: u8 = 1
+const BlockWriteBuf: u8 = 2
 
 // Maximum valid 31-bit stream id (RFC 9113 5.1.1).
 const MaxStreamId: u32 = 0x7FFF_FFFF
@@ -90,9 +90,7 @@ linear view struct Page {
 Page.New(a: &Alloc): OutOfMemory!Page {
     var buf := HeapList[u8].New(a)
     onerr buf.Free(a)
-    for _ in 0..PageSize {
-        try buf.Push(a, 0)
-    }
+    try EnsureLen(a, mut buf, PageSize)
     return Page(buf: buf, len: 0, off: 0)
 }
 
@@ -105,12 +103,12 @@ impl Free for Page {
 
 // PageQueue is a per-stream FIFO of received DATA pages.
 linear view struct PageQueue {
-    pages: HeapList[Page]
+    pages: coll.HeapDeque[Page]
     total: int
 }
 
 PageQueue.New(a: &Alloc): PageQueue {
-    return PageQueue(pages: HeapList[Page].New(a), total: 0)
+    return PageQueue(pages: coll.HeapDeque[Page].New(a), total: 0)
 }
 
 impl Free for PageQueue {
@@ -136,6 +134,7 @@ linear view struct Stream {
     send_gate: UpdateGate
     progress: Progress
     blocked_on: u8
+    send_min: int
     dribble_since: ?time.Instant
     in_owed: bool
     owed_next: int
@@ -178,6 +177,7 @@ Stream.New(a: &Alloc, next_free: int): Stream {
         send_gate: UpdateGate.New(),
         progress: Progress.New(),
         blocked_on: BlockNone,
+        send_min: MinDataUnit,
         dribble_since: none,
         in_owed: false,
         owed_next: -1,
@@ -229,6 +229,7 @@ const IdTomb: u32 = 0xFFFF_FFFF
 
 linear view struct StreamTable {
     slots: HeapList[Stream]
+    free_pages: HeapList[Page]
     map: HeapList[IdEntry]
     map_used: int
     cap_limit: int
@@ -264,13 +265,14 @@ StreamTable.New(a: &Alloc, limit: int): OutOfMemory!StreamTable {
     for _ in 0..map_cap {
         try map.Push(a, IdEntry(id: IdEmpty, idx: -1))
     }
-    return StreamTable(slots: slots, map: map, map_used: 0, cap_limit: lim, free_head: 0, active: 0, open: 0)
+    return StreamTable(slots: slots, free_pages: HeapList[Page].New(a), map: map, map_used: 0, cap_limit: lim, free_head: 0, active: 0, open: 0)
 }
 
 impl Free for StreamTable {
     Free(self, a: &Alloc) {
-        StreamTable(slots, map, ..) := self
+        StreamTable(slots, free_pages, map, ..) := self
         slots.Free(a)
+        free_pages.Free(a)
         map.Free(a)
     }
 }
@@ -410,6 +412,7 @@ StreamTable.AllocSlot(mut self, a: &Alloc into self, id: u32, send_init: int, re
     s.send_gate = UpdateGate.New()
     s.progress = Progress.New()
     s.blocked_on = BlockNone
+    s.send_min = MinDataUnit
     s.dribble_since = none
     s.owed_credit = 0
     s.owed_reset = none
@@ -468,74 +471,83 @@ StreamTable.EndRemote(mut self, idx: int) {
     }
 }
 
-StreamTable.AppendClientData(mut self, a: &Alloc into self, idx: int, data: []u8): OutOfMemory!void {
+StreamTable.AppendClientData(mut self, heap: &Heap, idx: int, data: []u8): OutOfMemory!void {
+    a := heap.Alloc()
     if data.Len() == 0 {
         return
     }
     var off := 0
-    slot := mut self.slots.ItemsMut()[idx]
-    plen := slot.cli_pages.pages.Len()
-    if plen > 0 {
-        tail := mut slot.cli_pages.pages.ItemsMut()[plen - 1]
+    pool := mut self.free_pages
+    queue := mut self.slots.ItemsMut()[idx].cli_pages
+    if queue.pages.Len() > 0 {
+        var tail := queue.pages.Pop().Must()
         room := PageSize - tail.len
-        if room > 0 {
-            k := if data.Len() < room { data.Len() } else { room }
+        k := if data.Len() < room { data.Len() } else { room }
+        if k > 0 {
             (mut tail.buf.ItemsMut()[tail.len..tail.len + k]).CopyFrom(data[0..k])
             tail.len += k
-            slot.cli_pages.total += k
-            off += k
+            queue.total += k
+            off = k
         }
+        queue.pages.Push(a, tail).Must()
     }
     for off < data.Len() {
-        var p := try Page.New(a)
+        var p := pool.Pop() else { try Page.New(a) }
         rem := data.Len() - off
         k := if rem < PageSize { rem } else { PageSize }
         (mut p.buf.ItemsMut()[0..k]).CopyFrom(data[off..off + k])
         p.len = k
-        slot.cli_pages.pages.Push(a, p) else e {
+        p.off = 0
+        queue.pages.Push(a, p) else e {
             p.Free(a)
             fail e
         }
-        slot.cli_pages.total += k
+        queue.total += k
         off += k
     }
 }
 
-StreamTable.ReadClientData(mut self, a: &Alloc, idx: int, dst: mut []u8): int {
-    if dst.Len() == 0 {
-        return 0
+RecyclePage(a: &Alloc, pool: mut HeapList[Page], p: Page into pool) {
+    if pool.Len() < MaxFreePages {
+        pool.Push(a, p) else {
+            p.Free(a)
+        }
+    } else {
+        p.Free(a)
     }
+}
+
+StreamTable.ReadClientData(mut self, a: &Alloc, idx: int, dst: mut []u8): int {
     var copied := 0
-    slot := mut self.slots.ItemsMut()[idx]
-    for copied < dst.Len() && slot.cli_pages.pages.Len() > 0 {
-        var drop := false
-        p := mut slot.cli_pages.pages.ItemsMut()[0]
+    pool := mut self.free_pages
+    queue := mut self.slots.ItemsMut()[idx].cli_pages
+    for copied < dst.Len() {
+        var p := queue.pages.PopFront() else { break }
         avail := p.len - p.off
         need := dst.Len() - copied
         k := if avail < need { avail } else { need }
-        if k > 0 {
-            (mut dst[copied..copied + k]).CopyFrom(p.buf.Items()[p.off..p.off + k])
-            p.off += k
-            copied += k
-            slot.cli_pages.total -= k
-        }
-        drop = p.off >= p.len
-        if drop {
-            done_p := slot.cli_pages.pages.Remove(0)
-            done_p.Free(a)
+        (mut dst[copied..copied + k]).CopyFrom(p.buf.Items()[p.off..p.off + k])
+        p.off += k
+        copied += k
+        queue.total -= k
+        if p.off == p.len {
+            RecyclePage(a, pool, p)
+        } else {
+            queue.pages.PushFront(a, p).Must()
         }
     }
     return copied
 }
 
 StreamTable.ReleaseSlot(mut self, idx: int, a: &Alloc) {
+    pool := mut self.free_pages
     s := mut self.slots.ItemsMut()[idx]
     if s.state == StIdle {
         return
     }
     old_id := s.id
     for s.cli_pages.pages.Len() > 0 {
-        s.cli_pages.pages.Pop().Must().Free(a)
+        RecyclePage(a, pool, s.cli_pages.pages.Pop().Must())
     }
     s.cli_pages.total = 0
     if h := mut s.cli_head {

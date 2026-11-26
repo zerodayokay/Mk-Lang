@@ -98,13 +98,11 @@ linear view struct ConnCore {
     wout: Mutex[HeapList[u8]]
     st: Mutex[State]
     wr_wake: sync.Notify
-    wr_space_wake: sync.Notify
-    drive_wake: sync.Notify
     parties: HeapList[sync.Notify]
 }
 
 ConnCore.Free(self, a: &Alloc) {
-    ConnCore(rd, wr, wl: _, wout, st, wr_wake: _, wr_space_wake: _, drive_wake: _, parties) := self
+    ConnCore(rd, wr, wl: _, wout, st, wr_wake: _, parties) := self
     rd.Into().Free(a)
     wr.Into().Free(a)
     wout.Into().Free(a)
@@ -162,8 +160,6 @@ export Conn.Client(h: &Heap, io: Io, conn: net.Conn into h, l: Limits): Error!Bo
         wout: Mutex[HeapList[u8]].New(HeapList[u8].New(a)),
         st: Mutex[State].New(st),
         wr_wake: sync.Notify.New(),
-        wr_space_wake: sync.Notify.New(),
-        drive_wake: sync.Notify.New(),
         parties: parties,
     )
     var cbox := Box[ConnCore].New(a, cc) else e {
@@ -220,7 +216,11 @@ export Conn.Server(h: &Heap, io: Io, conn: net.Conn into h, l: Limits, pre: []u8
     onerr wr.Free(a)
     var st := try NewState(a, lim, false, 0, now)
     onerr st.Free(a)
-    parties := HeapList[sync.Notify].New(a)
+    var parties := HeapList[sync.Notify].New(a)
+    onerr parties.Free(a)
+    for _ in 0..TableCap(lim.streams) {
+        try parties.Push(a, sync.Notify.New())
+    }
     cc := ConnCore(
         rd: Mutex[ReadState].New(rd),
         wr: Mutex[WriteState].New(wr),
@@ -228,8 +228,6 @@ export Conn.Server(h: &Heap, io: Io, conn: net.Conn into h, l: Limits, pre: []u8
         wout: Mutex[HeapList[u8]].New(HeapList[u8].New(a)),
         st: Mutex[State].New(st),
         wr_wake: sync.Notify.New(),
-        wr_space_wake: sync.Notify.New(),
-        drive_wake: sync.Notify.New(),
         parties: parties,
     )
     var cbox := Box[ConnCore].New(a, cc) else e {
@@ -422,7 +420,7 @@ export Conn.Reset(&self, s: StreamRef, code: u32) {
     g.Unlock()
     if wake {
         self.Core().wr_wake.NotifyOne()
-        self.WakeAll()
+        self.WakeStream(s.index)
     }
 }
 
@@ -433,6 +431,7 @@ ResetStreamSlot(st: mut State, idx: int, gen_: u32, code: u32, admitted_ids: mut
     }
     sid := slot.id
     slot.owed_reset = some(code)
+    slot.reset = some(code)
     slot.progress.Idle()
     reserve := slot.admit_reserve
     was_admitted := slot.admitted
@@ -458,7 +457,9 @@ Conn.SendCloseGoaway(&self, io: Io): Error!void {
         cst.owed.QueueGoaway(cst.last_processed_id, NoError)
     }
     cg.Unlock()
-    self.WakeAll()
+    if self.is_client {
+        self.Party(PartyDrive).NotifyOne()
+    }
     var expired := false
     var err: ?Error = none
     scope s := io.Scope() {
@@ -513,7 +514,7 @@ Conn.FinishClose(self, io: Io) {
 /// O(streams) for the frames owed; allocates nothing.
 export Conn.Evict(&self, io: Io) {
     self.SendCloseGoaway(io) else {}
-    self.NetConn().Shutdown(io.NoCancel(), net.Shutdown.Both) else {}
+    self.FailConn(io.NoCancel(), Closed, none, true)
 }
 
 /// Sends GOAWAY(NO_ERROR) best-effort within close_limit, closes the underlying
@@ -643,11 +644,29 @@ Conn.FailConn(&self, nc: Io, err: Error, goaway_code: ?u32, shutdown_now: bool) 
     self.WakeAll()
 }
 
+// Each party has at most one waiter. NotifyOne also covers the interval
+// between observing the blocked condition and starting its wait.
 Conn.WakeAll(&self) {
-    core_ := self.Core()
-    core_.wr_space_wake.NotifyAll()
-    core_.drive_wake.NotifyAll()
-    for i in 0..core_.parties.Len() {
-        core_.parties.Items()[i].NotifyAll()
+    for party in &self.Core().parties.Items() {
+        party.NotifyOne()
+    }
+}
+
+Conn.WriterNotify(&self, idx: int): &sync.Notify {
+    return self.Party(if self.is_client { WriterParty(idx) } else { idx })
+}
+
+Conn.WakeStream(&self, idx: int) {
+    if self.is_client {
+        self.Party(ReaderParty(idx)).NotifyOne()
+    }
+    self.WriterNotify(idx).NotifyOne()
+}
+
+Conn.WakeBlockedWriters(&self, st: &State, reason: u8) {
+    for i in 0..st.streams.slots.Len() {
+        if st.streams.slots.Items()[i].blocked_on == reason {
+            self.WriterNotify(i).NotifyOne()
+        }
     }
 }
