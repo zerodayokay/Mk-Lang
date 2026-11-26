@@ -1,0 +1,23 @@
+# runtime.AddFaultFilter on Windows sees a fault whose pc is in host code, here on a carrier's
+# system stack during a user extern a task calls, and on a blocking-pool thread: a filter resumes
+# ntdll's copy from a guard page, a fault every filter passes still reaches kernelbase's or the C
+# source's own __except, and a filter that guards the first page ends the process with 71 for a
+# fault there whatever the pc, before any __except. A fault on a thread the C source makes is not
+# filtered. Windows only: __try and the DLLs are Win64's.
+# hostfault/app/main.mk says what each part does. An unclaimed fault with no handler keeps the
+# system's status (0xC0000005), which no case can name.
+case ok
+target x86_64-windows
+stdout hostfault.out
+case claimed
+target x86_64-windows
+args claimed
+exit 71
+case claimed-seh
+target x86_64-windows
+args claimed-seh
+exit 71
+case claimed-pool
+target x86_64-windows
+args claimed-pool
+exit 71
