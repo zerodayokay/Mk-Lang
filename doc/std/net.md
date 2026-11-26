@@ -941,9 +941,8 @@ it); allocates nothing.
 export Listener.Addr(&self): Addr
 ```
 
-The bound address of the listener: the IP and port (zero Addr for a
-Unix-domain listener or another Io's listener). O(1); one runtime call;
-allocates nothing.
+The TCP listener's bound IP and port. Unix-domain listeners report the
+zero Addr. O(1); at most one runtime call; allocates nothing.
 
 ### `Listener.Close`
 

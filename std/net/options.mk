@@ -56,14 +56,14 @@ export const DefaultListenOptions: ListenOptions = ListenOptions(backlog: 0, reu
 export ListenWith(io: Io, addr: str, o: ListenOptions): Error!Listener {
     try CancelPoint(io)
     if l := Inherit(io, PortOf(addr)) {
-        Listener(h, bound, kind, no_delay: _) := l
-        return Listener(h: h, bound: bound, kind: kind, no_delay: o.no_delay)
+        Listener(h, bound, local, kind, no_delay: _) := l
+        return Listener(h: h, bound: bound, local: local, kind: kind, no_delay: o.no_delay)
     }
     // DefaultListenOptions stays on Listen's op, which every Io answers;
     // only a choice Listen does not make takes the call op.
     r := if o.backlog <= 0 && o.reuse_addr { core.IoListen(io, addr) } else { rt.ListenWith(io, addr, o.backlog, o.reuse_addr) }
     h := try Check(r)
-    return Listener(h: Trunc[uint](h), bound: Trunc[int](r.os), kind: StreamTcp, no_delay: o.no_delay)
+    return NewListener(Trunc[uint](h), Trunc[int](r.os), addr, o.no_delay)
 }
 
 /// Sends small writes at once (on true: TCP_NODELAY, Nagle's algorithm
