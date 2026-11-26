@@ -664,21 +664,21 @@ func TestCancelSaysNotRun(t *testing.T) {
 	all := func(string) bool { return true }
 	c := &Step{Status: "pass"}
 	judgeCancel(c, false, all, g.testResults, g.ended)
-	want := "36 of 37 listed tests not run because ./std timed out after 1h0m0s in the test step"
+	want := "38 of 39 listed tests not run because ./std timed out after 1h0m0s in the test step"
 	if c.Status != "fail" || c.Reason != want {
 		t.Errorf("cancel step: %s %q\nwant %q", c.Status, c.Reason, want)
 	}
-	if strings.Contains(c.Reason, "no such test") || len(c.Failed) != 36 {
+	if strings.Contains(c.Reason, "no such test") || len(c.Failed) != 38 {
 		t.Errorf("cancel step: %q, %d failed", c.Reason, len(c.Failed))
 	}
-	if len(cancelSafety) != 37 {
+	if len(cancelSafety) != 39 {
 		t.Fatalf("cancelSafety has %d rows: update the counts above", len(cancelSafety))
 	}
 
 	res := map[string]string{"./std TestCore_CancelClasses": "fail"}
 	c = &Step{Status: "pass"}
 	judgeCancel(c, false, all, res, g.ended)
-	if !strings.HasPrefix(c.Reason, "36 of 37 listed tests not run because ./std timed out") ||
+	if !strings.HasPrefix(c.Reason, "38 of 39 listed tests not run because ./std timed out") ||
 		!strings.HasSuffix(c.Reason, "; ./std TestCore_CancelClasses failed (the test step has its output)") {
 		t.Errorf("cancel step with a failure: %q", c.Reason)
 	}
@@ -716,7 +716,7 @@ func TestCancelAfterLinuxTimeout(t *testing.T) {
 	if !g.ended["./std"].linux {
 		t.Fatalf("a Linux-step end is not marked: %+v", g.ended)
 	}
-	want := "1 of 37 listed tests not run because ./std timed out after 1h0m0s in the " + linuxStepName + " step"
+	want := "1 of 39 listed tests not run because ./std timed out after 1h0m0s in the " + linuxStepName + " step"
 	for _, strict := range []bool{false, true} {
 		c := &Step{Status: "pass"}
 		judgeCancel(c, strict, all, res, g.ended)

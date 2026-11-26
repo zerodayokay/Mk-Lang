@@ -318,6 +318,26 @@ AckSet.AllowAckPing(mut self, now: time.Instant, rtt: time.Duration): bool {
     return true
 }
 
+// Reports whether pn in space has already been recorded or is below the duplicate floor.
+// O(count); allocates nothing.
+AckSet.IsDuplicate(&self, space: Space, pn: i64): bool {
+    si := SpaceIndex(space)
+    sp := &self.spaces[si]
+    if pn < sp.floor {
+        return true
+    }
+    n := sp.count
+    if n == 0 || pn > sp.ranges[n - 1].hi {
+        return false
+    }
+    for i in 0..n {
+        if pn >= sp.ranges[i].lo && pn <= sp.ranges[i].hi {
+            return true
+        }
+    }
+    return false
+}
+
 // Writes an ACK frame (type 0x02) for space into out and clears that space's
 // pending ACK trigger so at most one ACK-only packet answers a trigger
 // (RFC 9000 13.2.1, 13.2.3, 13.2.5, 19.3). Includes the largest range and drops

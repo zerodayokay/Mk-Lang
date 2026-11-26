@@ -992,3 +992,125 @@ Streams.OnLost(mut self, a: &Alloc, f: &SentFrame) {
         _ {}
     }
 }
+
+// Reports whether Read on stream id will make progress without waiting
+// (queued data, EOF, reset, or missing stream). O(1).
+Streams.IsReadable(&self, id: i64): bool {
+    entry := self.map.Get(&id) else {
+        return true
+    }
+    if !entry.has_recv {
+        return true
+    }
+    if entry.recv.contig.len > 0 {
+        return true
+    }
+    return entry.recv.state == RecvState.DataRecvd || entry.recv.state == RecvState.DataRead ||
+        entry.recv.state == RecvState.ResetRecvd || entry.recv.state == RecvState.ResetRead
+}
+
+// Reports whether a peer-initiated stream of direction uni is queued for Accept. O(1).
+Streams.HasAccept(&self, uni: bool): bool {
+    if uni {
+        return self.accept_uni.Len() > 0
+    }
+    return self.accept_bidi.Len() > 0
+}
+
+// Reports whether stream id can accept a buffered write or would immediately fail. O(1).
+Streams.CanWriteNow(&self, id: i64, max_buf: u64): bool {
+    entry := self.map.Get(&id) else {
+        return true
+    }
+    if !entry.has_send {
+        return true
+    }
+    if entry.send.state == SendState.ResetSent || entry.send.state == SendState.ResetRecvd ||
+        entry.send.fin_set || entry.send.state == SendState.DataSent || entry.send.state == SendState.DataRecvd {
+        return true
+    }
+    queued := entry.send.write_offset - entry.send.send_offset
+    if queued >= max_buf {
+        return false
+    }
+    return entry.send.TxAvail() > 0 && self.conn_flow.TxAvail() > 0 || queued == 0
+}
+
+// Reports whether a locally initiated stream of direction uni can be opened now. O(1).
+Streams.CanOpen(&self, uni: bool): bool {
+    if !uni {
+        return self.next_local_bidi_seq < self.limits.peer_max_streams_bidi
+    }
+    return self.next_local_uni_seq < self.limits.peer_max_streams_uni
+}
+
+// Returns remaining locally-openable bidi and uni stream counts. O(1).
+Streams.OpenLimits(&self): (bidi: i64, uni: i64) {
+    b := if self.limits.peer_max_streams_bidi > self.next_local_bidi_seq {
+        Cast[i64](self.limits.peer_max_streams_bidi - self.next_local_bidi_seq)
+    } else { 0 }
+    u := if self.limits.peer_max_streams_uni > self.next_local_uni_seq {
+        Cast[i64](self.limits.peer_max_streams_uni - self.next_local_uni_seq)
+    } else { 0 }
+    return (bidi: b, uni: u)
+}
+
+// Reports whether any stream or flow-control frame is ready to be emitted by Next.
+Streams.HasPending(&self): bool {
+    if self.conn_flow.rx_credit.Owed().IsSome() || self.conn_flow.blocked_pending {
+        return true
+    }
+    if self.max_streams_bidi_pending || self.max_streams_uni_pending ||
+        self.streams_blocked_bidi_pending || self.streams_blocked_uni_pending {
+        return true
+    }
+    c_avail := self.conn_flow.TxAvail()
+    for i in 0..self.active_ids.Len() {
+        id := self.active_ids[i]
+        entry := self.map.Get(&id).Must()
+        if entry.has_send && entry.send.reset_pending {
+            return true
+        }
+        if entry.has_recv && entry.recv.stop_pending {
+            return true
+        }
+        if entry.has_recv && entry.recv.CanSendMaxStreamData() && entry.recv.credit.Owed().IsSome() {
+            return true
+        }
+        if entry.has_send && entry.send.state != SendState.ResetSent &&
+            entry.send.state != SendState.ResetRecvd && entry.send.state != SendState.DataRecvd {
+            if entry.send.lost_ranges.Len() > 0 || entry.send.fin_lost {
+                return true
+            }
+            unsent := entry.send.write_offset - entry.send.send_offset
+            need_fin := entry.send.fin_set && !entry.send.fin_sent
+            if need_fin && unsent == 0 {
+                return true
+            }
+            if unsent > 0 {
+                s_avail := entry.send.TxAvail()
+                if s_avail > 0 && c_avail > 0 {
+                    return true
+                }
+                if s_avail == 0 {
+                    need_sb := match entry.send.blocked_sent_at {
+                        none { true }
+                        some(prev) { prev != entry.send.tx_max_stream_data }
+                    }
+                    if need_sb || entry.send.blocked_pending {
+                        return true
+                    }
+                } else {
+                    need_db := match self.conn_flow.blocked_sent_at {
+                        none { true }
+                        some(prev) { prev != self.conn_flow.tx_max_data }
+                    }
+                    if need_db || self.conn_flow.blocked_pending {
+                        return true
+                    }
+                }
+            }
+        }
+    }
+    return false
+}
