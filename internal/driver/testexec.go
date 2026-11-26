@@ -125,6 +125,10 @@ type TestReport struct {
 	PropSeed *uint64 `json:"prop_seed,omitempty"`
 	// timeout is the bound the children ran under, for the timeout reason.
 	timeout time.Duration
+	// ShowOutput is mk test --show-output: the text report prints a passing
+	// test's output under its PASS line too. The JSON report carries every
+	// test's output whatever it is.
+	ShowOutput bool `json:"-"`
 }
 
 // ExitStatus is 0 when every selected test passed, 1 otherwise.
@@ -152,7 +156,8 @@ func (r *TestReport) WriteJSON(w io.Writer) error {
 }
 
 // WriteText writes PASS and FAIL lines in test order, a failed test's
-// output indented under it, then "N passed, M failed".
+// output indented under it (every test's under --prop or ShowOutput), then
+// "N passed, M failed".
 // Durations only with timings.
 func (r *TestReport) WriteText(w io.Writer, timings bool) error {
 	var b strings.Builder
@@ -172,7 +177,7 @@ func (r *TestReport) WriteText(w io.Writer, timings bool) error {
 		if t.Note != "" {
 			b.WriteString("    note: " + t.Note + "\n")
 		}
-		if (t.Result != "pass" || r.PropSeed != nil) && t.Output != "" {
+		if (t.Result != "pass" || r.PropSeed != nil || r.ShowOutput) && t.Output != "" {
 			for _, l := range strings.Split(strings.TrimRight(strings.ReplaceAll(t.Output, "\r\n", "\n"), "\n"), "\n") {
 				b.WriteString("    " + l + "\n")
 			}

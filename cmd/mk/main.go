@@ -339,6 +339,8 @@ type testFlags struct {
 	// --cover and --cover-out <file>.
 	cover    bool
 	coverOut string
+	// --show-output: a passing test's output under its PASS line too.
+	showOutput bool
 }
 
 func newTestFlagSet(stderr io.Writer, tf *testFlags) *flag.FlagSet {
@@ -353,6 +355,7 @@ func newTestFlagSet(stderr io.Writer, tf *testFlags) *flag.FlagSet {
 	fs.StringVar(&tf.fuzzTime, "fuzztime", "10s", "with --fuzz: how long the loop runs")
 	fs.BoolVar(&tf.cover, "cover", false, "count the package's blocks and print line coverage per file")
 	fs.StringVar(&tf.coverOut, "cover-out", "", "with --cover: also write the coverage as lcov to this file")
+	fs.BoolVar(&tf.showOutput, "show-output", false, "print each passing test's output under its PASS line too")
 	return fs
 }
 
@@ -421,6 +424,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	if tf.json {
 		err = rep.WriteJSON(stdout)
 	} else {
+		rep.ShowOutput = tf.showOutput
 		err = rep.WriteText(stdout, tf.timings)
 	}
 	if err != nil {

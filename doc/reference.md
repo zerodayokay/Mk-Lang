@@ -10638,6 +10638,7 @@ PASS main "prints"
 - In a test, the heap counts its allocations. Memory still allocated when the test ends fails it with `leak (exit 102)`.
 - Test names are strings, unique in their module (E0206). No naming convention makes a function a test.
 - A test is checked with its module by every command, but built only by `mk test`. `mk build` and `mk run` leave tests out.
+- `mk test --show-output` also prints a passing test's output under its `PASS` line, indented as a failing test's is, so a test that measures or reports something can be read without failing it ([`mk test`](tools.md#mk-test)).
 
 ```mk
 // verdict: reject E0206
