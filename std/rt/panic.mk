@@ -52,6 +52,7 @@ export PanicText(code: u32): str {
         14 { "contract" }
         15 { "unreachable" }
         16 { "suspend in callback" }
+        17 { "unresolved function" }
         _ { "panic" }
     }
 }
