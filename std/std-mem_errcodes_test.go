@@ -69,6 +69,23 @@ var stdErrorCodes = []struct {
 	{"std.fs.NotFound", 363192304},
 	{"std.fs.Os", 875537413},
 	{"std.fs.Unsupported", 956715957},
+	{"std.gpu.DeviceLost", 1961494741},
+	{"std.gpu.Driver", 1059893016},
+	{"std.gpu.Invalid", 1727707434},
+	{"std.gpu.Missing", 1902189030},
+	{"std.gpu.NoAdapter", 421350488},
+	{"std.gpu.OutOfDeviceMemory", 1601703050},
+	{"std.gpu.SurfaceLost", 451601330},
+	{"std.gpu.Unsupported", 1437986487},
+	{"std.gpu.dx.DxFail", 1072418869},
+	{"std.gpu.dx.Unsupported", 2090660711},
+	{"std.gpu.vk.DeviceLost", 209628066},
+	{"std.gpu.vk.Driver", 12530534},
+	{"std.gpu.vk.Missing", 1165374240},
+	{"std.gpu.vk.NoAdapter", 1914984538},
+	{"std.gpu.vk.OutOfDeviceMemory", 1447469870},
+	{"std.gpu.vk.SurfaceLost", 2073396787},
+	{"std.gpu.vk.Unsupported", 1705523985},
 	{"std.http.BadRequest", 782613169},
 	{"std.http.BadUrl", 2004359864},
 	{"std.http.BodyNotReplayable", 870456459},
@@ -77,6 +94,9 @@ var stdErrorCodes = []struct {
 	{"std.http.Status", 23996673},
 	{"std.http.TooLarge", 474579670},
 	{"std.http.TooManyRedirects", 352195647},
+	{"std.image.Invalid", 1812470315},
+	{"std.image.TooLarge", 1774872296},
+	{"std.image.Unsupported", 984748343},
 	{"std.json.Depth", 1715825482},
 	{"std.json.Mismatch", 490261723},
 	{"std.json.Syntax", 567111721},
@@ -116,6 +136,8 @@ var stdErrorCodes = []struct {
 	{"std.websocket.PeerClosed", 1421078369},
 	{"std.websocket.Protocol", 2089393314},
 	{"std.websocket.TooLarge", 1217455577},
+	{"std.window.Os", 463735808},
+	{"std.window.Unsupported", 517637753},
 	{"std.x509.BadSignature", 2015478602},
 	{"std.x509.BadUsage", 1352315121},
 	{"std.x509.Expired", 388630855},
@@ -244,13 +266,14 @@ func TestStdErrorCodesStable(t *testing.T) {
 	var b strings.Builder
 	// std.db.sqlite is left out of the native half: a program importing it
 	// builds the sqlite amalgamation, which is kept outside the
-	// repository. Its codes are still pinned and checked against the
+	// repository. Internal modules are also outside a program's imports.
+	// Their codes are still pinned and checked against the
 	// formula above, as is an error whose payload no literal fills ("-").
 	var native []string
 	imports := map[string]bool{"std.sync": true}
 	for _, k := range keys {
 		mod := k[:strings.LastIndex(k, ".")]
-		if mod == "std.db.sqlite" || payload[k] == "-" {
+		if mod == "std.db.sqlite" || payload[k] == "-" || mod != PreludeModule && slices.Contains(Internal[:], mod) {
 			continue
 		}
 		native = append(native, k)

@@ -12,8 +12,8 @@ The library has four layers. A module imports only from its own layer and the la
 |---|---|---|
 | 0, core | `core` (the prelude types, interfaces, slices, `str`, `Cell`, `Format`), `math`, `simd`, `atomic`, `mmio`, `hash`, `build` | Nothing: no allocator, no OS |
 | 1, memory | `mem` (allocators), `coll` (containers), `text` (`Text`, Unicode, formatting) | Layer 0, and a source of memory pages |
-| 2, system | `fs`, `net`, `time`, `proc`, `term`, `sync`, `log`, `dl`, `runtime`, `vm`, `linux`; the private `rt`, `sys` and `task` | Layer 1, and an OS |
-| 3, batteries | `http`, `json`, `crypto`, `compress`, `regex`, `cli`, `sim`, `db.sqlite`, `big`, `encoding`, `url`, `websocket`, `csv`, `x509`, `tls`, `testing`, `libc` | Layer 2 |
+| 2, system | `fs`, `net`, `time`, `proc`, `term`, `sync`, `log`, `dl`, `runtime`, `vm`, `linux`, `window`, `gpu`; the private `rt`, `sys` and `task` | Layer 1, and an OS |
+| 3, batteries | `http`, `json`, `crypto`, `compress`, `regex`, `cli`, `sim`, `db.sqlite`, `big`, `encoding`, `url`, `websocket`, `csv`, `x509`, `tls`, `testing`, `libc`, `image` | Layer 2 |
 
 The generator modules `derive` and `dyn` run at compile time and belong to no layer: the code they emit uses layer 0 alone.
 
@@ -233,7 +233,7 @@ A panic is not an error: it prints a report and ends the process ([reference sec
 
 ### Untrusted input
 
-Every entry point that reads bytes from a peer or a file never panics on its input, and holds memory and stack bounded by its limits: `url.Parse`, the HTTP parsers, WebSocket frames, `Unzlib`, the zstd decoder, `Encoding.Decode`, base64 and hex decoding, the DER and PEM readers, the TZif reader, `ParseRfc3339`, `ParseHttpDate`, `ParseDuration`, `Term.Read`'s decoder, `csv.Records`, `big.Parse`, `x509.Parse`, `x509.ParsePem`, the TLS parsers and key parsing.
+Every entry point that reads bytes from a peer or a file never panics on its input, and holds memory and stack bounded by its limits: `url.Parse`, the HTTP parsers, WebSocket frames, `Unzlib`, the zstd decoder, `Encoding.Decode`, base64 and hex decoding, the DER and PEM readers, the TZif reader, `ParseRfc3339`, `ParseHttpDate`, `ParseDuration`, `Term.Read`'s decoder, `csv.Records`, `big.Parse`, `x509.Parse`, `x509.ParsePem`, the TLS parsers, key parsing, `image.DecodePng`, `gpu.CheckShader` (the SPIR-V reader) and the DXIL container reader.
 
 ## 6. Cancellation
 
@@ -270,9 +270,9 @@ An operation that can be cancelled has `Canceled` in its error set, so its signa
 
 ## 7. Handles
 
-A handle owns an OS resource or a peer's protocol state: `fs.File`, `fs.Mapping`, `fs.Walker`, `proc.Child`, `proc.PipeReader`, `proc.PipeWriter`, `proc.Pty`, `term.Term`, `net.Stream`, `net.Conn`, `http.Client`, `http.Exchange`, `http.Taken`, `tls.Conn`, `websocket.Conn` and `dl.Library`. A handle is linear, so the compiler checks that you end it.
+A handle owns an OS resource or a peer's protocol state: `fs.File`, `fs.Mapping`, `fs.Walker`, `proc.Child`, `proc.PipeReader`, `proc.PipeWriter`, `proc.Pty`, `term.Term`, `net.Stream`, `net.Conn`, `http.Client`, `http.Exchange`, `http.Taken`, `tls.Conn`, `websocket.Conn`, `dl.Library`, `window.Window`, `window.Surface` and `gpu.Device`. A handle is linear, so the compiler checks that you end it. The objects a `gpu.Device` makes (`gpu.Buffer`, `gpu.Texture`, `gpu.Swapchain` and the rest) are linear too, and are ended on the device: `buf.Close(dev)`.
 
-- A handle keeps what its constructor's `from` clause names, and nothing else. `net.Conn`, `http.Client`, `tls.Conn` and `websocket.Conn` keep the `&Heap` given at creation, `fs.Walker` keeps its `&Heap` (an open directory and a name per level), and `http.Exchange` holds its arena's loan. The others hold only handles.
+- A handle keeps what its constructor's `from` clause names, and nothing else. `net.Conn`, `http.Client`, `tls.Conn`, `websocket.Conn`, `window.Window` and `gpu.Device` keep the `&Heap` given at creation, `fs.Walker` keeps its `&Heap` (an open directory and a name per level), and `http.Exchange` holds its arena's loan. The others hold only handles.
 - A handle does not implement `Free`. Its consuming calls take no allocator and release everything it owns. Release a container of handles with `FreeEach`.
 - A type whose `Close` can fail has an infallible `Abandon(self)` for error paths: `onerr f.Abandon()`.
 - No consuming call has a run-time precondition: `Child.Wait(self)` and an encoder's `Finish(self)` are their own proof.
@@ -300,8 +300,10 @@ Each name links the module's page. Run `mk doc --std std.<module>` for one modul
 | [`std.encoding.cjk`](encoding.md#stdencodingcjk) | The Chinese, Japanese and Korean multi-byte encodings, linked only when named |
 | [`std.free`](free.md) | The freestanding target's panic information and heap |
 | [`std.fs`](fs.md) | Files, directories, metadata, walking a tree, memory-mapped files |
+| [`std.gpu`](gpu.md) | Graphics and compute on Direct3D 12 and Vulkan: devices, buffers, textures, pipelines, passes, swapchains. Experimental |
 | [`std.hash`](hash.md) | XXH3, XXH64, CRC32, SipHash, SHA-1, SHA-2, BLAKE3, with streaming states |
 | [`std.http`](http.md) | An HTTP/1.1 server and client, request routing |
+| [`std.image`](image.md) | PNG encoding and decoding, and image comparison with a tolerance. Provisional |
 | [`std.json`](json.md) | Parsing into a `Value`, and `gen json.Codec(T)` for typed reading and writing |
 | [`std.libc`](libc.md) | C functions, written in Mk, that a package's own C sources link against. No Mk names |
 | [`std.linux`](linux.md) | The raw system call, on x86_64-linux only. Unsafe only |
@@ -326,6 +328,7 @@ Each name links the module's page. Run `mk doc --std std.<module>` for one modul
 | [`std.url`](url.md) | Parsing and building URLs, query strings, internationalized domain names |
 | [`std.vm`](vm.md) | Reserving, committing and protecting memory pages; executable code regions. Unsafe only |
 | [`std.websocket`](websocket.md) | WebSocket client and server |
+| [`std.window`](window.md) | Native windows and their input events, on one window thread. Experimental |
 | [`std.x509`](x509.md) | Certificate parsing and verification. Experimental |
 
 The modules `std.core`, `std.rt`, `std.sys`, `std.task`, `std.target` and `std.simd.kernel` are the library's own internals. A program cannot import them (E0202); what they export that you need is in the prelude or in `std.runtime`. `std.pkg` holds the types a `pkg.mk` manifest is written in, reached through the manifest's `pkg` name ([packages](../packages.md)).

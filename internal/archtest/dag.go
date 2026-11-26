@@ -71,6 +71,9 @@ var DAG = []Edge{
 	{"tools/bench", []string{"tools/machinelock"}},
 	{"tools/bench/peakspawn", nil},
 	{"tools/dogfood", []string{"tools/machinelock"}},
+	{"tools/gpugolden", nil},
+	{"tools/gpushaders", nil},
+	{"tools/vkdispatch", nil},
 	{"tools/machinelock", nil},
 	{"tools/synth", nil},
 	// The system view generator: the importer and the check through the

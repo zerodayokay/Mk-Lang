@@ -33,10 +33,13 @@ const (
 var moduleClasses = []struct{ path, class, why string }{
 	{"std.dl", ClassProvisional, ""},
 	{"std.free", ClassProvisional, ""},
+	{"std.gpu", ClassExperimental, "its API may change before stabilisation"},
+	{"std.image", ClassProvisional, ""},
 	{"std.mmio", ClassProvisional, ""},
 	{"std.sim", ClassProvisional, ""},
 	{"std.simd", ClassProvisional, ""},
 	{"std.tls", ClassExperimental, "not yet reviewed by an outside cryptographer"},
+	{"std.window", ClassExperimental, "its API may change before stabilisation"},
 	{"std.x509", ClassExperimental, "not yet reviewed by an outside cryptographer"},
 }
 

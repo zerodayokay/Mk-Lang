@@ -1,0 +1,10 @@
+# A cube casting a shadow onto a ground plane through a comparison sampler.
+size 128 128
+camera 2.5 2.2 3.2 0 0 0 50
+light -0.6 -1 -0.3 1 0.96 0.9
+shadows on
+texture checker ../assets/checker.png
+mesh cube ../assets/cube.obj
+mesh plane ../assets/plane.obj
+object ground plane checker 0 -0.5 0 0 6 0.8 0.8 0.8
+object box cube checker 0 0.1 0 25 1 1 0.6 0.4

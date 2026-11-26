@@ -1,0 +1,6 @@
+render
+$CASES/scenes/instanced.scene
+$WORK/bench.png
+--warp
+--frames
+60

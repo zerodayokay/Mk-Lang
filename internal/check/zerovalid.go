@@ -259,6 +259,22 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is not zero-valid: "+why).
 			Text("param", "T").Text("bound", boundZeroValid).Text("type", ts))
 		return
+	case c.memAsBytes(item):
+		if len(g) != 1 || g[0].IsConst {
+			return
+		}
+		t = g[0].Type
+		if t == types.Poison {
+			return
+		}
+		if ok, why := c.byteViewArg(u.env, t, u.x.rec, map[types.TypeID]bool{}); ok {
+			return
+		} else {
+			ts := u.str(t)
+			u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` cannot be viewed as bytes: "+why).
+				Text("param", "T").Text("bound", boundByteView).Text("type", ts))
+			return
+		}
 	case c.readUnaligned(item):
 		if len(g) != 1 || g[0].IsConst {
 			return

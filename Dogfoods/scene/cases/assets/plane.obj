@@ -1,0 +1,11 @@
+# A 1 by 1 ground quad in the XZ plane facing +Y, with UVs repeated 4 times.
+v -0.5 0 0.5
+v 0.5 0 0.5
+v 0.5 0 -0.5
+v -0.5 0 -0.5
+vt 0 0
+vt 4 0
+vt 4 4
+vt 0 4
+vn 0 1 0
+f 1/1/1 2/2/1 3/3/1 4/4/1

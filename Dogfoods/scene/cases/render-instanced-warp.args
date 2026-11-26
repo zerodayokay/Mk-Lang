@@ -1,0 +1,7 @@
+render
+$CASES/scenes/instanced.scene
+$WORK/instanced.png
+--warp
+--validate
+--compare
+$CASES/golden/instanced.png

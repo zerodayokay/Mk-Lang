@@ -254,6 +254,10 @@ func (r residueRules) identResidue(id string) string {
 			return "lane id " + s
 		}
 	}
+	// The standard graphics term TextureView crosses the substring reView.
+	if id == "TextureView" {
+		return ""
+	}
 	if m := residueIdentWord.FindString(id); m != "" {
 		return "process word " + m
 	}

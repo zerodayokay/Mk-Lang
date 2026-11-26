@@ -401,8 +401,13 @@ export const IoOpRemoveAt: u32 = 40
 /// handle, os the bound port. A Sim answers it as its listen entry, which has
 /// no queue or TIME_WAIT to choose.
 export const IoOpListen: u32 = 41
+/// IoOpObjectWait: os is a Windows kernel waitable handle, w.a is timeout_ns
+/// (negative: forever) <- value 0 on signal, 1 on timeout, w.b 1 if a
+/// cancelled wait fired after cancel (credit consumed); Unsupported outside
+/// Windows.
+export const IoOpObjectWait: u32 = 42
 /// The number of ops; an op at or past it is Unsupported everywhere.
-export const IoOpCount: u32 = 42
+export const IoOpCount: u32 = 43
 
 /// IoOpTermMode's b: set the saved mode p back.
 export const IoTermSaved: i64 = 0
