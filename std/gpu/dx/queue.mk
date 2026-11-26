@@ -413,9 +413,8 @@ export Device.QueueWriteTexture(
     y: int,
     width: int,
     height: int,
-    layers: int,
     aspect: u8,
-    cur_state: u16,
+    states: []u16,
     data: []u8,
 ): Error!void {
     if Target.os != Os.Windows {
@@ -450,7 +449,9 @@ export Device.QueueWriteTexture(
     by := (height + bh - 1) / bh
     row_bytes := bx * bbytes
     row_pitch := (row_bytes + D3d12RowPitchAlign - 1) & ~(D3d12RowPitchAlign - 1)
-    slice_bytes := row_pitch * by
+    placement_mask := int(D3d12PlacementAlign) - 1
+    slice_bytes := (row_pitch * by + placement_mask) & ~placement_mask
+    layers := states.Len()
     total_bytes := slice_bytes * layers
 
     (res: src_res, cpu, off: src_off) := try self.AllocUploadSpan(Cast[u64](total_bytes), D3d12PlacementAlign)
@@ -484,7 +485,7 @@ export Device.QueueWriteTexture(
             height: Cast[windows.Uint](by * bh),
             row_pitch: Cast[windows.Uint](row_pitch),
             dxgi_fmt: dxgi_fmt,
-            cur_state: cur_state,
+            cur_state: states[li],
         ))
     }
 }
@@ -823,7 +824,7 @@ struct ReadTexRecordArgs {
     src_res: *d3d12.ID3D12Resource
     rb_res: *d3d12.ID3D12Resource
     dxgi_fmt: u32
-    cur_state: u16
+    states: *u16
     mip: int
     layer: int
     x: int
@@ -861,12 +862,12 @@ ReadTexRecordSys(arg: *u8) {
             return
         }
         RecordPendingZerosAndUploads(d, cmd)
-        before := MapResState((*p).cur_state)
         bx := ((*p).width + (*p).bw - 1) / (*p).bw
         by := ((*p).height + (*p).bh - 1) / (*p).bh
         cw := bx * (*p).bw
         ch := by * (*p).bh
         for li in 0..(*p).layers {
+            before := MapResState(raw.Read(raw.Offset((*p).states, li)))
             sub := Cast[windows.Uint]((*p).mip + ((*p).layer + li) * (*p).total_mips + (*p).plane * (*p).total_mips * (*p).total_layers)
             EmitTransition(cmd, (*p).src_res, sub, before, d3d12.D3d12ResourceStateCopySource)
             var dst_loc := mem.Zeroed[d3d12.D3d12TextureCopyLocation]()
@@ -957,9 +958,8 @@ export Device.ReadTextureSync(
     y: int,
     width: int,
     height: int,
-    layers: int,
     aspect: u8,
-    cur_state: u16,
+    states: []u16,
     need_bytes: int,
     serial: u64,
 ): Error![]u8 from a {
@@ -1000,7 +1000,9 @@ export Device.ReadTextureSync(
     by := (height + bh - 1) / bh
     row_bytes := bx * bbytes
     row_pitch := (row_bytes + D3d12RowPitchAlign - 1) & ~(D3d12RowPitchAlign - 1)
-    slice_bytes := row_pitch * by
+    placement_mask := int(D3d12PlacementAlign) - 1
+    slice_bytes := (row_pitch * by + placement_mask) & ~placement_mask
+    layers := states.Len()
     total_bytes := slice_bytes * layers
 
     desc := BufferResourceDesc(Cast[u64](total_bytes), d3d12.D3d12ResourceFlagNone)
@@ -1035,7 +1037,7 @@ export Device.ReadTextureSync(
         src_res: src_res,
         rb_res: rargs.out_res,
         dxgi_fmt: copy_fmt,
-        cur_state: cur_state,
+        states: raw.Data(states),
         mip: mip,
         layer: layer,
         x: x,

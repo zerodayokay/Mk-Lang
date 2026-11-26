@@ -112,6 +112,43 @@ ZeroCompressedTexture(st: &VkDeviceState, cmd: vulkan.VkCommandBuffer, tex: &VkT
     }
 }
 
+TransitionTransferLayers(
+    st: mut VkDeviceState,
+    cmd: vulkan.VkCommandBuffer,
+    tex: &VkTexRec,
+    mip: u32,
+    layer: u32,
+    layers: u32,
+    pmask: u8,
+    transfer: i32,
+    restore: bool,
+) {
+    asp := AspectForBarrier(tex.is_depth, tex.has_stencil, pmask)
+    img := HandleFrom[vulkan.VkImageT](tex.vk_image)
+    plane := if pmask == 2 { 1 } else { 0 }
+    start := tex.tracked_start + (plane * tex.mips + int(mip)) * tex.layers + int(layer)
+    access := if transfer == vulkan.VkImageLayoutTransferDstOptimal { vulkan.VkAccess2TransferWriteBit } else { vulkan.VkAccess2TransferReadBit }
+    all_access := vulkan.VkAccess2MemoryReadBit | vulkan.VkAccess2MemoryWriteBit
+    for li in 0..int(layers) {
+        prior := st.tracked_layouts[start + li]
+        if prior == transfer { continue }
+        lay := layer + Cast[u32](li)
+        if restore {
+            final_layout := if prior == vulkan.VkImageLayoutUndefined { vulkan.VkImageLayoutGeneral } else { prior }
+            EmitSingleImageBarrier(
+                &*st, cmd, img, asp, mip, 1, lay, 1, transfer, final_layout,
+                vulkan.VkPipelineStage2TransferBit, access, vulkan.VkPipelineStage2AllCommandsBit, all_access,
+            )
+            st.tracked_layouts[start + li] = final_layout
+        } else {
+            EmitSingleImageBarrier(
+                &*st, cmd, img, asp, mip, 1, lay, 1, prior, transfer,
+                vulkan.VkPipelineStage2AllCommandsBit, all_access, vulkan.VkPipelineStage2TransferBit, access,
+            )
+        }
+    }
+}
+
 FlushPendingZeroAndCopies(st: mut VkDeviceState, cmd: vulkan.VkCommandBuffer) {
     had_work := st.pending_zero_bufs.Len() > 0 || st.pending_zero_texs.Len() > 0 || st.pending_copies.Len() > 0
     if !had_work {
@@ -191,18 +228,7 @@ FlushPendingZeroAndCopies(st: mut VkDeviceState, cmd: vulkan.VkCommandBuffer) {
                     tex := st.textures[tidx]
                     img := HandleFrom[vulkan.VkImageT](tex.vk_image)
                     asp := AspectForBarrier(tex.is_depth, tex.has_stencil, op.pmask)
-                    // Read tracked layout of first subresource in region; restore it after copy.
-                    first_p := if op.pmask == 2 { 1 } else { 0 }
-                    sidx := tex.tracked_start + (first_p * tex.mips + int(op.mip)) * tex.layers + int(op.layer)
-                    cur_lay := st.tracked_layouts[sidx]
-                    if cur_lay != vulkan.VkImageLayoutTransferDstOptimal {
-                        EmitSingleImageBarrier(
-                            &*st, cmd, img, asp, op.mip, 1, op.layer, op.layers,
-                            cur_lay, vulkan.VkImageLayoutTransferDstOptimal,
-                            vulkan.VkPipelineStage2AllCommandsBit, vulkan.VkAccess2MemoryReadBit | vulkan.VkAccess2MemoryWriteBit,
-                            vulkan.VkPipelineStage2TransferBit, vulkan.VkAccess2TransferWriteBit,
-                        )
-                    }
+                    TransitionTransferLayers(st, cmd, &tex, op.mip, op.layer, op.layers, op.pmask, vulkan.VkImageLayoutTransferDstOptimal, false)
                     var reg := vulkan.VkBufferImageCopy(
                         buffer_offset: op.src_off,
                         buffer_row_length: 0,
@@ -212,16 +238,7 @@ FlushPendingZeroAndCopies(st: mut VkDeviceState, cmd: vulkan.VkCommandBuffer) {
                         image_extent: vulkan.VkExtent3D(width: op.w, height: op.h, depth: 1),
                     )
                     st.dev_d.vk_cmd_copy_buffer_to_image.Must()(cmd, HandleFrom[vulkan.VkBufferT](op.src_buf), img, vulkan.VkImageLayoutTransferDstOptimal, 1, raw.Of(&reg))
-                    if cur_lay != vulkan.VkImageLayoutTransferDstOptimal {
-                        restore_lay := if cur_lay == vulkan.VkImageLayoutUndefined { vulkan.VkImageLayoutGeneral } else { cur_lay }
-                        EmitSingleImageBarrier(
-                            &*st, cmd, img, asp, op.mip, 1, op.layer, op.layers,
-                            vulkan.VkImageLayoutTransferDstOptimal, restore_lay,
-                            vulkan.VkPipelineStage2TransferBit, vulkan.VkAccess2TransferWriteBit,
-                            vulkan.VkPipelineStage2AllCommandsBit, vulkan.VkAccess2MemoryReadBit | vulkan.VkAccess2MemoryWriteBit,
-                        )
-                        TrackSetTexLayoutDirect(st, op.dst_handle, int(op.mip), 1, int(op.layer), int(op.layers), op.pmask, restore_lay)
-                    }
+                    TransitionTransferLayers(st, cmd, &tex, op.mip, op.layer, op.layers, op.pmask, vulkan.VkImageLayoutTransferDstOptimal, true)
                 }
             }
         }
@@ -472,17 +489,7 @@ SubmitReadbackTexture(
         tex := st.textures[Cast[int](tex_id)]
         img := HandleFrom[vulkan.VkImageT](tex.vk_image)
         asp := AspectForBarrier(tex.is_depth, tex.has_stencil, pmask)
-        first_p := if pmask == 2 { 1 } else { 0 }
-        sidx := tex.tracked_start + (first_p * tex.mips + mip) * tex.layers + layer
-        cur_lay := st.tracked_layouts[sidx]
-        if cur_lay != vulkan.VkImageLayoutTransferSrcOptimal {
-            EmitSingleImageBarrier(
-                &*st, cmd, img, asp, Cast[u32](mip), 1, Cast[u32](layer), Cast[u32](layers),
-                cur_lay, vulkan.VkImageLayoutTransferSrcOptimal,
-                vulkan.VkPipelineStage2AllCommandsBit, vulkan.VkAccess2MemoryReadBit | vulkan.VkAccess2MemoryWriteBit,
-                vulkan.VkPipelineStage2TransferBit, vulkan.VkAccess2TransferReadBit,
-            )
-        }
+        TransitionTransferLayers(st, cmd, &tex, Cast[u32](mip), Cast[u32](layer), Cast[u32](layers), pmask, vulkan.VkImageLayoutTransferSrcOptimal, false)
         var reg := vulkan.VkBufferImageCopy(
             buffer_offset: 0,
             buffer_row_length: 0,
@@ -492,15 +499,7 @@ SubmitReadbackTexture(
             image_extent: vulkan.VkExtent3D(width: Cast[u32](w), height: Cast[u32](h), depth: 1),
         )
         st.dev_d.vk_cmd_copy_image_to_buffer.Must()(cmd, img, vulkan.VkImageLayoutTransferSrcOptimal, HandleFrom[vulkan.VkBufferT](stg_buf), 1, raw.Of(&reg))
-        if cur_lay != vulkan.VkImageLayoutTransferSrcOptimal {
-            restore_lay := if cur_lay == vulkan.VkImageLayoutUndefined { vulkan.VkImageLayoutGeneral } else { cur_lay }
-            EmitSingleImageBarrier(
-                &*st, cmd, img, asp, Cast[u32](mip), 1, Cast[u32](layer), Cast[u32](layers),
-                vulkan.VkImageLayoutTransferSrcOptimal, restore_lay,
-                vulkan.VkPipelineStage2TransferBit, vulkan.VkAccess2TransferReadBit,
-                vulkan.VkPipelineStage2AllCommandsBit, vulkan.VkAccess2MemoryReadBit | vulkan.VkAccess2MemoryWriteBit,
-            )
-        }
+        TransitionTransferLayers(st, cmd, &tex, Cast[u32](mip), Cast[u32](layer), Cast[u32](layers), pmask, vulkan.VkImageLayoutTransferSrcOptimal, true)
         r2 := st.dev_d.vk_end_command_buffer.Must()(cmd)
         if r2 != vulkan.VkSuccess { fail MapVkError(r2, CallQueueSubmit) }
 

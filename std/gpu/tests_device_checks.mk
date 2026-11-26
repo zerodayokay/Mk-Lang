@@ -305,16 +305,30 @@ test "device writes: WriteBuffer ordered against submissions, odd-size texture c
     var td := DefaultTextureDesc
     td.width = 13
     td.height = 7
+    td.layers = 2
     td.usage.copy_dst = true
     td.usage.copy_src = true
+    td.usage.render_target = true
     tex := try dev.NewTexture(td)
     defer tex.Close(mut dev)
-    var px := try sys.arena.Slice[u8](13 * 7 * 4)
+    var vd := DefaultViewDesc
+    vd.first_layer = 1
+    layer_view := try dev.NewView(&tex, vd)
+    defer layer_view.Close(mut dev)
+    var layer_enc := try dev.Encoder("different layer states")
+    onerr layer_enc.Abandon()
+    colors := [ColorAttachment(target: &layer_view, resolve: none, load: Load.Clear(r: 0.0, g: 0.0, b: 0.0, a: 1.0), store: Store.Store)]
+    desc := PassDesc(colors: colors[..], depth: none, label: "layer 1")
+    var layer_pass := layer_enc.RenderPass(&desc)
+    layer_pass.End()
+    try layer_enc.Submit()
+
+    var px := try sys.arena.Slice[u8](13 * 7 * 4 * 2)
     for i in 0..px.Len() {
         px[i] = Trunc[u8](i * 7 + 3)
     }
     region := TextureRegion(texture: &tex, mip: 0, layer: 0, x: 0, y: 0, aspect: Aspect.All)
-    size := Extent(width: 13, height: 7, layers: 1)
+    size := Extent(width: 13, height: 7, layers: 2)
     try dev.WriteTexture(region, px[..], size)
     tight := try dev.ReadTexture(sys.arena, sys.io, region, size)
     Assert(tight.Len() == px.Len())
@@ -325,7 +339,7 @@ test "device writes: WriteBuffer ordered against submissions, odd-size texture c
     defer tb.Close(mut dev)
     var e3 := try dev.Encoder("odd")
     onerr e3.Abandon()
-    e3.CopyTextureToBuffer(region, &tb, DataLayout(offset: 512, bytes_per_row: 256, rows_per_layer: 7), size)
+    e3.CopyTextureToBuffer(region, &tb, DataLayout(offset: 512, bytes_per_row: 256, rows_per_layer: 7), Extent(width: 13, height: 7, layers: 1))
     try e3.Submit()
     mt := try dev.MapRead(sys.io, &tb, 0, 512 + 256 * 7)
     tbytes := mt.Bytes()

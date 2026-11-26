@@ -7,8 +7,8 @@
 // replay-time layout tracker assertions.
 //
 // How: converts BarrierCmd items to VkImageMemoryBarrier2 /
-// VkBufferMemoryBarrier2 batches for vkCmdPipelineBarrier2, while tracking
-// expected layouts in st.tracked_layouts when build.Profile is Test/Checked.
+// VkBufferMemoryBarrier2 batches for vkCmdPipelineBarrier2, tracking layouts
+// used by transfers and checking them in Test and Checked profiles.
 
 import c.vulkan
 import std.build
@@ -186,9 +186,6 @@ AspectForBarrier(is_depth: bool, has_stencil: bool, pmask: u8): u32 {
 }
 
 TrackAssertAndSetTex(st: mut VkDeviceState, tex_id: u64, first_mip: int, mip_count: int, first_layer: int, layer_count: int, pmask: u8, old_lay: i32, new_lay: i32, op_idx: int) {
-    if !TrackerEnabled() {
-        return
-    }
     tidx := Cast[int](tex_id)
     if tidx <= 0 || tidx >= st.textures.Len() || !st.textures[tidx].alive {
         return
@@ -202,9 +199,11 @@ TrackAssertAndSetTex(st: mut VkDeviceState, tex_id: u64, first_mip: int, mip_cou
         for m in first_mip..(first_mip + mip_count) {
             for l in first_layer..(first_layer + layer_count) {
                 sidx := tex.tracked_start + (p * tex.mips + m) * tex.layers + l
-                cur := st.tracked_layouts[sidx]
-                if old_lay != vulkan.VkImageLayoutUndefined && cur != old_lay {
-                    FormatTrackerPanic("barrier", op_idx, old_lay, cur)
+                if TrackerEnabled() {
+                    cur := st.tracked_layouts[sidx]
+                    if old_lay != vulkan.VkImageLayoutUndefined && cur != old_lay {
+                        FormatTrackerPanic("barrier", op_idx, old_lay, cur)
+                    }
                 }
                 st.tracked_layouts[sidx] = new_lay
             }
@@ -239,9 +238,6 @@ TrackCheckTexLayout(st: &VkDeviceState, tex_id: u64, first_mip: int, mip_count: 
 }
 
 TrackSetTexLayoutDirect(st: mut VkDeviceState, tex_id: u64, first_mip: int, mip_count: int, first_layer: int, layer_count: int, pmask: u8, new_lay: i32) {
-    if !TrackerEnabled() {
-        return
-    }
     tidx := Cast[int](tex_id)
     if tidx <= 0 || tidx >= st.textures.Len() || !st.textures[tidx].alive {
         return

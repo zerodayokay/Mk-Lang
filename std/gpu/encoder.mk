@@ -725,6 +725,14 @@ PrepDeviceWriteTex(st: &DeviceState, serial: u32, dst: TextureRegion, data_len: 
     return (nh: dt.native_handle, pmask: pmask)
 }
 
+CopyLayerStates(tex: &TextureEntry, region: TextureRegion, layers: int, plane: int): [MaxTextureLayers]u16 {
+    var states: [MaxTextureLayers]u16 = [0; MaxTextureLayers]
+    for li in 0..layers {
+        states[li] = tex.state.StateAt(plane, region.mip, region.layer + li)
+    }
+    return states
+}
+
 /// Copies tight rows of data into a texture region before the next
 /// submission's commands. O(bytes): repacks rows to 256-byte pitch.
 export Device.WriteTexture(mut self, dst: TextureRegion, data: []u8, size: Extent): Error!void {
@@ -744,8 +752,8 @@ export Device.WriteTexture(mut self, dst: TextureRegion, data: []u8, size: Exten
                 _ { u8(0) }
             }
             plane := if asp == 2 { 1 } else { 0 }
-            cur_s := st.textures.Get(dst.texture.slot).state.StateAt(plane, dst.mip, dst.layer)
-            d.QueueWriteTexture(nh, dst.mip, dst.layer, dst.x, dst.y, size.width, size.height, size.layers, asp, cur_s, data) else e {
+            states := CopyLayerStates(st.textures.Get(dst.texture.slot), dst, size.layers, plane)
+            d.QueueWriteTexture(nh, dst.mip, dst.layer, dst.x, dst.y, size.width, size.height, asp, states[0..size.layers], data) else e {
                 ge := MapDxError(e)
                 RecordDxFailure(st, ge)
                 fail ge
@@ -801,9 +809,9 @@ export Device.ReadTexture(mut self, a: &Arena, io: Io, src: TextureRegion, size:
             }
             plane := if asp == 2 { 1 } else { 0 }
             src_nh := st.textures.Get(src.texture.slot).native_handle
-            cur_s := st.textures.Get(src.texture.slot).state.StateAt(plane, src.mip, src.layer)
+            states := CopyLayerStates(st.textures.Get(src.texture.slot), src, size.layers, plane)
             read_serial := st.serials.Advance()
-            out := d.ReadTextureSync(a, io, src_nh, src.mip, src.layer, src.x, src.y, size.width, size.height, size.layers, asp, cur_s, need, read_serial) else e {
+            out := d.ReadTextureSync(a, io, src_nh, src.mip, src.layer, src.x, src.y, size.width, size.height, asp, states[0..size.layers], need, read_serial) else e {
                 SyncDxMessages(self.heap.Alloc(), st)
                 ge := MapDxError(e)
                 RecordDxFailure(st, ge)

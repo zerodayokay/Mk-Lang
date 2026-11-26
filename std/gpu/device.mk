@@ -383,9 +383,11 @@ NextDeviceSerial(): u32 {
     return Cast[u32](DeviceSerial.Add(1))
 }
 
+const MaxTextureLayers: int = 256
+
 const DefaultPortableLimits: DeviceLimits = DeviceLimits(
     max_texture_size: 16384,
-    max_texture_layers: 256,
+    max_texture_layers: MaxTextureLayers,
     max_bind_groups: 4,
     max_bindings_per_group: 16,
     max_dynamic_uniforms: 4,
