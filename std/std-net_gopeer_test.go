@@ -52,6 +52,36 @@ Say[A: Fields[Format] + Plain](sys: &System, const f: str, args: A): WriteError!
     try w.Flush()
 }
 
+ReadExact(io: Io, c: &net.Conn, buf: mut []u8): net.Error!bool {
+    var n := 0
+    for n < buf.Len() {
+        k := try c.Read(io, mut buf[n..])
+        if k == 0 {
+            return false
+        }
+        n += k
+    }
+    return true
+}
+
+ReadFrame(io: Io, c: &net.Conn, buf: mut []u8): net.Error!int {
+    var hdr: [1]u8 = [0]
+    if !try ReadExact(io, c, mut hdr[..]) {
+        return 0
+    }
+    n := int(hdr[0])
+    if n > buf.Len() || !try ReadExact(io, c, mut buf[0..n]) {
+        fail Closed
+    }
+    return n
+}
+
+WriteFrame(io: Io, c: &net.Conn, data: []u8): net.Error!void {
+    var hdr: [1]u8 = [Trunc[u8](data.Len())]
+    try c.WriteAll(io, hdr[..])
+    try c.WriteAll(io, data)
+}
+
 Dial(sys: &System, mode: str, addr: str): net.Error|WriteError!void {
     io := sys.io
     s := if mode == "dial" { try net.Dial(io, addr) } else { try net.DialUnix(io, addr) }
@@ -73,16 +103,25 @@ Dial(sys: &System, mode: str, addr: str): net.Error|WriteError!void {
     } else {
         try Say(sys, "unix\n", ())
     }
-    try c.WriteAll(io, "ping".AsBytes())
-    try c.Shutdown(io, net.Shutdown.Write)
     var buf: [64]u8 = [0; 64]
     var n := 0
-    for {
-        k := try c.Read(io, mut buf[n..])
-        if k == 0 {
-            break
+    if mode == "dial" {
+        try c.WriteAll(io, "ping".AsBytes())
+        try c.Shutdown(io, net.Shutdown.Write)
+        for {
+            k := try c.Read(io, mut buf[n..])
+            if k == 0 {
+                break
+            }
+            n += k
         }
-        n += k
+    } else {
+        scope r := io.Scope() {
+            r.CancelAfter(time.Seconds(10))
+            try WriteFrame(io, &c, "ping".AsBytes())
+            try c.Shutdown(io, net.Shutdown.Write)
+            n = try ReadFrame(io, &c, mut buf[..])
+        }
     }
     try sys.Print("got {t}\n", (t: str.From(buf[0..n]) else { "?" }))
     try c.Close(io)
@@ -116,15 +155,27 @@ Serve(sys: &System, mode: str, path: str): net.Error|WriteError!void {
     }
     var buf: [64]u8 = [0; 64]
     var n := 0
-    for {
-        k := try c.Read(io, mut buf[n..])
-        if k == 0 {
-            break
+    if tcp {
+        for {
+            k := try c.Read(io, mut buf[n..])
+            if k == 0 {
+                break
+            }
+            n += k
         }
-        n += k
+        try c.WriteAll(io, "pong:".AsBytes())
+        try c.WriteAll(io, buf[0..n])
+    } else {
+        scope r := io.Scope() {
+            r.CancelAfter(time.Seconds(10))
+            n = try ReadFrame(io, &c, mut buf[..])
+            var out: [70]u8 = [0; 70]
+            pre := "pong:".AsBytes()
+            (mut out[0..pre.Len()]).CopyFrom(pre)
+            (mut out[pre.Len()..pre.Len() + n]).CopyFrom(buf[0..n])
+            try WriteFrame(io, &c, out[0..pre.Len() + n])
+        }
     }
-    try c.WriteAll(io, "pong:".AsBytes())
-    try c.WriteAll(io, buf[0..n])
     try c.Close(io)
 }
 `
@@ -208,6 +259,71 @@ func net3Serve(t *testing.T, l net.Listener, got chan<- string) {
 	// The Mk side half-closed first, so its socket, not this one, waits
 	// in TIME_WAIT: one entry per run.
 	got <- string(b) + "|" + c.RemoteAddr().String() + "|" + c.LocalAddr().String()
+}
+
+// net3ReadFrame reads a 1-byte length-prefixed frame from c.
+func net3ReadFrame(c net.Conn) ([]byte, error) {
+	var hdr [1]byte
+	if _, err := io.ReadFull(c, hdr[:]); err != nil {
+		return nil, err
+	}
+	b := make([]byte, int(hdr[0]))
+	if _, err := io.ReadFull(c, b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// net3WriteFrame writes data as a 1-byte length-prefixed frame to c.
+func net3WriteFrame(c net.Conn, data []byte) error {
+	buf := append([]byte{byte(len(data))}, data...)
+	_, err := c.Write(buf)
+	return err
+}
+
+// net3ServeUnix answers one framed Unix-domain connection on l so neither side
+// waits on a Windows overlapped AF_UNIX EOF that the OS can drop.
+func net3ServeUnix(t *testing.T, l net.Listener, got chan<- string) {
+	c, err := l.Accept()
+	if err != nil {
+		got <- "accept: " + err.Error()
+		return
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+	b, err := net3ReadFrame(c)
+	if err != nil {
+		got <- "read: " + err.Error()
+		return
+	}
+	if err := net3WriteFrame(c, append([]byte("pong:"), b...)); err != nil {
+		got <- "write: " + err.Error()
+		return
+	}
+	got <- string(b) + "|" + c.RemoteAddr().String() + "|" + c.LocalAddr().String()
+}
+
+// net3ClientUnix dials addr over Unix with a length-framed exchange.
+func net3ClientUnix(t *testing.T, network, addr string) (string, net.Conn) {
+	t.Helper()
+	c, err := net.DialTimeout(network, addr, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+	if err := net3WriteFrame(c, []byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	if uc, ok := c.(*net.UnixConn); ok {
+		if err := uc.CloseWrite(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := net3ReadFrame(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b), c
 }
 
 // net3Client dials addr over network as a Go client: it sends "ping",
@@ -347,7 +463,7 @@ func TestStdNet_GoPeer(t *testing.T) {
 			}
 			defer l.Close()
 			got := make(chan string, 1)
-			go net3Serve(t, l, got)
+			go net3ServeUnix(t, l, got)
 			readLine, wait := net3Start(t, exe, dir, "dialunix", path)
 			if line := readLine(); line != "unix" {
 				t.Fatalf("Mk said %q", line)
@@ -367,7 +483,7 @@ func TestStdNet_GoPeer(t *testing.T) {
 			if line := readLine(); line != "ready" {
 				t.Fatalf("Mk said %q", line)
 			}
-			reply, c := net3Client(t, "unix", path)
+			reply, c := net3ClientUnix(t, "unix", path)
 			c.Close()
 			wait()
 			if reply != "pong:ping" {

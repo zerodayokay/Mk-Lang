@@ -59,30 +59,50 @@ HexLow(d: u8): u8 {
     return if d < 10 { 48 + d } else { 87 + d }
 }
 
-// UxEcho accepts one connection on l and echoes it to its end.
+// UxReadExact reads dst.Len() bytes from c, returning false on an error or early end.
+UxReadExact(c: &Stream, io: Io, dst: mut []u8): bool {
+    var n := 0
+    for n < dst.Len() {
+        k := c.Read(io, mut dst[n..]) else {
+            return false
+        }
+        if k == 0 {
+            return false
+        }
+        n += k
+    }
+    return true
+}
+
+// UxEcho accepts one connection on l and echoes one length-framed message under
+// a bounded deadline, so it does not wait on a lost Windows AF_UNIX EOF.
 UxEcho(l: &Listener, io: Io, done: mut int) {
-    c := l.Accept(io) else {
-        *done = -1
-        return
-    }
-    var buf: [512]u8 = [0; 512]
-    for {
-        n := c.Read(io, mut buf[..]) else {
+    scope r := io.Scope() {
+        r.CancelAfter(time.Seconds(10))
+        c := l.Accept(io) else {
+            *done = -1
+            return
+        }
+        defer c.Close()
+        var hdr: [1]u8 = [0]
+        if !UxReadExact(&c, io, mut hdr[..]) {
             *done = -2
-            c.Close()
             return
         }
-        if n == 0 {
-            break
-        }
-        c.WriteAll(io, buf[0..n]) else {
-            *done = -3
-            c.Close()
+        want := int(hdr[0])
+        var buf: [256]u8 = [0; 256]
+        if want > 0 && !UxReadExact(&c, io, mut buf[0..want]) {
+            *done = -2
             return
         }
-        *done += n
+        if want > 0 {
+            c.WriteAll(io, buf[0..want]) else {
+                *done = -3
+                return
+            }
+        }
+        *done = want
     }
-    c.Close()
 }
 
 test "A Unix stream echoes through a Conn, half-closes, and has no address or TCP option" (sys: &System) {
@@ -115,15 +135,17 @@ test "A Unix stream echoes through a Conn, half-closes, and has no address or TC
         conn := st.Conn()
         onerr conn.Abandon()
         Assert(conn.PeerAddr().IsNone())
+        var hdr: [1]u8 = [11]
+        try conn.WriteAll(sys.io, hdr[..])
         try conn.WriteAll(sys.io, "hello, unix".AsBytes())
         try conn.Shutdown(sys.io, Shutdown.Write)
         var n := 0
-        // The echo's end of stream: bounded, since Windows' AF_UNIX can
+        // The echo is length-framed and bounded, since Windows' AF_UNIX can
         // lose a peer's close under an overlapped receive (an OS defect).
         scope r := sys.io.Scope() {
             r.CancelAfter(time.Seconds(10))
-            for {
-                k := conn.Read(sys.io, mut buf[n..]) else {
+            for n < 11 {
+                k := conn.Read(sys.io, mut buf[n..11]) else {
                     break
                 }
                 if k == 0 {
