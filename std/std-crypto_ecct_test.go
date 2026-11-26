@@ -276,6 +276,25 @@ var cr2EcCtByBuild = ctByBuild{
 	"mk.std.simd.kernel.Wipe":         {"release": 12},
 }
 
+// cr2EcCtBack is this test's ctBackTable: exact per-build counts of
+// non-induction back edges (ctClassifyBack [2]), each read as public or
+// rejection-sampling outcome (never secret).
+var cr2EcCtBack = ctBackTable{
+	"mk.main.Main":                    {"release": 6},                     // try error-tag jumps to Main's shared error block
+	"mk.std.crypto.DerIntLen":         {"release-pgo": 1},                 // leading zero-byte skip on public signature (r, s)
+	"mk.std.crypto.Drbg:New":          {"release-pgo": 6},                 // inlined Wipe: 5 alignment-head tests (addr & 7), 1 tail length test
+	"mk.std.crypto.Drbg:Next":         {"release-pgo": 6},                 // inlined Wipe: 5 alignment-head tests (addr & 7), 1 tail length test
+	"mk.std.crypto.EcSecret:Generate": {"release": 3, "release-pgo": 1},   // Random error tag and rejection loop (b >= n, b == 0; public outcome)
+	"mk.std.crypto.EcSecret:Wipe":     {"release-pgo": 6},                 // inlined Wipe: 5 alignment-head tests (addr & 7), 1 tail length test
+	"mk.std.crypto.EcdsaSign":         {"release": 4, "release-pgo": 22},  // 4 rejection-loop checks (k, r, s; public outcome); PGO adds 3 inlined Wipes (18)
+	"mk.std.crypto.KeyAlgorithm":      {"release": 4, "release-pgo": 30},  // public DER AlgorithmIdentifier OID bytes, tags, and parameter presence
+	"mk.std.crypto.KeyEc":             {"release": 51, "release-pgo": 3},  // public DER structure, OIDs, curve, and single post-loop pad != 0 error test
+	"mk.std.crypto.KeyUint":           {"release-pgo": 2},                 // public DER INTEGER minimal encoding and sign checks
+	"mk.std.crypto.ParsePrivateKey":   {"release": 34, "release-pgo": 11}, // public DER TLV parsing, version, OIDs, and algorithm dispatch
+	"mk.std.crypto.PutDerInt":         {"release-pgo": 2},                 // leading zero-byte skips on public signature (r, s)
+	"mk.std.simd.kernel.Wipe":         {"release": 1, "release-pgo": 1},   // word loop i + 8 <= n on buffer length
+}
+
 // cr2EcCtAbsent are the cr2EcCtAllow functions a build of this probe
 // holds no body of, by build, each inlined into a checked caller
 // (ctRequirePresent). The release build's
@@ -354,7 +373,7 @@ func TestSTDCRYPTO_EcConstantTimeDisassembly(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ins, into := cr2CtBuildSrc(t, objdump, cr2EcCtProbe, nil, pgo)
-			other, counts := ctClassify(ins)
+			other, back, counts := ctClassifyBack(ins)
 			seen := map[string]bool{}
 			for _, x := range ins {
 				seen[x.fn] = true
@@ -379,7 +398,7 @@ func TestSTDCRYPTO_EcConstantTimeDisassembly(t *testing.T) {
 					t.Errorf("%s is inlined into %v in the %s build of the secret paths' probe: a secret path reaches verification's variable-time arithmetic", fn, slices.Sorted(maps.Keys(holders)), name)
 				}
 			}
-			var names []string
+			var names, read []string
 			for fn := range seen {
 				// kernel.Wipe: the release build calls it where main
 				// calls crypto.Wipe.
@@ -408,8 +427,10 @@ func TestSTDCRYPTO_EcConstantTimeDisassembly(t *testing.T) {
 					t.Errorf("%s (%s build) has %d conditional jumps that neither guard a panic nor close a loop, %d allowed; read each (is it a secret?) and record the reading:\n    %s",
 						fn, name, n, allowed, strings.Join(other[fn], "\n    "))
 				}
-				t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], len(other[fn]), allowed)
+				read = append(read, fn)
+				t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction, %d allowed), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], cr2EcCtBack[cr2CtInstance.ReplaceAllString(fn, "")][name], len(other[fn]), allowed)
 			}
+			ctBackCheck(t, "cr2EcCtBack", cr2EcCtBack, name, back, read)
 		})
 	}
 }

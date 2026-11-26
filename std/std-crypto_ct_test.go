@@ -1,9 +1,9 @@
 // Why: a conditional jump on a secret leaks it through timing; the source has
 // no `if` on a secret, but LLVM can still turn a mask select into a branch.
-// What: the classifier ctParse and ctClassify, the allowance tables with
-// their presence rule (ctRequirePresent, ctPresence) and the probe-function
-// rule (ctProbeFn), and TestSTDCRYPTO_ConstantTimeDisassembly over
-// std.crypto's secret paths.
+// What: the classifier ctParse, ctClassify and ctClassifyBack, the allowance
+// tables (including ctBackTable and ctBackCheck) with their presence rule
+// (ctRequirePresent, ctPresence) and the probe-function rule (ctProbeFn),
+// and TestSTDCRYPTO_ConstantTimeDisassembly over std.crypto's secret paths.
 // How: llvm-objdump on an x86_64-linux build; each jump is "check" (reaches a
 // Panic), "back" (a loop) or "other", and a new "other" fails for a human.
 
@@ -113,6 +113,18 @@ var ctAllow = map[string]int{
 	"mk.std.hash.Sha512Blocks":            3,
 	"mk.std.hash.Sha512State:Bytes":       5, // no build reads more than 5
 	"mk.std.hash.Sha512State:Sum":         1,
+}
+
+// ctBack is this test's ctBackTable: exact per-build counts of non-induction
+// back edges (ctClassifyBack [2]), each read as public or non-secret.
+var ctBack = ctBackTable{
+	"mk.main.Main":                  {"release": 12}, // 11 backward jumps to the shared error-return block on Print/Open tags, 1 Writer.Bytes capacity test
+	"mk.std.crypto.ChaBlock":        {"release": 1},  // fixed 10 double rounds (spilled loop counter decq -0x8(%rsp))
+	"mk.std.crypto.ChaXor":          {"release": 1},  // 256-byte block loop (public src.Len())
+	"mk.std.crypto.X25519":          {"release": 1},  // fixed 255-step Montgomery ladder counter reloaded across field calls
+	"mk.std.hash.Sha256State:Bytes": {"release": 1},  // tail CopyBytes branch on public length
+	"mk.std.hash.Sha512Blocks":      {"release": 2},  // CPU feature test (avx2/bmi2) and 128-byte block loop on public length
+	"mk.std.hash.Sha512State:Bytes": {"release": 1},  // tail CopyBytes branch on public length
 }
 
 // ctPublic are std.crypto's functions that see public data only (Verify's
@@ -346,12 +358,13 @@ var ctTables = []struct {
 	absent map[string][]string
 	unrec  map[string][]string
 	by     ctByBuild
+	back   ctBackTable
 	builds []string
 }{
-	{"TestSTDCRYPTO_ConstantTimeDisassembly", []map[string]int{ctAllow}, ctAbsent, ctUnrecorded, nil, []string{"release"}},
-	{"TestSTDCRYPTO_TlsConstantTimeDisassembly", []map[string]int{cr2CtAllow, ctAllow}, cr2CtAbsent, cr2CtUnrecorded, cr2CtByBuild, []string{"kernel", "kernel-pgo", "masked", "masked-pgo"}},
-	{"TestSTDCRYPTO_EcConstantTimeDisassembly", []map[string]int{cr2EcCtAllow, cr2CtAllow, ctAllow}, cr2EcCtAbsent, cr2EcCtUnrecorded, cr2EcCtByBuild, []string{"release", "release-pgo"}},
-	{"TestSTDHASH_ConstantTimeDisassembly", []map[string]int{h2CtAllow}, h2CtAbsent, h2CtUnrecorded, h2CtByBuild, []string{"kernel", "kernel-pgo", "masked", "masked-pgo"}},
+	{"TestSTDCRYPTO_ConstantTimeDisassembly", []map[string]int{ctAllow}, ctAbsent, ctUnrecorded, nil, ctBack, []string{"release"}},
+	{"TestSTDCRYPTO_TlsConstantTimeDisassembly", []map[string]int{cr2CtAllow, ctAllow}, cr2CtAbsent, cr2CtUnrecorded, cr2CtByBuild, cr2CtBack, []string{"kernel", "kernel-pgo", "masked", "masked-pgo"}},
+	{"TestSTDCRYPTO_EcConstantTimeDisassembly", []map[string]int{cr2EcCtAllow, cr2CtAllow, ctAllow}, cr2EcCtAbsent, cr2EcCtUnrecorded, cr2EcCtByBuild, cr2EcCtBack, []string{"release", "release-pgo"}},
+	{"TestSTDHASH_ConstantTimeDisassembly", []map[string]int{h2CtAllow}, h2CtAbsent, h2CtUnrecorded, h2CtByBuild, h2CtBack, []string{"kernel", "kernel-pgo", "masked", "masked-pgo"}},
 }
 
 // TestSTDCRYPTO_AllowanceTables checks the tables themselves, with no
@@ -395,6 +408,29 @@ func TestSTDCRYPTO_AllowanceTables(t *testing.T) {
 		for fn, n := range tb.chain[0] {
 			if n > 0 && slices.Contains(tb.absent[fn], "*") {
 				t.Errorf("%s: %s is allowed %d jumps but listed absent from every build, so the count covers no body read here: hold it at 0", tb.test, fn, n)
+			}
+		}
+		// A back-edge count names a function of the test's lookup and a
+		// build of the test the function is not absent from, and is above
+		// 0 (0 is every function's default).
+		for fn, per := range tb.back {
+			known := false
+			for _, m := range tb.chain {
+				_, ok := m[fn]
+				known = known || ok
+			}
+			if !known {
+				t.Errorf("%s: back-edge count for %s, which its tables do not list", tb.test, fn)
+			}
+			for b, n := range per {
+				switch {
+				case !slices.Contains(tb.builds, b):
+					t.Errorf("%s: back-edge count for %s names build %q, not one of %v", tb.test, fn, b, tb.builds)
+				case slices.Contains(tb.absent[fn], b) || slices.Contains(tb.absent[fn], "*"):
+					t.Errorf("%s: back-edge count for %s in %s, a build its absent list names", tb.test, fn, b)
+				case n <= 0:
+					t.Errorf("%s: back-edge count %d for %s in %s: a function with none is left out", tb.test, n, fn, b)
+				}
 			}
 		}
 	}
@@ -472,11 +508,140 @@ func ctParse(dis string) []ctInsn {
 // unconditional jmp there (a panic block reached through a jump), and
 // before the direction is looked at, so a backward jump to a panic block
 // (CtrNi's Load checks) is a check, not a back edge. A back edge's
-// flag-setter is an induction compare when it is an add, sub, inc or dec,
-// or a cmp or test of a register the loop body (target to the edge) adds
-// to, subtracts from, increments, decrements or loads with lea; any other
-// back edge may exit on data, and is counted in [2] for its reading.
+// flag-setter (the instruction right before it) is an induction compare
+// when it steps a counter (ctStep: an add or sub of an immediate, an inc or
+// a dec), or is a cmp or test of a counter outside any memory operand; a
+// counter is a register the loop body (target to the edge) writes at least
+// once and only with steps, and, when it is caller-saved, holds no call.
+// Any other back edge may exit on data (a rejection loop's test of a drawn
+// secret, a compare of a loaded byte), and is counted in [2] for its
+// reading (ctClassifyBack lists them, ctBackTable bounds them).
 func ctClassify(ins []ctInsn) (map[string][]string, map[string][3]int) {
+	other, _, counts := ctClassifyBack(ins)
+	return other, counts
+}
+
+var (
+	ctImmRe = regexp.MustCompile(`^\$-?(0x[0-9a-f]+|[0-9]+),`)
+	ctMemRe = regexp.MustCompile(`\([^)]*\)`)
+	// ctCallerSaved are the registers a call may change (System V).
+	ctCallerSaved = map[string]bool{"rax": true, "rcx": true, "rdx": true, "rsi": true, "rdi": true, "r8": true, "r9": true, "r10": true, "r11": true}
+)
+
+// ctReg is the 64-bit register a register operand (with its %) is part of.
+func ctReg(r string) string {
+	r = strings.TrimPrefix(r, "%")
+	switch r {
+	case "al", "ah", "ax", "eax":
+		return "rax"
+	case "bl", "bh", "bx", "ebx":
+		return "rbx"
+	case "cl", "ch", "cx", "ecx":
+		return "rcx"
+	case "dl", "dh", "dx", "edx":
+		return "rdx"
+	case "sil", "si", "esi":
+		return "rsi"
+	case "dil", "di", "edi":
+		return "rdi"
+	case "bpl", "bp", "ebp":
+		return "rbp"
+	case "spl", "sp", "esp":
+		return "rsp"
+	}
+	if len(r) > 1 && r[0] == 'r' && r[1] >= '0' && r[1] <= '9' {
+		return strings.TrimRight(r, "dwb")
+	}
+	return r
+}
+
+// ctStep reports whether x steps a register by a constant (an add or sub
+// of an immediate, an inc or a dec), and which.
+func ctStep(x ctInsn) (string, bool) {
+	fields := strings.Split(x.args, ",")
+	dst := strings.TrimSpace(fields[len(fields)-1])
+	if !strings.HasPrefix(dst, "%") {
+		return "", false
+	}
+	switch {
+	case strings.HasPrefix(x.op, "inc"), strings.HasPrefix(x.op, "dec"):
+		return ctReg(dst), true
+	case strings.HasPrefix(x.op, "add"), strings.HasPrefix(x.op, "sub"):
+		return ctReg(dst), ctImmRe.MatchString(x.args)
+	}
+	return "", false
+}
+
+// ctWrites reports whether x may write r: as its last operand (not for a
+// compare, a test, a jump or a push, whose last operand is read), or as
+// one an instruction writes without naming it last (mul and div, the sign
+// extensions, xchg, xadd, cmpxchg, mulx, cpuid, rdtsc, syscall, the string
+// instructions); a call is ctCounter's.
+func ctWrites(x ctInsn, r string) bool {
+	op := x.op
+	implicit := map[string][]string{"cqto": {"rdx"}, "cltd": {"rdx"}, "cwtd": {"rdx"}, "cltq": {"rax"}, "cwtl": {"rax"}, "cpuid": {"rax", "rbx", "rcx", "rdx"}, "rdtsc": {"rax", "rdx"}, "syscall": {"rax", "rcx", "r11"}}
+	if regs, ok := implicit[op]; ok {
+		return slices.Contains(regs, r)
+	}
+	fields := strings.Split(x.args, ",")
+	named := func() bool {
+		for _, f := range fields {
+			if f = strings.TrimSpace(ctMemRe.ReplaceAllString(f, "")); strings.HasPrefix(f, "%") && ctReg(f) == r {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case strings.HasPrefix(op, "xchg"), strings.HasPrefix(op, "xadd"), strings.HasPrefix(op, "mulx"):
+		return named()
+	case strings.HasPrefix(op, "cmpxchg"):
+		return r == "rax" || named()
+	case strings.HasPrefix(op, "rep"), strings.HasPrefix(op, "stos"), strings.HasPrefix(op, "lods"), strings.HasPrefix(op, "scas"), strings.Contains(x.args, "%es:"), strings.Contains(x.args, "%ds:"):
+		return r == "rsi" || r == "rdi" || r == "rcx" || r == "rax"
+	case (strings.HasPrefix(op, "mul") || strings.HasPrefix(op, "div") || strings.HasPrefix(op, "idiv") || strings.HasPrefix(op, "imul")) && len(fields) == 1:
+		return r == "rax" || r == "rdx"
+	}
+	if strings.HasPrefix(op, "bt") && !strings.HasPrefix(op, "bts") && !strings.HasPrefix(op, "btr") && !strings.HasPrefix(op, "btc") {
+		return false
+	}
+	for _, p := range []string{"cmp", "test", "ptest", "ucomis", "comis", "j", "push", "nop"} {
+		if strings.HasPrefix(op, p) && !strings.HasPrefix(op, "cmov") {
+			return false
+		}
+	}
+	dst := strings.TrimSpace(fields[len(fields)-1])
+	return strings.HasPrefix(dst, "%") && ctReg(dst) == r
+}
+
+// ctCounter reports whether ins[from:to] writes r at least once and only
+// with steps (ctStep), with no call when r is caller-saved.
+func ctCounter(ins []ctInsn, r string, from, to int) bool {
+	steps := 0
+	for k := from; k < to; k++ {
+		y := ins[k]
+		if strings.HasPrefix(y.op, "call") {
+			if ctCallerSaved[r] {
+				return false
+			}
+			continue
+		}
+		if !ctWrites(y, r) {
+			continue
+		}
+		if s, ok := ctStep(y); !ok || s != r {
+			return false
+		}
+		steps++
+	}
+	return steps > 0
+}
+
+// ctClassifyBack is ctClassify with, per function, the back edges counted
+// in [2], each with its flag-setter (the instruction right before it, and
+// before that the last instruction that is no mov or lea, which is the one
+// whose flags the jump reads when only moves come between).
+func ctClassifyBack(ins []ctInsn) (map[string][]string, map[string][]string, map[string][3]int) {
 	at := map[uint64]int{}
 	for i, x := range ins {
 		at[x.addr] = i
@@ -513,32 +678,33 @@ func ctClassify(ins []ctInsn) (map[string][]string, map[string][3]int) {
 			return false
 		}
 		set := ins[i-1]
-		for _, p := range []string{"add", "sub", "inc", "dec"} {
-			if strings.HasPrefix(set.op, p) {
-				return true
-			}
+		if r, ok := ctStep(set); ok {
+			return ctCounter(ins, r, from, i)
 		}
 		if !strings.HasPrefix(set.op, "cmp") && !strings.HasPrefix(set.op, "test") {
 			return false
 		}
-		for _, r := range ctRegRe.FindAllString(set.args, -1) {
-			for k := from; k < i-1; k++ {
-				y := ins[k]
-				fields := strings.Split(y.args, ",")
-				dst := strings.TrimSpace(fields[len(fields)-1])
-				if dst != r {
-					continue
-				}
-				for _, p := range []string{"add", "sub", "inc", "dec", "lea"} {
-					if strings.HasPrefix(y.op, p) {
-						return true
-					}
-				}
+		for _, r := range ctRegRe.FindAllString(ctMemRe.ReplaceAllString(set.args, ""), -1) {
+			if ctCounter(ins, ctReg(r), from, i-1) {
+				return true
 			}
 		}
 		return false
 	}
+	// setter is the back edge's text: the instruction before it and, when
+	// that is a mov or lea, the last one before them that is neither.
+	setter := func(i int) string {
+		var parts []string
+		for k := i - 1; k >= 0 && k >= i-4 && ins[k].fn == ins[i].fn; k-- {
+			parts = append([]string{ins[k].op + " " + ins[k].args}, parts...)
+			if !strings.HasPrefix(ins[k].op, "mov") && !strings.HasPrefix(ins[k].op, "lea") {
+				break
+			}
+		}
+		return strings.Join(parts, "; ")
+	}
 	other := map[string][]string{}
+	back := map[string][]string{}
 	counts := map[string][3]int{}
 	for i, x := range ins {
 		if !strings.HasPrefix(x.op, "j") || strings.HasPrefix(x.op, "jmp") {
@@ -553,6 +719,7 @@ func ctClassify(ins []ctInsn) (map[string][]string, map[string][3]int) {
 			c[1]++
 			if !induction(i, j) {
 				c[2]++
+				back[x.fn] = append(back[x.fn], setter(i)+"  |  "+x.op+" "+x.args)
 			}
 		default:
 			prev := ""
@@ -563,7 +730,61 @@ func ctClassify(ins []ctInsn) (map[string][]string, map[string][3]int) {
 		}
 		counts[x.fn] = c
 	}
-	return other, counts
+	return other, back, counts
+}
+
+// ctBackTable bounds the back edges counted in ctClassify's [2] of each
+// function a constant-time test reads, by build: function (instance hash
+// stripped) to build to the count the build has, every edge read (does the
+// loop exit on a secret?). A function or build it does not name has none.
+// The bound is exact (ctBackProblems): a build with more fails with the
+// edges to read, and one with fewer fails until its count is lowered, so
+// no count stands above what its build reaches.
+type ctBackTable map[string]map[string]int
+
+// ctBackProblems is the rule of ctBackTable for one build: back holds each
+// function's [2] edges (ctClassifyBack) and read the functions the test
+// reads in the build. A function above its count fails with its edges; a
+// count no instance of the function reaches fails, as does a count for a
+// function the build holds no read body of.
+func ctBackProblems(table string, tb ctBackTable, build string, back map[string][]string, read []string) []string {
+	var problems []string
+	most := map[string]int{}
+	for _, fn := range read {
+		name := cr2CtInstance.ReplaceAllString(fn, "")
+		allowed := tb[name][build]
+		n := len(back[fn])
+		if n > allowed {
+			problems = append(problems, fmt.Sprintf("%s (%s build) has %d back edges whose compare is not an induction, %d allowed in %s; read each (does the loop exit on a secret?) and record the reading:\n    %s",
+				fn, build, n, allowed, table, strings.Join(back[fn], "\n    ")))
+		}
+		if m, ok := most[name]; !ok || n > m {
+			most[name] = n
+		}
+	}
+	for name, per := range tb {
+		allowed, ok := per[build]
+		if !ok {
+			continue
+		}
+		m, held := most[name]
+		switch {
+		case !held:
+			problems = append(problems, fmt.Sprintf("%s: %s allows %d back edges in the %s build, which holds no body of it that the test reads: drop the build from its entry", name, table, allowed, build))
+		case m < allowed:
+			problems = append(problems, fmt.Sprintf("%s (%s build) has %d back edges whose compare is not an induction, %s allows %d: lower the count to the build's", name, build, m, table, allowed))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// ctBackCheck fails t with ctBackProblems' problems.
+func ctBackCheck(t *testing.T, table string, tb ctBackTable, build string, back map[string][]string, read []string) {
+	t.Helper()
+	for _, p := range ctBackProblems(table, tb, build, back, read) {
+		t.Error(p)
+	}
 }
 
 // TestSTDCRYPTO_ConstantTimeDisassembly builds, for x86_64-linux in release
@@ -606,12 +827,12 @@ func TestSTDCRYPTO_ConstantTimeDisassembly(t *testing.T) {
 	if len(ins) == 0 {
 		t.Fatal("llvm-objdump printed no instruction")
 	}
-	other, counts := ctClassify(ins)
+	other, back, counts := ctClassifyBack(ins)
 	seen := map[string]bool{}
 	for _, x := range ins {
 		seen[x.fn] = true
 	}
-	var names []string
+	var names, read []string
 	for fn := range seen {
 		names = append(names, fn)
 	}
@@ -631,8 +852,10 @@ func TestSTDCRYPTO_ConstantTimeDisassembly(t *testing.T) {
 			t.Errorf("%s has %d conditional jumps that neither guard a panic nor close a loop, %d allowed; read each (is it a secret?) and record the reading:\n    %s",
 				fn, n, allowed, strings.Join(other[fn], "\n    "))
 		}
-		t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], len(other[fn]), allowed)
+		read = append(read, fn)
+		t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction, %d allowed), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], ctBack[cr2CtInstance.ReplaceAllString(fn, "")]["release"], len(other[fn]), allowed)
 	}
+	ctBackCheck(t, "ctBack", ctBack, "release", back, read)
 	into := ctInlined(t, exe)
 	ctRequirePresent(t, "ctAllow", "release", ctAllow, seen, ctAbsent, ctUnrecorded, into, func(fn string) bool { return ctChecked(fn) && !ctPublic[fn] })
 	for fn := range ctUnrecorded {
@@ -720,6 +943,69 @@ func TestSTDCRYPTO_ConstantTimeClassifier(t *testing.T) {
 	other3, counts3 := ctClassify(ctParse(dis3))
 	if c := counts3["mk.std.crypto.Tag"]; c[0] != 0 || len(other3["mk.std.crypto.Tag"]) != 1 {
 		t.Fatalf("got counts %v, other %q; want no check and the je as other: the scan stops at the jmp", c, other3["mk.std.crypto.Tag"])
+	}
+	// A memory-operand compare referencing a stepped index, a caller-saved
+	// counter across a call, a stepped register also overwritten in the loop,
+	// and a memory-operand dec all go into [2] rather than [1].
+	const dis4 = `
+0000000000004000 <mk.std.crypto.SecretLoop>:
+    4000:      	addq	$0x1, %rax
+    4004:      	cmpb	$0x0, (%rsi,%rax)
+    4008:      	jne	0x4000 <mk.std.crypto.SecretLoop>
+    4010:      	callq	0x9100 <mk.std.crypto.Helper>
+    4015:      	addq	$0x1, %rcx
+    4019:      	cmpq	%rdx, %rcx
+    401c:      	jb	0x4010 <mk.std.crypto.SecretLoop+0x10>
+    4020:      	movq	(%rsi), %rbx
+    4023:      	addq	$0x1, %rbx
+    4027:      	cmpq	%rdx, %rbx
+    402a:      	jb	0x4020 <mk.std.crypto.SecretLoop+0x20>
+    4030:      	decq	-0x8(%rsp)
+    4035:      	jne	0x4030 <mk.std.crypto.SecretLoop+0x30>
+    4037:      	retq
+`
+	_, back4, counts4 := ctClassifyBack(ctParse(dis4))
+	if c := counts4["mk.std.crypto.SecretLoop"]; c != [3]int{0, 4, 4} || len(back4["mk.std.crypto.SecretLoop"]) != 4 {
+		t.Fatalf("got counts %v, back %q; want [0 4 4] and 4 non-induction back edges", c, back4["mk.std.crypto.SecretLoop"])
+	}
+}
+
+// TestSTDCRYPTO_BackEdgeRule verifies ctBackProblems: an exact match passes,
+// a function above its count (or above the default 0) fails, a function below
+// its count fails, and an entry for a build with no read body fails.
+func TestSTDCRYPTO_BackEdgeRule(t *testing.T) {
+	tb := ctBackTable{
+		"mk.std.crypto.Exact":   {"b": 2},
+		"mk.std.crypto.TooHigh": {"b": 3},
+		"mk.std.crypto.Missing": {"b": 1},
+		"mk.std.crypto.Other":   {"other": 1},
+	}
+	back := map[string][]string{
+		"mk.std.crypto.Exact":   {"cmpq %rax, %rbx  |  jb 0x10", "testb %al, %al  |  jne 0x20"},
+		"mk.std.crypto.TooHigh": {"cmpq %rax, %rbx  |  jb 0x30"},
+		"mk.std.crypto.Unread":  {"cmpb $0x0, (%rsi)  |  jne 0x40"},
+	}
+	read := []string{"mk.std.crypto.Exact", "mk.std.crypto.TooHigh", "mk.std.crypto.Unread"}
+	problems := ctBackProblems("tb", tb, "b", back, read)
+	if len(problems) != 3 {
+		t.Fatalf("got %d problems, want 3:\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+	if !strings.Contains(problems[0], "mk.std.crypto.Missing:") || !strings.Contains(problems[0], "drop the build") {
+		t.Errorf("problem[0] = %q; want Missing drop-build error", problems[0])
+	}
+	if !strings.Contains(problems[1], "mk.std.crypto.TooHigh (b build) has 1 back edges") || !strings.Contains(problems[1], "allows 3") {
+		t.Errorf("problem[1] = %q; want TooHigh lower-count error", problems[1])
+	}
+	if !strings.Contains(problems[2], "mk.std.crypto.Unread (b build) has 1 back edges") || !strings.Contains(problems[2], "0 allowed") {
+		t.Errorf("problem[2] = %q; want Unread above-default error", problems[2])
+	}
+	okTb := ctBackTable{
+		"mk.std.crypto.Exact":  {"b": 2},
+		"mk.std.crypto.Unread": {"b": 1},
+		"mk.std.crypto.Other":  {"other": 1},
+	}
+	if got := ctBackProblems("tb", okTb, "b", back, []string{"mk.std.crypto.Exact", "mk.std.crypto.Unread"}); len(okTb) == 0 || len(got) != 0 {
+		t.Fatalf("exact table gave problems: %v", got)
 	}
 }
 

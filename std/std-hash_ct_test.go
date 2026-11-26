@@ -147,6 +147,24 @@ var h2CtByBuild = ctByBuild{
 	"mk.std.hash.Sha512State:Sum":   {"kernel": 1, "masked": 1, "masked-pgo": 2},
 }
 
+// h2CtBack is this test's ctBackTable: exact per-build counts of
+// non-induction back edges (ctClassifyBack [2]), each read as public (lengths,
+// fixed round counts, CPU feature flags, or Writer.Bytes buffer capacity).
+var h2CtBack = ctBackTable{
+	"mk.main.Main":                  {"kernel": 2, "kernel-pgo": 5, "masked": 2},                  // Writer.Bytes buffer capacity; kernel-pgo adds inlined Sha512State:Bytes/Sha512Blocks length/round loops
+	"mk.std.hash.Sha1Blocks":        {"kernel": 1, "masked": 1},                                   // simd.Cpu().Has("sha") feature test
+	"mk.std.hash.Sha1State:Bytes":   {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // self.n < 64 / i < n on public lengths
+	"mk.std.hash.Sha256Compress":    {"kernel": 2, "kernel-pgo": 3, "masked": 1, "masked-pgo": 1}, // block loop (n - i >= 64), fixed 8 round groups, and Sha256Blocks CPU feature test
+	"mk.std.hash.Sha256State:Bytes": {"kernel": 1, "kernel-pgo": 4, "masked": 1, "masked-pgo": 1}, // public lengths; kernel-pgo adds inlined Sha256Compress length and round loops
+	"mk.std.hash.Sha256State:Sum":   {"kernel-pgo": 2},                                            // inlined Sha256Compress length and round loops
+	"mk.std.hash.Sha512Blocks":      {"kernel": 2, "kernel-pgo": 3, "masked": 2, "masked-pgo": 1}, // Sha512Blocks CPU feature test, 128-byte block loop, and fixed 10 round groups
+	"mk.std.hash.Sha512State:Bytes": {"kernel": 1, "kernel-pgo": 4, "masked": 1, "masked-pgo": 1}, // public lengths; kernel-pgo adds inlined Sha512Blocks length and round loops
+	"mk.std.hash.Sha512State:Sum":   {"kernel-pgo": 2},                                            // inlined Sha512Blocks length and round loops
+	"mk.std.simd.kernel.Sha1Ni":     {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // block loop i < n on public length
+	"mk.std.simd.kernel.Sha512Avx2": {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // fixed 10 round groups or block loop i < n on public length
+	"mk.std.simd.kernel.ShaNi":      {"kernel": 1, "kernel-pgo": 1},                               // block loop i < n on public length
+}
+
 // h2CtMust are the functions every build must hold out of line, so the
 // check cannot pass by reading nothing: the three block loops, the SHA-512
 // kernel's body (s8ShaOff masks only SHA-256's kernel, so the masked
@@ -356,7 +374,7 @@ func TestSTDHASH_ConstantTimeDisassembly(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			t.Parallel()
 			ins, into := h2CtBuild(t, objdump, b.forces, b.pgo)
-			other, counts := ctClassify(ins)
+			other, back, counts := ctClassifyBack(ins)
 			seen := map[string]bool{}
 			for _, x := range ins {
 				seen[x.fn] = true
@@ -374,7 +392,7 @@ func TestSTDHASH_ConstantTimeDisassembly(t *testing.T) {
 				}
 			}
 			ctRequirePresent(t, "h2CtAllow", b.name, h2CtAllow, seen, h2CtAbsent, h2CtUnrecorded, into, h2CtChecked)
-			var names []string
+			var names, read []string
 			for fn := range seen {
 				if h2CtChecked(fn) {
 					names = append(names, fn)
@@ -392,8 +410,10 @@ func TestSTDHASH_ConstantTimeDisassembly(t *testing.T) {
 					t.Errorf("%s (%s build) has %d conditional jumps that neither guard a panic nor close a loop, %d allowed; read each (is it a secret?) and record the reading:\n    %s",
 						fn, b.name, n, allowed, strings.Join(other[fn], "\n    "))
 				}
-				t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], len(other[fn]), allowed)
+				read = append(read, fn)
+				t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction, %d allowed), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], h2CtBack[cr2CtInstance.ReplaceAllString(fn, "")][b.name], len(other[fn]), allowed)
 			}
+			ctBackCheck(t, "h2CtBack", h2CtBack, b.name, back, read)
 		})
 	}
 }

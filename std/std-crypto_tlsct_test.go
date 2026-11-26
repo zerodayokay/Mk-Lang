@@ -218,6 +218,30 @@ var cr2CtAllow = map[string]int{
 	"mk.std.simd.kernel.Counter":          0,
 }
 
+// cr2CtBack is this test's ctBackTable: exact per-build counts of
+// non-induction back edges (ctClassifyBack [2]), each read as public (lengths,
+// round counts, CPU feature flags, or Wipe's buffer length/alignment).
+var cr2CtBack = ctBackTable{
+	"mk.std.crypto.AesEncrypt4":           {"kernel-pgo": 1, "masked-pgo": 1},                           // round loop 1..nr (public key length)
+	"mk.std.crypto.AesGcm:Ctr":            {"kernel": 1, "kernel-pgo": 5, "masked": 1, "masked-pgo": 4}, // block/tail loops on public length n; masked-pgo adds inlined AesEncrypt4 round loop
+	"mk.std.crypto.AesGcm:Ghash":          {"kernel": 6},                                                // whole == data.Len() and inlined GhashBlocks CPU feature tests (pclmul, aes)
+	"mk.std.crypto.AesGcm:New":            {"kernel": 2},                                                // inlined GhashKey CPU feature tests (pclmul, aes)
+	"mk.std.crypto.AesGcm:Tag":            {"kernel": 2, "kernel-pgo": 4, "masked-pgo": 5},              // ghni/GhashBlocks CPU feature tests and whole == data.Len() length checks
+	"mk.std.crypto.AesSchedule":           {"kernel-pgo": 1, "masked-pgo": 1},                           // key-word loop 0..nk (public key length)
+	"mk.std.crypto.Expand256":             {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // output-length loop i < out.Len()
+	"mk.std.crypto.Expand384":             {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // output-length loop i < out.Len()
+	"mk.std.crypto.Expand512":             {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // output-length loop i < out.Len()
+	"mk.std.crypto.GhashPortable":         {"kernel": 1, "kernel-pgo": 1, "masked": 1, "masked-pgo": 1}, // block loop on public data length
+	"mk.std.crypto.HmacPad":               {"kernel-pgo": 2, "masked-pgo": 2},                           // pad loop 0..b (public block size 64 or 128)
+	"mk.std.crypto.Wipe":                  {"kernel": 1, "masked": 1},                                   // inlined Wipe word loop i + 8 <= n (buffer length)
+	"mk.std.simd.kernel.AesCtr":           {"kernel": 1},                                                // simd.Cpu().Has("aes") feature test
+	"mk.std.simd.kernel.AesEncryptBlocks": {"kernel": 1},                                                // simd.Cpu().Has("aes") feature test
+	"mk.std.simd.kernel.BlocksNi":         {"kernel": 1, "kernel-pgo": 1},                               // 8-block loop i + 128 <= n on public length
+	"mk.std.simd.kernel.CtrNi":            {"kernel": 3, "kernel-pgo": 2},                               // 8-block, 1-block, and tail loops on public length
+	"mk.std.simd.kernel.GhashNi":          {"kernel": 1, "kernel-pgo": 1},                               // 4-block loop i + 64 <= n on public length
+	"mk.std.simd.kernel.Wipe":             {"kernel-pgo": 2, "masked-pgo": 2},                           // alignment head and word loop i + 8 <= n
+}
+
 // cr2CtNi are the instruction path's bodies: every unmasked build holds
 // them, so the AES and carry-less multiply path was read, and no masked
 // build does, so the mask took.
@@ -363,7 +387,7 @@ func TestSTDCRYPTO_TlsConstantTimeDisassembly(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			t.Parallel()
 			ins, into := cr2CtBuild(t, objdump, b.forces, b.pgo)
-			other, counts := ctClassify(ins)
+			other, back, counts := ctClassifyBack(ins)
 			seen := map[string]bool{}
 			for _, x := range ins {
 				seen[x.fn] = true
@@ -383,7 +407,7 @@ func TestSTDCRYPTO_TlsConstantTimeDisassembly(t *testing.T) {
 					t.Errorf("%s held out of line: %v in the %s build; want %v", ni, held, b.name, b.forces == nil)
 				}
 			}
-			var names []string
+			var names, read []string
 			for fn := range seen {
 				if cr2CtChecked(fn) {
 					names = append(names, fn)
@@ -407,8 +431,10 @@ func TestSTDCRYPTO_TlsConstantTimeDisassembly(t *testing.T) {
 					t.Errorf("%s (%s build) has %d conditional jumps that neither guard a panic nor close a loop, %d allowed; read each (is it a secret?) and record the reading:\n    %s",
 						fn, b.name, n, allowed, strings.Join(other[fn], "\n    "))
 				}
-				t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], len(other[fn]), allowed)
+				read = append(read, fn)
+				t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction, %d allowed), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], cr2CtBack[cr2CtInstance.ReplaceAllString(fn, "")][b.name], len(other[fn]), allowed)
 			}
+			ctBackCheck(t, "cr2CtBack", cr2CtBack, b.name, back, read)
 		})
 	}
 }
