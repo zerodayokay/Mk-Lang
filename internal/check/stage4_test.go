@@ -1,6 +1,6 @@
 // Why: gen reads declarations at stage 4, before check has run, through a
 // view the driver adapts into gen.World.
-// What: TestGenView_SameModuleFromAST.
+// What: TestGenView_SameModuleFromAST and TestGenView_ValueResult.
 // How: builds the view (stage4.go, GenView) of a module stopped before
 // stage 5 and reads its declarations, fields and types from the AST alone.
 
@@ -113,5 +113,39 @@ func TestGenView_SameModuleFromAST(t *testing.T) {
 	}
 	if got, un := v.TypeOf(7, tagsNode); got != types.NoType || un != source.Symbol(0) {
 		t.Errorf("TypeOf on a missing file = %d %d", got, un)
+	}
+}
+
+// TestGenView_ValueResult: the view reads a result as stage 5 does: a
+// written E!T, parenthesized or not, fails; an alias of one is the union
+// held as a value, with no errors, in a fn type and in a method alike.
+func TestGenView_ValueResult(t *testing.T) {
+	w := newWorld(t, true)
+	b := w.add("m", opt{stopBefore: true}, "error Bad\n\ntype R = Bad!int\n\n"+
+		"struct S {\n\tf: fn(&R): R\n\tg: fn(): (Bad!int)\n\th: fn(): Bad!int\n}\n\n"+
+		"interface I {\n\tGet(&self): R\n\tPut(&self): Bad!int\n}\n")
+	v := w.c.GenView(&ModuleInput{Module: b.id, Files: b.files, Info: b.info})
+	tab := w.tab
+	bad := tab.ErrorSet([]types.ErrorMember{{Item: b.item("Bad")}})
+	r := tab.ErrorUnion(bad, types.Int)
+	fails := tab.Fn(types.FnType{Result: types.Int, Errors: bad})
+	d, ok := v.Decl(b.item("S"), b.id)
+	if !ok || len(d.Fields) != 3 {
+		t.Fatalf("Decl(S) = %+v", d)
+	}
+	for i, want := range []types.TypeID{tab.Fn(types.FnType{Params: []types.FnParam{{Type: tab.Ref(r)}}, Result: r, Errors: types.EmptyErrors}), fails, fails} {
+		if d.Fields[i].Type != want {
+			t.Errorf("field %d: %s, want %s", i, tab.TypeString(d.Fields[i].Type, nil), tab.TypeString(want, nil))
+		}
+	}
+	s, ok := v.Decl(b.item("I"), b.id)
+	if !ok || len(s.Methods) != 2 {
+		t.Fatalf("Decl(I) = %+v", s)
+	}
+	if get := s.Methods[0].Sig; get.Result != r || get.Errors != types.EmptyErrors {
+		t.Errorf("Get: result %s errors %d, want the union as a value", tab.TypeString(get.Result, nil), get.Errors)
+	}
+	if put := s.Methods[1].Sig; put.Result != types.Int || put.Errors != bad {
+		t.Errorf("Put: result %s errors %d, want int failing with Bad", tab.TypeString(put.Result, nil), put.Errors)
 	}
 }

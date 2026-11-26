@@ -50,6 +50,9 @@ func (r *run) spliceValue(m *eval.Machine, v eval.Value, t *types.Type) ([]tok, 
 		if ferr != nil {
 			return nil, true, ferr
 		}
+		if err := r.spellFailed(); err != nil {
+			return nil, true, err // a type argument naming such a fn type
+		}
 		return ts, true, r.chargeToks(m, len(ts))
 	}
 	return nil, false, nil

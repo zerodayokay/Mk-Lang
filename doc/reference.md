@@ -7970,6 +7970,8 @@ These types are in the prelude, so a generator module needs no import for them. 
 | `fl.Kind()`, `fl.Param()`, `fl.Path()`, `fl.Field()` | One `Flow` of `m.Flows()`: its `FlowKind` (`From`, `Into`, `Ends`, or `Store` for `*q into p`); the destination (`result` for `From`, the receiving parameter for `Into` and `Store`, the ended parameter for `Ends`, `self` for the receiver); the source as written, `""` for `Ends`; the result field of a per-field clause, else `""`. `m.Flows()` lists one entry per source, by kind, field, parameter and path |
 | `p.Name()`, `p.Type()`, `p.Const()` | A parameter |
 
+A `fn` type or a method whose result is an error union held as a value (`fn(&R): R` with `type R = Bad!int`, a function that cannot fail) has no spelling in generated code: a written `E!T` result is one that fails. `t.Name()`, a `Type` splice and `m.Signature()` of one stop the run with E0901 at the `gen` line, naming the type or method, and the line emits nothing.
+
 A generator reports bad input with `Fail`. This one refuses a type that is not a struct:
 
 ```mk
