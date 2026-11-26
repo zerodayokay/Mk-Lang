@@ -39,11 +39,11 @@ func jsonOf(t *testing.T, r Result) []byte {
 	return b.Bytes()
 }
 
-// pkgOnly drops std's module paths.
+// pkgOnly drops std and generated system view module paths.
 func pkgOnly(ms []string) []string {
 	var out []string
 	for _, m := range ms {
-		if !strings.HasPrefix(m, "std.") {
+		if !strings.HasPrefix(m, "std.") && !strings.HasPrefix(m, sysViewPrefix) {
 			out = append(out, m)
 		}
 	}

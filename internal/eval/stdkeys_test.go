@@ -108,6 +108,8 @@ var runtimeRefusals = map[string]string{
 	"std.rt.FuncTable":     "extern",
 	"std.rt.StackPointer":  "pointer-bytes",
 	"std.rt.UsesTasks":     "extern",
+	"std.dl.Present":       "extern",
+	"std.sys.LazyPresent":  "extern",
 }
 
 // TestRuntimeIntrinsicsRefused: the runtime-only intrinsics
@@ -115,8 +117,10 @@ var runtimeRefusals = map[string]string{
 // the list is in refusals with the refusal it names, every
 // entry of refusals is a row, and every bodiless declaration of the files
 // that declare them (std/rt/intrinsics.mk, std/sys/linux/syscall.mk,
-// std/sys/nutshell/syscall.mk, std/sys/windows/teb.mk, std/task/context.mk)
-// has a refusal under its stable key, each key counted once (the Nutshell
+// std/sys/nutshell/syscall.mk, std/sys/windows/teb.mk, std/task/context.mk,
+// and the Present intrinsics of std/sys/windows/lazy.mk and std/dl/dl.mk,
+// generic ones included) has a refusal under its stable key, each key
+// counted once (the Nutshell
 // variant declares Linux's Syscall again). An unrefused one would be the
 // E0000 of an unknown intrinsic.
 func TestRuntimeIntrinsicsRefused(t *testing.T) {
@@ -138,13 +142,15 @@ func TestRuntimeIntrinsicsRefused(t *testing.T) {
 			t.Errorf("%s is both implemented and refused", key)
 		}
 	}
-	decl := regexp.MustCompile(`^(?:export )?([A-Z][A-Za-z0-9]*)\(.*\)[^{]*$`)
+	decl := regexp.MustCompile(`^(?:export )?([A-Z][A-Za-z0-9]*)(?:\[[^\]]*\])?\(.*\)[^{]*$`)
 	files := map[string]string{
 		"../../std/rt/intrinsics.mk":        "std.rt.",
 		"../../std/sys/linux/syscall.mk":    "std.sys.",
 		"../../std/sys/nutshell/syscall.mk": "std.sys.",
 		"../../std/sys/windows/teb.mk":      "std.sys.",
 		"../../std/task/context.mk":         "std.task.",
+		"../../std/sys/windows/lazy.mk":     "std.sys.",
+		"../../std/dl/dl.mk":                "std.dl.",
 	}
 	seen := map[string]bool{}
 	for file, mod := range files {
@@ -183,6 +189,8 @@ func TestRuntimeIntrinsicRefusalsRun(t *testing.T) {
 		{"std.sys", "Teb", types.RefuseExtern},
 		{"std.sys", "Clone", types.RefuseExtern},
 		{"std.task", "Switch", types.RefuseExtern},
+		{"std.sys", "LazyPresent", types.RefuseExtern},
+		{"std.dl", "Present", types.RefuseExtern},
 	} {
 		w := newWorld(t)
 		in := w.fn(c.mod, c.name, types.Int)

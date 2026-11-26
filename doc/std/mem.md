@@ -11,7 +11,7 @@
 - `Null` refuses everything.
 - `Custom` is an allocator over your own functions.
 - `Pool` stores values under generational handles.
-- `OffsetOf`, `Prefetch` and `Zeroed` help with layout.
+- `OffsetOf`, `Prefetch`, `Zeroed`, `AsBytes` and `SliceAsBytes` help with layout and byte views.
 
 Reach for it to put a hard budget on memory, to keep small containers off the heap, or to check in a test that code frees what it allocates, allocates nothing, or survives an allocation that fails. Its pool lets values name each other without references.
 
@@ -49,6 +49,7 @@ import std.mem
 | A field's byte offset | `OffsetOf[T]("field")` |
 | A prefetch hint | `Prefetch(p, write)` |
 | A value of zero bytes, such as a C struct of many fields | `Zeroed[T]()` |
+| A read-only byte view of an unpadded plain value or slice | `AsBytes(&x)`, `SliceAsBytes(xs)` |
 
 Each allocator gives an `&Alloc` (`Custom` an `Alloc`, which you pass as `&`), which a heap container (`HeapList`, `HeapMap`, `Box`, `coll.HeapDeque`, ...) or `Arena.NewIn` takes. `Counting`, `Limit`, `Failing` and `Fallback` take an `&Alloc` themselves, so they stack in any order.
 
@@ -180,6 +181,52 @@ export Main(sys: &System): WriteError!void {
 ```text
 $ mk run zeroed.mk
 640 0 false
+```
+
+`AsBytes(p)` and `SliceAsBytes(xs)` return a read-only `[]u8` over `p` or `xs` without copying or allocating. `T` must be `bool`, `char`, a number, `void`, an array of such types, or an unpadded plain struct with no references, raw pointers or interior mutability; padded structs and reference-holding types are E0701.
+
+```mk
+// verdict: ok
+import std.mem
+
+struct Vertex {
+    x: f32
+    y: f32
+}
+
+export Main(sys: &System): WriteError!void {
+    vs := [Vertex(x: 1.0, y: 2.0), Vertex(x: 3.0, y: 4.0)]
+    one := mem.AsBytes(&vs[0])
+    all := mem.SliceAsBytes(vs[..])
+    try sys.Print("{a} {b}\n", (a: one.Len(), b: all.Len()))
+}
+```
+
+```mk
+// verdict: reject E0701
+import std.mem
+
+struct Padded {
+    tag: u8
+    val: u32
+}
+
+F(p: &Padded): []u8 from p {
+    return mem.AsBytes(p) // <- E0701
+}
+```
+
+```mk
+// verdict: reject E0701
+import std.mem
+
+struct HoldsRef {
+    s: str
+}
+
+F(xs: []HoldsRef): []u8 from xs {
+    return mem.SliceAsBytes(xs) // <- E0701
+}
 ```
 
 ## Examples
@@ -552,6 +599,19 @@ Fields:
 - `resize: fn(*u8, *u8, int, int, int): bool`: resize(ctx, p, old, new, align) grows or shrinks the block in place, or
   returns false.
 - `free: fn(*u8, *u8, int, int)`: free(ctx, p, size, align) gives the block back.
+
+### `AsBytes`
+
+```
+export AsBytes[T](p: &T): []u8 from p
+```
+
+- Flows: The result borrows from p.
+
+A read-only byte view of p. T must be bool, char, a number, void, an
+array of such types, or an unpadded plain struct (or record) with no
+references, raw pointers or interior mutability (E0701 otherwise).
+O(1); allocates nothing.
 
 ### `Counting`
 
@@ -1075,6 +1135,18 @@ export Prefetch[T](p: &T, write: bool)
 
 A hint that p's memory will soon be read, or written when write is
 true; it changes nothing a program can observe. O(1); allocates
+nothing.
+
+### `SliceAsBytes`
+
+```
+export SliceAsBytes[T](xs: []T): []u8 from xs
+```
+
+- Flows: The result borrows from xs.
+
+A read-only byte view of xs's elements in order. T must satisfy the same
+layout and plainness rules as AsBytes (E0701 otherwise). O(1); allocates
 nothing.
 
 ### `Zeroed`

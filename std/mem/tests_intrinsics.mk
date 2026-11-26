@@ -230,3 +230,62 @@ test "Zeroed is a record of zero bytes, natively and in the evaluator" {
     Assert(Zeroed[u64]() == 0 && Zeroed[?u32]().IsNone())
     _ = Zeroed[void]()
 }
+
+struct BvPair {
+    a: u16
+    b: u16
+}
+
+struct BvNested {
+    head: BvPair
+    tag: bool
+    pad: u8
+    tail: [2]u8
+}
+
+packed struct BvPacked {
+    tag: u8
+    val: u32
+    flags: u16
+}
+
+struct BvEmpty {
+}
+
+BvCompileCheck(): bool {
+    a: u32 = 0x1122_3344
+    ab := AsBytes(&a)
+    if ab.Len() != 4 || ab[0] != 0x44 || ab[3] != 0x11 {
+        return false
+    }
+    arr := [BvPair(a: 0x0102, b: 0x0304), BvPair(a: 0x0506, b: 0x0708)]
+    sb := SliceAsBytes(arr[..])
+    return sb.Len() == 8 && sb[0] == 0x02 && sb[1] == 0x01 && sb[6] == 0x08 && sb[7] == 0x07
+}
+
+const BvAtCompileTime: bool = BvCompileCheck()
+
+test "AsBytes and SliceAsBytes view scalars, arrays and unpadded structs, natively and in eval" {
+    Assert(BvAtCompileTime)
+    flag := true
+    fb := AsBytes(&flag)
+    Assert(fb.Len() == 1 && fb[0] == 1)
+    ch: char = 'A'
+    cb := AsBytes(&ch)
+    Assert(cb.Len() == 4 && cb[0] == 65 && cb[1] == 0 && cb[2] == 0 && cb[3] == 0)
+    f: f32 = 1.0
+    Assert(AsBytes(&f).Len() == 4)
+    n := BvNested(head: BvPair(a: 0x0A0B, b: 0x0C0D), tag: true, pad: 0xEE, tail: [0x12, 0x34])
+    nb := AsBytes(&n)
+    Assert(nb.Len() == 8 && nb[0] == 0x0B && nb[4] == 1 && nb[5] == 0xEE && nb[6] == 0x12 && nb[7] == 0x34)
+    pk := BvPacked(tag: 0x7F, val: 0x0102_0304, flags: 0xAABB)
+    pkb := AsBytes(&pk)
+    Assert(pkb.Len() == 7 && pkb[0] == 0x7F && pkb[1] == 0x04 && pkb[4] == 0x01 && pkb[5] == 0xBB && pkb[6] == 0xAA)
+    emp := BvEmpty()
+    Assert(AsBytes(&emp).Len() == 0)
+    empty_vs: [0]BvPair = []
+    Assert(SliceAsBytes(empty_vs[..]).Len() == 0)
+    nums: [3]u16 = [0x0102, 0x0304, 0x0506]
+    nsb := SliceAsBytes(nums[..])
+    Assert(nsb.Len() == 6 && nsb[0] == 0x02 && nsb[5] == 0x05)
+}

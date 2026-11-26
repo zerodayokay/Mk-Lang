@@ -1,0 +1,8 @@
+# 4x MSAA with a resolve, and a blended overlay quad.
+size 128 128
+camera 1.6 1.4 2.4 0 0 0 50
+msaa 4
+overlay on
+texture checker ../assets/checker.png
+mesh cube ../assets/cube.obj
+object box cube checker 0 0 0 40 1 1 1 1

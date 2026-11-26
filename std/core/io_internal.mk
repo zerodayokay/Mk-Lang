@@ -406,8 +406,13 @@ export const IoOpUdpConnect: u32 = 42
 /// IoOpTryRecvFrom: h; out the buffer; q the source <- the count, or -1
 /// with err None when nothing is queued.
 export const IoOpTryRecvFrom: u32 = 43
+/// IoOpObjectWait: os is a Windows kernel waitable handle, w.a is timeout_ns
+/// (negative: forever) <- value 0 on signal, 1 on timeout, w.b 1 if a
+/// cancelled wait fired after cancel (credit consumed); Unsupported outside
+/// Windows.
+export const IoOpObjectWait: u32 = 44
 /// The number of ops; an op at or past it is Unsupported everywhere.
-export const IoOpCount: u32 = 44
+export const IoOpCount: u32 = 45
 
 /// IoOpTermMode's b: set the saved mode p back.
 export const IoTermSaved: i64 = 0

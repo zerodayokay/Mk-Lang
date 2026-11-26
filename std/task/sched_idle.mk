@@ -17,6 +17,10 @@ import std.sys
 // Every idle carrier may be inside PollWait at once (std.sys's contract).
 // It returns spinning, to look for work.
 Idle(c: *Carrier) {
+    main := Target.os == Os.Macos && raw.Addr(c) == raw.Addr(C0())
+    if main {
+        RunMainService(c)
+    }
     st := TS()
     TrimSpare(c)
     unsafe "the TaskState page; c is the calling thread's carrier" {
@@ -48,13 +52,17 @@ Idle(c: *Carrier) {
     Jitter(JitterIdle)
     IdleGateHold()
     var done: [64]*sys.Op = [raw.Null[sys.Op](); 64]
-    n := sys.PollWait(wait, mut done[..])
+    n := if main {
+        WaitMainService(c, wait, mut done[..])
+    } else {
+        sys.PollWait(wait, mut done[..])
+    }
     SignalPoll(c)
     if PoolListed() {
         PoolReinterrupt()
     }
     unsafe "the TaskState page Start mapped, which lives until exit" {
-        if timeout < 0 {
+        if timeout < 0 && !(main && MainServiceDue(c) != 0) {
             // Edge: none; a test counter (test "RT-MN-TimerNoSpuriousWake").
             _ = (*st).idle_unarmed.Add(1)
         }

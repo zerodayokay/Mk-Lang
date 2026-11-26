@@ -941,6 +941,9 @@ FindRunnable(c: *Carrier): *Task {
             }
         }
         if due {
+            if Target.os == Os.Macos && raw.Addr(c) == raw.Addr(C0()) {
+                RunMainService(c)
+            }
             unsafe "c is the calling thread's carrier; flush cached slots if any spawner waits" {
                 if (*c).slot_count > 0 && ((*TS()).slot_waiters.Load() != 0 || rt.TrimGateGet() != 0) {
                     FlushSlots(c, int((*c).slot_count))

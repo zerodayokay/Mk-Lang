@@ -1,0 +1,4 @@
+script
+$CASES/scripts/hidden.script
+--warp
+--validate

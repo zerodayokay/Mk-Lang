@@ -1,8 +1,9 @@
 // Why: a hosted program or library may define MkPanicHook to see a panic before
 // the runtime reports it, and the hook's call order and arguments are part of
 // the runtime's contract.
-// What: TestPanicHook_Hosted, TestPanicHook_SuspendInCallback and
-// TestPanicHook_LibAfterStop, with their sample programs and C hosts.
+// What: TestPanicHook_Hosted, TestPanicHook_SuspendInCallback,
+// TestPanicHook_LibAfterStop and TestPanicHook_Unresolved, with their
+// sample programs and C hosts.
 // How: builds Windows programs and a library whose hook writes the PanicInfo
 // through Win32, runs them in dev and release, and matches stderr and the exit
 // status 101.
@@ -244,5 +245,73 @@ func TestPanicHook_LibAfterStop(t *testing.T) {
 				t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
 			}
 		})
+	}
+}
+
+// unresolvedHookProgram calls MkGone, which binds lazily to mkgone.dll, a
+// DLL no machine has; its MkPanicHook writes the PanicInfo it gets.
+const unresolvedHookProgram = `import std.runtime
+import std.raw
+
+extern GetStdHandle(n: u32): *u8
+extern WriteFile(h: *u8, buf: *u8, n: u32, done: *u32, ov: *u8): i32
+extern MkGone(): i32
+
+Say(s: str) {
+    var done: u32 = 0
+    unsafe "a console write of s's bytes" {
+        _ = WriteFile(GetStdHandle(0xFFFFFFF4), raw.StrData(s), Trunc[u32](s.Len()), raw.Of(&done), raw.Null[u8]())
+    }
+}
+
+export extern MkPanicHook(info: &runtime.PanicInfo) {
+    Say("hook ")
+    Say(info.message)
+    if info.code == 17 {
+        Say(" code 17")
+    }
+    Say("\n")
+}
+
+export Main(sys: &System): void {
+    unsafe "mkgone.dll's function, which cannot be loaded" {
+        _ = MkGone()
+    }
+}
+`
+
+// TestPanicHook_Unresolved: the call of a lazily bound function whose DLL
+// cannot be loaded passes PanicUnresolved (17) and the message naming the
+// function and the DLL to MkPanicHook, once, before the report; exit 101.
+func TestPanicHook_Unresolved(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("SKIP: lazy binding and the hook's writes are Windows'")
+	}
+	tools := needTools(t)
+	root := writeTree(t, map[string]string{
+		"pkg.mk": manifest(map[string]string{"name": `"hook17"`,
+			"bins":           `[pkg.Bin(name: "hook17", root: ".", link_script: "", cpu: "", subsystem: "", kind: "", abi: "")]`,
+			"unsafe_modules": `["."]`,
+			"links":          `[pkg.Link(name: "mkgone.dll", kind: "lazy", path: "mkgone.def", target: "x86_64-windows")]`}),
+		"mkgone.def": "MkGone\n",
+		"main.mk":    unresolvedHookProgram,
+	})
+	for _, prof := range []types.Profile{types.Dev, types.Release} {
+		s, err := NewSession(Config{Root: root, Target: types.X86_64Windows, Profile: prof, Tools: tools, CacheDir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, paths, err := s.Build(filepath.Join(t.TempDir(), "hook17.exe"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Report.Diags) > 0 || len(paths) != 1 {
+			t.Fatalf("build: %d paths\n%s", len(paths), r.Report.Text(r.Sources))
+		}
+		_, errOut, code := runExe(t, types.X86_64Windows, paths[0], "")
+		want := regexp.MustCompile(`^hook unresolved function: MkGone of mkgone\.dll: the library could not be loaded code 17\npanic: unresolved function: MkGone of mkgone\.dll: the library could not be loaded( at \S+)?\n$`)
+		if code != 101 || !want.MatchString(dropBacktrace(errOut)) || strings.Count(errOut, "hook ") != 1 {
+			t.Errorf("%v: exit %d, stderr %q", prof, code, errOut)
+		}
 	}
 }

@@ -93,7 +93,9 @@ export struct Carrier {
     slot_free: *rt.SlotHeader
     slot_count: u32
     slot_pad: u32
-    pad0: [5]u64
+    // The main-thread service deadline, read and written only by carrier 0.
+    main_service_due: i64
+    pad0: [4]u64
     runnext: raw.Atomic[u64]
     pad1: [7]u64
     top: raw.Atomic[i64]

@@ -1,0 +1,17 @@
+# A minimised window's frames are Hidden; drawing continues after a restore.
+canvas 96 96
+color 200 60 20
+brush 5
+move 10 48
+down
+move 86 48
+up
+minimize
+restore
+move 48 10
+down
+move 48 86
+up
+expect strokes 2 undone 0
+print
+snapshot hidden.png

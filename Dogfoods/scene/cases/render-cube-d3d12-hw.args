@@ -1,0 +1,7 @@
+render
+$CASES/scenes/cube.scene
+$WORK/cube.png
+--backend
+d3d12
+--validate
+--compare-warp
