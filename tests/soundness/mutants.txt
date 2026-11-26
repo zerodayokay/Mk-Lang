@@ -1015,3 +1015,15 @@ replace \tdone := true\n
 note one taken or narrowed part consumes the whole temporary of a by-value match (consumePart): an arm that tests one field to a plain variant or takes one payload, and discards a linear sibling inside a constructor (some(_), ok(_)) or as a type parameter's `_`, drops that sibling unconsumed; expected VLinear
 witness LM-narrow-struct.mk LM-take-struct.mk LM-narrow-variant.mk LM-nested-union.mk LM-optional.mk LM-generic.mk
 end
+
+mutant M-LM-meet
+rule R2
+class R
+file internal/borrow/state.go
+anchor 		cover:   ss.meet(a.cover, b.cover),
+
+replace 		cover:   ss.unite(a.cover, b.cover),
+
+note a join keeps the parts of a linear temporary that either predecessor covers (joinEntry): a match compiled arm by arm whose arm narrowed one field and then failed a later test passes that field's cover to the next arm, where the path from the field's other variant still holds a Res, so a narrowing there of the last field consumes the whole temporary; LM-join is accepted and drops the Res unconsumed; expected VLinear
+witness LM-join.mk
+end
