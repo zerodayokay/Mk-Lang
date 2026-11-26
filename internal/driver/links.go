@@ -378,9 +378,10 @@ func otherKind(k string) string {
 // objects. Faults: E0202 reason link at a link this host or build cannot
 // take; E0001 for an extern var a named DLL would supply; a file
 // that cannot be read, E0001 tool fs.
-func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cobjs []string) (*linkPlan, []*diag.Diagnostic) {
+func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cobjs []string, mode posixMode) (*linkPlan, []*diag.Diagnostic) {
 	links := linksFor(append(append([]pkgLink(nil), w.links...), testPkgLinks()...), w.cfg.Target.Name)
-	if len(links) == 0 {
+	posix := w.posixNames(insts)
+	if len(links) == 0 && len(posix) == 0 && mode != posixSelected {
 		return nil, nil
 	}
 	p := &linkPlan{labels: map[string]string{}, windows: w.cfg.Target.OS == types.OSWindows, triple: w.cfg.Target.LLVMTriple}
@@ -449,13 +450,14 @@ func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cob
 		defs[n] = true
 	}
 	for i := range insts.List {
-		fd, ok := w.items.Get(insts.List[i].Item).Decl.(*types.FuncDecl)
+		it := w.items.Get(insts.List[i].Item)
+		fd, ok := it.Decl.(*types.FuncDecl)
 		if !ok || !fd.Sig.Extern {
 			continue
 		}
 		if insts.List[i].Body == nil {
 			refs[insts.List[i].Symbol] = true
-		} else {
+		} else if mode != posixDiscover || w.items.Module(it.Module).Path != libcModule {
 			defs[insts.List[i].Symbol] = true
 		}
 	}
@@ -476,6 +478,14 @@ func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cob
 			defs[n] = true
 		}
 	}
+	if len(posix) != 0 {
+		for _, o := range w.cfg.ExtraObjects {
+			d, _ := objectSymbols(o)
+			for _, n := range d {
+				defs[n] = true
+			}
+		}
+	}
 	pulled := archivePull(p.archives, refs, defs)
 	for n := range refs {
 		if !defs[n] && !isVar[n] {
@@ -490,6 +500,12 @@ func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cob
 		for _, n := range d {
 			p.memberDefs[n] = true
 		}
+	}
+	if d := p.addPosix(w, posix, mode); d != nil {
+		return nil, []*diag.Diagnostic{d}
+	}
+	if mode == posixDiscover {
+		return p, nil
 	}
 	if len(p.sos) > 0 {
 		ds = append(ds, p.soVarFaults(w, w.externVars(globals))...)
