@@ -291,6 +291,59 @@ TestPeerHandshakeThenDrain(io: Io, h: &Heap, peer: &net.Conn, win: int, max_stre
     }
 }
 
+TestPeerReadUploadPastInitialWindow(io: Io, h: &Heap, peer: &net.Conn) {
+    a := h.Alloc()
+    TestHandshakePeer(a, io, peer, InitialWindow, 1)
+    var received := 0
+    for received < InitialWindow {
+        frame := TestReadFrame(a, io, peer).Must().Must()
+        if frame.kind == TypeData {
+            Assert(frame.stream == 1 && (frame.flags & FlagEndStream) == 0)
+            received += frame.payload.Len()
+        }
+        frame.Free(a)
+    }
+    Assert(received == InitialWindow)
+
+    credit: [4]u8 = [0, 0, 0, 1]
+    TestSendFrameMust(io, peer, TypeWindowUpdate, 0, 0, credit[..])
+    TestSendFrameMust(io, peer, TypeWindowUpdate, 0, 1, credit[..])
+    for {
+        frame := TestReadFrame(a, io, peer).Must().Must()
+        is_data := frame.kind == TypeData
+        if is_data {
+            Assert(frame.stream == 1 && (frame.flags & FlagEndStream) != 0)
+            Assert(CoreBytesEq(frame.payload.Items(), "x".AsBytes()))
+        }
+        frame.Free(a)
+        if is_data {
+            return
+        }
+    }
+}
+
+test "H2 client resumes a 64 KiB upload when one byte of window credit arrives" (sys: &System) {
+    io := sys.io
+    h := sys.heap
+    (a: cli, b: peer) := pipe.ConnPair(h, 8192).Must()
+    defer peer.Abandon()
+    var lim := TestDefaultLimits()
+    lim.window = 8192
+    cli_box := Conn.Client(h, io, cli, lim).Must()
+    defer cli_box.Take(h.Alloc()).Abandon()
+
+    scope s := io.Scope() {
+        s.CancelAfter(time.Seconds(5))
+        s.go TestPeerReadUploadPastInitialWindow(io, h, &peer)
+        p := fields.Pseudo(method: "POST", scheme: "http", authority: "example.com", path: "/upload")
+        hs: [1]TestField = [TestField(name: "content-length", value: "65536")]
+        stream := cli_box.Ref().TryOpen(io, &p, hs[..], false).Must().Must()
+        defer cli_box.Ref().Release(stream)
+        payload: [65536]u8 = [b'x'; 65536]
+        cli_box.Ref().Send(io, stream, payload[..], true).Must()
+    }
+}
+
 test "H2 client ProgressFloor timer aborts starved Send without peer WINDOW_UPDATE" (sys: &System) {
     io := sys.io
     h := sys.heap
