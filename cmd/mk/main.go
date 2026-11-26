@@ -349,7 +349,7 @@ func newTestFlagSet(stderr io.Writer, tf *testFlags) *flag.FlagSet {
 	fs.StringVar(&tf.timeout, "timeout", "60s", "per test child process; 0 disables")
 	fs.BoolVar(&tf.release, "release", false, "release profile")
 	fs.StringVar(&tf.std, "std", "", "test std's own test blocks of this module and the modules under it (std for all); takes no path")
-	fs.StringVar(&tf.sim, "sim", "", "run every test under simulated Io with this seed (an unsigned decimal)")
+	fs.StringVar(&tf.sim, "sim", "", "give every test this seed as MK_SIM_SEED, for a std.sim world it builds, and seed --prop (an unsigned decimal)")
 	fs.BoolVar(&tf.prop, "prop", false, "run the property tester over the contracts")
 	fs.StringVar(&tf.fuzz, "fuzz", "", "run the fuzz target of the test of exactly this name under the mutation loop")
 	fs.StringVar(&tf.fuzzTime, "fuzztime", "10s", "with --fuzz: how long the loop runs")
