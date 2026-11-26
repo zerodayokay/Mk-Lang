@@ -2,7 +2,7 @@
 // union's own bytes: a copy would leave a returned reference dangling and
 // a write lost.
 // What: TestErrorSideBorrowsInPlace.
-// How: builds two programs for the host in dev and release, runs them, and
+// How: builds three programs for the host in dev and release, runs them, and
 // reads each borrowing function's IR for a slot of the error set.
 
 package driver
@@ -358,6 +358,129 @@ export Main(sys: &System): WriteError!void {
 }
 `
 
+// errSideRouteFns carries a borrow of an error payload out by the other
+// routes: a generic function instantiated with three ok types, ?T around
+// a nested ok(err(..)), a u32 field beside an i64 ok side, a closure
+// capture, a defer, a task and a loop over references; PickedAt does the
+// same at compile time.
+const errSideRouteFns = `
+error H(x: u8, y: u32)
+
+PickAny[T: Plain](r: &(F|F2!T), d: &u8): &u8 from r, d {
+    return match r {
+        err(F2(code: c)) { c }
+        _ { d }
+    }
+}
+
+PickDeep(r: &?(E!(F|F2!int)), d: &u8): &u8 from r, d {
+    return match r {
+        some(ok(err(F2(code: c)))) { c }
+        _ { d }
+    }
+}
+
+PickH(r: &(H!i64), d: &u32): &u32 from r, d {
+    return match r {
+        err(H(x: _, y: y)) { y }
+        _ { d }
+    }
+}
+
+Apply(const f: fn(): int): int {
+    return f()
+}
+
+Read(c: &u8, out: mut int) {
+    *out = int(*c)
+}
+
+Closure(r: &(F|F2!int)): int {
+    var d: u8 = 1
+    c := PickAny(r, &d)
+    return Apply(fn(): int { return int(*c) + Smash(3) - 48 })
+}
+
+Deferred(r: &(F|F2!int), out: mut int) {
+    var d: u8 = 1
+    c := PickAny(r, &d)
+    defer Read(c, mut *out)
+    _ = Smash(9)
+}
+
+Fail8(): F|F2!u8 {
+    fail F2(code: 5)
+}
+
+Fail16(): F|F2![2]u64 {
+    fail F2(code: 6)
+}
+
+FailH(n: u32): H!i64 {
+    fail H(x: 3, y: n)
+}
+
+PickedAt(n: int): int {
+    var s: F|F2!int = Mk(n)
+    var d: u8 = 1
+    p := PickAny(&s, &d)
+    var h: H!i64 = FailH(4000)
+    var e: u32 = 1
+    q := PickH(&h, &e)
+    _ = Smash(5)
+    return int(*p) + int(*q)
+}
+
+const Picked: int = PickedAt(-7)
+
+export Main(sys: &System): WriteError!void {
+    var d: u8 = 1
+    var v0: F|F2!int = Mk(-4)
+    var v1: F|F2!int = Mk(-5)
+    var v2: F|F2!int = Mk(-6)
+    var sum := 0
+    for r in [&v0, &v1, &v2] {
+        p := PickAny(r, &d)
+        _ = Smash(sum)
+        sum = sum * 10 + int(*p)
+    }
+    try sys.Print("loop {x}\n", (x: sum))
+
+    var g8: F|F2!u8 = Fail8()
+    p8 := PickAny(&g8, &d)
+    _ = Smash(1)
+    var g16: F|F2![2]u64 = Fail16()
+    p16 := PickAny(&g16, &d)
+    _ = Smash(2)
+    try sys.Print("generic {a} {b}\n", (a: *p8, b: *p16))
+
+    var a: F|F2!int = Mk(-8)
+    var e: E!(F|F2!int) = Get(&a, false)
+    var o: ?(E!(F|F2!int)) = Wrap(&e)
+    pd := PickDeep(&o, &d)
+    _ = Smash(3)
+    try sys.Print("deep {x}\n", (x: *pd))
+
+    var h: H!i64 = FailH(4000000)
+    var d32: u32 = 1
+    ph := PickH(&h, &d32)
+    _ = Smash(4)
+    try sys.Print("h {x}\n", (x: *ph))
+
+    var s9: F|F2!int = Mk(-9)
+    var out := 0
+    Deferred(&s9, mut out)
+    try sys.Print("closure {x} defer {y}\n", (x: Closure(&s9), y: out))
+
+    var s10: F|F2!int = Mk(-10)
+    var t := 0
+    scope s := sys.io.Scope() {
+        s.go Read(PickAny(&s10, &d), mut t)
+    }
+    try sys.Print("task {x} const {y}\n", (x: t, y: Picked))
+}
+`
+
 // TestErrorSideBorrowsInPlace: each program prints the values it stored in
 // both profiles, and no function that returns a borrow of an error side
 // has a slot of the error set F|F2 (8 bytes, align 4) to copy it into.
@@ -368,11 +491,18 @@ func TestErrorSideBorrowsInPlace(t *testing.T) {
 	tools := needTools(t)
 	target := HostTarget()
 	const shared = "pick 7\nwhole 7\nview 7\nok 7\nsome 6\ng 300\nw 77\ncall 3\nfloat 1.5 2.25 3.5 4\n"
-	progs := []struct{ name, src, want string }{
-		{"shared", errSideFns + errSideMainShared, shared},
-		{"all", errSideFns + errSideMutFns + errSideMainAll, shared + "mut 9 9 11 123456789012 3\nbump 6301\nconst 909\n"},
+	sets := []string{"Pick", "Whole", "Viewed", "PickOk", "PickSome"}
+	progs := []struct {
+		name, src, want string
+		fns             []string
+	}{
+		{"shared", errSideFns + errSideMainShared, shared, sets},
+		{"all", errSideFns + errSideMutFns + errSideMainAll, shared + "mut 9 9 11 123456789012 3\nbump 6301\nconst 909\n", sets},
+		{"routes", errSideFns + errSideRouteFns, "loop 456\ngeneric 5 6\ndeep 8\nh 4000000\nclosure 9 defer 9\ntask 10 const 4007\n",
+			[]string{"PickAny", "PickDeep", "PickH"}},
 	}
-	setSlot := regexp.MustCompile(`alloca \[8 x i8\], align 4\b`)
+	// A slot of the error set F|F2 (8 bytes) or H (12 bytes), align 4.
+	setSlot := regexp.MustCompile(`alloca \[(8|12) x i8\], align 4\b`)
 	for _, p := range progs {
 		for _, prof := range []types.Profile{types.Dev, types.Release} {
 			t.Run(p.name+"/"+prof.String(), func(t *testing.T) {
@@ -402,14 +532,16 @@ func TestErrorSideBorrowsInPlace(t *testing.T) {
 					t.Errorf("exit %d, stdout %q, stderr %q; want %q", code, out, errOut, p.want)
 				}
 				text := ll.String()
-				for _, fn := range []string{"Pick", "Whole", "Viewed", "PickOk", "PickSome"} {
-					body := llFunc(text, "@mk.main."+fn+"(")
-					if body == "" {
+				for _, fn := range p.fns {
+					bodies := llFuncs(text, "@mk.main."+fn)
+					if len(bodies) == 0 {
 						t.Fatalf("no %s in the IR", fn)
 					}
-					// Viewed copies the View it returns, never the set.
-					if setSlot.MatchString(body) || fn != "Viewed" && strings.Contains(body, "memcpy") {
-						t.Errorf("%s copies the error side:\n%s", fn, body)
+					for _, body := range bodies {
+						// Viewed copies the View it returns, never the set.
+						if setSlot.MatchString(body) || fn != "Viewed" && strings.Contains(body, "memcpy") {
+							t.Errorf("%s copies the error side:\n%s", fn, body)
+						}
 					}
 				}
 			})
@@ -417,15 +549,17 @@ func TestErrorSideBorrowsInPlace(t *testing.T) {
 	}
 }
 
-// llFunc is the text of the definition whose first line holds sig, up to
-// its closing brace, or "".
-func llFunc(ll, sig string) string {
+// llFuncs is the text of every definition of fn or of an instance of it
+// (fn then "(", or "." and the instance's hash), each up to its closing
+// brace.
+func llFuncs(ll, fn string) []string {
+	var out []string
 	for _, part := range strings.Split(ll, "\ndefine ")[1:] {
 		head, _, _ := strings.Cut(part, "\n")
-		if strings.Contains(head, sig) {
+		if strings.Contains(head, fn+"(") || strings.Contains(head, fn+".") {
 			body, _, _ := strings.Cut(part, "\n}\n")
-			return body
+			out = append(out, body)
 		}
 	}
-	return ""
+	return out
 }
