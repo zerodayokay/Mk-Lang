@@ -3,7 +3,7 @@
 // value, a global, a const, a value a fn literal reads, and a linear
 // payload. Each operand is read once. With an argument, Must on a local
 // that holds an error panics with the error, as Must on a fallible call
-// does. It was an internal compiler error in lower (MKH-915).
+// does.
 import std.mem
 
 error Bad

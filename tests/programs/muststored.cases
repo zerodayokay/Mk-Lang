@@ -1,7 +1,6 @@
-# .Must() on stored E!T values (a local, a field, an element, a deref, an if and a match
-# value, a global, a const, a capture, a linear payload) was an internal compiler error
-# in lower (MKH-915). With an argument, Must on a local holding an error panics with it.
-# Both profiles, both targets.
+# .Must() on stored E!T values, not calls: a local, a field, an element, a deref, an if and a
+# match value, a global, a const, a capture and a linear payload, each read once. With an
+# argument, Must on a local holding an error panics with it. Both profiles, both targets.
 case ok
 stdout muststored.out
 case err

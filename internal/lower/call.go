@@ -1080,7 +1080,10 @@ func (bl *builder) builtin(x *ast.CallExpr, c Call) mir.Rvalue {
 			// that cannot fail returning one (a result type parameter
 			// bound to one). It is taken once, and its discriminant
 			// picks ok's payload or the panic with the error, as
-			// elseUnion's does.
+			// elseUnion's does. A payload that is not plain moves into
+			// a T temporary first (okTemp), as tryUnion's does, so a
+			// dropped `r.Must()` is a T for borrow's E0402, as a call's
+			// destination is.
 			p := bl.optTaken(recv)
 			e := bl.newTemp(bl.tab.ErrorSetType(bl.tab.Get(bl.b.PlaceType(p)).Errors), at)
 			ok, pb := bl.newBlock(), bl.newBlock()
@@ -1089,7 +1092,9 @@ func (bl *builder) builtin(x *ast.CallExpr, c Call) mir.Rvalue {
 			bl.assign(bl.b.Place(e), use(bl.valueOf(bl.errPayload(p), true, at)), at)
 			bl.term(mir.Terminator{Kind: mir.TermPanic, Panic: types.PanicMust, HasMsg: true, Msg: bl.valueOfTemp(e, at)}, at)
 			bl.cur = ok
-			return use(bl.valueOf(bl.okPayload(p), true, at))
+			ok, value := bl.okTemp(p, ok, func() mir.Rvalue { return use(bl.valueOf(bl.okPayload(p), true, at)) }, recv.Span())
+			bl.cur = ok
+			return value()
 		}
 		et := bl.tab.ErrorSetType(ic.Errors)
 		e := bl.newTemp(et, at)

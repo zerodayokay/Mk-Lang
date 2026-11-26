@@ -1,11 +1,13 @@
 // Why: check accepts try, else, match and Must on any E!T value, a stored
-// one as well as a call's, so lower must take each of them, never ICE
-// ("Must on a value that is not a call", MKH-915).
-// What: TestStoredUnionForms.
-// How: a table of operation x operand form. Each case is one module; the
-// handling operations must check and lower clean, and Must must panic with
-// the error; the operations check refuses must get a diagnostic, never
-// E0000 or a lower ICE.
+// one as well as a call's, so lower must take each of them without an
+// internal error, and Must must panic with the error.
+// What: TestStoredUnionForms, TestMustStoredPanics,
+// TestMustDroppedLinearPayload and checkLowerAll.
+// How: a table of operation x operand form, each case one module: the
+// handling operations must check and lower clean, and the operations check
+// refuses must get a diagnostic, never E0000 or a lower ICE. Must's MIR is
+// read for one switch on the value's discriminant, a panic with its error,
+// and a payload that is not plain moved into a T temporary.
 
 package lower
 
@@ -16,6 +18,7 @@ import (
 
 	"mk/internal/check"
 	"mk/internal/diag"
+	"mk/internal/mir"
 	"mk/internal/source"
 	"mk/internal/types"
 )
@@ -152,6 +155,35 @@ Linear(t: Bad!Ticket): int {
 		wantIn(t, got, "Discriminant(", "panic "+types.PanicMust.String()+" ")
 		if strings.Contains(got, " err must ") || strings.Count(got, "Discriminant(") != 1 {
 			t.Errorf("%s: want one switch on the value's discriminant and no call edge:\n%s", fn, got)
+		}
+	}
+}
+
+// TestMustDroppedLinearPayload: Must on a stored E!T moves a payload that
+// is not plain out of the E!T temporary into a T temporary, as else's
+// statement form and try do, so a dropped `r.Must()` is a Res for borrow
+// (E0402 with Res's release facts), as a call's destination is, not an
+// E!Res with none.
+func TestMustDroppedLinearPayload(t *testing.T) {
+	l := lowerSrc(t, resSrc+`Stmt(r: E!Res) {
+	r.Must()
+}
+
+Drop(r: E!Res) {
+	_ = r.Must()
+}
+`)
+	for _, k := range []string{"Stmt", "Drop"} {
+		s := l.print(k)
+		d := mir.NoLocal
+		for i, lc := range l.body(k).Locals {
+			if lc.Kind == mir.LocalTemp && l.w.tab.TypeString(lc.Type, nil) == "Res" {
+				d = mir.LocalID(i)
+				break
+			}
+		}
+		if d == mir.NoLocal || !strings.Contains(s, "_"+itoa(int(d))+" = move (_2 as ok).0\n") {
+			t.Errorf("%s: the ok payload is not moved into a Res temporary:\n%s", k, s)
 		}
 	}
 }
