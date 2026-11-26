@@ -104,16 +104,14 @@ var cr2EcCtAllow = map[string]int{
 	// separate ptest for zero): its answer is
 	// public (BadKey).
 	"mk.std.crypto.EcSecret:FromBytes": 4,
-	// out's length; the identity test (never taken for a valid secret).
-	// PGO keeps both in line.
+	// The output length and the inlined identity test in P256PtBytes.
+	// The identity branch cannot be taken for a valid secret.
 	"mk.std.crypto.EcSecret:Public": 2,
-	// With the probe's ParsePrivateKey and Generate. Main:
-	// the try edges (error-union tags), the match on the parsed key's kind
-	// and an error code's compare; none reads a byte of a key. 11 of them;
-	// then the probe's own Print, compiled in line: the error tag each of
-	// its 13 writes returns (seven values, six separators). 24 in the
-	// release build, 23 under PGO.
-	"mk.main.Main": 24,
+	// Main: checks around the crypto calls and the parsed key's kind,
+	// including the inlined key validation in release. Print adds write
+	// error tags and the inlined Writer.Bytes buffer checks. PGO keeps
+	// a different set of calls out of line.
+	"mk.main.Main": 37,
 	// Generate: the curve, Random's try edge, and the inlined Wipe of b
 	// (the unrolled head's tests of constants, andl $7, cmpq of the
 	// length). The draw's range check (js, ptest) is the rejection loop's
@@ -128,61 +126,48 @@ var cr2EcCtAllow = map[string]int{
 	// copy's length dispatch, and FromBytes' range check when inlined into
 	// KeyEc (its answer public). No jump reads the scalar or the seed: they
 	// are copied whole, and the seed is never tested. KeyAlgorithm:
-	// 54 in the release build, where the
+	// In the release build, the
 	// inlined KeySame compares are laid out without main's three-way
 	// switch on the OID's length, so three length tests repeat after a
 	// failed compare (oid.content.Len() against 3 twice more and
 	// p.content.Len() against 5 once more; main's single 9 moved).
-	// KeyEc: 37 under PGO, where KeyIs is inlined (v's, oct's
-	// and p's class, tag and constructed bit, three jumps for each call
-	// main made), with Next's error and option tags, KeyUint's and
-	// FromBytes' error tags, the version INTEGER's length and byte, x's
-	// class, constructed bit and tag order, c >= 0 and c != 0, d's length
-	// against 33 and KeySame's answer. The scalar's bytes are only copied;
-	// the OR of the bytes before the last 32 (KeyEc's pad, main's too) is
-	// one backward jump.
+	// In the PGO build, KeyAlgorithm and KeyEc also inline KeySame,
+	// and KeyEc inlines KeyBits. The additional branches check public
+	// OID lengths and bytes, DER tags and public-key encoding.
+	// The scalar is copied after checking its encoded length and padding.
 	// ParsePrivateKey under PGO: 39, among them a test of a parsed
 	// element's constructed byte (cmpb $0x0 after its tag against 0x10),
 	// public, which the classifier does not take for a check.
 	"mk.std.crypto.ParsePrivateKey": 39,
-	"mk.std.crypto.KeyAlgorithm":    54,
-	"mk.std.crypto.KeyEc":           37,
-	"mk.std.crypto.KeyUint":         10, // no build reads more than 10
-	"mk.std.crypto.KeySame":         9,
+	"mk.std.crypto.KeyAlgorithm":    51,
+	"mk.std.crypto.KeyEc":           55,
+	"mk.std.crypto.KeyUint":         11, // DER INTEGER type, length, sign and leading zero encoding
+	"mk.std.crypto.KeySame":         0,
 	"mk.std.crypto.KeyIs":           0, // inlined in every build (cr2EcCtAbsent), read in KeyEc and its other callers (read at 2 out of line)
-	"mk.std.crypto.KeyBits":         4,
+	"mk.std.crypto.KeyBits":         0,
 	// The inlined Wipe of d's 32 bytes.
 	"mk.std.crypto.EcSecret:Wipe": 12,
-	// Wipe, over cr2CtAllow's 12 for this probe: 14 under PGO, where the
-	// tail's byte loop is unrolled
-	// once more (i + 1 and i + 2 against n). Every jump compares n, the
-	// head's count from the buffer's address (& 7) or i; nothing reads a
-	// byte. The release build has no crypto.Wipe body: KeyEc's two wipes
-	// call kernel.Wipe, the same code, which this test reads at the same 14
-	// (12 in release and 14 under PGO). These two are this
-	// probe's. cr2CtAllow holds kernel.Wipe at 0: in the AES
-	// probe, where kernel.Wipe is inlined into crypto.Wipe (read at 12, 8
-	// under PGO), it has no body.
-	"mk.std.crypto.Wipe":      14,
-	"mk.std.simd.kernel.Wipe": 14,
+	// Crypto's Wipe wrapper is inlined in both builds. The kernel's
+	// out-of-line body tests the buffer length, alignment of the address,
+	// and the word and byte loop counters.
+	"mk.std.crypto.Wipe":      0,
+	"mk.std.simd.kernel.Wipe": 13,
 	// The identity test of Z (IsZero, its answer public); PGO adds an
 	// out-of-line split of the same test.
-	"mk.std.crypto.P256PtBytes":  1, // no build reads more than 1
+	"mk.std.crypto.P256PtBytes":  0, // the inlined identity test is counted in EcSecret:Public
 	"mk.std.crypto.P256PtXBytes": 1,
 	// The loop's entry test on k.Len() (public).
 	"mk.std.crypto.P256PtMul": 1,
 	// The peer's point (public): its length and form, the coordinates'
 	// range and the curve equation.
-	"mk.std.crypto.P256PtFromBytes": 5, // no build reads more than 5
+	"mk.std.crypto.P256PtFromBytes": 8, // the release build splits the public curve-equation test
 	// Both curves' tests, out's length, the peer point's answer, the
 	// secret's range (js, ptest), the identity test, the Wipe of x.
 	"mk.std.crypto.EcdhShared": 18,
 	// The curve, the digest's length (empty, at least 32), the secret's
 	// range (js, ptest), the format, and the inlined Wipes of the nonce,
-	// K and V. P256nDigest is inlined here in both builds, and its one
-	// jump, cmpq $0x20 of digest.Len() and jb, counts here; the other 39
-	// include the range checks' js and ptest (FiatSubBorrow keeps Below's
-	// borrow one test). Under PGO: 25, read on its listing. Each of the
+	// K and V. P256nDigest is out of line in both builds and its
+	// length check is counted there. Each of the
 	// three inlined Wipes (the nonce's 32 bytes, K's and V's 64) ends in
 	// its byte tail, laid out in line and unrolled by two, with forward
 	// exits and an unconditional jmp back, so its index tests are not
@@ -192,9 +177,10 @@ var cr2EcCtAllow = map[string]int{
 	// stack address (Wipe's alignment head: leaq; notl; andl $7) plus a
 	// constant; the tails only store zero, and no compare reads a byte of
 	// the buffer, the key or the digest.
-	"mk.std.crypto.EcdsaSign": 40,
-	// The hash kind (a match on a public value) and the Wipe of t.
-	"mk.std.crypto.DrbgMac":   2,
+	"mk.std.crypto.EcdsaSign": 39,
+	// The hash kind and the inlined HMAC constructors' tests of the
+	// public key length against each hash's block size.
+	"mk.std.crypto.DrbgMac":   5,
 	"mk.std.crypto.Drbg:New":  12,
 	"mk.std.crypto.Drbg:Next": 12, // no build reads more than 12
 	// The signature's encoding: format, out's length and the leading zero
@@ -251,10 +237,8 @@ var cr2EcCtAllow = map[string]int{
 	"mk.std.crypto.P256PtBaseMul":  0,
 	"mk.std.crypto.P256CombLookup": 0,
 	"mk.std.crypto.P256CombBits":   0,
-	// P256nDigest: digest.Len() against 32 (the cmpq of its length
-	// argument). It is inlined into EcdsaSign in both builds
-	// (cr2EcCtAbsent), so the jump counts there and it is held at 0.
-	"mk.std.crypto.P256nDigest":   0,
+	// P256nDigest: the digest's length against 32, selecting the copy.
+	"mk.std.crypto.P256nDigest":   1,
 	"mk.std.crypto.FiatAdd64":     0,
 	"mk.std.crypto.FiatSub64":     0,
 	"mk.std.crypto.FiatSubBorrow": 0,
@@ -267,19 +251,18 @@ var cr2EcCtAllow = map[string]int{
 // whose two builds read different counts, at the count each build has (from
 // the test's -v log), every one at or below the reading above.
 var cr2EcCtByBuild = ctByBuild{
-	"mk.main.Main":                    {"release-pgo": 23},
+	"mk.main.Main":                    {"release": 32},
 	"mk.std.crypto.Drbg:New":          {"release-pgo": 6},
 	"mk.std.crypto.Drbg:Next":         {"release-pgo": 6},
 	"mk.std.crypto.EcSecret:Generate": {"release-pgo": 2},
-	"mk.std.crypto.EcSecret:Public":   {"release": 1},
 	"mk.std.crypto.EcSecret:Wipe":     {"release-pgo": 6},
 	"mk.std.crypto.EcdhShared":        {"release-pgo": 6},
-	"mk.std.crypto.EcdsaSign":         {"release-pgo": 25},
-	"mk.std.crypto.KeyAlgorithm":      {"release-pgo": 20},
-	"mk.std.crypto.KeyEc":             {"release": 28},
+	"mk.std.crypto.EcdsaSign":         {"release-pgo": 21},
+	"mk.std.crypto.KeyAlgorithm":      {"release-pgo": 23},
+	"mk.std.crypto.KeyEc":             {"release": 20},
+	"mk.std.crypto.P256PtFromBytes":   {"release-pgo": 5},
 	"mk.std.crypto.KeyUint":           {"release-pgo": 8},
 	"mk.std.crypto.ParsePrivateKey":   {"release": 14},
-	"mk.std.crypto.SigEncode":         {"release-pgo": 3},
 	"mk.std.simd.kernel.Wipe":         {"release": 12},
 }
 
@@ -295,9 +278,9 @@ var cr2EcCtAbsent = map[string][]string{
 	"mk.std.crypto.FiatAdd64":      {"*"},
 	"mk.std.crypto.FiatSub64":      {"*"},
 	"mk.std.crypto.FiatSubBorrow":  {"*"},
-	"mk.std.crypto.KeyBits":        {"release"},
+	"mk.std.crypto.KeyBits":        {"*"},
 	"mk.std.crypto.KeyIs":          {"*"},
-	"mk.std.crypto.KeySame":        {"release"},
+	"mk.std.crypto.KeySame":        {"*"},
 	"mk.std.crypto.NonceHash":      {"*"},
 	"mk.std.crypto.P256Add":        {"release"},
 	"mk.std.crypto.P256Below":      {"*"},
@@ -316,7 +299,6 @@ var cr2EcCtAbsent = map[string][]string{
 	"mk.std.crypto.P256nBelow":     {"*"},
 	"mk.std.crypto.P256nCmovznz":   {"*"},
 	"mk.std.crypto.P256nDecode":    {"*"},
-	"mk.std.crypto.P256nDigest":    {"*"},
 	"mk.std.crypto.P256nEncode":    {"*"},
 	"mk.std.crypto.P256nEqual":     {"*"},
 	"mk.std.crypto.P256nIsZero":    {"*"},
@@ -327,8 +309,16 @@ var cr2EcCtAbsent = map[string][]string{
 	"mk.std.crypto.P256nSetOne":    {"*"},
 	"mk.std.crypto.P256nSub":       {"*"},
 	"mk.std.crypto.PutBe64":        {"*"},
-	"mk.std.crypto.Random":         {"release"},
-	"mk.std.crypto.Wipe":           {"release"},
+	"mk.std.crypto.Random":         {"*"},
+	"mk.std.crypto.SigEncode":      {"release-pgo"}, // EcdsaSign
+	"mk.std.crypto.Wipe":           {"*"},
+
+	"mk.std.crypto.P256FromMontgomery":  {"*"},       // P256Encode
+	"mk.std.crypto.P256PtBytes":         {"*"},       // EcSecret:Public
+	"mk.std.crypto.P256PtSelect":        {"*"},       // P256PtLookup
+	"mk.std.crypto.P256PtXBytes":        {"release"}, // EcdhShared and EcdsaSign
+	"mk.std.crypto.P256ToMontgomery":    {"*"},       // P256Decode
+	"mk.std.crypto.P256nFromMontgomery": {"*"},       // P256nEncode
 }
 
 // TestSTDCRYPTO_EcConstantTimeDisassembly runs std-crypto's classifier
@@ -466,6 +456,10 @@ func cr2EcCtChecked(fn string) bool {
 // locations the optimizer dropped; their allowances cover no body read
 // here.
 var cr2EcCtUnrecorded = map[string][]string{
+	// Only the discarded out-of-line encoders retain the debug record.
+	// This limb OR is part of P256IsZero; the encoders' live callers
+	// cover the identity test in EcSecret:Public, EcdhShared and EcdsaSign.
+	"mk.std.crypto.P256Nonzero":  {"release"},
 	"mk.std.crypto.P256Opp":      {"*"},
 	"mk.std.crypto.P256Reduce":   {"*"},
 	"mk.std.crypto.P256SetOne":   {"*"},

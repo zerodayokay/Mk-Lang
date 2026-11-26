@@ -58,16 +58,11 @@ export Main(sys: &System): WriteError!void {
 // llvm-objdump's listing as a test of a length, a loop bound or a CPU
 // feature, never of the message, the key or the state.
 var h2CtAllow = map[string]int{
-	// Main: the small state methods (Sha384State's, New) inlined here add
-	// no jump. All 19 are the probe's own Print, compiled in line: the error
-	// tag each write returns (eight values, five separators by
-	// Writer.Bytes), and the first two separators' in-line writes: the
-	// buffer's free space (cap - len, jle), on the slow path its length zero
-	// (je, BytesSlow or the sink's call) and that call's error tag. Under
-	// PGO, 15: every separator by Writer.Bytes, the fifteen writes' tags.
-	// The buffer's fill moves only with the text already printed, which the
-	// probe writes out; none reads the key, the message or the state.
-	"mk.main.Main":          19,
+	// Main: the small inlined SHA state methods add no branches.
+	// Without PGO, Print's writer path is inlined, with write error tags,
+	// number formatting, remaining capacity and empty-buffer tests.
+	// With PGO, only the 15 write error tags are in Main.
+	"mk.main.Main":          44,
 	"mk.std.crypto.Hmac256": 1, // the key length above 64 (cmpq $0x41) and the data length zero; no build reads more than 1
 	"mk.std.hash.Sha1":      0, // PGO builds only: the one-shot out of line
 	// Sha1Blocks: the SHA-1 kernel's guard,

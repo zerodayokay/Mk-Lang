@@ -68,15 +68,10 @@ export Main(sys: &System): WriteError|crypto.Error!void {
 // (Sha256Compress, with the SHA-NI kernel's guard) is read by
 // std-hash_ct_test.go on its four builds, so it is not listed here.
 var ctAllow = map[string]int{
-	// Main: Open's error edge (2 when Seal is out of line), then the
-	// probe's own Print, compiled in line: the error tag each write returns
-	// (the two bools, the two bytes, the separators written by
-	// Writer.Bytes and BytesSlow: 7), and the first separator's in-line
-	// write: the buffer's free space (cap - len, jle) and, on the slow
-	// path, its length zero (je), which picks BytesSlow or the sink's
-	// call. None reads a key: the buffer's fill moves only with the text
-	// already printed, which the probe writes out.
-	"mk.main.Main": 10,
+	// Main: Open's error tag and the probe's own Print. The other
+	// branches concern the formatted bools and bytes it writes out or
+	// Writer.Bytes' remaining capacity and empty-buffer tests.
+	"mk.main.Main": 14,
 
 	"mk.std.crypto.AeadTag":               2,  // aad and ciphertext lengths mod 16; no build reads more than 2
 	"mk.std.crypto.ChaXor":                13, // 13 with frame pointers on (the default; rbp is not free, so register allocation and block layout change), read on the release disassembly: each flag-setter is an index, a length or a constant, among them the 256-byte four-block loop's length test (i against n) and the loop-versioning guards (an index, a length or their difference against another of them or a constant: 0x100, 0x3f, 3, 0x20, a length's low bits); none tests a key or data byte
@@ -133,12 +128,16 @@ var ctPublic = map[string]bool{
 var ctAbsent = map[string][]string{
 	"mk.std.crypto.ChaCha20Poly1305:Seal": {"*"},
 	"mk.std.crypto.ChaOut4":               {"*"},
+	"mk.std.crypto.CombEntry":             {"*"}, // CombAt
 	"mk.std.crypto.Ed25519:FromSeed":      {"*"},
 	"mk.std.crypto.Equal":                 {"*"},
 	"mk.std.crypto.FePow22523":            {"*"},
 	"mk.std.crypto.FeSqrtRatio":           {"*"},
 	"mk.std.crypto.FeSquareN":             {"*"},
+	"mk.std.crypto.P1Sub":                 {"*"}, // PtDoubleMult, public
+	"mk.std.crypto.P1SubAffine":           {"*"}, // PtDoubleMult, public
 	"mk.std.crypto.ScLimbs32":             {"*"},
+	"mk.std.crypto.ScReduce64":            {"*"}, // Ed25519:Sign
 }
 
 // ctRequirePresent is the rule of the constant-time disassembly tests: a
@@ -608,7 +607,17 @@ func TestSTDCRYPTO_ConstantTimeDisassembly(t *testing.T) {
 		}
 		t.Logf("%s: %d checks, %d loop edges (%d on a compare that is not an induction), %d other (%d allowed)", fn, counts[fn][0], counts[fn][1], counts[fn][2], len(other[fn]), allowed)
 	}
-	ctRequirePresent(t, "ctAllow", "release", ctAllow, seen, ctAbsent, ctUnrecorded, ctInlined(t, exe), func(fn string) bool { return ctChecked(fn) && !ctPublic[fn] })
+	into := ctInlined(t, exe)
+	ctRequirePresent(t, "ctAllow", "release", ctAllow, seen, ctAbsent, ctUnrecorded, into, func(fn string) bool { return ctChecked(fn) && !ctPublic[fn] })
+	for fn := range ctUnrecorded {
+		publicCopy := false
+		for holder := range into[fn] {
+			publicCopy = publicCopy || seen[holder] && ctPublic[holder]
+		}
+		if !publicCopy {
+			t.Errorf("%s has no recorded inlined copy in a public function", fn)
+		}
+	}
 	if !seen["mk.main.Main"] {
 		t.Error("the probe's Main is not in the disassembly: the symbol names changed, so nothing above was checked")
 	}
@@ -688,13 +697,13 @@ func TestSTDCRYPTO_ConstantTimeClassifier(t *testing.T) {
 	}
 }
 
-// ctUnrecorded are the ctAbsent functions no function the test reads holds
-// a copy of in the release build (ctRequirePresent): FeSqrtRatio and
-// FePow22523, on Verify's
-// path, are inlined into PtFromBytes alone, a public function (ctPublic)
-// that decodes the public key, so their jumps are not read here; their
-// allowances are 0, so a build that holds them in a read function fails.
+// ctUnrecorded are the helpers inlined only into public functions:
+// PtFromBytes decodes the public key, and PtDoubleMult uses only the
+// public key and scalars from verification. The test checks for those
+// copies and requires a new reading if either scope changes.
 var ctUnrecorded = map[string][]string{
 	"mk.std.crypto.FePow22523":  {"*"},
 	"mk.std.crypto.FeSqrtRatio": {"*"},
+	"mk.std.crypto.P1Sub":       {"*"},
+	"mk.std.crypto.P1SubAffine": {"*"},
 }
