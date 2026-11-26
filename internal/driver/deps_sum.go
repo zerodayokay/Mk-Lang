@@ -347,27 +347,47 @@ func writeFileAtomic(path string, data []byte) error {
 // reports whether this call wrote it. It is for a file that every writer
 // writes with the same bytes, such as a header in a directory named by
 // its content, when builds in this process and in others may write it at
-// once: each writes a temporary of its own and renames it over p, so a
-// reader never sees half the file. On Windows the rename fails while
-// another writer or a reader has p open, so a failed write is retried,
-// briefly, until p holds data, whoever wrote it.
+// once: each writes a temporary of its own (mode 0644, as os.WriteFile
+// makes a file) and renames it over p, so a reader never sees half the
+// file. On Windows the rename fails while another writer or a reader has
+// p open, so a failed rename is retried, briefly, until it succeeds or p
+// holds data, whoever wrote it.
 func writeSameFile(p string, data []byte) (bool, error) {
-	var err error
+	if old, err := os.ReadFile(p); err == nil && bytes.Equal(old, data) {
+		return false, nil
+	}
+	f, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".tmp-*")
+	if err != nil {
+		return false, err
+	}
+	tmp := f.Name()
+	err = f.Chmod(0o644)
+	if err == nil {
+		_, err = f.Write(data)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return false, err
+	}
 	for try := 1; ; try++ {
-		if old, rerr := os.ReadFile(p); rerr == nil && bytes.Equal(old, data) {
-			return false, nil
-		}
-		if err = writeFileAtomic(p, data); err == nil {
+		if err = os.Rename(tmp, p); err == nil {
 			return true, nil
 		}
-		if try == sameFileTries {
+		if old, rerr := os.ReadFile(p); rerr == nil && bytes.Equal(old, data) {
+			err = nil // another writer's copy is in place
+		}
+		if err == nil || try == sameFileTries {
+			os.Remove(tmp)
 			return false, err
 		}
 		time.Sleep(time.Duration(try) * time.Millisecond)
 	}
 }
 
-// sameFileTries bounds writeSameFile's attempts: their pauses add up to
+// sameFileTries bounds writeSameFile's renames: their pauses add up to
 // about a second.
 const sameFileTries = 45
 
