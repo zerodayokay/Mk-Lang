@@ -29,18 +29,23 @@ func (c *Context) funcWorld() FuncWorld {
 
 // bindFunction binds a function gen argument: the
 // generator's parameter must be Method; the function must be a free,
-// non-generic function. It returns the Method handle and false with a
-// diagnostic otherwise.
-func (c *Context) bindFunction(r *run, a Arg, pt types.TypeID) (uint32, *diag.Diagnostic) {
+// non-generic function. It returns the Method handle, or a diagnostic, or
+// poison: a function of another module with no declaration, never checked
+// because its module or one it imports has an error before types, which
+// has its own diagnostic.
+func (c *Context) bindFunction(r *run, a Arg, pt types.TypeID) (uint32, *diag.Diagnostic, bool) {
 	methodT := c.Types.Named(c.Known.Method, nil)
 	if c.Known.Method == types.NoItem || pt != methodT {
-		return 0, c.mismatch(a.Span, pt, "a function")
+		return 0, c.mismatch(a.Span, pt, "a function"), false
 	}
 	it := c.Items.Get(a.Item)
 	name := c.Interner.Str(it.Name)
 	if it.Owner != types.NoItem || it.OwnerPrim != types.NoType {
 		return 0, diag.New(diag.E0301, a.Span, "`"+name+"` is a method; a gen argument names a free function").
-			Text("expected", "a non-generic function").Text("found", "a method")
+			Text("expected", "a non-generic function").Text("found", "a method"), false
+	}
+	if _, ok := it.Decl.(*types.FuncDecl); !ok && it.Module != r.module {
+		return 0, nil, true
 	}
 	fw := c.funcWorld()
 	var v *MethodView
@@ -49,16 +54,16 @@ func (c *Context) bindFunction(r *run, a Arg, pt types.TypeID) (uint32, *diag.Di
 	}
 	if v == nil {
 		return 0, diag.New(diag.E0301, a.Span, "a gen argument is a type, an interface, a literal or a function").
-			Text("expected", "a type, an interface, a literal or a function").Text("found", "`"+name+"`")
+			Text("expected", "a type, an interface, a literal or a function").Text("found", "`"+name+"`"), false
 	}
 	if len(v.Sig.Generics) > 0 {
 		return 0, diag.New(diag.E0301, a.Span, "`"+name+"` is generic, so it cannot be a gen argument").
 			Text("expected", "a non-generic function").Text("found", "the generic `"+name+"`").
-			Alt("wrap the instance you want in a non-generic function and name that")
+			Alt("wrap the instance you want in a non-generic function and name that"), false
 	}
 	sig := v.Sig
 	r.methods = append(r.methods, methodH{iface: a.Item, sig: &sig, flows: v.Flows})
-	return uint32(len(r.methods) - 1), nil
+	return uint32(len(r.methods) - 1), nil, false
 }
 
 // typeFuncs is Type.Methods of a named struct or enum: its inherent
