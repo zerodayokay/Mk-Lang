@@ -11,10 +11,12 @@ package driver
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"syscall"
 	"testing"
 	"time"
 
@@ -259,19 +261,28 @@ func TestVersionLineMemo(t *testing.T) {
 
 	// A clang reached through a symbolic link (Linux's /usr/bin/clang-N)
 	// is memoized by the file it names.
-	real := filepath.Join(t.TempDir(), "clang-21")
-	fakeClang(t, real, "clang 4", old)
-	link := filepath.Join(t.TempDir(), "clang")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatalf("symlink: %v (Developer Mode is on, brief2)", err)
-	}
-	runs = 0
-	for range 2 {
-		versionLine(open(), link, run)
-	}
-	if runs != 1 {
-		t.Errorf("through a symbolic link: %d runs, want 1", runs)
-	}
+	t.Run("symlink", func(t *testing.T) {
+		const privilegeNotHeld = syscall.Errno(1314) // Windows ERROR_PRIVILEGE_NOT_HELD
+		real := filepath.Join(t.TempDir(), "clang-21")
+		fakeClang(t, real, "clang 4", old)
+		link := filepath.Join(t.TempDir(), "clang")
+		if err := os.Symlink(real, link); err != nil {
+			if runtime.GOOS == "windows" && errors.Is(err, privilegeNotHeld) {
+				t.Skipf("symbolic link privilege unavailable: %v", err)
+			}
+			t.Fatalf("symlink: %v", err)
+		}
+		runs = 0
+		for range 2 {
+			got, err := versionLine(open(), link, run)
+			if err != nil || got != line {
+				t.Fatalf("through a symbolic link: %q, %v; want %q", got, err, line)
+			}
+		}
+		if runs != 1 {
+			t.Errorf("through a symbolic link: %d runs, want 1", runs)
+		}
+	})
 }
 
 // TestDiscoveryMemoIdentity: with discovery left to the driver, a

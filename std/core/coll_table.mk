@@ -35,6 +35,9 @@ struct Table[K, V] {
     keyed: bool
 }
 
+const TableGroupShift = 4
+const TableGroupWidth = 1 << TableGroupShift
+
 const CtrlEmpty: u8 = 0xFF
 const CtrlDeleted: u8 = 0x80
 const GroupLsb: u64 = 0x0101010101010101
@@ -345,7 +348,7 @@ TableFind[K: Hash + Eq, V](t: &Table[K, V], hash: u64, k: &K): int {
         if (EmptyMask(lo) | EmptyMask(hi)) != 0 {
             return -1
         }
-        stride = stride +% 16
+        stride = stride +% TableGroupWidth
         pos = (pos +% stride) & mask
     }
 }
@@ -369,7 +372,7 @@ TableFindSimd[K: Hash + Eq, V](t: &Table[K, V], hash: u64, k: &K): int {
         if (g == vemp).Bits() != 0 {
             return -1
         }
-        stride = stride +% 16
+        stride = stride +% TableGroupWidth
         pos = (pos +% stride) & mask
     }
 }
@@ -392,7 +395,7 @@ FirstFree[K, V](t: &Table[K, V], hash: u64): int {
         if m2 != 0 {
             return (pos +% 8 +% (raw.Ctz64(m2) >> 3)) & mask
         }
-        stride = stride +% 16
+        stride = stride +% TableGroupWidth
         pos = (pos +% stride) & mask
     }
 }
@@ -407,7 +410,7 @@ FirstFreeSimd[K, V](t: &Table[K, V], hash: u64): int {
         if m != 0 {
             return (pos +% raw.Ctz64(m)) & mask
         }
-        stride = stride +% 16
+        stride = stride +% TableGroupWidth
         pos = (pos +% stride) & mask
     }
 }
@@ -460,7 +463,7 @@ TableLookup[K: Hash + Eq, V](t: &Table[K, V], hash: u64, k: &K): (at: int, free:
         if (EmptyMask(lo) | EmptyMask(hi)) != 0 {
             return (at: -1, free: free)
         }
-        stride = stride +% 16
+        stride = stride +% TableGroupWidth
         pos = (pos +% stride) & mask
     }
 }
@@ -492,7 +495,7 @@ TableLookupSimd[K: Hash + Eq, V](t: &Table[K, V], hash: u64, k: &K): (at: int, f
         if (g == vemp).Bits() != 0 {
             return (at: -1, free: free)
         }
-        stride = stride +% 16
+        stride = stride +% TableGroupWidth
         pos = (pos +% stride) & mask
     }
 }
@@ -588,7 +591,7 @@ TableClaim[K, V](t: mut Table[K, V], hash: u64): int {
 // through it, which gives one of growth back; else deleted.
 TableErase[K, V](t: mut Table[K, V], i: int) {
     mask := t.cap -% 1
-    before := (i -% 16) & mask
+    before := (i -% TableGroupWidth) & mask
     empty := if Target.os != Os.Freestanding {
         TableEraseShortSimd(t.ctrl, i, before)
     } else {
@@ -596,7 +599,7 @@ TableErase[K, V](t: mut Table[K, V], i: int) {
         after := if lo_a != 0 { raw.Ctz64(lo_a) >> 3 } else { 8 +% (raw.Ctz64(EmptyMask(GroupAt(t.ctrl, i +% 8))) >> 3) }
         hi_b := EmptyMask(GroupAt(t.ctrl, before +% 8))
         prior := if hi_b != 0 { raw.Clz64(hi_b) >> 3 } else { 8 +% (raw.Clz64(EmptyMask(GroupAt(t.ctrl, before))) >> 3) }
-        after +% prior < 16
+        after +% prior < TableGroupWidth
     }
     if empty {
         CtrlPut(t.ctrl, t.cap, i, CtrlEmpty)
@@ -610,8 +613,8 @@ TableErase[K, V](t: mut Table[K, V], i: int) {
 TableEraseShortSimd(ctrl: *u8, i: int, before: int): bool {
     vemp := simd.Vec[u8, 16].Splat(CtrlEmpty)
     after := raw.Ctz64((GroupAt16(ctrl, i) == vemp).Bits())
-    prior := raw.Clz64((GroupAt16(ctrl, before) == vemp).Bits() << 48)
-    return after +% prior < 16
+    prior := raw.Clz64((GroupAt16(ctrl, before) == vemp).Bits() << (64 - TableGroupWidth))
+    return after +% prior < TableGroupWidth
 }
 
 // TableResize moves every key to new arrays of newcap slots: the
@@ -621,7 +624,7 @@ TableResize[K: Hash + Eq, V](t: mut Table[K, V], a: &Alloc, free: bool, newcap: 
     align := AlignOfT[Slot[K, V]]()
     // A slot array whose byte count would overflow int is out of memory, as
     // in GrowSlots, never a wrapped size.
-    if newcap > GrowLimit - 16 || (size > 0 && newcap > GrowLimit / size) {
+    if newcap > GrowLimit - TableGroupWidth || (size > 0 && newcap > GrowLimit / size) {
         return false
     }
     ctrl := NewCtrl(a, newcap)
@@ -632,7 +635,7 @@ TableResize[K: Hash + Eq, V](t: mut Table[K, V], a: &Alloc, free: bool, newcap: 
     if size > 0 {
         p := AllocBytes(a, newcap * size, align)
         if raw.IsNull(p) {
-            FreeBytes(a, ctrl, newcap + 16, 16)
+            FreeBytes(a, ctrl, newcap + TableGroupWidth, TableGroupWidth)
             return false
         }
         slots = BytesAs[Slot[K, V]](p)
@@ -680,7 +683,7 @@ TableRehashInPlace[K: Hash + Eq, V](t: mut Table[K, V]) {
         hash := TableHash(&*t, SlotRef(KeyAt(t.slots, i), 0))
         p := H1(hash) & mask
         j := FirstFree(&*t, hash)
-        if ((i - p) & mask) >> 4 == ((j - p) & mask) >> 4 {
+        if ((i - p) & mask) >> TableGroupShift == ((j - p) & mask) >> TableGroupShift {
             CtrlPut(t.ctrl, cap, i, H2(hash))
             i += 1
             continue
@@ -723,6 +726,6 @@ TableFreeArrays[K, V](t: &Table[K, V], a: &Alloc) {
     if t.cap == 0 {
         return
     }
-    FreeBytes(a, t.ctrl, t.cap + 16, 16)
+    FreeBytes(a, t.ctrl, t.cap + TableGroupWidth, TableGroupWidth)
     FreeSlots(a, t.slots, t.cap)
 }

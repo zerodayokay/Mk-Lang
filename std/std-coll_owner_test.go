@@ -69,48 +69,17 @@ Report(out: mut Writer, tag: str, m: &HeapMap[int, int], k: int): WriteError!voi
     try out.Flush()
 }
 
-// FindKey is the first key from 1000 whose insert takes a slot with
-// control byte want, or -1.
-FindKey(m: &HeapMap[int, int], want: int): int {
-    for k in 1000..1000000 {
-        if collowner.FreeCtrl(m, k) == want {
-            return k
-        }
-    }
-    return -1
-}
-
-// Full16 is a map of capacity 16 with keys base to base + 13: 14 used,
-// growth 0.
-Full16(h: &Alloc, base: int): OutOfMemory!HeapMap[int, int] {
+// Full32 fills the growth allowance of a capacity-32 map with ordinary
+// consecutive keys. At capacity 16 an erase cannot leave a tombstone.
+Full32(h: &Alloc): OutOfMemory!HeapMap[int, int] {
     var m := HeapMap[int, int].New(h)
-    for i in 0..14 {
-        m.Set(h, base + i, i) else {
+    for i in 0..28 {
+        m.Set(h, i, i) else {
             m.Free(h)
             fail OutOfMemory
         }
     }
     return m
-}
-
-// Sparse16 is a map of capacity 16 with growth 0 and 7 used (14 keys in,
-// then 7 removed, each leaving a deleted byte) and an absent key whose
-// insert takes an empty slot. It tries key sets until one does; the
-// caller prints the shape, so a failed search shows there.
-Sparse16(h: &Alloc): OutOfMemory!HeapMap[int, int] {
-    for b in 0..1000 {
-        var m := try Full16(h, b * 100)
-        for i in 0..7 {
-            k := b * 100 + i
-            _ = m.Remove(&k)
-        }
-        s := collowner.Shape(&m)
-        if s.cap == 16 && s.used == 7 && s.growth == 0 && FindKey(&m, 255) >= 0 {
-            return m
-        }
-        m.Free(h)
-    }
-    return try Full16(h, 0)
 }
 
 // Churn drives HeapMap inserts and removes with a seeded sequence. Before
@@ -262,22 +231,22 @@ export Main(sys: &System) {
         }
         m.Free(h)
     } else if which == "HeapMap.Set.grow" {
-        // Capacity 16, growth 0, 14 used: an insert into an empty slot
+        // Capacity 32, growth 0, 28 used: an insert into an empty slot
         // doubles the table.
-        var m := Full16(h, 0) else {
+        var m := Full32(h) else {
             return
         }
-        k := FindKey(&m, 255)
+        k := 1000
         Report(mut out, "pre", &m, k) else {
         }
         m.Set(w, k, 1) else {
         }
         m.Free(h)
     } else if which == "HeapMap.Ensure.grow" {
-        var m := Full16(h, 0) else {
+        var m := Full32(h) else {
             return
         }
-        k := FindKey(&m, 255)
+        k := 1000
         Report(mut out, "pre", &m, k) else {
         }
         _ = m.Ensure(w, k, 1) else {
@@ -346,41 +315,63 @@ export Main(sys: &System) {
             return
         }
     } else if which == "tombstone" {
-        // COLL-R4: growth 0 with a deleted slot on the new key's path. The
-        // insert reuses it and allocates nothing, so it compares nothing.
-        var m := Full16(h, 0) else {
+        // Remove and reinsert an ordinary key whose slot stays deleted.
+        var m := Full32(h) else {
             return
         }
-        for i in 0..14 {
+        var k := -1
+        for i in 0..28 {
             _ = m.Remove(&i)
-            if collowner.Shape(&m).growth == 0 {
+            if collowner.Shape(&m).growth == 0 && collowner.FreeCtrl(&m, i) == 128 {
+                k = i
                 break
             }
             m.Set(h, i, i) else {
+                m.Free(h)
+                return
             }
         }
-        k := FindKey(&m, 128)
+        defer m.Free(h)
         Report(mut out, "pre", &m, k) else {
-        }
-        m.Set(w, k, 1) else {
-        }
-        Report(mut out, "post", &m, k) else {
-        }
-        m.Free(h)
-    } else if which == "rehash" {
-        // COLL-R4: growth 0 with 7 of 16 slots used and an empty slot on
-        // the new key's path: rule 6 rehashes in place, no allocation.
-        var m := Sparse16(h) else {
             return
         }
-        k := FindKey(&m, 255)
-        Report(mut out, "pre", &m, k) else {
+        if k < 0 {
+            return
         }
-        _ = m.Ensure(w, k, 1) else {
+        m.Set(w, k, 1) else {
+            return
         }
         Report(mut out, "post", &m, k) else {
+            return
         }
-        m.Free(h)
+    } else if which == "rehash" {
+        // A sliding window of 28 ordinary keys at capacity 64 leaves
+        // tombstones. Stop at the first new key that needs an empty slot
+        // with no growth left. At 28 live slots it must rehash in place.
+        var m := HeapMap[int, int].New(h)
+        defer m.Free(h)
+        for k in 1000..51000 {
+            s := collowner.Shape(&m)
+            if s.cap == 64 && s.used == 28 && s.growth == 0 && collowner.FreeCtrl(&m, k) == 255 {
+                Report(mut out, "pre", &m, k) else {
+                    return
+                }
+                _ = m.Ensure(w, k, 1) else {
+                    return
+                }
+                Report(mut out, "post", &m, k) else {
+                    return
+                }
+                break
+            }
+            m.Set(h, k, k) else {
+                return
+            }
+            if k >= 1028 {
+                old := k - 28
+                _ = m.Remove(&old)
+            }
+        }
     } else if which == "churn" {
         Churn(mut out, h, w, 200000, 12345) else {
             return
@@ -463,8 +454,8 @@ func TestStdColl_WrongAllocatorPanics(t *testing.T) {
 		}{
 			{"HeapMap.Set", "HeapMap.Set", nil},
 			{"HeapMap.Ensure", "HeapMap.Ensure", nil},
-			{"HeapMap.Set.grow", "HeapMap.Set", &shape{16, 14, 0, 255}},
-			{"HeapMap.Ensure.grow", "HeapMap.Ensure", &shape{16, 14, 0, 255}},
+			{"HeapMap.Set.grow", "HeapMap.Set", &shape{32, 28, 0, 255}},
+			{"HeapMap.Ensure.grow", "HeapMap.Ensure", &shape{32, 28, 0, 255}},
 			{"HeapMap.Free", "HeapMap.Free", nil},
 			{"HeapMap.Free.empty", "HeapMap.Free", nil},
 			{"TextMap.Ensure", "TextMap.Ensure", nil},
@@ -532,10 +523,8 @@ func TestStdColl_NoCompareWithoutAllocation(t *testing.T) {
 				t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and \"after\"", code, stdout, stderr)
 			}
 			s := parseShapes(t, stdout)
-			// Capacity 16, 13 used, growth 0, and the key's slot deleted;
-			// after, the slot is reused: 14 used, growth still 0.
-			if s["pre"] != (shape{16, 13, 0, 128}) || s["post"].cap != 16 || s["post"].used != 14 || s["post"].growth != 0 {
-				t.Fatalf("shapes %+v, want pre {16 13 0 128} and post cap 16, used 14, growth 0", s)
+			if s["pre"] != (shape{32, 27, 0, 128}) || s["post"] != (shape{32, 28, 0, -1}) {
+				t.Fatalf("shapes %+v, want pre {32 27 0 128} and post {32 28 0 -1}", s)
 			}
 		})
 		t.Run(fmt.Sprintf("rehash/%v", flags), func(t *testing.T) {
@@ -544,10 +533,9 @@ func TestStdColl_NoCompareWithoutAllocation(t *testing.T) {
 				t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and \"after\"", code, stdout, stderr)
 			}
 			s := parseShapes(t, stdout)
-			// 7 used of 16 with growth 0 is at most cap·7/16: the table
-			// rehashes in place, then 8 used and growth 14 - 8.
-			if s["pre"] != (shape{16, 7, 0, 255}) || s["post"].cap != 16 || s["post"].used != 8 || s["post"].growth != 6 {
-				t.Fatalf("shapes %+v, want pre {16 7 0 255} and post cap 16, used 8, growth 6", s)
+			// After rehash and insertion, growth is 64*7/8 - 29.
+			if s["pre"] != (shape{64, 28, 0, 255}) || s["post"] != (shape{64, 29, 27, -1}) {
+				t.Fatalf("shapes %+v, want pre {64 28 0 255} and post {64 29 27 -1}", s)
 			}
 		})
 		t.Run(fmt.Sprintf("churn/%v", flags), func(t *testing.T) {
