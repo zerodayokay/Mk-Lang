@@ -1,14 +1,14 @@
 // Why: fuzzing and benchmarking should need no new syntax: a test block
 // calls a function, and the driver decides what happens.
 //
-// What: Fuzz, Bench, BenchSys, ExpectPanic, RunSeeds, the mutation
-// loop (Loop, Mutate, Guided) and the small decimal helpers it reads
-// and writes with.
+// What: Fuzz, FuzzSys, Bench, BenchSys, ExpectPanic, RunSeeds, the
+// mutation loop (Loop, Mutate, Guided) and the small decimal helpers it
+// reads and writes with.
 //
 // How: the driver (internal/driver/fuzz.go, bench.go and testing.go)
 // tells the test child what to do through environment variables; with
-// none set, Fuzz calls nothing, Bench calls f(1) once (BenchSys
-// f(sys, 1)), so a plain test run passes over all three, and
+// none set, Fuzz and FuzzSys call nothing and Bench calls f(1) once
+// (BenchSys f(sys, 1)), so a plain test run passes over all four, and
 // ExpectPanic does nothing. The protocol (environment variables, read
 // once):
 //
@@ -77,11 +77,41 @@ const BenchTarget: i64 = 20_000_000
 /// have failed. It saves an input that panics, leaks, hangs or exits
 /// non-zero into that directory, one input per distinct failure. f fails
 /// by panicking. Under plain `mk test` with no corpus files, and in any run
-/// outside `mk test`, f is not called.
+/// outside `mk test`, f is not called. A target that needs the System, to
+/// run an external oracle or allocate from the heap, takes one: see
+/// FuzzSys.
 ///
 /// It allocates its inputs from the process heap and frees them before it
 /// returns; O(the corpus) in plain mode.
 export Fuzz(f: fn([]u8)) {
+    Drive(none, some(f), none)
+}
+
+/// FuzzSys is Fuzz for a target that needs the System, to reach sys.io (to
+/// run an external oracle through std.proc, or to write a finding's
+/// artifact) or to allocate: the test block passes its own sys, and
+/// FuzzSys calls f(sys, data) wherever Fuzz would call f(data). f's sys is
+/// the test block's with an arena of the call's own on sys.heap, freed when
+/// f returns, so what f takes from sys.arena (proc.Run's output, say) does
+/// not pile up over the mutation loop's many calls. The fuzzer's own work,
+/// reading the corpus and writing the state file the driver saves a
+/// failing input from, runs on the native Io, never on sys.io, so it is
+/// the same under `mk test --sim`. f's io is the test block's, under
+/// `--sim` too: an oracle it runs is a real process, deterministic only as
+/// far as that process is, and an f that wants a simulated world builds
+/// one with std.sim. The hang limit counts f's whole call, an oracle's
+/// time included.
+///
+/// It allocates its inputs from the process heap and frees them before it
+/// returns, O(the corpus) in plain mode, and each call's arena, one 4 KiB
+/// chunk until f takes more.
+export FuzzSys(sys: &System, f: fn(sys: &System, data: []u8)) {
+    Drive(some(sys), none, some(f))
+}
+
+// Drive runs the fuzz target the driver's environment asks for: f (from
+// Fuzz) or g with s (from FuzzSys), one of them set.
+Drive(s: ?&System, f: ?fn([]u8), g: ?fn(sys: &System, data: []u8)) {
     mode := rt.Env("MK_TESTING_FUZZ") else {
         return
     }
@@ -92,13 +122,35 @@ export Fuzz(f: fn([]u8)) {
     io := rt.NativeIo()
     blob := fs.ReadBytes(&a, io, path).Must()
     if mode == "run" {
-        RunSeeds(blob, f)
+        RunSeeds(blob, s, f, g)
     } else if mode == "loop" {
-        Loop(&a, io, blob, f)
+        Loop(&a, io, blob, s, f, g)
     } else {
         Panic("std.testing: MK_TESTING_FUZZ is neither run nor loop")
     }
     a.Free()
+}
+
+// Call calls the fuzz target on data: g(s with an arena of this call's
+// own, data) when Drive got g and s, f(data) otherwise. g returns nothing
+// and takes s and data shared, so nothing it takes from the arena
+// outlives the call, and the arena is freed when g returns.
+Call(s: ?&System, f: ?fn([]u8), g: ?fn(sys: &System, data: []u8), data: []u8) {
+    if t := s {
+        if h := g {
+            var ar := Arena.New(t.heap).Must()
+            defer ar.Free()
+            var c := *t
+            c.arena = &ar
+            h(&c, data)
+            return
+        }
+    }
+    if h := f {
+        h(data)
+        return
+    }
+    Panic("std.testing: a fuzz target with neither f nor g and s")
 }
 
 /// Bench makes f the benchmark of the test block that calls it. f(n) does
@@ -283,8 +335,9 @@ DataAt(b: []u8, i: int): int {
     return i + 5 + U32(b, i + 1) + 4
 }
 
-// RunSeeds calls f once per seed record of the input file b, in its order.
-RunSeeds(b: []u8, f: fn([]u8)) {
+// RunSeeds calls the target (Call) once per seed record of the input file
+// b, in its order.
+RunSeeds(b: []u8, s: ?&System, f: ?fn([]u8), g: ?fn(sys: &System, data: []u8)) {
     var i := 0
     for i < b.Len() {
         d := DataAt(b, i)
@@ -293,7 +346,7 @@ RunSeeds(b: []u8, f: fn([]u8)) {
             rt.WriteErr("fuzz input ".AsBytes())
             rt.WriteErr(b[i + 5..d - 4])
             rt.WriteErr("\n".AsBytes())
-            f(b[d..end])
+            Call(s, f, g, b[d..end])
         }
         i = end
     }
@@ -364,8 +417,8 @@ Guided(base: uint, seen: mut []u8, prev: mut []u64): bool {
 // Loop is the mutation loop of `mk test --fuzz`: from the seeds of b (or
 // one empty input) and the inputs Guided kept, it mutates a copy, records
 // it in the state file, and calls f, until MK_TESTING_ITERS calls (or for
-// ever, the driver stopping the child).
-Loop(a: &Arena, io: Io, b: []u8, f: fn([]u8)) {
+// ever, the driver stopping the child). It calls the target through Call.
+Loop(a: &Arena, io: Io, b: []u8, s: ?&System, f: ?fn([]u8), g: ?fn(sys: &System, data: []u8)) {
     state_path := rt.Env("MK_TESTING_STATE") else {
         Panic("std.testing: MK_TESTING_FUZZ=loop without MK_TESTING_STATE")
     }
@@ -439,7 +492,7 @@ Loop(a: &Arena, io: Io, b: []u8, f: fn([]u8)) {
         PutU64(mut frame[..], 8, Trunc[u64](n))
         _ = state.WriteAt(io, 0, frame[0..16 + n]).Must()
         rt.CoverCmpReset()
-        f(frame[16..16 + n])
+        Call(s, f, g, frame[16..16 + n])
         cnt := rt.CoverCmpCount()
         for ci in 0..cnt {
             w := rt.CoverCmpWidthAt(ci)

@@ -666,7 +666,7 @@ Contracts are checked in the callee, so editing a contract does not rebuild the 
 
 **Coverage.** `mk test --cover` counts each basic block and prints line coverage per file. The counts are written at exit, and when the runner stops a test on a timeout. `--cover-out file` also writes lcov. The counters are readable from inside the process. The report lists the package's own files, not std's.
 
-**Fuzzing.** `testing.Fuzz(f)` in a `test` block registers a fuzz target. Plain `mk test` runs it over its saved inputs; `mk test --fuzz <test name> [--fuzztime d]` searches for new failing inputs.
+**Fuzzing.** `testing.Fuzz(f)` in a `test` block registers a fuzz target (`testing.FuzzSys(sys, f)` one that takes the test's `System`, to run an external oracle or write an artifact through `sys.io`, or to allocate from `sys.heap`). Plain `mk test` runs it over its saved inputs; `mk test --fuzz <test name> [--fuzztime d]` searches for new failing inputs.
 
 **Benchmarks.** `testing.Bench(f)` in a `test` block registers a benchmark (`testing.BenchSys(sys, f)` one that allocates from the heap), and `mk bench [name]` runs it. `--limit` bounds the time each benchmark takes, and `--baseline` compares with an earlier run.
 

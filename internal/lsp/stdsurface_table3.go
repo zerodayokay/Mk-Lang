@@ -110,6 +110,7 @@ var surfaceDocs3 = map[string]surfaceDoc{
 	"testing.BenchSys":           {Module: "std.testing", Lines: []string{"testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))"}},
 	"testing.ExpectPanic":        {Module: "std.testing", Lines: []string{"testing.ExpectPanic(want: str)"}},
 	"testing.Fuzz":               {Module: "std.testing", Lines: []string{"testing.Fuzz(f: fn([]u8))"}},
+	"testing.FuzzSys":            {Module: "std.testing", Lines: []string{"testing.FuzzSys(sys: &System, f: fn(sys: &System, data: []u8))"}},
 	"text.BidiLevels":            {Module: "std.text", Lines: []string{"text.BidiLevels(a: &Arena, s: str, dir: Direction): OutOfMemory!Levels from a, s"}},
 	"text.Bounds.Next":           {Module: "std.text", Lines: []string{"Bounds.Next(mut self): ?int"}},
 	"text.Breaks.Next":           {Module: "std.text", Lines: []string{"Breaks.Next(mut self): ?(at: int, mandatory: bool)"}},

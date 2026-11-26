@@ -1,6 +1,6 @@
 # std.testing
 
-`std.testing` turns a `test` block into a fuzz target, a benchmark or a test that expects a panic. `testing.Fuzz(f)` calls `f` with inputs: saved files under plain `mk test`, mutated ones under `mk test --fuzz`. `testing.Bench(f)` lets `mk bench` time `f`, and `testing.BenchSys(sys, f)` does the same for an `f` that takes the test's `System`. `testing.ExpectPanic(want)` makes a test pass only when it panics. None needs syntax of its own: a test block calls the function, and the `mk` command decides what happens. For ordinary tests, `Assert` and the `test` block are enough; for checking a function's contract with generated arguments, use `mk test --prop` ([contracts and the property tester](../tools.md#7-contracts-and-the-property-tester)).
+`std.testing` turns a `test` block into a fuzz target, a benchmark or a test that expects a panic. `testing.Fuzz(f)` calls `f` with inputs: saved files under plain `mk test`, mutated ones under `mk test --fuzz`, and `testing.FuzzSys(sys, f)` does the same for an `f` that takes the test's `System`. `testing.Bench(f)` lets `mk bench` time `f`, and `testing.BenchSys(sys, f)` does the same for an `f` that takes the test's `System`. `testing.ExpectPanic(want)` makes a test pass only when it panics. None needs syntax of its own: a test block calls the function, and the `mk` command decides what happens. For ordinary tests, `Assert` and the `test` block are enough; for checking a function's contract with generated arguments, use `mk test --prop` ([contracts and the property tester](../tools.md#7-contracts-and-the-property-tester)).
 
 Read the [`mk test`](../tools.md#mk-test) and [`mk bench`](../tools.md#mk-bench) commands first, and [fuzzing and benchmarks](../tools.md#10-debugging-coverage-fuzzing-and-profiling) for the flags.
 
@@ -17,7 +17,7 @@ import std.testing
 - [Benchmarks](#benchmarks)
 - [Expected panics](#expected-panics)
 - [Memory and cost](#memory-and-cost)
-- [Examples](#examples): [run a fuzz target over saved inputs](#run-a-fuzz-target-over-saved-inputs), [a saved input that fails](#a-saved-input-that-fails), [find a failing input](#find-a-failing-input), [a benchmark](#a-benchmark), [a benchmark that allocates](#a-benchmark-that-allocates), [a refused input](#a-refused-input)
+- [Examples](#examples): [run a fuzz target over saved inputs](#run-a-fuzz-target-over-saved-inputs), [a saved input that fails](#a-saved-input-that-fails), [find a failing input](#find-a-failing-input), [a fuzz target with an external oracle](#a-fuzz-target-with-an-external-oracle), [a benchmark](#a-benchmark), [a benchmark that allocates](#a-benchmark-that-allocates), [a refused input](#a-refused-input)
 - [API](#api)
 
 ## The main pieces
@@ -25,6 +25,7 @@ import std.testing
 | Task | Use |
 |---|---|
 | Declare a fuzz target | `testing.Fuzz(f)` in a `test` block, `f: fn([]u8)` |
+| Declare a fuzz target that needs the `System` (an external oracle, an artifact, the heap) | `testing.FuzzSys(sys, f)` in a `test` block that takes `(sys: &System)`, `f: fn(sys: &System, data: []u8)` |
 | Run it over saved inputs | `mk test` |
 | Search for failing inputs | `mk test --fuzz <test name> [--fuzztime d]` |
 | Declare a benchmark | `testing.Bench(f)` in a `test` block, `f: fn(n: int)` |
@@ -46,6 +47,13 @@ A fuzz target is a function `f: fn([]u8)` that fails by panicking: a failed `Ass
   - a name that another test of the package shares, ignoring case.
 
   The hex digits come from the SHA-256 of the module path and the test name: in module `main`, the test `a:b` reads `testdata/fuzz/a_b~977664b1/`. When the plain directory `a_b/` holds files, `mk test` prints a note naming the one it reads.
+
+A function value captures nothing, so `f: fn([]u8)` cannot reach a `System`: it cannot run an external oracle (a reference implementation or a disassembler, through `std.proc`), write a finding's artifact, or allocate from `sys.heap`. A target that needs one is a function `f: fn(sys: &System, data: []u8)`. Its test block takes `(sys: &System)` and calls `testing.FuzzSys(sys, f)`, which calls `f(sys, data)` wherever `Fuzz` calls `f(data)`, in plain `mk test` and in the mutation loop alike.
+
+- `f`'s `sys` is the test block's, except that its `arena` is a new one on `sys.heap` for each call, freed when `f` returns. So what `f` takes from `sys.arena`, such as the output of `proc.Run(sys.arena, sys.io, ...)`, does not pile up over the mutation loop's many calls.
+- The fuzzer's own work, reading the saved inputs and writing the state the driver saves a failing input from, never goes through `sys.io`: it uses the native `Io` and the process heap, under `mk test --sim` too.
+- `f`'s `sys.io` is the test block's, under `mk test --sim SEED` too: an oracle it runs is a real process, deterministic only as far as that process is. An `f` that wants a seeded, simulated world builds one with [`std.sim`](sim.md).
+- The hang limit counts the whole call of `f`, an oracle's time included.
 
 Commit the `testdata/fuzz/` directories: they are the regression tests the mutation loop leaves behind.
 
@@ -86,11 +94,11 @@ A kept `Assert` or a contract is code too, and a test can check that it refuses 
 
 ## Memory and cost
 
-`Fuzz` reads its inputs into memory from the process heap and frees them before it returns. In plain `mk test` it costs one call of `f` per saved input. `Bench` and `BenchSys` allocate nothing themselves. In any other run `Fuzz` costs one check, `Bench` one call of `f(1)` and `BenchSys` one call of `f(sys, 1)`. `ExpectPanic` allocates nothing and, under `mk test`, writes one line.
+`Fuzz` and `FuzzSys` read their inputs into memory from the process heap and free them before they return. In plain `mk test` each costs one call of `f` per saved input. `FuzzSys` also makes each call's arena, one 4 KiB chunk from `sys.heap` until `f` takes more, and frees it when `f` returns. `Bench` and `BenchSys` allocate nothing themselves. In any other run `Fuzz` and `FuzzSys` cost one check, `Bench` one call of `f(1)` and `BenchSys` one call of `f(sys, 1)`. `ExpectPanic` allocates nothing and, under `mk test`, writes one line.
 
 ## Examples
 
-Each example is a package directory: the file shown (`port.mk`, `digits.mk`, `header.mk`, `sum.mk`, `list.mk`, `load.mk`, in order) and, for the fuzz targets, the files under `testdata/fuzz/`.
+Each example is a package directory: the file shown (`port.mk`, `digits.mk`, `header.mk`, `upper.mk`, `sum.mk`, `list.mk`, `load.mk`, in order) and, for the fuzz targets, the files under `testdata/fuzz/`.
 
 ### Run a fuzz target over saved inputs
 
@@ -223,6 +231,46 @@ FAIL main "payload": panic (exit 101)
 ```
 
 The backtrace and the summary line that follow are cut here.
+
+### A fuzz target with an external oracle
+
+```mk
+// verdict: ok
+import std.proc
+import std.testing
+
+// Upper is the function under test: ASCII letters to upper case.
+Upper(b: []u8, out: mut []u8) {
+    for i in 0..b.Len() {
+        c := b[i]
+        out[i] = if c >= b'a' && c <= b'z' { c - 32 } else { c }
+    }
+}
+
+// Check compares Upper with tr, the oracle, run through sys.io. Its
+// sys.arena is freed when it returns.
+Check(sys: &System, b: []u8) {
+    out := sys.arena.Slice[u8](b.Len()).Must()
+    Upper(b, out)
+    args := ["tr", "a-z", "A-Z"]
+    r := proc.Run(sys.arena, sys.io, args[..], b, 1 << 16) else {
+        return // no tr on this machine: nothing to compare with
+    }
+    if r.code != 0 {
+        return // tr refused the input: nothing to compare with
+    }
+    Assert(r.stdout.Len() == out.Len())
+    for i in 0..out.Len() {
+        Assert(r.stdout[i] == out[i])
+    }
+}
+
+test "upper" (sys: &System) {
+    testing.FuzzSys(sys, Check) // calls Check(sys, b) on each saved input
+}
+```
+
+`Check` allocates its output and the oracle's from `sys.arena`, which `FuzzSys` makes anew for each call, and runs the oracle through `sys.io`, neither of which a `fn([]u8)` can reach. With no saved inputs, plain `mk test` passes; `mk test --fuzz upper` runs `tr` on every input it makes.
 
 ### A benchmark
 
@@ -404,9 +452,36 @@ guided by the blocks they reach, until the fuzz time ends or 20 runs
 have failed. It saves an input that panics, leaks, hangs or exits
 non-zero into that directory, one input per distinct failure. f fails
 by panicking. Under plain `mk test` with no corpus files, and in any run
-outside `mk test`, f is not called.
+outside `mk test`, f is not called. A target that needs the System, to
+run an external oracle or allocate from the heap, takes one: see
+FuzzSys.
 
 It allocates its inputs from the process heap and frees them before it
 returns; O(the corpus) in plain mode.
+
+### `FuzzSys`
+
+```
+export FuzzSys(sys: &System, f: fn(sys: &System, data: []u8))
+```
+
+FuzzSys is Fuzz for a target that needs the System, to reach sys.io (to
+run an external oracle through std.proc, or to write a finding's
+artifact) or to allocate: the test block passes its own sys, and
+FuzzSys calls f(sys, data) wherever Fuzz would call f(data). f's sys is
+the test block's with an arena of the call's own on sys.heap, freed when
+f returns, so what f takes from sys.arena (proc.Run's output, say) does
+not pile up over the mutation loop's many calls. The fuzzer's own work,
+reading the corpus and writing the state file the driver saves a
+failing input from, runs on the native Io, never on sys.io, so it is
+the same under `mk test --sim`. f's io is the test block's, under
+`--sim` too: an oracle it runs is a real process, deterministic only as
+far as that process is, and an f that wants a simulated world builds
+one with std.sim. The hang limit counts f's whole call, an oracle's
+time included.
+
+It allocates its inputs from the process heap and frees them before it
+returns, O(the corpus) in plain mode, and each call's arena, one 4 KiB
+chunk until f takes more.
 
 <!-- api:end -->

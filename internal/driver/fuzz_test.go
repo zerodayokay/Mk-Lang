@@ -485,3 +485,97 @@ test "magic8" {
 		t.Errorf("saved magic8 input = %x (%v), want e0ac6824df9b5713...", in8, err)
 	}
 }
+
+// fuzzSysSource has FuzzSys targets: "echo" copies each input into an
+// arena off sys.heap and prints its length through sys.io, and "two sys"
+// does the same and fails on an input of two bytes or more; "no target"
+// takes a System and never calls FuzzSys.
+const fuzzSysSource = `import std.testing
+
+Copy(sys: &System, b: []u8): int {
+    var a := Arena.New(sys.heap).Must()
+    defer a.Free()
+    c := a.Slice[u8](b.Len()).Must()
+    for i in 0..b.Len() {
+        c[i] = b[i]
+    }
+    var same := 0
+    for i in 0..c.Len() {
+        if c[i] == b[i] {
+            same += 1
+        }
+    }
+    return same
+}
+
+Echo(sys: &System, b: []u8) {
+    n := Copy(sys, b)
+    sys.Print("echo {n}\n", (n: n)) else {
+        Panic("echo: print failed")
+    }
+}
+
+TwoSys(sys: &System, b: []u8) {
+    Assert(Copy(sys, b) < 2)
+}
+
+test "echo" (sys: &System) {
+    testing.FuzzSys(sys, Echo)
+}
+
+test "two sys" (sys: &System) {
+    testing.FuzzSys(sys, TwoSys)
+}
+
+test "no target" (sys: &System) {
+    _ = sys
+}
+`
+
+// TestMkTestFuzzSys: a FuzzSys target gets the test block's System. Plain
+// mk test calls f(sys, data) once per corpus file, in name order, and f
+// allocates from sys.heap and prints through sys.io; --fuzz runs the loop
+// on it, saves the input that fails, and plain mk test then fails on it;
+// a block that takes a System but never calls FuzzSys is not a fuzz
+// target. The failure it guards against: a FuzzSys whose plain run or
+// loop does not call f, or calls it on other bytes, still passing.
+func TestMkTestFuzzSys(t *testing.T) {
+	root := testPkg(t, map[string]string{"main.mk": fuzzSysSource})
+	writeFiles(t, root, map[string]string{
+		"testdata/fuzz/echo/a": "abc",
+		"testdata/fuzz/echo/b": "hello",
+	})
+	rep := mkTest(t, Config{Root: root}, TestOptions{Run: "echo"})
+	if got := results(rep); got != "main echo pass" {
+		t.Fatalf("mk test: %s", got)
+	}
+	out := rep.Tests[0].Output
+	ia, ib := strings.Index(out, "fuzz input a\n"), strings.Index(out, "fuzz input b\n")
+	e3, e5 := strings.Index(out, "echo 3\n"), strings.Index(out, "echo 5\n")
+	if ia < 0 || ib < ia || e3 < 0 || e5 < e3 || strings.Count(out, "echo ") != 2 {
+		t.Errorf("echo's output (want the inputs a, b in order, then echo 3 and echo 5):\n%s", out)
+	}
+	rep = mkTest(t, Config{Root: root}, TestOptions{Fuzz: "two sys", FuzzTime: 30 * time.Second})
+	if len(rep.Tests) != 1 || rep.Tests[0].Result != "fail" || !strings.Contains(rep.Tests[0].Detail, "saved to testdata/fuzz/two sys/") {
+		t.Fatalf("--fuzz two sys: %+v", rep.Tests)
+	}
+	dir := filepath.Join(root, "testdata", "fuzz", "two sys")
+	files := corpusFiles(dir)
+	if len(files) == 0 {
+		t.Fatalf("nothing saved in %s", dir)
+	}
+	if in, err := os.ReadFile(filepath.Join(dir, files[0])); err != nil || len(in) < 2 {
+		t.Errorf("saved input %q (%v): want 2 bytes or more", in, err)
+	}
+	if report, err := os.ReadFile(filepath.Join(dir, files[0]+".report")); err != nil || !strings.Contains(string(report), "result: panic\nstatus: 101\n") {
+		t.Errorf("report: %s (%v)", report, err)
+	}
+	rep = mkTest(t, Config{Root: root}, TestOptions{Run: "two sys"})
+	if got := results(rep); got != "main two sys panic" {
+		t.Errorf("plain mk test over the saved input: %s", got)
+	}
+	rep = mkTest(t, Config{Root: root}, TestOptions{Fuzz: "no target", FuzzTime: 5 * time.Second})
+	if len(rep.Tests) != 1 || rep.Tests[0].Result != "fail" || !strings.Contains(rep.Tests[0].Detail, "not a fuzz target") {
+		t.Errorf("--fuzz no target: %+v", rep.Tests)
+	}
+}

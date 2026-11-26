@@ -257,12 +257,12 @@ func (s *Session) fuzzLoop(out *TestCase, tc testCase, argv, env []string, i int
 		}
 		if !r.started {
 			// The child never reached the loop: the test does not call
-			// testing.Fuzz, or failed before it did.
+			// testing.Fuzz or testing.FuzzSys, or failed before it did.
 			out.Status = r.status
 			out.Result = "fail"
-			out.Detail = "not a fuzz target: the test did not reach testing.Fuzz"
+			out.Detail = "not a fuzz target: the test did not reach testing.Fuzz or testing.FuzzSys"
 			if r.status != 0 {
-				out.Detail = "the test failed before testing.Fuzz: " + r.reason
+				out.Detail = "the test failed before testing.Fuzz or testing.FuzzSys: " + r.reason
 			}
 			out.Output = log.String() + r.output
 			out.Duration = time.Since(start)
