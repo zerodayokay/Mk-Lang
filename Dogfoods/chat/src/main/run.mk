@@ -14,6 +14,8 @@ import std.http
 import std.log
 import std.net
 import std.time
+import std.tls
+import std.x509
 import src.client
 import src.drill
 import src.hub
@@ -87,6 +89,42 @@ Run(sys: &System, o: &Options, mode: Mode): WriteError!int {
             return 1
         }
     }
+    if o.web_tls_chain.IsSome() != o.web_tls_key.IsSome() || (waddr.Len() == 0 && (o.web_tls_chain.IsSome() || o.web_cacert.IsSome())) {
+        try sys.PrintErr("chat: HTTPS needs --web, --web-tls-chain and --web-tls-key\n")
+        return 2
+    }
+    if o.web_cacert.IsSome() && o.web_tls_chain.IsNone() {
+        try sys.PrintErr("chat: --web-cacert needs an HTTPS web front end\n")
+        return 2
+    }
+    var web_server := http.DefaultServerOptions
+    web_server.connections = cfg.max_clients
+    var web_tls := tls.DefaultConfig
+    if chain := o.web_tls_chain {
+        web_tls.identities = WebIdentity(sys.arena, sys.io, chain, o.web_tls_key else { "" }) else e {
+            try sys.PrintErr("chat: cannot load web TLS identity: {e}\n", (e))
+            return 1
+        }
+        web_server.secure = some(tls.Acceptor(&web_tls))
+        web_server.h2 = true
+    }
+    var replay_tls := tls.DefaultConfig
+    no_certs: [0]x509.Certificate = []
+    var roots := x509.Pool.New(no_certs[..])
+    if path := o.web_cacert {
+        pem := fs.ReadText(sys.arena, sys.io, path) else e {
+            try sys.PrintErr("chat: cannot read web roots: {e}\n", (e))
+            return 1
+        }
+        certs := x509.ParsePem(sys.arena, pem) else e {
+            try sys.PrintErr("chat: cannot read web roots: {e}\n", (e))
+            return 1
+        }
+        roots = x509.Pool.New(certs.Done()[..])
+        replay_tls.roots = some(&roots)
+    }
+    web_secure := web_server.secure.IsSome()
+    replay_web := client.WebTarget(addr: waddr, secure: if web_secure { some(tls.Connector(&replay_tls)) } else { none })
     hb := hub.Hub.New(sys.heap, sys.io, cfg, motd, log.Stderr(level)) else {
         try sys.PrintErr("chat: out of memory for {n} clients\n", (n: cfg.max_clients))
         return 1
@@ -110,7 +148,10 @@ Run(sys: &System, o: &Options, mode: Mode): WriteError!int {
     defer transcript.Free(sys.heap.Alloc())
     var bad: ?client.ScriptError = none
     io := sys.io
-    scope root := io.Scope() {
+    // A replay may close both a pooled HTTP/2 connection and its TLS state
+    // on its task stack. Reserve a larger stack in HTTPS replay mode.
+    stack := if mode == Mode.Replay && web_secure { StackSize.Large } else { StackSize.Default }
+    scope root := io.ScopeWith(Limits(tasks: 16, stack: stack)) {
         root.go server.Stopper(&root, io, &hb)
         root.go server.Serve(&l, io, &hb, &ends)
         root.go hub.HistoryWriter(io, &hb.history, mut hfile, mut failed, mut written)
@@ -130,11 +171,12 @@ Run(sys: &System, o: &Options, mode: Mode): WriteError!int {
                 root.go server.OnSignal(io, &hb)
                 sys.PrintErr("chat: listening on 127.0.0.1:{port}\n", (port)) else {}
                 if waddr.Len() > 0 {
-                    sys.PrintErr("chat: web front end on http://{waddr}/rooms\n", (waddr)) else {}
+                    scheme := if web_secure { "https" } else { "http" }
+                    sys.PrintErr("chat: web front end on {scheme}://{waddr}/rooms\n", (scheme, waddr)) else {}
                 }
             }
             .Replay {
-                root.go Replay(sys.heap, io, &hb, local, waddr, script, mut transcript, mut bad)
+                root.go Replay(sys.heap, io, &hb, local, &replay_web, script, mut transcript, mut bad)
             }
             .Load {
                 spec := client.LoadSpec(clients: o.clients else { 100 }, rooms: o.rooms else { 10 }, messages: o.messages else { 5 }, shutdown: o.shutdown)
@@ -144,7 +186,7 @@ Run(sys: &System, o: &Options, mode: Mode): WriteError!int {
         // a workaround: http.ServeWith takes the System, which no task may share, so the
         // web front end is served here and the work above runs in tasks
         if waddr.Len() > 0 {
-            web.Serve(sys, waddr, &front, mut web_failed)
+            web.Serve(sys, waddr, &web_server, &front, mut web_failed)
         }
     }
     front.Free()
@@ -273,7 +315,7 @@ WaitForBots(io: Io, hb: &hub.Hub, bots: int) {
 /// The `replay` command's work, as a task beside the servers: runs the
 /// script, keeps its transcript in `out` and a script error in `bad`, then
 /// begins shutdown.
-Replay(h: &Heap, io: Io, hb: &hub.Hub, local: str, web: str, script: str, out: mut HeapText, bad: mut ?client.ScriptError) {
+Replay(h: &Heap, io: Io, hb: &hub.Hub, local: str, web: &client.WebTarget, script: str, out: mut HeapText, bad: mut ?client.ScriptError) {
     var arena := Arena.New(h) else {
         *bad = some(OutOfMemory)
         hb.stop.NotifyOne()

@@ -638,6 +638,16 @@ refused peer is reported as Refused on Linux and macOS; on Windows the
 socket ignores ICMP, so it is not. Errors: InvalidAddress, Canceled, or
 the OS's. O(1); allocates nothing.
 
+### `Datagram.DontFragment`
+
+```
+export Datagram.DontFragment(&self): Error!bool
+```
+
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Reports whether IP Don't Fragment is currently set on this native UDP socket.
+
 ### `Datagram.LocalAddr`
 
 ```
@@ -710,6 +720,18 @@ Asks the OS for receive and send buffer sizes of `recv` and `send`
 bytes (0 keeps the current size). Errors: Unsupported for another Io's
 socket; Os for the OS's refusal. O(1): at most two system calls;
 allocates nothing.
+
+### `Datagram.SetDontFragment`
+
+```
+export Datagram.SetDontFragment(&self): Error!void
+```
+
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Sets IP Don't Fragment (`IP_DONTFRAGMENT` / `IP_MTU_DISCOVER` on IPv4;
+`IPV6_DONTFRAG` / `IPV6_MTU_DISCOVER` on IPv6) where the OS allows.
+Errors: Unsupported on a non-native socket (Sim, Tape), or Os.
 
 ### `Datagram.Share`
 

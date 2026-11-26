@@ -668,6 +668,23 @@ Variants:
 - `Handshake`
 - `Application`
 
+### `QuicPostMessage`
+
+```
+export QuicPostMessage(server: bool, buf: []u8): Alert|Protocol!int
+```
+
+- Errors: Alert(code: u8), Protocol
+
+Checks one 1-RTT post-handshake CRYPTO message in `buf` (RFC 9001 4.4,
+4.6.1, 6): returns 0 when `buf` does not yet hold a whole message, or the
+bytes consumed for a dropped NewSessionTicket on a client. Fails with
+Protocol (connection PROTOCOL_VIOLATION) on a CertificateRequest (4.4) or a
+NewSessionTicket whose early_data extension is not 0xffffffff (4.6.1), with
+Alert(decode_error) on a malformed NewSessionTicket, and with
+Alert(unexpected_message) (CRYPTO_ERROR 0x010a) on KeyUpdate (6) or any
+other message. O(buf.Len()); allocates nothing.
+
 ### `QuicServer`
 
 ```

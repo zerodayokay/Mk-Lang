@@ -42,6 +42,10 @@ const SoRcvBuf: uint = 8
 const SoLinger: uint = 13
 const SoReuseAddrCall: uint = 2
 const SolSocketCall: uint = 1
+const IpProtoIp: uint = 0
+const IpMtuDiscover: uint = 10
+const Ipv6MtuDiscover: uint = 23
+const IpPmtudiscDo: i32 = 2
 // CopyChunk is one copy_file_range's request: 16 MiB, so a cancel is seen
 // within one chunk's time (Go asks 1 GiB, with no cancel to see); 64
 // system calls per GiB cost nothing next to the copy.
@@ -539,6 +543,14 @@ export SocketOption(h: uint, opt: i64, b: i64, c: i64): OsResult {
         name = SoLinger
         v[1] = Trunc[i32](c)
         size = 8
+    } else if opt == core.IoSockDontFrag {
+        level = IpProtoIp
+        name = IpMtuDiscover
+        v[0] = if b != 0 { IpPmtudiscDo } else { 0 }
+    } else if opt == core.IoSockDontFragV6 {
+        level = IpProtoIpv6
+        name = Ipv6MtuDiscover
+        v[0] = if b != 0 { IpPmtudiscDo } else { 0 }
     } else {
         return FailWith(core.SysErr.Other)
     }
@@ -580,6 +592,12 @@ export SocketOptionGet(h: uint, opt: i64): OsResult {
         name = SoSndBuf
     } else if opt == core.IoSockLinger {
         name = SoLinger
+    } else if opt == core.IoSockDontFrag {
+        level = IpProtoIp
+        name = IpMtuDiscover
+    } else if opt == core.IoSockDontFragV6 {
+        level = IpProtoIpv6
+        name = Ipv6MtuDiscover
     } else {
         return FailWith(core.SysErr.Other)
     }

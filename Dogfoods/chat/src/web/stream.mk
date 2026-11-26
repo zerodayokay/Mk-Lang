@@ -25,8 +25,9 @@ LocalOrigin(origin: str): bool {
     if origin.Len() == 0 {
         return true
     }
-    for host in ["http://127.0.0.1", "http://localhost", "http://[::1]"] {
-        if origin == host || origin.StartsWith(host) && origin.Byte(host.Len()) == b':' {
+    address := if origin.StartsWith("https://") { origin[8..] } else if origin.StartsWith("http://") { origin[7..] } else { return false }
+    for host in ["127.0.0.1", "localhost", "[::1]"] {
+        if address == host || address.StartsWith(host) && address.Byte(host.Len()) == b':' {
             return true
         }
     }
@@ -230,7 +231,18 @@ Events(c: &Front, a: &Arena, io: Io, res: mut http.Response, link: &http.Link, r
     try res.Header("Cache-Control", "no-cache")
     var w := res.Writer()
     try Print(mut w, ": {who} joined {room}\n\n", (who, room))
-    try res.Flush(io, link)
+    res.Flush(io, link) else e {
+        Finish(b, io, false)
+        fail e
+    }
+    if link.Version() == http.HttpVersion.Http2 {
+        ended := PumpH2(io, res, link, b, count) else e {
+            Finish(b, io, false)
+            fail e
+        }
+        Finish(b, io, ended)
+        return
+    }
     // the events are written as chunks on the taken connection, each from a
     // buffer on the stack: a Body per event would copy each one into the
     // response's arena for the whole life of the stream
@@ -245,6 +257,32 @@ Events(c: &Front, a: &Arena, io: Io, res: mut http.Response, link: &http.Link, r
     }
     t.Abandon()
     Finish(b, io, ended)
+}
+
+// Send one event per Flush. Body reuses the buffer instead of retaining all
+// the bytes written since the event stream opened.
+PumpH2(io: Io, res: mut http.Response, link: &http.Link, b: &Bridge, count: int): http.Error!bool {
+    var sent := 0
+    for count == 0 || sent < count {
+        p := b.down.Recv(io) else { return false }
+        if p.done {
+            return true
+        }
+        line := p.frame.Text().Trim()
+        if line.StartsWith("OK") || line.StartsWith("ERR") {
+            continue
+        }
+        var event: [520]u8 = [0; 520]
+        var n := 0
+        for part in ["data: ", line, "\n\n"] {
+            (mut event[n..n + part.Len()]).CopyFrom(part.AsBytes())
+            n += part.Len()
+        }
+        try res.Body(event[..n])
+        try res.Flush(io, link)
+        sent += 1
+    }
+    return false
 }
 
 /// Writes each line the session is sent, replies left out, as one event in

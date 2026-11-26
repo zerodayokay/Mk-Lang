@@ -264,6 +264,27 @@ export Datagram.SetBuffers(&self, recv: int, send: int): Error!void {
     }
 }
 
+/// Sets IP Don't Fragment (`IP_DONTFRAGMENT` / `IP_MTU_DISCOVER` on IPv4;
+/// `IPV6_DONTFRAG` / `IPV6_MTU_DISCOVER` on IPv6) where the OS allows.
+/// Errors: Unsupported on a non-native socket (Sim, Tape), or Os.
+export Datagram.SetDontFragment(&self): Error!void {
+    if !rt.IsNativeSocket(self.h) {
+        fail Unsupported
+    }
+    opt := if self.v6 { core.IoSockDontFragV6 } else { core.IoSockDontFrag }
+    _ = try Check(rt.SockOption(rt.NativeIo(), self.h, opt, 1, 0))
+}
+
+/// Reports whether IP Don't Fragment is currently set on this native UDP socket.
+export Datagram.DontFragment(&self): Error!bool {
+    if !rt.IsNativeSocket(self.h) {
+        fail Unsupported
+    }
+    opt := if self.v6 { core.IoSockDontFragV6 } else { core.IoSockDontFrag }
+    r := try Check(rt.SockOptionGet(rt.NativeIo(), self.h, opt))
+    return r != 0
+}
+
 /// Converts the socket into a SharedDatagram that tasks share by reference.
 /// O(1); allocates nothing.
 export Datagram.Share(self): SharedDatagram {

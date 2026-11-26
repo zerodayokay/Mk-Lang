@@ -241,7 +241,7 @@ SentSpace.Push(mut self, a: &Alloc, pn: i64, sent_ns: i64, bytes: int, ack_elici
     try self.EnsurePkts(a, self.pkt_len + 1)
     try self.EnsureFrames(a, self.frm_len + fs.Len())
     fcap := self.frames.Len()
-    fstart := (self.frm_head + self.frm_len) % fcap
+    fstart := if fcap == 0 { 0 } else { (self.frm_head + self.frm_len) % fcap }
     if fs.Len() > 0 {
         fitems := self.frames.ItemsMut()
         for i in 0..fs.Len() {

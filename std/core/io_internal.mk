@@ -438,6 +438,10 @@ export const IoSockSendBuffer: i64 = 5
 /// IoOpSockOpt's option SO_LINGER: b 1 on, c seconds; on with 0 closes by
 /// reset, leaving no TIME_WAIT.
 export const IoSockLinger: i64 = 6
+/// IoOpSockOpt's option IP_DONTFRAGMENT / IP_MTU_DISCOVER (IPv4): b 1 on, 0 off.
+export const IoSockDontFrag: i64 = 7
+/// IoOpSockOpt's option IPV6_DONTFRAG / IPV6_MTU_DISCOVER (IPv6): b 1 on, 0 off.
+export const IoSockDontFragV6: i64 = 8
 
 /// Makes one call through io's call entry; a.op names the operation (IoOp*).
 /// It is the only native code the call links. One indirect call here; it

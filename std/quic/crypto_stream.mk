@@ -299,3 +299,22 @@ CryptoStreams.MaxOffset(&self, level: Space): u64 {
 CryptoStreams.UnreadBytes(&self, level: Space): int {
     return self.levels[SpaceIndex(level)].rx_contig.len
 }
+
+// Reports whether CRYPTO data or lost CRYPTO ranges are queued to send at level. O(1).
+CryptoStreams.HasPending(&self, level: Space): bool {
+    li := SpaceIndex(level)
+    if self.levels[li].discarded {
+        return false
+    }
+    return self.levels[li].tx_lost.Len() > 0 || self.levels[li].tx_send < self.levels[li].tx_write
+}
+
+// Resets send cursors at level so the identical CRYPTO bytes are resent from
+// offset 0 after a Retry packet (RFC 9000 17.2.5.3, QT-286). O(1).
+CryptoStreams.ResetTx(mut self, level: Space) {
+    li := SpaceIndex(level)
+    self.levels[li].tx_send = 0
+    self.levels[li].tx_base = 0
+    self.levels[li].tx_acked.Clear()
+    self.levels[li].tx_lost.Clear()
+}

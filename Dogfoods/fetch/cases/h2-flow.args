@@ -1,0 +1,11 @@
+--origin
+$CASES/data/flow.origin
+--origin-h2
+--http2-prior-knowledge
+--http2-window
+65536
+--max-time
+15s
+-o
+flow.bin
+http://{origin}/flow
