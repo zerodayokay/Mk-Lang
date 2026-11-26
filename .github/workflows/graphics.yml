@@ -1,0 +1,95 @@
+name: Native Vulkan smoke
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/graphics.yml'
+      - 'std/gpu/**'
+      - 'std/window/**'
+      - 'std/task/**'
+      - 'std/sys/macos/**'
+      - 'Dogfoods/scene/**'
+      - 'Dogfoods/sketch/**'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      LLVM_VERSION: 21.1.8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Linux toolchain and Vulkan ICD
+        if: runner.os == 'Linux'
+        run: |
+          . /etc/os-release
+          major=${LLVM_VERSION%%.*}
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/llvm.asc" https://apt.llvm.org/llvm-snapshot.gpg.key
+          fpr=$(gpg --show-keys --with-colons "$RUNNER_TEMP/llvm.asc" | awk -F: '$1 == "fpr" { print $10; exit }')
+          test "$fpr" = 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+          gpg --dearmor < "$RUNNER_TEMP/llvm.asc" | sudo tee /usr/share/keyrings/mk-graphics-llvm.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/mk-graphics-llvm.gpg] https://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-$major main" |
+            sudo tee /etc/apt/sources.list.d/mk-graphics-llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-$major" "lld-$major" "llvm-$major" libglfw3 libvulkan1 mesa-vulkan-drivers xvfb xauth
+          echo "MK_LLVM=/usr/lib/llvm-$major/bin" >> "$GITHUB_ENV"
+          icd=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$icd"
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+
+      - name: macOS toolchain and MoltenVK
+        if: runner.os == 'macOS'
+        run: |
+          name="LLVM-$LLVM_VERSION-macOS-ARM64"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o llvm.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.xz"
+          echo 'b95bdd32a33a81ee4d40363aaeb26728a26783fcef26a4d80f65457433ea4669  llvm.tar.xz' | shasum -a 256 -c -
+          tar -xJf llvm.tar.xz
+          echo "MK_LLVM=$RUNNER_TEMP/$name/bin" >> "$GITHUB_ENV"
+          brew install glfw vulkan-loader molten-vk
+          prefix=$(brew --prefix)
+          echo "DYLD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+          icd=$(find -L "$(brew --prefix molten-vk)" -name 'MoltenVK_icd.json' -print -quit)
+          test -n "$icd"
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+
+      - name: Build scene and sketch
+        run: |
+          go build -o "$RUNNER_TEMP/mk" ./cmd/mk
+          "$RUNNER_TEMP/mk" build Dogfoods/scene -o "$RUNNER_TEMP/scene"
+          "$RUNNER_TEMP/mk" build Dogfoods/sketch -o "$RUNNER_TEMP/sketch"
+          "$RUNNER_TEMP/sketch" check-script Dogfoods/sketch/cases/scripts/close.script
+
+      - name: Render and present on Linux
+        if: runner.os == 'Linux'
+        run: |
+          scene=Dogfoods/scene/cases/scenes/shadow.scene
+          "$RUNNER_TEMP/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
+          test -s "$RUNNER_TEMP/shadow.png"
+          xvfb-run -a "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3
+
+      - name: Render and present on macOS
+        if: runner.os == 'macOS'
+        run: |
+          if [ "$(swift -e 'import Metal; print(MTLCopyAllDevices().count)')" = 0 ]; then
+            echo 'The macOS host has no Metal device. The build ran, and rendering still needs a Metal host.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          scene=Dogfoods/scene/cases/scenes/shadow.scene
+          "$RUNNER_TEMP/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
+          test -s "$RUNNER_TEMP/shadow.png"
+          "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3

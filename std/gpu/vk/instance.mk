@@ -1,11 +1,11 @@
-// Why: Vulkan initialization must probe vulkan-1.dll cleanly without crashing
-// when absent, enable Vulkan 1.3 + surface + optional debug_utils, capture
+// Why: Vulkan initialization must handle a missing loader cleanly, enable
+// Vulkan 1.3, surface and optional debug utils, capture
 // debug messages in a lock-free ring, and select qualifying physical devices.
 //
 // What: IsAvailable, CreateVkInstance, DestroyVkInstance, VkDebugRing,
 // DrainDebugMessages, EnumAdapters, and QueryFormatCaps.
 //
-// How: opens the system Vulkan loader on Windows, runs
+// How: opens the platform's Vulkan loader, runs
 // adapter enumeration through runtime.Blocking, checks Vulkan 1.3 + timeline
 // semaphore + dynamic rendering + sync2 + draw parameters, and maps
 // VkFormatProperties (including D24S8 -> D32S8 fallback) for all 44 formats.
@@ -15,21 +15,19 @@ import std.core
 import std.dl
 import std.mem
 import std.raw
+import std.rt
 import std.runtime
 
 var GVkGipaAddr: raw.Atomic[uint] = raw.Atomic[uint].New(0)
 
 LoadVkGetInstanceProcAddr(io: Io): vulkan.PfnVkGetInstanceProcAddr {
-    if Target.os != core.Os.Windows {
-        return none
-    }
     cached := GVkGipaAddr.Load()
     if cached != 0 {
         unsafe "cached is vkGetInstanceProcAddr address from detached vulkan loader library" {
             return raw.FnFromAddr[vulkan.PfnVkGetInstanceProcAddr](cached)
         }
     }
-    lib := dl.Open(io, "vulkan-1.dll", dl.Search.System) else { return none }
+    lib := OpenVulkanLoader(io) else { return none }
     sym := lib.Symbol("vkGetInstanceProcAddr")
     match sym {
         none {
@@ -51,7 +49,29 @@ LoadVkGetInstanceProcAddr(io: Io): vulkan.PfnVkGetInstanceProcAddr {
     }
 }
 
-/// Reports whether the Windows Vulkan loader is present and loadable.
+OpenVulkanLoader(io: Io): dl.Error!dl.Library {
+    if Target.os == core.Os.Windows {
+        return try dl.Open(io, "vulkan-1.dll", dl.Search.System)
+    }
+    if Target.os == core.Os.Linux {
+        return try dl.Open(io, "libvulkan.so.1", dl.Search.System)
+    }
+    if Target.os == core.Os.Macos {
+        if path := rt.Env("MK_VULKAN_LIBRARY") {
+            return try dl.Open(io, path, dl.Search.Path)
+        }
+        return dl.Open(io, "libvulkan.1.dylib", dl.Search.System) else {
+            dl.Open(io, "libvulkan.1.dylib", dl.Search.Application) else {
+                dl.Open(io, "/opt/homebrew/lib/libvulkan.1.dylib", dl.Search.Path) else {
+                    try dl.Open(io, "/usr/local/lib/libvulkan.1.dylib", dl.Search.Path)
+                }
+            }
+        }
+    }
+    fail dl.Unsupported
+}
+
+/// Reports whether the platform's Vulkan loader is present and loadable.
 export IsAvailable(io: Io): bool {
     return LoadVkGetInstanceProcAddr(io).IsSome()
 }
@@ -112,9 +132,14 @@ CStrEq(p: *u8, lit: str): bool {
     }
 }
 
-CheckInstanceSupport(gd: &GlobalDispatch): (has_surface: bool, has_win32: bool, has_debug: bool, has_val: bool) {
+// Include both X11 extensions because a GLFW build can prefer either.
+// Allow headless devices even when the loader has no window-system extensions.
+const SurfaceExtensions: [6]str = ["VK_KHR_win32_surface\x00", "VK_KHR_xlib_surface\x00", "VK_KHR_xcb_surface\x00", "VK_KHR_wayland_surface\x00", "VK_EXT_metal_surface\x00", "VK_MVK_macos_surface\x00"]
+
+CheckInstanceSupport(gd: &GlobalDispatch): (has_surface: bool, wsi: [6]bool, portability: bool, has_debug: bool, has_val: bool) {
     var has_surface := false
-    var has_win32 := false
+    var wsi: [6]bool = [false; 6]
+    var portability := false
     var has_debug := false
     var has_val := false
     match gd.vk_enumerate_instance_extension_properties {
@@ -125,11 +150,16 @@ CheckInstanceSupport(gd: &GlobalDispatch): (has_surface: bool, has_win32: bool, 
                     n := if int(cnt) > 256 { 256 } else { int(cnt) }
                     var exts: [256]vulkan.VkExtensionProperties = [mem.Zeroed[vulkan.VkExtensionProperties](); 256]
                     var got: u32 = Trunc[u32](n)
-                    if enum_ext(raw.Null[u8](), raw.OfMut(mut got), raw.DataMut(mut exts[..])) == vulkan.VkSuccess || true {
+                    er := enum_ext(raw.Null[u8](), raw.OfMut(mut got), raw.DataMut(mut exts[..]))
+                    if er == vulkan.VkSuccess || er == vulkan.VkIncomplete {
                         for i in 0..int(got) {
                             ep := raw.Data(exts[i].extension_name[..])
                             if CStrEq(ep, "VK_KHR_surface") { has_surface = true }
-                            if CStrEq(ep, "VK_KHR_win32_surface") { has_win32 = true }
+                            for j in 0..SurfaceExtensions.Len() {
+                                name := SurfaceExtensions[j]
+                                if CStrEq(ep, name[..name.Len() - 1]) { wsi[j] = true }
+                            }
+                            if CStrEq(ep, "VK_KHR_portability_enumeration") { portability = true }
                             if CStrEq(ep, "VK_EXT_debug_utils") { has_debug = true }
                         }
                     }
@@ -156,7 +186,7 @@ CheckInstanceSupport(gd: &GlobalDispatch): (has_surface: bool, has_win32: bool, 
         }
         none {}
     }
-    return (has_surface: has_surface, has_win32: has_win32, has_debug: has_debug, has_val: has_val)
+    return (has_surface: has_surface, wsi: wsi, portability: portability, has_debug: has_debug, has_val: has_val)
 }
 
 struct VkInstCreated {
@@ -203,15 +233,27 @@ CreateVkInstanceRaw(gipa: vulkan.PfnVkGetInstanceProcAddr, ring_alloc: ?&Alloc, 
         some(ra) { if sup.has_debug { AllocZeroedDebugRing(ra) } else { 0 } }
         none { 0 }
     }
-    var ext_ptrs: [4]*u8 = [raw.Null[u8](); 4]
+    var ext_ptrs: [9]*u8 = [raw.Null[u8](); 9]
     var ext_cnt: u32 = 0
     if sup.has_surface {
         ext_ptrs[int(ext_cnt)] = raw.StrData("VK_KHR_surface\x00")
         ext_cnt += 1
-        if Win32SurfaceSupported() && sup.has_win32 {
-            ext_ptrs[int(ext_cnt)] = raw.StrData("VK_KHR_win32_surface\x00")
-            ext_cnt += 1
+        (first, count) := match Target.os {
+            .Windows { (first: 0, count: 1) }
+            .Linux { (first: 1, count: 3) }
+            .Macos { (first: 4, count: 2) }
+            _ { (first: 0, count: 0) }
         }
+        for j in first..first + count {
+            if sup.wsi[j] {
+                ext_ptrs[int(ext_cnt)] = raw.StrData(SurfaceExtensions[j])
+                ext_cnt += 1
+            }
+        }
+    }
+    if sup.portability {
+        ext_ptrs[int(ext_cnt)] = raw.StrData("VK_KHR_portability_enumeration\x00")
+        ext_cnt += 1
     }
     if sup.has_debug {
         ext_ptrs[int(ext_cnt)] = raw.StrData("VK_EXT_debug_utils\x00")
@@ -229,6 +271,9 @@ CreateVkInstanceRaw(gipa: vulkan.PfnVkGetInstanceProcAddr, ring_alloc: ?&Alloc, 
 
     var ici := mem.Zeroed[vulkan.VkInstanceCreateInfo]()
     ici.s_type = vulkan.VkStructureTypeInstanceCreateInfo
+    // The loader enumerates portability drivers only when both the
+    // extension and VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR are set.
+    ici.flags = if sup.portability { 1 } else { 0 }
     ici.p_application_info = raw.Of(&app)
     ici.enabled_layer_count = lay_cnt
     ici.pp_enabled_layer_names = if lay_cnt > 0 { raw.Data(lay_ptrs[..]) } else { raw.Null[*u8]() }
@@ -462,9 +507,10 @@ QueryAllFormatCaps(inst_d: &InstanceDispatch, pd: vulkan.VkPhysicalDevice, limit
     return (caps: caps, d24s8_fmt: d24s8_fmt)
 }
 
-CheckDeviceExtensions(inst_d: &InstanceDispatch, pd: vulkan.VkPhysicalDevice): (has_swapchain: bool, has_depth_clip: bool) {
+CheckDeviceExtensions(inst_d: &InstanceDispatch, pd: vulkan.VkPhysicalDevice): (has_swapchain: bool, has_depth_clip: bool, portability: bool) {
     var has_swapchain := false
     var has_depth_clip := false
+    var portability := false
     unsafe "pd and inst_d are live" {
         enum_ext := inst_d.vk_enumerate_device_extension_properties.Must()
         var cnt: u32 = 0
@@ -477,10 +523,11 @@ CheckDeviceExtensions(inst_d: &InstanceDispatch, pd: vulkan.VkPhysicalDevice): (
                 ep := raw.Data(exts[i].extension_name[..])
                 if CStrEq(ep, "VK_KHR_swapchain") { has_swapchain = true }
                 if CStrEq(ep, "VK_EXT_depth_clip_control") { has_depth_clip = true }
+                if CStrEq(ep, "VK_KHR_portability_subset") { portability = true }
             }
         }
     }
-    return (has_swapchain: has_swapchain, has_depth_clip: has_depth_clip)
+    return (has_swapchain: has_swapchain, has_depth_clip: has_depth_clip, portability: portability)
 }
 
 struct PdProbe {
@@ -488,6 +535,7 @@ struct PdProbe {
     queue_family: u32
     has_swapchain: bool
     has_depth_clip: bool
+    portability: bool
     d24s8_fmt: i32
     name_bytes: [256]u8
     name_len: int
@@ -626,6 +674,7 @@ ProbePhysicalDevice(inst_d: &InstanceDispatch, pd: vulkan.VkPhysicalDevice, idx:
             queue_family: Cast[u32](qfam),
             has_swapchain: exts.has_swapchain,
             has_depth_clip: exts.has_depth_clip,
+            portability: exts.portability,
             d24s8_fmt: d24s8_fmt,
             name_bytes: name_bytes,
             name_len: name_len,

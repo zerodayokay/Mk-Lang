@@ -9,4 +9,8 @@
 const Package = pkg.Package(
     name: "scene",
     bins: [pkg.Bin(name: "scene", root: "src/main", subsystem: "console")],
+    links: [
+        pkg.Link(name: "libc.so.6", kind: "dynamic", path: "", target: "x86_64-linux"),
+        pkg.Link(name: "libc.so.6", kind: "dynamic", path: "", target: "aarch64-linux"),
+    ],
 )

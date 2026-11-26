@@ -34,9 +34,9 @@ import std.window
 
 ## Requirements
 
-- **Targets.** `x86_64-windows`, on Win32. On every other target the module compiles and `Open` fails with `Unsupported`.
+- **Targets.** x86-64 Windows uses Win32. x86-64 and AArch64 Linux use GLFW 3 with an X11 or Wayland display and a system-glibc Mk executable. x86-64 and AArch64 macOS use GLFW 3 with a graphical login session. `Open` reports `Unsupported` when the required window library is unavailable.
 - **DPI.** Windows are per-monitor DPI aware: sizes are physical pixels, and `Window.Scale` (1.0 at 96 dpi) says how many physical pixels make one logical pixel. A move to a monitor of another scale reports `ScaleChanged` and resizes the window to keep its logical size.
-- **Threads.** The window thread runs the Win32 message loop; it is started by the first `Open` and is not a task. A `Window` is `Send` but not `Share`: one task reads its events at a time.
+- **Threads.** A dedicated OS thread pumps the event queue on Windows and Linux. On macOS the scheduler pumps Cocoa events on the process's main thread. Any task may open and move a `Window`. One task reads its events at a time.
 
 ## Events
 
@@ -69,7 +69,7 @@ The setters (`SetTitle`, `SetSize`, `SetFullscreen`, `SetCursor`, `SetCursorMode
 
 ## Surfaces
 
-`Window.Surface()` returns a `Surface`, a claim on the native window that a renderer keeps: the OS window is not destroyed while a surface lives, even after `Window.Close` (it is hidden instead). `Surface.Native()` gives the OS handles, `Native.Win32(hwnd, hinstance)`, and `Surface.Size()` the client size. A `std.gpu` swapchain holds one, so a program may close the window and its swapchain in either order. A surface is plain words and `Send`; end it with `Close`.
+`Window.Surface()` returns a `Surface`, a claim on the native window that a renderer keeps. If the program calls `Window.Close` first, the window is hidden until the last surface closes. `Surface.Native()` returns `Native.Win32(hwnd, hinstance)` on Windows or `Native.Unix(handle)` on Linux and macOS, where `handle` is a `GLFWwindow *` address. `Surface.Size()` returns the client size. A `std.gpu` swapchain holds its own claim. End a `Surface` with `Close`.
 
 ## Errors
 

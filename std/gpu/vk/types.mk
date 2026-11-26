@@ -382,8 +382,8 @@ export struct StreamChunk {
 }
 
 export struct SwapchainOptions {
-    export hwnd: uint
-    export hinstance: uint
+    export window_handle: uint
+    export window_instance: uint
     export vk_format: i32
     export format_idx: int
     export mode: int
@@ -626,8 +626,6 @@ struct VkSwapImage {
 
 struct VkSwapchainRec {
     alive: bool
-    hwnd: uint
-    hinstance: uint
     surface: u64
     swapchain: u64
     vk_format: i32
@@ -653,7 +651,7 @@ struct VkSwapchainRec {
 
 VkSwapchainRec.Free(self, a: &Alloc) {
     VkSwapchainRec(
-        alive: _, hwnd: _, hinstance: _, surface: _, swapchain: _, vk_format: _, format_idx: _,
+        alive: _, surface: _, swapchain: _, vk_format: _, format_idx: _,
         mode: _, req_buffers: _, copy_src: _, width: _, height: _, frames_in_flight: _,
         images, acq: _, acq_cursor: _, present_serials: _, present_cursor: _,
         handed_out: _, handed_image: _, pending_submit_wait: _, pending_wait_sem: _,

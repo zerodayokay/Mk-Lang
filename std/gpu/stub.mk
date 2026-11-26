@@ -628,14 +628,14 @@ Native.DestroyPipeline(mut self, id: u64) {
     }
 }
 
-Device.NativeCreateSwapchain(mut self, o: &SwapchainOptions, w: int, h: int, hwnd: uint, hinst: uint): Error!u64 {
+Device.NativeCreateSwapchain(mut self, o: &SwapchainOptions, w: int, h: int, window_handle: uint, window_instance: uint): Error!u64 {
     match mut self.state.Mut().native {
         .Stub(s) { return s.AllocHandle() }
         .Dx(d: _) { fail Unsupported }
         .Vk(v) {
             sc_opts := vk.SwapchainOptions(
-                hwnd: hwnd,
-                hinstance: hinst,
+                window_handle: window_handle,
+                window_instance: window_instance,
                 vk_format: RowOf(o.format).vk_format,
                 format_idx: FormatIndex(o.format),
                 mode: VkPresentModeCode(o.mode),

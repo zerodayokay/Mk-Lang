@@ -49,4 +49,5 @@ export open enum CursorMode {
 /// The OS's handles for a window.
 export open enum Native {
     Win32(hwnd: uint, hinstance: uint)
+    Unix(handle: uint)
 }

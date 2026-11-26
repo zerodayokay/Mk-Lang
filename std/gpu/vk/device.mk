@@ -117,7 +117,7 @@ CreateVkDeviceRaw(ic: &VkInstCreated, pr: &PdProbe, opts: &OpenOptions): Error!V
         qci.queue_count = 1
         qci.p_queue_priorities = raw.Of(&qprio)
 
-        var ext_ptrs: [2]*u8 = [raw.Null[u8](); 2]
+        var ext_ptrs: [3]*u8 = [raw.Null[u8](); 3]
         var ext_cnt: u32 = 0
         if pr.has_swapchain {
             ext_ptrs[int(ext_cnt)] = raw.StrData("VK_KHR_swapchain\x00")
@@ -125,6 +125,10 @@ CreateVkDeviceRaw(ic: &VkInstCreated, pr: &PdProbe, opts: &OpenOptions): Error!V
         }
         if opts.features.depth_clip_control {
             ext_ptrs[int(ext_cnt)] = raw.StrData("VK_EXT_depth_clip_control\x00")
+            ext_cnt += 1
+        }
+        if pr.portability {
+            ext_ptrs[int(ext_cnt)] = raw.StrData("VK_KHR_portability_subset\x00")
             ext_cnt += 1
         }
 

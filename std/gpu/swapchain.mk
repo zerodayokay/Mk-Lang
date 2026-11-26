@@ -106,16 +106,19 @@ export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOpti
         .Stub(s: _) { true }
         _ { false }
     }
-    var hwnd: uint = 0
-    var hinst: uint = 0
+    var window_handle: uint = 0
+    var window_instance: uint = 0
     var ww := 0
     var wh := 0
     surf: ?window.Surface = match w.Surface() {
         ok(sf) {
             match sf.Native() {
                 .Win32(hwnd: hw, hinstance: hi) {
-                    hwnd = hw
-                    hinst = hi
+                    window_handle = hw
+                    window_instance = hi
+                }
+                .Unix(handle) {
+                    window_handle = handle
                 }
                 _ {
                     if !is_stub {
@@ -144,7 +147,7 @@ export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOpti
         }
     }
     onerr CloseOptSurface(surf)
-    sc := try self.NewSwapchainFromHwnd(io, hwnd, hinst, ww, wh, o)
+    sc := try self.NewSwapchainFromNative(io, window_handle, window_instance, ww, wh, o)
     old_surf := Replace(mut self.state.Mut().swapchains.GetMut(sc.slot).surface, surf)
     CloseOptSurface(old_surf)
     return sc
@@ -157,7 +160,7 @@ CloseOptSurface(surf: ?window.Surface) {
     }
 }
 
-Device.NewSwapchainFromHwnd(mut self, io: Io, hwnd: uint, hinst: uint, ww: int, wh: int, o: SwapchainOptions): Error!Swapchain {
+Device.NewSwapchainFromNative(mut self, io: Io, window_handle: uint, window_instance: uint, ww: int, wh: int, o: SwapchainOptions): Error!Swapchain {
     _ = io
     try self.CheckAlive()
     if !IsSwapchainFormat(o.format) {
@@ -181,11 +184,11 @@ Device.NewSwapchainFromHwnd(mut self, io: Io, hwnd: uint, hinst: uint, ww: int, 
         .Vk(v: _) { (stub: false, dx: false) }
     }
     if is_stub {
-        nh = try self.NativeCreateSwapchain(&o, sw, sh, hwnd, hinst)
+        nh = try self.NativeCreateSwapchain(&o, sw, sh, window_handle, window_instance)
     } else if is_dx {
         (dxgi_res, dxgi_rtv) := SwapchainDxgiFormats(o.format)
         spec := dx.SwapchainSpec(
-            hwnd: hwnd,
+            hwnd: window_handle,
             width: ww,
             height: wh,
             dxgi_res: dxgi_res,
@@ -264,7 +267,7 @@ Device.NewSwapchainFromHwnd(mut self, io: Io, hwnd: uint, hinst: uint, ww: int, 
             }
         }
     } else {
-        nh = try self.NativeCreateSwapchain(&o, sw, sh, hwnd, hinst)
+        nh = try self.NativeCreateSwapchain(&o, sw, sh, window_handle, window_instance)
     }
 
     onerr self.state.Mut().native.DestroySwapchain(a, nh)

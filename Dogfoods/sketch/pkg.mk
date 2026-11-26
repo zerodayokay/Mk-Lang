@@ -10,6 +10,11 @@ const Package = pkg.Package(
     targets: [
         pkg.Select(os: "windows", modules: [pkg.Module(name: "plat", dir: "src/plat/windows")]),
         pkg.Select(os: "linux", modules: [pkg.Module(name: "plat", dir: "src/plat/linux")]),
+        pkg.Select(os: "macos", modules: [pkg.Module(name: "plat", dir: "src/plat/linux")]),
+    ],
+    links: [
+        pkg.Link(name: "libc.so.6", kind: "dynamic", path: "", target: "x86_64-linux"),
+        pkg.Link(name: "libc.so.6", kind: "dynamic", path: "", target: "aarch64-linux"),
     ],
     // a module that `targets` selects is listed by its directory, not its name
     unsafe_modules: ["src/plat/windows"],
