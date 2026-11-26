@@ -51,7 +51,7 @@ PairsAre(got: &FieldBlock, want: []str): bool {
             return false
         }
         f := got.Get(i)
-        if f.name != before || f.value != after {
+        if !Same(f.name, before) || !Same(f.value, after) {
             return false
         }
     }

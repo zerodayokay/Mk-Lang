@@ -113,30 +113,33 @@ StrHead(src: []u8, at: int, n: int): Truncated|BadInteger!(huffman: bool, start:
     return (huffman, start: next, end: next + value)
 }
 
-// StrCost is the encoded length of s as a string literal with an n-bit
-// length prefix, and whether it is Huffman coded: Huffman when huffman is
-// on and its code is not longer than s (RFC 7541 5.2). O(s).
-StrCost(s: []u8, n: int, huffman: bool): (len: int, huff: bool) {
+// How a string literal is written: its whole encoded length, whether it is
+// Huffman coded, and the length of its data (the code or the raw bytes).
+type StrCode = (len: int, huff: bool, data: int)
+
+// StrCost is how s is written as a string literal with an n-bit length
+// prefix: Huffman when huffman is on and its code is not longer than s (RFC
+// 7541 5.2). O(s).
+StrCost(s: []u8, n: int, huffman: bool): StrCode {
     if huffman {
         h := HuffLen(s)
         if h <= s.Len() {
-            return (len: IntLen(h, n) + h, huff: true)
+            return (len: IntLen(h, n) + h, huff: true, data: h)
         }
     }
-    return (len: IntLen(s.Len(), n) + s.Len(), huff: false)
+    return (len: IntLen(s.Len(), n) + s.Len(), huff: false, data: s.Len())
 }
 
 // PutStr writes s as a string literal with an n-bit length prefix into out
-// from out[0], with flags (the bits above the Huffman flag) in its first
-// byte, Huffman coded when huff is set, and returns its length. out holds
-// at least StrCost(s, n, huff).len bytes. O(s).
-PutStr(out: mut []u8, s: []u8, n: int, flags: u8, huff: bool): int {
-    if !huff {
+// from out[0], as c (StrCost of s with the same n) says, with flags (the
+// bits above the Huffman flag) in its first byte, and returns c.len. out
+// holds at least c.len bytes. O(s).
+PutStr(out: mut []u8, s: []u8, n: int, flags: u8, c: StrCode): int {
+    if !c.huff {
         k := PutInt(out, s.Len(), n, flags)
         (mut out[k..k + s.Len()]).CopyFrom(s)
         return k + s.Len()
     }
-    h := HuffLen(s)
-    k := PutInt(out, h, n, flags | Trunc[u8](1 << n))
-    return k + HuffPut(mut out[k..k + h], s)
+    k := PutInt(out, c.data, n, flags | Trunc[u8](1 << n))
+    return k + HuffPut(mut out[k..k + c.data], s)
 }
