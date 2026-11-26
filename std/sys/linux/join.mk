@@ -6,8 +6,8 @@
 // How: the thread is cloned with its ThreadRec's ctid set to 1, which the
 // kernel clears to 0 and wakes on futex when the thread exits
 // (CLONE_CHILD_CLEARTID, in CloneThread); the join waits for 0, then unmaps
-// the thread's stack, guard page and alternate signal stack. In system-libc
-// mode a joinable thread is not built yet: ThreadStartJoin fails with ENOSYS.
+// the thread's stack, guard page and alternate signal stack. System-libc
+// mode uses pthread_create and pthread_join on the same explicit mappings.
 
 import std.raw
 
@@ -16,7 +16,7 @@ const FutexWait: uint = 0
 // child TID with a shared FUTEX_WAKE.
 
 /// ThreadStartJoin is ThreadStart for a thread ThreadJoin will join: value
-/// is the address of its ThreadRec (the handle ThreadJoin takes), not the
+/// is the address of its join record (the handle ThreadJoin takes), not the
 /// tid. Its stack stays mapped until the join. O(1) system calls, as
 /// ThreadStart. Maps the thread's stack; allocates nothing on the heap.
 export ThreadStartJoin(entry: fn(*u8), arg: *u8, stack: int): OsResult {
@@ -24,7 +24,7 @@ export ThreadStartJoin(entry: fn(*u8), arg: *u8, stack: int): OsResult {
         return Fail(22)
     }
     if LibcBuild() {
-        return Fail(38)
+        return PthreadStart(entry, arg, stack, true)
     }
     total := (stack + 4095) / 4096 * 4096 + 4096
     base := Reserve(total, 4096)
@@ -56,6 +56,10 @@ export ThreadStartJoin(entry: fn(*u8), arg: *u8, stack: int): OsResult {
 /// the blocking pool (runtime.Joined.Join). O(1) system calls besides the
 /// wait. Allocates nothing.
 export ThreadJoin(h: i64) {
+    if LibcBuild() {
+        PthreadJoin(h)
+        return
+    }
     unsafe "h is the ThreadRec ThreadStartJoin wrote at its stack's top; ctid is the word the kernel clears at the thread's exit" {
         rec := raw.FromAddr[ThreadRec](Trunc[uint](h))
         w := raw.Of(&(*rec).ctid)

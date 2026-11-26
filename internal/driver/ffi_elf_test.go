@@ -320,6 +320,50 @@ func TestFFI_Threads(t *testing.T) {
 	}
 }
 
+// TestFFI_JoinedThread joins successive pinned threads in system-libc mode.
+func TestFFI_JoinedThread(t *testing.T) {
+	const main = `import std.raw
+import std.runtime
+
+var Finished: raw.Atomic[u32] = raw.Atomic[u32].New(0)
+
+Worker(io: Io) {
+    _ = io
+    _ = Finished.Add(1)
+}
+
+Join(j: runtime.Joined, io: Io) {
+    j.Join(io) else {
+        Join(j, io.NoCancel())
+    }
+}
+
+export Main(system: &System): int {
+    for i in 0..4 {
+        Join(runtime.Thread(system.io, Worker), system.io)
+        if int(Finished.Load()) != i + 1 {
+            return 1
+        }
+    }
+    return 0
+}
+`
+	for _, target := range []types.Target{types.X86_64Linux, types.Aarch64Linux} {
+		t.Run(target.Name, func(t *testing.T) {
+			root := writeTree(t, map[string]string{
+				"pkg.mk":      ffiManifest([]string{linkLit("libc.so.6", "dynamic", "", target.Name)}),
+				"app/main.mk": main,
+			})
+			exe := mustBuild(t, root, target, types.Dev)
+			if target.Name == linuxT.Name && (runtime.GOOS == "linux" || os.Getenv("MK_LINUX") == "1") {
+				if out, code := runLinuxEnv(t, exe, nil); code != 0 {
+					t.Errorf("exit %d, stdout %q, want exit 0", code, out)
+				}
+			}
+		})
+	}
+}
+
 // TestFFI_Runtime: std's own runtime test blocks, std.rt and std.task (the
 // fault, stack-overflow and cancellation blocks among them), built in
 // system-libc mode through testLinks and run on x86_64-linux in dev and
@@ -363,13 +407,6 @@ func TestFFI_Runtime(t *testing.T) {
 						timed := stdTimingBlock(tc.Name) && !timingRun()
 						m := stdEnvTag.FindStringSubmatch(tc.Name)
 						if timed {
-							continue
-						}
-						if !baseline && strings.HasPrefix(tc.Name, "RT-Pin-JoinClears") {
-							// A pinned Thread is a joinable OS thread, which system-libc
-							// mode does not build: sys.ThreadStartJoin fails with ENOSYS
-							// (std/sys/linux/join.mk), and the block panics by design.
-							t.Logf("%s %q: not run in system-libc mode (no joinable thread)", tc.Module, tc.Name)
 							continue
 						}
 						if m == nil {
