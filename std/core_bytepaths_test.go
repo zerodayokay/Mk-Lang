@@ -637,15 +637,15 @@ export Main(sys: &System): WriteError!void {
 
 // core11WitnessNeed is each witness's need on a hosted target with this std,
 // the least fuel at which mk check holds its const.
-const core11WitnessNeed = 4_354_281
+const core11WitnessNeed = 3_229_101
 
 // TestCore_CompileTimeWitnesses pins the witnesses wit-fr and wit-p64, a
 // known and accepted cost of the std.simd form: one str.From at compile
 // time over 200,000 bytes of French prose, and over ASCII with one é every
 // 64 bytes. From 256 bytes a hosted target's ValidUtf8 is std.simd's, about
-// 21.8 steps per byte on such text in the evaluator, so each needs
-// core11WitnessNeed, 4,354,281 steps (v1.2.0: 2,489,325 and 2,031,352;
-// measured 2026-11-16), past the default 4 million. The const states a
+// 16.1 steps per byte on such text in the evaluator, so each needs
+// core11WitnessNeed, 3,229,101 steps (v1.2.0: 2,489,325 and 2,031,352;
+// measured 2026-11-16), within the default 4 million. The const states a
 // fuel, 5,500,000, which passes and also bounds the cost from above, and the
 // need is checked exact: clean at it, E0902 one below. On
 // x86_64-freestanding, where std.core keeps its own form, both fit the

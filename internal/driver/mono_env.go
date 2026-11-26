@@ -54,6 +54,12 @@ func (r *readingEnv) ImplMethod(ifc types.ItemID, m uint32, self types.TypeID) (
 	return r.monoEnv.implMethod(ifc, m, self, &r.reads)
 }
 
+// ReadBody (mono.BodyReader) keeps the body of a requires predicate the
+// instance folded, as eval records a body it enters.
+func (r *readingEnv) ReadBody(item types.ItemID) {
+	r.reads.Add(types.Read{Kind: types.ReadBody, Key: r.w.items.Get(item).Key})
+}
+
 func (s *semantics) monoEnv(w *world) *monoEnv {
 	s.monoOnce.Do(func() { s.menv = &monoEnv{w: w, insts: map[source.Hash]served{}} })
 	return s.menv

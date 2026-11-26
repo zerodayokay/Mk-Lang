@@ -78,10 +78,10 @@ TbySplitHosted(t: str, want: int): int {
 // Forty 19-byte fields, each comma 19 bytes past from, in the third word of
 // IndexByteIn's prefix. The reference needs 29,805 and this std 22,123, on
 // x86_64-freestanding 29,805; a word prefix of 16 bytes (the i16 mutant)
-// needs 34,685. One fuel cannot hold both, so there are two guards.
+// needs 32,228. One fuel cannot hold both, so there are two guards.
 // TbySplit20 runs on every target at 1.3 times the reference's need, which on
 // x86_64-freestanding is this std's need. TbySplit20Hosted, the same split
-// behind TbySplitHosted (the reference 29,821, this std 22,139, i16 34,701),
+// behind TbySplitHosted (the reference 29,821, this std 22,139, i16 32,244),
 // holds a hosted target at the reference's fuel, so the 16-byte prefix still
 // fails it.
 const TbySplit20AtCompileTime: int = TbySplit("k001=vx01yyyyyyyyyy,k002=vx02yyyyyyyyyy,k003=vx03yyyyyyyyyy,k004=vx04yyyyyyyyyy,k005=vx05yyyyyyyyyy,k006=vx06yyyyyyyyyy,k007=vx07yyyyyyyyyy,k008=vx08yyyyyyyyyy,k009=vx09yyyyyyyyyy,k010=vx10yyyyyyyyyy,k011=vx11yyyyyyyyyy,k012=vx12yyyyyyyyyy,k013=vx13yyyyyyyyyy,k014=vx14yyyyyyyyyy,k015=vx15yyyyyyyyyy,k016=vx16yyyyyyyyyy,k017=vx17yyyyyyyyyy,k018=vx18yyyyyyyyyy,k019=vx19yyyyyyyyyy,k020=vx20yyyyyyyyyy,k021=vx21yyyyyyyyyy,k022=vx22yyyyyyyyyy,k023=vx23yyyyyyyyyy,k024=vx24yyyyyyyyyy,k025=vx25yyyyyyyyyy,k026=vx26yyyyyyyyyy,k027=vx27yyyyyyyyyy,k028=vx28yyyyyyyyyy,k029=vx29yyyyyyyyyy,k030=vx30yyyyyyyyyy,k031=vx31yyyyyyyyyy,k032=vx32yyyyyyyyyy,k033=vx33yyyyyyyyyy,k034=vx34yyyyyyyyyy,k035=vx35yyyyyyyyyy,k036=vx36yyyyyyyyyy,k037=vx37yyyyyyyyyy,k038=vx38yyyyyyyyyy,k039=vx39yyyyyyyyyy,k040=vx40yyyyyyyyyy,") fuel 38_700
@@ -147,12 +147,12 @@ TbyFromShape(n: int, shape: int, calls: int): int {
 // an earlier gate re-added with one change each, and g0, that gate itself):
 //   255 bytes, one é: 23,745 and 23,795; ValidUtf8's threshold lowered to
 //     128 bytes (t128).
-//   256 bytes, one é: 24,095 and 30,675 (std.simd's form, 1.27 times); the
+//   256 bytes, one é: 24,095 and 25,275 (std.simd's form, 1.05 times); the
 //     fork removed, so std.simd's word form runs on x86_64-freestanding
 //     (fsu), and std.simd's word forms on x86_64-windows (std-words).
 //   255 bytes, two-byte scalars: 98,858 and 98,878; the earlier gate, g0 and
 //     mg1 to mg6, on x86_64-freestanding.
-//   256 bytes, two-byte scalars: 99,497 and 34,073; fsu, std-words, g0 on
+//   256 bytes, two-byte scalars: 99,497 and 27,593; fsu, std-words, g0 on
 //     x86_64-freestanding.
 //   100 bytes, 9 two-byte scalars then ASCII: 99,489 and
 //     99,689; the earlier gate needs 213,964 on the 0.5% grid; g0 and mg1 to
@@ -172,13 +172,13 @@ const TbyDenseHeadAtCompileTime: int = TbyFromShape(100, 2, 40) fuel 129_700
 // TbyFromHosted runs str.From calls times over the first n bytes of a
 // 300-byte buffer of two-byte scalars on a hosted target, and returns calls
 // on x86_64-freestanding without the work. Its two guards pin ValidUtf8's
-// hand-off at 256 bytes from above: the fuels are 1.39 and 1.45 times this
+// hand-off at 256 bytes from above: the fuels are 1.71 and 1.79 times this
 // std's need, far below the SWAR form's, so any threshold above 256 bytes
 // fails the 256-byte guard. Needs, the reference (the SWAR form) and this std:
-//   256 bytes: 99,477 and 34,053; ValidUtf8's threshold at 257, 512 or
+//   256 bytes: 99,477 and 27,573; ValidUtf8's threshold at 257, 512 or
 //     1,024 bytes (t257, t512, t1024) 99,497.
-//   300 bytes: 116,615 and 39,855; t512 and t1024 116,635. A threshold of
-//     257 hands 300 bytes to std.simd and needs this std's 39,855, so only
+//   300 bytes: 116,615 and 32,295; t512 and t1024 116,635. A threshold of
+//     257 hands 300 bytes to std.simd and needs this std's 32,295, so only
 //     the 256-byte guard kills it.
 TbyFromHosted(n: int, calls: int): int {
     if Target.os == Os.Freestanding {
@@ -207,11 +207,11 @@ const TbyAbove300AtCompileTime: int = TbyFromHosted(300, 4) fuel 57_800
 // 20 times each: BytesEqual's two overlapping words, which hold 9 to 16 bytes
 // off std.simd. Per call the reference's word loop needs 254 and 298 steps,
 // this std's two words 307, and std.simd's Equal from 9 bytes (the be8
-// mutant) 428 at every length from 9 to 15 and 416 at 16, while the
-// reference's need grows 44 per byte: from 11 bytes be8 is within 1.3 times
-// the reference, so the guard holds 9 and 10 bytes. Needs: the reference
+// mutant) 365 at every length from 9 to 15 and 353 at 16, while the
+// reference's need grows 44 per byte: from 10 bytes be8 is within 1.3 times
+// the reference, so the 9-byte calls carry the guard. Needs: the reference
 // 10,929, this std 12,169 (1.11 times), on x86_64-freestanding 10,929; be8
-// 17,009. The fuel is 1.3 times the reference's.
+// 14,489, 2% over the fuel. The fuel is 1.3 times the reference's.
 TbyStartsShort(): int {
     var n := 0
     for _ in 0..20 {
@@ -228,9 +228,9 @@ TbyStartsShort(): int {
 const TbyStartsShortAtCompileTime: int = TbyStartsShort() fuel 14_200
 
 // Forty 32-byte and forty 48-byte fields: Split in the band past
-// IndexByteIn's 32-byte word prefix, where this std needs more steps than
-// the reference, an accepted cost. 32 bytes: the reference 36,076, this
-// std 41,350 (1.15 times); 48 bytes: 41,076 and 43,530 (1.06 times); on
+// IndexByteIn's 32-byte word prefix, where at 32 bytes this std needs more
+// steps than the reference, an accepted cost. 32 bytes: the reference 36,076,
+// this std 38,893 (1.08 times); 48 bytes: 41,076 and 41,010 (0.998 times); on
 // x86_64-freestanding the reference's. Killed by IndexByteIn calling std.simd
 // whenever 16 bytes are left (idx), the fork removed on
 // x86_64-freestanding (fsi) and std-words. The fuels are 1.3 times
@@ -241,7 +241,7 @@ const TbySplit48AtCompileTime: int = TbySplit("k001=vx01yyyyyyyyyyyyyyyyyyyyyyyy
 
 // Long inputs, where std.simd's forms need fewer steps than the word forms (a
 // guard here because thresholds raised out of reach pass every other test).
-// str.From of 4 KiB of ASCII: this std 12,433, the SWAR form (the reference)
+// str.From of 4 KiB of ASCII: this std 12,253, the SWAR form (the reference)
 // 34,931; a ValidUtf8 that never calls std.simd needs the same 34,931.
 TbyFromLong(): int {
     if Target.os == Os.Freestanding {
@@ -256,7 +256,7 @@ TbyFromLong(): int {
 
 const TbyFromLongAtCompileTime: int = TbyFromLong() fuel 20_000
 
-// Slice[u8].Index of the last of 4 KiB: this std 12,918, the reference
+// Slice[u8].Index of the last of 4 KiB: this std 12,855, the reference
 // 36,200, IndexByteIn never reaching std.simd 102,470.
 TbyFindLong(): int {
     if Target.os == Os.Freestanding {
@@ -274,8 +274,8 @@ TbyFindLong(): int {
 const TbyFindLongAtCompileTime: int = TbyFindLong() fuel 20_000
 
 // StartsWith and EndsWith of a 4 KiB text by itself, after its str.From: this
-// std 46,739, the reference 150,833, BytesEqual comparing bytes in place of
-// std.simd's Equal 373,087.
+// std 46,433, the reference 150,833, BytesEqual comparing bytes in place of
+// std.simd's Equal 372,907.
 TbyEqLong(): int {
     if Target.os == Os.Freestanding {
         return 2
@@ -339,7 +339,9 @@ export Main(sys: &System) {
 // steps this std takes; they do not depend on the host, since the evaluator
 // answers Cpu() with the target's baseline. They are the needs of mk check,
 // which evaluates as a development build does, contracts included; a release
-// build may evaluate the same consts in fewer steps. A change that moves a
+// build of this program needs the same steps, since the only contracts its
+// calls reach are requires clauses that hold for every instance, which no
+// profile checks on entry. A change that moves a
 // need fails here: find the new need by bisecting that guard's fuel with mk
 // check (clean at the need, E0902 one below), then write it here and in the
 // comments.
@@ -352,18 +354,18 @@ var core11GuardNeeds = []struct {
 	{"TbySplit20HostedAtCompileTime", 22_139, 29_821},
 	{"TbySparseAtCompileTime", 47_849, 47_649},
 	{"TbyEdge255SparseAtCompileTime", 23_795, 23_745},
-	{"TbyEdge256SparseAtCompileTime", 30_675, 24_095},
+	{"TbyEdge256SparseAtCompileTime", 25_275, 24_095},
 	{"TbyEdge255DenseAtCompileTime", 98_878, 98_858},
-	{"TbyEdge256DenseAtCompileTime", 34_073, 99_497},
+	{"TbyEdge256DenseAtCompileTime", 27_593, 99_497},
 	{"TbyDenseHeadAtCompileTime", 99_689, 99_489},
-	{"TbyAbove256AtCompileTime", 34_053, 99_477},
-	{"TbyAbove300AtCompileTime", 39_855, 116_615},
+	{"TbyAbove256AtCompileTime", 27_573, 99_477},
+	{"TbyAbove300AtCompileTime", 32_295, 116_615},
 	{"TbyStartsShortAtCompileTime", 12_169, 10_929},
-	{"TbySplit32AtCompileTime", 41_350, 36_076},
-	{"TbySplit48AtCompileTime", 43_530, 41_076},
-	{"TbyFromLongAtCompileTime", 12_433, 34_931},
-	{"TbyFindLongAtCompileTime", 12_918, 36_200},
-	{"TbyEqLongAtCompileTime", 46_739, 150_833},
+	{"TbySplit32AtCompileTime", 38_893, 36_076},
+	{"TbySplit48AtCompileTime", 41_010, 41_076},
+	{"TbyFromLongAtCompileTime", 12_253, 34_931},
+	{"TbyFindLongAtCompileTime", 12_855, 36_200},
+	{"TbyEqLongAtCompileTime", 46_433, 150_833},
 }
 
 // guardConst matches a guard's line in core11Guards: its name, then its fuel.
