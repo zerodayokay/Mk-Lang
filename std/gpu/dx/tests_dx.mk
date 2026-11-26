@@ -174,8 +174,36 @@ WriteU32Le(dst: mut []u8, idx: int, v: u32) {
     dst[o + 3] = Trunc[u8]((v >> 24) & 0xFF)
 }
 
-test "dx bounds check: DESCRIPTORS_STATIC_KEEPING_BUFFER_BOUNDS_CHECKS on StructuredBuffer and CBV" (sys: &System) {
+DxSkipReason(a: &Arena, io: Io): ?str {
     if Target.os != Os.Windows {
+        return some("requires Windows")
+    }
+    match rt.Env("MK_GPU_ADAPTER") {
+        some(v) {
+            if v.Eq(&"vulkan") {
+                return some("MK_GPU_ADAPTER=vulkan")
+            }
+            if v.Eq(&"warp") {
+                return none
+            }
+        }
+        none {}
+    }
+    var triples: [132]u32 = [0; 132]
+    var guar: [44]FormatRowCaps = [mem.Zeroed[FormatRowCaps](); 44]
+    MakeRgba8GuarTable(mut triples, mut guar)
+    ads := Adapters(a, io, triples[..], guar[..]) else { return some("no d3d12 adapter") }
+    for i in 0..ads.Len() {
+        if !ads[i].is_software {
+            return none
+        }
+    }
+    return some("no hardware d3d12 adapter")
+}
+
+test "dx bounds check: DESCRIPTORS_STATIC_KEEPING_BUFFER_BOUNDS_CHECKS on StructuredBuffer and CBV" (sys: &System) {
+    if r := DxSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var ar := try Arena.New(sys.heap)
@@ -315,7 +343,8 @@ test "dx bounds check: DESCRIPTORS_STATIC_KEEPING_BUFFER_BOUNDS_CHECKS on Struct
 }
 
 test "dx swapchain: acquire, render, present, resize, hidden, abandon, waitable credit, and device loss" (sys: &System) {
-    if Target.os != Os.Windows {
+    if r := DxSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var ar := try Arena.New(sys.heap)
@@ -531,7 +560,8 @@ test "dx swapchain: acquire, render, present, resize, hidden, abandon, waitable 
 }
 
 test "dx planted bug: SkipPassBarrier fails Strict debug layer on swapchain Present" (sys: &System) {
-    if Target.os != Os.Windows {
+    if r := DxSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var ar := try Arena.New(sys.heap)

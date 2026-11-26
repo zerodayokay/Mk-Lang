@@ -1,12 +1,12 @@
 // Why: dxil.mk parses untrusted DXBC/DXIL containers and must catch unsigned
 // blobs, malformed part tables, and stage mismatches without panicking.
 //
-// What: tests over all 17 compiled DXIL blobs in tests_shaders.mk plus
+// What: tests over all 21 compiled DXIL blobs in tests_shaders.mk plus
 // hostile/unsigned/wrong-stage DXBC inputs.
 //
 // How: decodes committed DXIL blobs and mutates headers/parts in Arena buffers.
 
-test "all 17 compiled DXIL containers pass CheckDxil for their stages" (sys: &System) {
+test "all 21 compiled DXIL containers pass CheckDxil for their stages" (sys: &System) {
     a := sys.arena
     try CheckDxil(try DecodeShader(a, TriVsDxilZ), Stage.Vertex)
     try CheckDxil(try DecodeShader(a, TriPsDxilZ), Stage.Fragment)
@@ -25,6 +25,10 @@ test "all 17 compiled DXIL containers pass CheckDxil for their stages" (sys: &Sy
     try CheckDxil(try DecodeShader(a, DoubleCsDxilZ), Stage.Compute)
     try CheckDxil(try DecodeShader(a, PostInvertCsDxilZ), Stage.Compute)
     try CheckDxil(try DecodeShader(a, PrefixSumCsDxilZ), Stage.Compute)
+    try CheckDxil(try DecodeShader(a, PinningIdsVsDxilZ), Stage.Vertex)
+    try CheckDxil(try DecodeShader(a, PinningIdsPsDxilZ), Stage.Fragment)
+    try CheckDxil(try DecodeShader(a, HistogramCsDxilZ), Stage.Compute)
+    try CheckDxil(try DecodeShader(a, BitonicSortCsDxilZ), Stage.Compute)
 }
 
 test "dxil refuses unsigned zero hash, wrong stage, truncated header, and bad part offsets" (sys: &System) {

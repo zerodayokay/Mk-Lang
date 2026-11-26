@@ -11,6 +11,8 @@
 // pipelines from tests_shaders.mk SPIR-V blobs, executes draws and dispatches
 // into offscreen targets/buffers, and verifies pixel/element outputs.
 
+import std.rt
+
 HasVkAdapter(sys: &System): Error!bool {
     var a := try Arena.New(sys.heap)
     defer a.Free()
@@ -67,8 +69,24 @@ NewSimpleTex(dev: mut Device, fmt: TextureFormat, w: int, h: int, layers: int, m
     return try dev.NewTexture(td)
 }
 
-test "gpu vulkan Adapters, Open, resource kinds, zeroing, and Close zero leaks" (sys: &System) {
+VkTestSkipReason(sys: &System): Error!?str {
+    match rt.Env("MK_GPU_ADAPTER") {
+        some(v) {
+            if v.Eq(&"warp") || v.Eq(&"d3d12") {
+                return some(try sys.arena.Fmt("MK_GPU_ADAPTER={v}", (v)))
+            }
+        }
+        none {}
+    }
     if !(try HasVkAdapter(sys)) {
+        return some("no vulkan adapter")
+    }
+    return none
+}
+
+test "gpu vulkan Adapters, Open, resource kinds, zeroing, and Close zero leaks" (sys: &System) {
+    if r := try VkTestSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var a := try Arena.New(sys.heap)
@@ -585,7 +603,8 @@ RunDepthTest(a: &Arena, io: Io, dev: mut Device, rt: &Texture, rt_v: &TextureVie
 }
 
 test "gpu vulkan S1 graphics pipelines Tri, Quad, TexturedQuad, DepthCube, Instanced, BlendMsaa, DepthSample" (sys: &System) {
-    if !(try HasVkAdapter(sys)) {
+    if r := try VkTestSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var a := try Arena.New(sys.heap)
@@ -611,7 +630,8 @@ test "gpu vulkan S1 graphics pipelines Tri, Quad, TexturedQuad, DepthCube, Insta
 }
 
 test "gpu vulkan S1 compute pipelines DoubleCs, PostInvertCs, and PrefixSumCs" (sys: &System) {
-    if !(try HasVkAdapter(sys)) {
+    if r := try VkTestSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var a := try Arena.New(sys.heap)

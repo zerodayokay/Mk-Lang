@@ -12,6 +12,30 @@ import std.raw
 import std.rt
 import std.window
 
+DxTestSkipReason(a: &Arena, io: Io): ?str {
+    if Target.os != Os.Windows {
+        return some("requires Windows")
+    }
+    match rt.Env("MK_GPU_ADAPTER") {
+        some(v) {
+            if v.Eq(&"vulkan") {
+                return some("MK_GPU_ADAPTER=vulkan")
+            }
+            if v.Eq(&"warp") {
+                return none
+            }
+        }
+        none {}
+    }
+    ads := Adapters(a, io, Backend.D3d12) else { return some("no d3d12 adapter") }
+    for i in 0..ads.Len() {
+        if ads[i].kind != AdapterKind.Software {
+            return none
+        }
+    }
+    return some("no hardware d3d12 adapter")
+}
+
 DxTestWantsSoftware(): bool {
     match rt.Env("MK_GPU_ADAPTER") {
         some(v) {
@@ -90,7 +114,8 @@ CheckWindowSwapchain(heap: &Heap, io: Io, dev: mut Device) {
 }
 
 test "dx portable: Adapters, Open Strict, FormatCaps, Limits, and zero leaks" (sys: &System) {
-    if Target.os != Os.Windows {
+    if r := DxTestSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     ads := try Adapters(sys.arena, sys.io, Backend.D3d12)
@@ -123,7 +148,8 @@ test "dx portable: Adapters, Open Strict, FormatCaps, Limits, and zero leaks" (s
 }
 
 test "dx portable zeroing: NewBuffer and NewTexture color + depth start zeroed" (sys: &System) {
-    if Target.os != Os.Windows {
+    if r := DxTestSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var dev := try OpenDxPortable(sys.heap, sys.io, DebugMode.Strict)
@@ -187,7 +213,8 @@ test "dx portable zeroing: NewBuffer and NewTexture color + depth start zeroed" 
 }
 
 test "dx portable render: tri, dynamic-uniform quad, and textured_quad" (sys: &System) {
-    if Target.os != Os.Windows {
+    if r := DxTestSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var dev := try OpenDxPortable(sys.heap, sys.io, DebugMode.Strict)
@@ -396,7 +423,8 @@ test "dx portable render: tri, dynamic-uniform quad, and textured_quad" (sys: &S
 }
 
 test "dx portable render: depth_cube + depth_sample, blend_msaa resolve, instanced + copies + debug groups" (sys: &System) {
-    if Target.os != Os.Windows {
+    if r := DxTestSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var dev := try OpenDxPortable(sys.heap, sys.io, DebugMode.Strict)
@@ -701,7 +729,8 @@ test "dx portable render: depth_cube + depth_sample, blend_msaa resolve, instanc
 }
 
 test "dx portable compute: double, prefix_sum->post_invert UAV->SRV, ClearBuffer, MapWrite, deferred close" (sys: &System) {
-    if Target.os != Os.Windows {
+    if r := DxTestSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var dev := try OpenDxPortable(sys.heap, sys.io, DebugMode.Strict)
@@ -1022,7 +1051,8 @@ RunPlantedBugCheck(sys: &System, bug: PlantedBug): Error!(errs: int, warns: int,
 }
 
 test "dx portable sync & planted bugs: WaitIdle cancel, SkipDecay, SkipPassBarrier" (sys: &System) {
-    if Target.os != Os.Windows {
+    if r := DxTestSkipReason(sys.arena, sys.io) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
     var dev := try OpenDxPortable(sys.heap, sys.io, DebugMode.Strict)

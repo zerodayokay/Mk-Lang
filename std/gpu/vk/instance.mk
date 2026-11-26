@@ -640,6 +640,7 @@ ProbePhysicalDevice(inst_d: &InstanceDispatch, pd: vulkan.VkPhysicalDevice, idx:
                 caps: caps,
                 depth_bias_clamp_ok: feats2.features.depth_bias_clamp != 0,
                 draw_params_ok: f11.shader_draw_parameters != 0,
+                standard_sample_locations: lim.standard_sample_locations != 0,
             ),
         ))
     }

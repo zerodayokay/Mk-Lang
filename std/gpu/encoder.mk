@@ -12,6 +12,9 @@ import std.mem
 import std.gpu.dx
 import std.gpu.vk
 
+// The command-stream chunks a Vulkan submit describes without allocating.
+const InlineVkChunks: int = 8
+
 /// A copy's size in texels and layers.
 export struct Extent {
     export width: int
@@ -579,23 +582,12 @@ export Encoder.Submit(self): Error!void {
         }
         .Vk(v) {
             cc := st.stream.chunk_ids.Len()
-            var chunks := HeapList[vk.StreamChunk].New(a)
-            var bcmds := HeapList[vk.BarrierCmd].New(a)
-            defer {
-                chunks.Free(a)
-                bcmds.Free(a)
-            }
-            for ci in 0..cc {
-                cid := st.stream.chunk_ids[ci]
-                ch := st.chunk_pool.chunks[cid].Ref()
-                used := st.stream.ChunkEndWord(ci)
-                try chunks.Push(a, vk.StreamChunk(words: ch.words[0..used]))
-            }
+            st.vk_bcmds.Clear()
             for bi in 0..st.stream.barriers.Len() {
                 it := &st.stream.barriers[bi]
                 if it.is_tex {
                     tb := &it.tex
-                    try bcmds.Push(a, vk.BarrierCmd(
+                    try st.vk_bcmds.Push(a, vk.BarrierCmd(
                         is_tex: true,
                         handle: st.textures.Get(tb.slot).native_handle,
                         all_sub: tb.all_sub,
@@ -610,7 +602,7 @@ export Encoder.Submit(self): Error!void {
                     ))
                 } else {
                     bb := &it.buf
-                    try bcmds.Push(a, vk.BarrierCmd(
+                    try st.vk_bcmds.Push(a, vk.BarrierCmd(
                         is_tex: false,
                         handle: st.buffers.Get(bb.slot).native_handle,
                         all_sub: false,
@@ -625,7 +617,23 @@ export Encoder.Submit(self): Error!void {
                     ))
                 }
             }
-            v.SubmitStream(submit_serial, chunks.Items(), bcmds.Items(), st.stream.labels.Items()) else e {
+            // A submit usually spans few chunks: describe up to InlineVkChunks
+            // of them on the stack and spill to the heap only past that.
+            var no_words: [0]u64 = []
+            var inline: [InlineVkChunks]vk.StreamChunk = [vk.StreamChunk(words: no_words[..]); InlineVkChunks]
+            var spill := HeapList[vk.StreamChunk].New(a)
+            defer spill.Free(a)
+            for ci in 0..cc {
+                ch := st.chunk_pool.chunks[st.stream.chunk_ids[ci]].Ref()
+                piece := vk.StreamChunk(words: ch.words[0..st.stream.ChunkEndWord(ci)])
+                if cc <= InlineVkChunks {
+                    inline[ci] = piece
+                } else {
+                    try spill.Push(a, piece)
+                }
+            }
+            chunks := if cc <= InlineVkChunks { inline[0..cc] } else { spill.Items() }
+            v.SubmitStream(submit_serial, chunks, st.vk_bcmds.Items(), st.stream.labels.Items()) else e {
                 gerr := MapVkErr(e)
                 st.lost = true
                 st.sticky_err = some(gerr)
