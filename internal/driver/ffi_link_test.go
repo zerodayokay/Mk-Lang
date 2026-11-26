@@ -249,6 +249,11 @@ func TestFFIM_Validate(t *testing.T) {
 		{"absolute", linkLit("x", "static", "/x.a", l), "links[0].path"},
 		{"dotdot", linkLit("x", "static", "../x.a", l), "links[0].path"},
 		{"bad def", linkLit("x.dll", "dynamic", "lib/bad.def", w), "links[0].path"},
+		{"lazy on linux", linkLit("libx.so", "lazy", "", l), "links[0].kind"},
+		{"lazy on aarch64", linkLit("libx.so", "lazy", "", "aarch64-linux"), "links[0].kind"},
+		{"lazy on macos", linkLit("libx.dylib", "lazy", "", "x86_64-macos"), "links[0].kind"},
+		{"lazy separator", linkLit(`lib/x.dll`, "lazy", "", w), "links[0].name"},
+		{"lazy lib path", linkLit("x.dll", "lazy", "lib/x.lib", w), "links[0].path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := writeTree(t, map[string]string{
@@ -269,7 +274,7 @@ func TestFFIM_Validate(t *testing.T) {
 		})
 	}
 	root := writeTree(t, map[string]string{
-		"pkg.mk": ffiManifest([]string{linkLit("version.dll", "dynamic", "", w), linkLit("x.dll", "dynamic", "lib/x.def", w),
+		"pkg.mk": ffiManifest([]string{linkLit("version.dll", "dynamic", "", w), linkLit("x.dll", "dynamic", "lib/x.def", w), linkLit("z.dll", "lazy", "lib/x.def", w),
 			linkLit("x", "static", "lib/x.lib", w), linkLit("libm.so.6", "dynamic", "lib/m.def", l), linkLit("y", "static", "lib/y.a", l)}),
 		"app/main.mk": "export Main(sys: &System) {\n}\n",
 		"lib/x.def":   "Add\r\nSub\n",
