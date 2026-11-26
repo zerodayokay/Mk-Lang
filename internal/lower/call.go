@@ -178,6 +178,10 @@ func (bl *builder) emitCallAt(x *ast.CallExpr, c Call, edge *errEdge, spawn mir.
 				}
 			} else if bl.isRecvExclView(fe.X, c.Sig) {
 				pa.borrow, pa.kind, pa.exclView = true, mir.Exclusive, true
+			} else if u, ok := unparen(fe.X).(*ast.UnaryExpr); ok && u.Op == ast.TokMut && spawn == mir.NoLocal {
+				// An explicit exclusive slice is a receiver borrow too.
+				_, pa.borrow = bl.sliceBorrow(u)
+				pa.kind = mir.Exclusive
 			}
 		}
 		ps = append(ps, pa)
@@ -630,15 +634,19 @@ func (bl *builder) borrowArg(pa *pendingArg, c Call, call source.Span) {
 		pa.mode = mir.ArgReborrow
 		return
 	}
+	u, _ := unparen(pa.e).(*ast.UnaryExpr)
+	explicit := u != nil && (u.Op == ast.TokAmp || u.Op == ast.TokMut)
+	if explicit {
+		if _, isSlice := bl.sliceBorrow(u); isSlice {
+			// A slice borrow is its RvSlice value. Unary lowers it
+			// through sliceExpr, bounds and all.
+			pa.op = bl.operand(pa.e)
+			pa.mode = bl.argMode(pa.op, at)
+			return
+		}
+	}
 	if !pa.recv {
-		if u, ok := unparen(pa.e).(*ast.UnaryExpr); ok && (u.Op == ast.TokAmp || u.Op == ast.TokMut) {
-			if _, isSlice := bl.sliceBorrow(u); isSlice {
-				// A slice borrow is its RvSlice value, not a reference to
-				// it: unary lowers it through sliceExpr, bounds and all.
-				pa.op = bl.operand(pa.e)
-				pa.mode = bl.argMode(pa.op, at)
-				return
-			}
+		if explicit {
 			var p mir.Place
 			if s, ok := bl.mutSliceDeref(u); ok && bl.isPlaceExpr(s) {
 				p = bl.mutPlace(s) // `mut *s` reborrows s

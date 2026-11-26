@@ -41,7 +41,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Diagnostics
 
-- E0507 no longer suggests an exclusive sub-slice of a shared slice or immutable array.
+- E0507 omits the exclusive sub-slice suggestion for a shared slice, an immutable array, or a source with a conflicting loan. An explicit mutable sub-slice receiver follows the documented argument order, so a plain argument can read the source before the receiver borrows it.
 
 - E0507 on a write to a `var` global or a `mut` borrow of one names the global: `Table[_] is part of the global Table, which is never assigned` for `Table[7] = 42`, `P is a global, which is never borrowed mut` for a `mut self` method's call, `Table[0..2] is part of the global Table, which is never borrowed mut` for `Table[0..2].Fill(0)` (whose `try` line offered `(mut Table[0..2])`, which is refused too), with `try: a global changes only through its methods: make it, or the part that changes, an atomic or a Mutex`. It said `this temporary[_] is reached through a shared reference and cannot be written`, after the temporary reference a use of a global is. A write through a reference the global holds keeps the shared reference's text, spelled from the global (`H.r.n`) ([globals](doc/memory.md#r16-globals)).
 - E0902 on a `var` global's initializer names the route that compiles: `try: a global cannot state fuel: do the work in a const with fuel 8000000, and initialize Total from that const`. It said `raise the limit: fuel 8000000`, which a `var` cannot write. Writing it anyway, `var Total: int = Spin() fuel 8_000_000`, is E0101 with a message that names the same route; it said `one item per line` ([fuel](doc/reference.md#fuel)).

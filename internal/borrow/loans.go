@@ -129,7 +129,7 @@ func (c *checker) subSliceAlt(st *state, ctx *stmtCtx, d *diag.Diagnostic, p pat
 	if !strings.HasSuffix(text, "]") || !strings.Contains(text, "[") || !strings.Contains(text, "..") || strings.HasPrefix(text, "mut ") {
 		return
 	}
-	base := c.subSliceBase(c.roots[root].local)
+	base := c.subSliceBase(ctx, c.roots[root].local)
 	if base == noPath {
 		return
 	}
@@ -140,41 +140,56 @@ func (c *checker) subSliceAlt(st *state, ctx *stmtCtx, d *diag.Diagnostic, p pat
 		conflict = c.liveHolder(st, ctx, l, false, root) != noRoot
 		return !conflict
 	})
-	if !conflict {
-		d.Alt("borrow the sub-slice exclusively: `(mut " + text + ")`, since `" + text + "` is the shared view")
+	if conflict {
+		return
 	}
+	// Argument borrows and capture environments can be formed after the
+	// receiver, so their loans may be absent from the current state.
+	call := c.body.Span(ctx.span)
+	recv := c.body.Span(c.body.Locals[c.roots[root].local].Span)
+	for _, l := range c.candidates(base, colMut) {
+		loan := c.loans[l]
+		site := c.body.Span(loan.site)
+		argument := recv.End <= site.Start && call.Contains(site.StartPos()) && call.Contains(site.EndPos())
+		if argument || loan.slot && site == call {
+			return
+		}
+	}
+	d.Alt("borrow the sub-slice exclusively: `(mut " + text + ")`, since `" + text + "` is the shared view")
 }
 
-// subSliceBase finds the MIR source of the sub-slice temporary. Its
-// spelling alone cannot distinguish a mutable array from a shared slice.
-func (c *checker) subSliceBase(local mir.LocalID) pathID {
-	for _, b := range c.body.Blocks {
-		for i := range b.Stmts {
-			s := &b.Stmts[i]
-			rv := &s.Rvalue
-			if s.Kind != mir.StAssign || s.Place.Local != local || s.Place.Proj.Len != 0 ||
-				rv.Kind != mir.RvSlice || rv.Borrow != mir.Shared {
-				continue
-			}
-			p := c.paths.ofPlace(c.body, c.tab, rv.Place)
-			pi := c.paths.get(p)
-			for _, sp := range pi.steps {
-				if sp.kind == stDeref && sp.mode != dmExcl {
-					return noPath
-				}
-			}
-			switch c.tab.Kind(pi.typ()) {
-			case types.KArray:
-				ri := &c.roots[pi.root]
-				if pi.derefs == 0 && (ri.kind == rkUser || ri.kind == rkParam && ri.byValueParam) && !ri.isVar {
-					return noPath
-				}
-				return p
-			case types.KMutSlice:
-				return c.paths.extend(p, step{kind: stDeref, mode: dmExcl}, pi.typ())
-			}
+// subSliceBase looks up the temporary in the block where the receiver is
+// formed. Lower assigns the shared slice after its bounds checks and uses
+// it immediately. Without a known slice source, omit the alternative.
+func (c *checker) subSliceBase(ctx *stmtCtx, local mir.LocalID) pathID {
+	stmts := c.body.Blocks[ctx.b].Stmts
+	for i := ctx.i - 1; i >= 0; i-- {
+		s := &stmts[i]
+		if s.Kind != mir.StAssign || s.Place.Local != local || s.Place.Proj.Len != 0 {
+			continue
+		}
+		rv := &s.Rvalue
+		if rv.Kind != mir.RvSlice || rv.Borrow != mir.Shared {
 			return noPath
 		}
+		p := c.paths.ofPlace(c.body, c.tab, rv.Place)
+		pi := c.paths.get(p)
+		for _, sp := range pi.steps {
+			if sp.kind == stDeref && sp.mode != dmExcl {
+				return noPath
+			}
+		}
+		switch c.tab.Kind(pi.typ()) {
+		case types.KArray:
+			ri := &c.roots[pi.root]
+			if pi.derefs == 0 && (ri.kind == rkUser || ri.kind == rkParam && ri.byValueParam) && !ri.isVar {
+				return noPath
+			}
+			return p
+		case types.KMutSlice:
+			return c.paths.extend(p, step{kind: stDeref, mode: dmExcl}, pi.typ())
+		}
+		return noPath
 	}
 	return noPath
 }
