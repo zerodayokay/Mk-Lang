@@ -307,9 +307,10 @@ func cModPath(dep, name string) string { return prefixOfDep(dep) + "c." + name }
 
 // prune gives each binding module only the items the other builds'
 // files use, transitively (lazy items), and the shim only their functions;
-// the views on disk stay whole, and every kept line keeps its line there. It runs in the read step
-// just before the C build is read: the builds before it are read, and the
-// package's files, read after it, are read here too.
+// the views on disk stay whole, and every kept line keeps its line there.
+// It runs in the read step just before the C build is read: the builds
+// before it are read, and the package's files, read after it, are read
+// here too.
 func (ci *cImports) prune(w *world, builds []*build) {
 	if w.cfg.TestHooks.CImportWhole {
 		return
