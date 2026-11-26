@@ -131,9 +131,9 @@ var cr2EcCtAllow = map[string]int{
 	// switch on the OID's length, so three length tests repeat after a
 	// failed compare (oid.content.Len() against 3 twice more and
 	// p.content.Len() against 5 once more; main's single 9 moved).
-	// In the PGO build, KeyAlgorithm and KeyEc also inline KeySame,
-	// and KeyEc inlines KeyBits. The additional branches check public
-	// OID lengths and bytes, DER tags and public-key encoding.
+	// KeyAlgorithm and KeyEc inline KeySame in both builds. KeyEc also
+	// inlines KeyBits. The PGO layout of KeyEc has more branches for
+	// public OID lengths and bytes, DER tags and public-key encoding.
 	// The scalar is copied after checking its encoded length and padding.
 	// ParsePrivateKey under PGO: 39, among them a test of a parsed
 	// element's constructed byte (cmpb $0x0 after its tag against 0x10),
@@ -185,7 +185,7 @@ var cr2EcCtAllow = map[string]int{
 	"mk.std.crypto.Drbg:Next": 12, // no build reads more than 12
 	// The signature's encoding: format, out's length and the leading zero
 	// bytes of r and s, which are the public output.
-	"mk.std.crypto.SigEncode": 7, // no build reads more than 7
+	"mk.std.crypto.SigEncode": 7, // release body only; PGO reads it in EcdsaSign
 	"mk.std.crypto.DerIntLen": 2,
 	"mk.std.crypto.PutDerInt": 4,
 	// No other jump: the field and group arithmetic and its helpers.
@@ -261,8 +261,10 @@ var cr2EcCtByBuild = ctByBuild{
 	"mk.std.crypto.KeyAlgorithm":      {"release-pgo": 23},
 	"mk.std.crypto.KeyEc":             {"release": 20},
 	"mk.std.crypto.P256PtFromBytes":   {"release-pgo": 5},
+	"mk.std.crypto.P256PtXBytes":      {"release": 0},
 	"mk.std.crypto.KeyUint":           {"release-pgo": 8},
 	"mk.std.crypto.ParsePrivateKey":   {"release": 14},
+	"mk.std.crypto.SigEncode":         {"release-pgo": 0},
 	"mk.std.simd.kernel.Wipe":         {"release": 12},
 }
 

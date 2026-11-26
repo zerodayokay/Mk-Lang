@@ -557,14 +557,10 @@ func TestSTDCRYPTO_ConstantTimeDisassembly(t *testing.T) {
 	// --debug keeps the symbol table: a release ELF link without it passes
 	// --strip-all, and the disassembly is read by symbol. But --debug turns
 	// off the leaf inliner (lower.InlineLeaves), so a
-	// --debug build is not the shipped code. What holds: the crypto
-	// functions these tests read have the same instructions with and without
-	// --debug, addresses masked, in all eleven builds of the four tests, PGO
-	// included (TestSTDCRYPTO_ReadBodiesAreShipped; this probe's Main alone
-	// differs, after its first 302 instructions, with the same 13
-	// conditional jumps, and a read body whose shipped copy differs passes
-	// there only with the same conditional jumps). The rest of .text differs, mostly
-	// std.rt.ReadAll and std.core.StreamPutIn, where the leaf inliner works.
+	// --debug build can differ from the shipped code.
+	// TestSTDCRYPTO_ReadBodiesAreShipped compares the bodies across all
+	// eleven builds and requires matching conditional jumps if the masked
+	// instructions differ.
 	exe, out, status := cryptoTry(t, cryptoCTProbe, "--release", "--debug", "-target", "x86_64-linux")
 	if status != 0 {
 		if strings.Contains(out, "no usable LLVM") {
