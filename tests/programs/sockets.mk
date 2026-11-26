@@ -80,6 +80,108 @@ Talk(a: &Arena, io: Io, stream: net.Stream, text: str): str from a {
     return reply
 }
 
+// ReadExactStream reads buf.Len() bytes from s or fails with Closed on an early end.
+ReadExactStream(io: Io, s: &net.Stream, buf: mut []u8): net.Error!void {
+    var n := 0
+    for n < buf.Len() {
+        got := try s.Read(io, mut buf[n..])
+        if got == 0 {
+            fail Closed
+        }
+        n += got
+    }
+}
+
+// ReadExactConn reads buf.Len() bytes from c or fails with Closed on an early end.
+ReadExactConn(io: Io, c: &net.Conn, buf: mut []u8): net.Error!void {
+    var n := 0
+    for n < buf.Len() {
+        got := try c.Read(io, mut buf[n..])
+        if got == 0 {
+            fail Closed
+        }
+        n += got
+    }
+}
+
+// UpperUnix answers one length-framed Unix connection on l under a bounded
+// wait: Windows AF_UNIX overlapped reads can miss a peer's close, so the
+// Unix exchange uses a 1-byte length prefix instead of waiting for EOF.
+UpperUnix(io: Io, l: &net.Listener, failed: mut ?net.Error) {
+    scope r := io.Scope() {
+        r.CancelAfter(time.Seconds(10))
+        s := l.Accept(io) else e {
+            *failed = some(e)
+            return
+        }
+        defer s.Close()
+        var hdr: [1]u8 = [0]
+        ReadExactStream(io, &s, mut hdr[..]) else e {
+            *failed = some(e)
+            return
+        }
+        n := int(hdr[0])
+        var buf: [256]u8 = [0; 256]
+        if n > 0 {
+            ReadExactStream(io, &s, mut buf[0..n]) else e {
+                *failed = some(e)
+                return
+            }
+        }
+        for i in 0..n {
+            if buf[i] >= b'a' && buf[i] <= b'z' {
+                buf[i] -= 32
+            }
+        }
+        s.WriteAll(io, hdr[..]) else e {
+            *failed = some(e)
+            return
+        }
+        if n > 0 {
+            s.WriteAll(io, buf[..n]) else e {
+                *failed = some(e)
+                return
+            }
+        }
+    }
+}
+
+// ExchangeUnix sends a length-framed message over c and reads the framed reply
+// under a bounded wait.
+ExchangeUnix(a: &Arena, io: Io, c: &net.Conn, text: str): net.Error|OutOfMemory!str from a {
+    scope r := io.Scope() {
+        r.CancelAfter(time.Seconds(10))
+        var hdr: [1]u8 = [Trunc[u8](text.Len())]
+        try c.WriteAll(io, hdr[..])
+        try c.WriteAll(io, text.AsBytes())
+        var rhdr: [1]u8 = [0]
+        try ReadExactConn(io, c, mut rhdr[..])
+        n := int(rhdr[0])
+        buf := try a.Slice[u8](256)
+        if n > 0 {
+            try ReadExactConn(io, c, mut buf[..n])
+        }
+        return str.From(buf[..n]) else {
+            "(not UTF-8)"
+        }
+    }
+}
+
+// TalkUnix erases stream into a Conn, exchanges length-framed text through it,
+// closes it, and returns the reply, or what failed.
+TalkUnix(a: &Arena, io: Io, stream: net.Stream, text: str): str from a {
+    conn := stream.Conn()
+    reply := ExchangeUnix(a, io, &conn, text) else e {
+        conn.Abandon()
+        return Describe(a, "exchange", e)
+    }
+    conn.Close(io) else e {
+        conn.Abandon()
+        return Describe(a, "close", e)
+    }
+    return reply
+}
+
 // Describe formats what failed and why, in a.
 Describe(a: &Arena, what: str, e: net.Error | OutOfMemory): str from a {
     return a.Fmt("{what}: {e}", (what: what, e: e)) else {
@@ -142,7 +244,7 @@ Tcp(w: mut Writer, a: &Arena, io: Io): WriteError!void {
     try Print(w, "tcp: addresses {addrs}, reply {reply}\n", (addrs: addrs, reply: reply))
 }
 
-// Unix serves one connection with Upper. On Windows the corpus runs in
+// Unix serves one connection with UpperUnix. On Windows the corpus runs in
 // its own directory, giving the socket a short relative name. Else use the
 // system's temporary directory (a WSL run directory cannot host a socket).
 Unix(w: mut Writer, a: &Arena, io: Io): WriteError!void {
@@ -165,13 +267,13 @@ Unix(w: mut Writer, a: &Arena, io: Io): WriteError!void {
     var failed: ?net.Error = none
     var reply := ""
     scope s := io.Scope() {
-        s.go Upper(io, &l, mut failed)
+        s.go UpperUnix(io, &l, mut failed)
         stream := net.DialUnix(io, path) else e {
             try Print(w, "dial unix: {e}\n", (e: e))
             s.Cancel()
             return
         }
-        reply = Talk(a, io, stream, "over a unix socket")
+        reply = TalkUnix(a, io, stream, "over a unix socket")
     }
     if f := failed {
         try Print(w, "unix server: {f}\n", (f: f))
