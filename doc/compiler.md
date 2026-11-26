@@ -79,7 +79,7 @@ The evaluator (`eval`) interprets MIR for `const` values, generators and the REP
 - **Memory** is a byte array per allocation in the target's layout; a pointer is an allocation and an offset. Raw access is allowed inside allocations the evaluation made. Reading another `const` gives a read-only copy.
 - **Refused**: I/O, system calls, bodiless `extern` calls, `var` globals, and reading a pointer's bytes as an integer. Each is E0901.
 - **Floats** give a canonical NaN from arithmetic. Math functions and float-to-text are the same Mk code in `std` that runs at run time; the host's libm and formatting are never used.
-- **Limits**: fuel counts MIR statements and terminators, plus one step per 16 bytes moved, copied or allocated. Frames live on the heap, so host recursion cannot overflow; one evaluation's frames may hold 1 MiB, and past that it panics with `stack limit`.
+- **Limits**: fuel counts MIR statements and terminators, plus one step per 16 bytes moved, copied or allocated. Frames live on the heap, so host recursion cannot overflow; one evaluation's frames may hold 1 MiB (more under a stated fuel, and four times the value's size for a const's or global's initializer, which also gets one step of fuel per two bytes of it), and past that it panics with `stack limit`.
 - **Records**: each evaluation records the hash of every body it entered, every const and layout it read, every `Target` field it read, and every query with its answer, "none" included. So an added `impl` reruns an evaluation that saw its absence.
 
 ## 6. Incremental builds

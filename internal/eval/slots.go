@@ -226,6 +226,15 @@ func (m *Machine) startConst(item types.ItemID, at source.Span) {
 	if cd.body.ParamCount != 0 {
 		source.ICEf(at, "eval: initializer of %s has parameters", m.items().Get(item).Key)
 	}
+	// The value an initializer builds is the declaration's storage, not
+	// recursion: its frames may hold four copies of it, and its fuel pays
+	// eight steps per 16 bytes of it (what building, copying and returning
+	// it cost), whatever smaller limit and fuel the evaluation has.
+	if v := cd.localTI[mir.ReturnLocal].size; v != 0 {
+		s := m.seg()
+		s.room = satAdd(satAdd(v, v), satAdd(v, v))
+		s.fuel = max(s.fuel, v/2)
+	}
 	m.pushFrame(cd, ce, item, body.OnerrRuns, at, 0)
 	m.entering = types.NoItem
 }
