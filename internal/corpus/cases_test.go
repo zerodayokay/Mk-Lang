@@ -37,6 +37,9 @@ func TestParseCases(t *testing.T) {
 	if ok.Stdout != "tests/programs/panics/copy.in" || ok.Stdin != "" || ok.Stderr != "" || ok.Exit != 0 {
 		t.Errorf("ok streams: %q %q %q exit %d", ok.Stdin, ok.Stdout, ok.Stderr, ok.Exit)
 	}
+	if DefaultCaseTimeout != 30*time.Second {
+		t.Errorf("DefaultCaseTimeout = %v, want 30s", DefaultCaseTimeout)
+	}
 	if !slices.Equal(ok.Profiles, []string{"dev", "release"}) || !slices.Equal(ok.Targets, []string{"x86_64-windows", "x86_64-linux"}) || ok.Timeout != DefaultCaseTimeout {
 		t.Errorf("ok defaults: %q %q %v", ok.Profiles, ok.Targets, ok.Timeout)
 	}
