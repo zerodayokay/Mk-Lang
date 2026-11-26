@@ -114,7 +114,7 @@ PASS src "words"
 | `--timeout d` | The time limit per test process. The default is `60s`; `0` turns it off |
 | `--release` | Build the tests in the release profile |
 | `--prop` | Run the property tester over the contracts instead of the tests ([section 7](#7-contracts-and-the-property-tester)) |
-| `--sim seed` | Run every test under simulated `Io` with this seed ([section 9](#9-simulation-record-and-replay)) |
+| `--sim seed` | Give every test this seed as `MK_SIM_SEED`, for a test that builds a simulated world from it, and seed the property tester ([section 9](#9-simulation-record-and-replay)) |
 | `--cover`, `--cover-out file` | Print line coverage per file, and write it as lcov |
 | `--fuzz name`, `--fuzztime d` | Run the fuzz target of the named test ([section 10](#10-debugging-coverage-fuzzing-and-profiling)) |
 | `--std module` | Run the standard library's own tests for this module and the modules under it (`std` for all). Takes no path |
@@ -656,7 +656,7 @@ Contracts are checked in the callee, so editing a contract does not rebuild the 
 
 `Io` is a value, so a program that takes an `Io` can run against a simulated one. [std.sim](std/sim.md) simulates a seeded world, and records and replays a real run's `Io` calls.
 
-`mk test --sim SEED` runs every test under simulated `Io` with that seed. A function with no `Io` cannot read the clock or the outside world, so the seed decides the whole run. The limit is `unsafe` code and C: a C library that reads the clock escapes simulation.
+`mk test --sim SEED` puts the seed in each test's environment as `MK_SIM_SEED` and prints it in the report, and `--prop` draws its inputs from it. It does not simulate the test's `System`: `sys.io` is still the real one. A test that wants the simulated world reads the seed (`sys.Env("MK_SIM_SEED")`), builds a `sim.Sim` from it and runs its code on the `Sim`'s `Io`. Code that waits only on that `Io` cannot read the clock or the outside world, so the seed decides the whole run. The limit is `unsafe` code and C: a C library that reads the clock escapes simulation.
 
 ## 10. Debugging, coverage, fuzzing and profiling
 

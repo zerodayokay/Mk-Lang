@@ -10867,7 +10867,7 @@ These are library features that run inside `test` blocks:
 - `testing.Fuzz(f)` registers a fuzz target, and `testing.FuzzSys(sys, f)` one that takes the test's `System`, to run an external oracle through `sys.io` or to allocate. `mk test` runs it over saved inputs, and `mk test --fuzz name` searches for new failing ones. See [fuzz targets](std/testing.md#fuzz-targets).
 - `testing.Bench(f)` registers a benchmark that `mk bench` runs, and `testing.BenchSys(sys, f)` one that takes the test's `System`, to allocate. See [benchmarks](std/testing.md#benchmarks).
 - `testing.ExpectPanic(want)` makes a test pass only when it panics after the call, so a test can check that an `Assert` or a contract refuses a bad input. See [expected panics](std/testing.md#expected-panics).
-- `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` runs every test that way. See [`std.sim`](std/sim.md).
+- `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` gives every test that seed, in its environment as `MK_SIM_SEED` (`sys.Env("MK_SIM_SEED")`), and prints it in the report; a test's `System` stays the real one, so a test that wants the simulated world builds a `Sim` from the seed. See [`std.sim`](std/sim.md).
 
 See also: [write a test and a property](cookbook.md#write-a-test-and-a-property), [tests beside code](codebase.md#6-tests-beside-code), [`mk test`](tools.md#mk-test).
 
