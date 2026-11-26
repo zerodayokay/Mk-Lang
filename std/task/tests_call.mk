@@ -3,7 +3,7 @@
 // routes and both targets.
 // What: the RT8-Call-* blocks for std/rt/call.mk, std/task/io_call.mk and
 // each target's sys/call.mk, with helpers CaBytes, CaWrite, CaFifoCopy and
-// the gated copy (CaGateIo, CaGateCall, CaGateJob).
+// the gated copy (CaGateIo, CaGateCall, CaGateJob, CaGatedCopy).
 // How: run by the scheduler harness, and on both targets at 1 and 16
 // carriers by std/rt_deadline_test.go (its RT8- blocks). Files are made in
 // the temporary directory (FlName: TEMP or TMP on Windows, TMPDIR or /tmp
@@ -204,14 +204,17 @@ test "RT8-Call-LockCancelFree a waiting Lock in a cancelled scope returns Cancel
 // cut mid-way when the deadline is delivered on time.
 const CaBig: i64 = 512 * 1024 * 1024
 
-// CaGate is what the gated copy's job saw: 1 in saw when its cancel word
-// was set before it ran the copy, and the nanoseconds it waited in waited.
+// CaGate is what the gated copy's job saw: 1 in entered once a pool
+// thread runs it in its call, 1 in saw when its cancel word was set
+// before it ran the copy, and the nanoseconds it waited in waited.
 struct CaGate {
+    entered: raw.Atomic[u32]
     saw: raw.Atomic[u32]
     waited: raw.Atomic[i64]
 }
 
-var CaGated: CaGate = CaGate(saw: raw.Atomic[u32].New(0), waited: raw.Atomic[i64].New(0))
+var CaGated: CaGate = CaGate(entered: raw.Atomic[u32].New(0), saw: raw.Atomic[u32].New(0),
+    waited: raw.Atomic[i64].New(0))
 
 // CaHold carries the call's own job from CaGateCall to CaGateJob.
 struct CaHold {
@@ -251,23 +254,28 @@ CaGateCall(io: Io, a: *core.IoCallArgs): core.IoResult {
     }
 }
 
-// CaGateJob is a gated copy's pool job: it waits, on its pool thread,
-// until its cancel word is set (DlBound at most, through the pool's
-// interrupt), notes that in CaGated, and then runs the copy's own job with
-// that word. A copy so gated cannot end before its deadline is delivered:
-// when the delivery never comes, the copy runs whole and is not Canceled.
+// CaGateJob is a gated copy's pool job: on its pool thread (Current null),
+// it notes its entry in CaGated, waits until its cancel word is set
+// (DlBound at most, through the pool's interrupt), notes that in CaGated,
+// and then runs the copy's own job with that word. A copy so gated cannot
+// end before its deadline is delivered: when the delivery never comes,
+// the copy runs whole and is not Canceled.
 CaGateJob(a: *core.IoCallArgs) {
     unsafe "w.a is CaGateCall's hold; stop is this pool job's cancel word, both live until the call returns" {
-        // Off the pool (no cancel word) nothing is gated, and saw stays 0.
-        if !raw.IsNull((*a).stop) {
-            word := raw.PtrCast[u32, raw.Atomic[u32]]((*a).stop)
+        // Off the pool (an inline fallback on a carrier) nothing is gated,
+        // so entered and saw stay 0 without stalling the carrier.
+        if raw.IsNull(Current()) {
             t0 := BenchNow()
-            for (*word).Load() == 0 && BenchNow() - t0 < DlBound {
-                sys.SleepNanos(DlMs)
-            }
-            if (*word).Load() != 0 {
-                CaGated.waited.Store(BenchNow() - t0)
-                CaGated.saw.Store(1)
+            CaGated.entered.Store(1)
+            if !raw.IsNull((*a).stop) {
+                word := raw.PtrCast[u32, raw.Atomic[u32]]((*a).stop)
+                for (*word).Load() == 0 && BenchNow() - t0 < DlBound {
+                    sys.SleepNanos(DlMs)
+                }
+                if (*word).Load() != 0 {
+                    CaGated.waited.Store(BenchNow() - t0)
+                    CaGated.saw.Store(1)
+                }
             }
         }
         hold := raw.FromAddr[CaHold](Trunc[uint]((*a).w.a))
@@ -275,6 +283,15 @@ CaGateJob(a: *core.IoCallArgs) {
         job := (*hold).job
         job(a)
     }
+}
+
+// CaGatedCopy runs RT8-Call-CopyCancel's gated copy in its own task so
+// the scope body can wait for CaGateJob to enter on a pool thread before
+// arming the 5 ms deadline.
+CaGatedCopy(io: Io, src: str, dst: str, err_out: &raw.Atomic[u32], val_out: &raw.Atomic[i64]) {
+    r := rt.CopyFile(io, CaBytes(src), CaBytes(dst))
+    val_out.Store(r.value)
+    err_out.Store(if r.err == core.SysErr.Canceled { 1 } else if r.err == core.SysErr.None { 2 } else { 3 })
 }
 
 test "RT8-Call-CopyCancel a deadline ends a CopyFile in its call with Canceled, dst never made; a copy that races its deadline ends Canceled with a prefix in dst or copies all; a scope cancelled first copies nothing (prefix)" (sys: &System) {
@@ -289,21 +306,36 @@ test "RT8-Call-CopyCancel a deadline ends a CopyFile in its call with Canceled, 
     Assert(rt.FileTruncate(io, h, CaBig).err == core.SysErr.None)
     Assert(NativeClose(io, h).err == core.SysErr.None)
     _ = NativeRemove(io, dst)
-    // Gated: the copy is in its call on a pool thread and cannot end
-    // before the 5 ms deadline reaches its cancel word, however late a
-    // busy machine delivers it; then it ends Canceled and makes no dst
-    // (each target's CopyFile reads the word before it opens anything).
+    // Gated: the scope body waits until the copy has entered CaGateJob on
+    // a pool thread (JobInCall) before arming the 5 ms deadline, so a slow
+    // pool pickup never cancels the job while queued; then the copy cannot
+    // end before the deadline reaches its cancel word, however late a busy
+    // machine delivers it, and ends Canceled with no dst made (each target's
+    // CopyFile reads the word before it opens anything).
     gio := CaGateIo()
+    CaGated.entered.Store(0)
     CaGated.saw.Store(0)
-    var g := core.IoResult(value: 0, err: core.SysErr.None, os: 0)
+    CaGated.waited.Store(0)
+    gerr := raw.Atomic[u32].New(0)
+    gval := raw.Atomic[i64].New(-1)
     t0 := BenchNow()
+    var armed_at: i64 = 0
     scope s := gio.Scope() {
-        s.CancelAfter(core.DurationOf(5 * DlMs))
-        g = rt.CopyFile(gio, CaBytes(src), CaBytes(dst))
+        s.go CaGatedCopy(gio, src, dst, &gerr, &gval)
+        for CaGated.entered.Load() == 0 && BenchNow() - t0 < DlBound {
+            YieldNow()
+        }
+        if CaGated.entered.Load() == 1 {
+            armed_at = BenchNow()
+            s.CancelAfter(core.DurationOf(5 * DlMs))
+        } else {
+            s.Cancel()
+        }
     }
-    took := BenchNow() - t0
+    took := if armed_at != 0 { BenchNow() - armed_at } else { BenchNow() - t0 }
+    Assert(CaGated.entered.Load() == 1)
     Assert(CaGated.saw.Load() == 1)
-    Assert(g.err == core.SysErr.Canceled)
+    Assert(gerr.Load() == 1 && gval.Load() == 0)
     Assert(took < DlBound)
     var w := core.IoWords(a: 0, b: 0, c: 0, d: 0)
     Assert(rt.StatEx(io, CaBytes(dst), false, mut w).err == core.SysErr.NotFound)
