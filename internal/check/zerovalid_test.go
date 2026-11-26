@@ -1,6 +1,6 @@
 // Why: mem.Zeroed of an atomic word is a fresh word holding 0, so a table
-// of atomics can be zeroed (MKH-492), while a unique type whose author owns
-// an invariant must stay refused whatever its fields.
+// of atomics can be zeroed, while a unique type whose author owns an
+// invariant must stay refused whatever its fields.
 // What: TestZeroValidIdentity.
 // How: a world with std.raw's and std.atomic's Atomic and a std.mem whose
 // Zeroed is bodiless; each case is one module's diagnostics.
@@ -37,6 +37,10 @@ func TestZeroValidIdentity(t *testing.T) {
 		{"an optional atomic", imp + "F(): ?atomic.Atomic[u8] {\n\treturn mem.Zeroed[?atomic.Atomic[u8]]()\n}\n", "E0701@6:9"},
 		{"unsafe impl Share", imp + "struct S {\n\tw: u64\n}\n\nunsafe impl Share for S {}\n\nF(): S {\n\treturn mem.Zeroed[S]()\n}\n", "E0701@12:9"},
 		{"unsafe impl Share over atomics", imp + "struct S {\n\tw: atomic.Atomic[u64]\n}\n\nunsafe impl Share for S {}\n\nF(): S {\n\treturn mem.Zeroed[S]()\n}\n", "E0701@12:9"},
+		{"unsafe impl Send over atomics", imp + "struct S {\n\tw: atomic.Atomic[u64]\n}\n\nunsafe impl Send for S {}\n\nF(): S {\n\treturn mem.Zeroed[S]()\n}\n", "E0701@12:9"},
+		{"error union of an atomic", imp + "struct S {\n\tr: OutOfMemory!atomic.Atomic[u8]\n}\n\nF(): [2]S {\n\treturn mem.Zeroed[[2]S]()\n}\n", ""},
+		{"view struct of atomics", imp + "view struct S {\n\tw: atomic.Atomic[u64]\n}\n\nF(): S {\n\treturn mem.Zeroed[S]()\n}\n", "E0701@10:9"},
+		{"Mutex by identity", imp + "F(): Mutex[int] {\n\treturn mem.Zeroed[Mutex[int]]()\n}\n", "E0701@6:9"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := w.add("std.z"+string(rune('a'+i)), opt{std: true}, tc.src)

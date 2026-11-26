@@ -361,18 +361,17 @@ func (c *Checker) integerArg(env *Env, t types.TypeID, atomic bool) bool {
 }
 
 // zeroValid reports whether every byte zero is a value of t, by the type
-// layouts: scalars, `void`, raw pointers, every optional (`none` is
+// layouts: scalars, `void`, raw pointers, every plain optional (`none` is
 // zero), arrays, records and structs of zero-valid parts, an enum whose
 // discriminant 0 names a variant with zero-valid fields, and `E!T` with a
 // zero-valid `T` (code 0 is success). Not: references and `fn` values
 // (never null), `str` and slices (an empty one holds a non-null pointer),
 // error-set values (codes start at 1), `never`, interfaces, open type
 // parameters, a struct with an invariant, anything linear (`Box`), and a
-// unique type zeroIdentity does not admit (`Mutex`, `Arena`, view structs).
+// unique type zeroIdentity does not admit (`Mutex`, view structs).
 // An atomic word or a `Cell` of a zero-valid T is zero-valid, and so is
 // anything unique only through such parts, since zero bytes make a fresh
-// value, never a copy (MKH-492: a global array of atomics). A type
-// parameter narrowed by `if T is X` is X.
+// value, never a copy. A type parameter narrowed by `if T is X` is X.
 //
 // Every type item the answer depends on is recorded in rec: its shape (the
 // facts), all its fields (private ones too: the zero fill writes them), and
@@ -450,16 +449,17 @@ func (c *Checker) zeroValid(env *Env, t types.TypeID, rec recorder, seen map[typ
 	return false
 }
 
-// zeroIdentity reports whether ty, a unique type, may still be zero-valid:
-// it is unique only by the identity of the words it holds, and a value of
-// zero bytes is a fresh one, never a copy. That is `raw.Atomic[T]` and
-// `Cell[T]` (a word of T), and an array, record, `E!T`, struct or enum
-// whose own declaration adds nothing unique, so that zeroValid's judgment
-// of its parts (an enum's tag-0 variant) decides. Not: a mut reference or
-// an optional (judged before or refused here), a view struct, a type with
-// an `unsafe impl` Send or Share (its author's invariant), and the other
-// compiler-known handles (Mutex, Chan, SpinCore, Arena, Scope, Alloc,
-// Heap, Io, System), whose zero bytes are no value the language promises.
+// zeroIdentity reports whether ty, a unique type that is not linear, may
+// still be zero-valid: it is unique only by the identity of the words it
+// holds, and a value of zero bytes is a fresh one, never a copy. That is
+// `raw.Atomic[T]` and `Cell[T]` (a word of T), and an array, record, `E!T`,
+// struct or enum whose own declaration adds nothing unique, so that
+// zeroValid's judgment of its parts (an enum's tag-0 variant) decides.
+// Not: an optional (its T must be plain), a `view` or `mut view` struct (a
+// `plain view` one is plain, judged by its fields alone), a type with an
+// `unsafe impl` Send or Share (its author's invariant), and the other types
+// kinds.go makes unique by identity whatever their fields: Mutex, Chan,
+// SpinCore and Alloc.
 func (c *Checker) zeroIdentity(ty *types.Type) bool {
 	switch ty.Kind {
 	case types.KArray, types.KRecord, types.KErrorUnion:
@@ -469,16 +469,11 @@ func (c *Checker) zeroIdentity(ty *types.Type) bool {
 		return false
 	}
 	k := &c.known
-	if ty.Item == types.NoItem {
+	switch ty.Item {
+	case types.NoItem, k.Mutex, k.Chan, k.SpinCore, k.Alloc:
 		return false
-	}
-	if ty.Item == k.Atomic || ty.Item == k.Cell {
+	case k.Atomic, k.Cell:
 		return true
-	}
-	for _, h := range []types.ItemID{k.Mutex, k.Chan, k.SpinCore, k.Arena, k.Scope, k.Alloc, k.Heap, k.Io, k.System} {
-		if h != types.NoItem && ty.Item == h {
-			return false
-		}
 	}
 	it := c.cfg.Items.Get(ty.Item)
 	if send, share := c.assertions(it); send != types.NoItem || share != types.NoItem {
@@ -486,7 +481,7 @@ func (c *Checker) zeroIdentity(ty *types.Type) bool {
 	}
 	switch d := it.Decl.(type) {
 	case *types.StructDecl:
-		return !d.Linear && !d.View
+		return !d.View
 	case *types.EnumDecl:
 		return true
 	}

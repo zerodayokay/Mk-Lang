@@ -1,5 +1,5 @@
 // verdict: reject E0701
-// note: mem.Zeroed's T must be zero-valid: a str, a reference, a fn value, a struct holding one, or an open type parameter is never all zero bytes; a plain record of many fields, an array of one and an optional are. T is the result, so it is not an error union either, written, through an alias, under try or as a fn value; a field of one, or an inferred ok type, is fine. An atomic or a Cell of a zero-valid word is zero-valid though unique, and so is anything unique only through them, a global table of atomics included (MKH-492); a Mutex, a linear struct and a view struct are not, whatever their fields
+// note: mem.Zeroed's T must be zero-valid: a str, a reference, a fn value, a struct holding one, or an open type parameter is never all zero bytes; a plain record of many fields, an array of one and an optional are. T is the result, so it is not an error union either, written, through an alias, under try or as a fn value; a field of one, or an inferred ok type, is fine. An atomic or a Cell of a zero-valid word is zero-valid though unique, and so is anything unique only through them, a global table of atomics included; a Mutex, a linear struct and a view struct are not, whatever their fields
 import std.atomic
 import std.mem
 

@@ -448,7 +448,7 @@ These types are zero-valid:
 These are not:
 
 - a struct with an `invariant`;
-- a linear type, a view struct, a type with an `unsafe impl` of `Send` or `Share`, and `Mutex`, `Chan` or `Arena`, whatever their parts;
+- a linear type, a `view` or `mut view` struct, a type with an `unsafe impl` of `Send` or `Share`, and `Mutex`, `Chan` or `Arena`, whatever their parts;
 - an enum with no variant of discriminant 0, or whose variant 0 has a part that is not zero-valid;
 - a reference, a `fn` value, `str`, a slice, an error-set value or a type parameter.
 
