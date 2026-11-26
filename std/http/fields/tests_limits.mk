@@ -267,6 +267,15 @@ test "an index one past a table that holds entries is BadIndex, as is a referenc
     Assert(ErrIs(try RunHex(sys.arena, h, mut dec2, "20 be"), "BadIndex(offset: 1, index: 62) after 0"))
 }
 
+test "duplicate dynamic entries are taken, not an error (RFC 7541 2.3.2)" (sys: &System) {
+    h := sys.heap.Alloc()
+    var dec := try Decoder.New(h, DefaultTableBytes, 1 << 16)
+    defer dec.Free(h)
+    custom := "400a 6375 7374 6f6d 2d6b 6579 0d63 7573 746f 6d2d 6865 6164 6572"
+    Assert(ErrIs(try RunHex(sys.arena, h, mut dec, try sys.arena.Fmt("{custom} {custom} be bf", (custom))), "ok 4"))
+    Assert(dec.TableLen() == 2 && dec.TableSize() == 110)
+}
+
 test "an index past the int range is BadInteger" (sys: &System) {
     h := sys.heap.Alloc()
     var dec := try Decoder.New(h, DefaultTableBytes, 1 << 16)
