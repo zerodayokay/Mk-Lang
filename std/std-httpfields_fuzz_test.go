@@ -328,6 +328,164 @@ FzHuffman(a: &Arena, h: &Alloc, w: mut Writer, input: []u8): WriteError|OutOfMem
     }
 }
 
+/// FzCheck parses fuzzed field pairs into a FieldBlock and runs CheckRequest,
+/// CheckResponse, CheckTrailers, JoinCookies, Sendable and LowerName.
+FzCheck(a: &Arena, h: &Alloc, w: mut Writer, input: []u8): WriteError|OutOfMemory!void {
+    var fb := fields.FieldBlock.New(h)
+    defer fb.Free(h)
+    var at := 0
+    for at + 1 < input.Len() && fb.Len() < 64 {
+        var nl := int(input[at]) & 31
+        var vl := int(input[at + 1]) & 63
+        at += 2
+        if nl > input.Len() - at {
+            nl = input.Len() - at
+        }
+        name := input[at..at + nl]
+        at += nl
+        if vl > input.Len() - at {
+            vl = input.Len() - at
+        }
+        val := input[at..at + vl]
+        at += vl
+        _ = fields.Sendable(name)
+        lbuf := try a.Slice[u8](nl + 1)
+        if fields.LowerName(name, val, mut lbuf[0..nl]) {
+            Assert(nl > 0)
+            for c in lbuf[0..nl] {
+                Assert(c > 0x20 && !(c >= 0x41 && c <= 0x5A) && c < 0x7F && c != b':')
+            }
+        }
+        try fb.Add(h, name, val, false, 0)
+    }
+    var req_ok := false
+    match fields.CheckRequest(&fb) {
+        ok(rh) {
+            req_ok = true
+            Assert(rh.method != "")
+            if !rh.connect {
+                Assert(rh.scheme == "http" || rh.scheme == "https")
+                Assert(rh.path != "")
+            } else {
+                Assert(rh.authority != "")
+            }
+            for i in 0..fb.Len() {
+                Assert(fb.Text(i).IsSome())
+            }
+            try w.Str("req ok\n")
+        }
+        err(_) { try w.Str("req err\n") }
+    }
+    _ = req_ok
+    match fields.CheckResponse(&fb) {
+        ok(r) {
+            Assert(r.status >= 100 && r.status <= 999 && r.status != 101)
+            try w.Str("resp ok\n")
+        }
+        err(_) { try w.Str("resp err\n") }
+    }
+    match fields.CheckTrailers(&fb) {
+        ok(_) { try w.Str("trl ok\n") }
+        err(_) { try w.Str("trl err\n") }
+    }
+    cbuf := try a.Slice[u8](fb.Bytes() + 8)
+    _ = fields.JoinCookies(&fb, cbuf)
+}
+
+/// FzQpack exercises QDecoder.Instructions, Decode, Unblocked, Owed, Cancel,
+/// QEncoder.EncodeBlock roundtrip, and QEncoder.PeerInstructions.
+FzQpack(a: &Arena, h: &Alloc, w: mut Writer, input: []u8): WriteError|OutOfMemory!void {
+    if input.Len() < 4 {
+        try w.Str("short\n")
+        return
+    }
+    cap := FzSizes[int(input[0] & 3)]
+    max_blk := [0, 2, 16, 1][int((input[0] >> 2) & 3)]
+    limit := FzLimits[int((input[0] >> 4) & 3)]
+    rest := input[4..]
+    c1 := int(input[1]) % (rest.Len() + 1)
+    c2 := c1 + int(input[2]) % (rest.Len() - c1 + 1)
+    c3 := c2 + int(input[3]) % (rest.Len() - c2 + 1)
+    ins1 := rest[0..c1]
+    ins2 := rest[c1..c2]
+    sec := rest[c2..c3]
+    peer := rest[c3..]
+
+    var dec := try fields.QDecoder.New(h, cap, max_blk, limit)
+    defer dec.Free(h)
+    var fb := fields.FieldBlock.New(h)
+    defer fb.Free(h)
+
+    // First encoder-stream chunk (may end mid-instruction).
+    match dec.Instructions(h, ins1) {
+        ok(used) {
+            Assert(used >= 0 && used <= ins1.Len())
+            try Print(w, "ins {used}\n", (used))
+        }
+        err(e) {
+            try Print(w, "err {e}\n", (e))
+            return
+        }
+    }
+    // Feed field section, possibly blocked.
+    var blocked := false
+    match dec.Decode(h, mut fb, 4, sec) {
+        ok(o) {
+            if o == fields.QOutcome.Blocked {
+                blocked = true
+                try w.Str("blocked\n")
+            } else if o == fields.QOutcome.TooLarge {
+                try w.Str("too large\n")
+            } else {
+                Assert(fb.Bytes() + 32 * fb.Len() <= limit)
+                try Print(w, "ok {n}\n", (n: fb.Len()))
+                qenc := fields.QEncoder.New()
+                out := try a.Slice[u8](qenc.BlockBound(&fb))
+                m := qenc.EncodeBlock(out, &fb) else {
+                    Panic("EncodeBlock refused BlockBound bytes")
+                }
+                var dec2 := try fields.QDecoder.New(h, 0, 0, 1 << 20)
+                defer dec2.Free(h)
+                var fb2 := fields.FieldBlock.New(h)
+                defer fb2.Free(h)
+                o2 := dec2.Decode(h, mut fb2, 0, out[0..m]) else {
+                    Panic("QEncoder roundtrip failed to decode")
+                }
+                Assert(o2 == fields.QOutcome.Fits && fb2.Len() == fb.Len())
+                for i in 0..fb.Len() {
+                    f1 := fb.Get(i)
+                    f2 := fb2.Get(i)
+                    Assert(f1.sensitive == f2.sensitive && FzEq(f1.name, f2.name) && FzEq(f1.value, f2.value))
+                }
+            }
+        }
+        err(e) {
+            try Print(w, "err {e}\n", (e))
+        }
+    }
+    // Second encoder-stream chunk, then Unblocked/Owed/Cancel.
+    match dec.Instructions(h, ins2) {
+        ok(used) {
+            Assert(used >= 0 && used <= ins2.Len())
+        }
+        err(e) {
+            try Print(w, "err {e}\n", (e))
+        }
+    }
+    var unb: [16]i64 = [0; 16]
+    _ = dec.Unblocked(mut unb[..])
+    if blocked {
+        dec.Cancel(4)
+    }
+    var owed: [64]u8 = [0; 64]
+    _ = dec.Owed(mut owed[..])
+    qenc := fields.QEncoder.New()
+    match qenc.PeerInstructions(peer) {
+        ok(u) { Assert(u >= 0 && u <= peer.Len()) }
+        err(e) { try Print(w, "peer {e}\n", (e)) }
+    }
+}
+
 /// Serves fuzz inputs on standard input until it ends.
 export FieldsFuzzMain(sys: &System): WriteError|OutOfMemory|ReadError|Utf8Error|ParseError!void {
     var inp := sys.Stdin()
@@ -348,6 +506,10 @@ export FieldsFuzzMain(sys: &System): WriteError|OutOfMemory|ReadError|Utf8Error|
         defer ar.Free()
         if before == "h" {
             try FzHpack(&ar, h, mut out, data[0..got])
+        } else if before == "c" {
+            try FzCheck(&ar, h, mut out, data[0..got])
+        } else if before == "q" {
+            try FzQpack(&ar, h, mut out, data[0..got])
         } else {
             try FzHuffman(&ar, h, mut out, data[0..got])
         }
@@ -572,6 +734,45 @@ func FuzzStdHttpFields_Huffman(f *testing.F) {
 			}
 		} else if !bytes.Equal(body, want) || len(code) <= len(want) {
 			t.Fatalf("input %x: raw %x for %x, whose code is %d bytes", in, body, want, len(code))
+		}
+	})
+}
+
+func FuzzStdHttpFields_Check(f *testing.F) {
+	f.Cleanup(hfStop)
+	f.Add([]byte("\x07\x03:methodGET\x07\x05:schemehttps\x06\x01:path/\x0a\x0b:authorityexample.com"))
+	f.Add([]byte("\x07\x03:status200\x0e\x02content-length42"))
+	f.Add([]byte("\x0a\x05connectionclose\x02\x08te\x08trailers"))
+	f.Add([]byte("\x06\x05cookiea=1; \x06\x03cookieb=2"))
+	f.Fuzz(func(t *testing.T, in []byte) {
+		if len(in) > 4096 {
+			in = in[:4096]
+		}
+		for _, l := range hfAsk(t, 'c', in) {
+			if !strings.HasPrefix(l, "req ") && !strings.HasPrefix(l, "resp ") && !strings.HasPrefix(l, "trl ") {
+				t.Fatalf("input %x: answer %q", in, l)
+			}
+		}
+	})
+}
+
+func FuzzStdHttpFields_Qpack(f *testing.F) {
+	f.Cleanup(hfStop)
+	// Appendix B vectors and edge-case sections.
+	f.Add(append([]byte{0x03, 0x00, 0x00, 0x10}, hfUnhex("0000 510b 2f69 6e64 6578 2e68 746d 6c")...))
+	f.Add(append([]byte{0x0b, 0x20, 0x20, 0x25}, hfUnhex("3fbd01 c00f 7777 772e 6578 616d 706c 652e 636f 6d c10c 2f73 616d 706c 652f 7061 7468 0381 10 11 84")...))
+	f.Add(append([]byte{0x00, 0x00, 0x00, 0x02}, hfUnhex("0100")...))
+	f.Add(append([]byte{0x07, 0x00, 0x00, 0x05}, hfUnhex("0200 80")...))
+	f.Fuzz(func(t *testing.T, in []byte) {
+		if len(in) > 8192 {
+			in = in[:8192]
+		}
+		for _, l := range hfAsk(t, 'q', in) {
+			if l != "short" && l != "blocked" && l != "too large" &&
+				!strings.HasPrefix(l, "ins ") && !strings.HasPrefix(l, "ok ") &&
+				!strings.HasPrefix(l, "err ") && !strings.HasPrefix(l, "peer ") {
+				t.Fatalf("input %x: answer %q", in, l)
+			}
 		}
 	})
 }

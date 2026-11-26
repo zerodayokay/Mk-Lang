@@ -59,3 +59,28 @@ export enum Outcome {
 /// The output holds fewer than need bytes. Nothing was written and the
 /// encoder did not change: give at least need bytes and call again.
 export error TooSmall(need: int)
+
+/// The field section at offset has a Required Insert Count encoding that
+/// exceeds FullRange, decodes to 0 from a non-zero wire value, or cannot be
+/// produced by a conformant encoder (RFC 9204 4.5.1.1).
+export error BadRequiredInsertCount(offset: int)
+
+/// The field section at offset has a Sign bit of 1 with Delta Base >= Required
+/// Insert Count (negative Base), or overflows int (RFC 9204 4.5.1.2).
+export error BadBase(offset: int)
+
+/// A field section could not be decoded immediately and the decoder already
+/// holds max_blocked blocked streams (RFC 9204 2.1.2).
+export error BlockedLimit
+
+/// A malformed or disallowed QPACK encoder-stream or decoder-stream
+/// instruction at offset (RFC 9204 4.3, 4.4).
+export error BadInstruction(offset: int)
+
+/// A QPACK dynamic-table capacity update or entry size at offset exceeds the
+/// decoder's advertised or current table capacity (RFC 9204 3.2.2, 4.3.1).
+export error CapacityExceeded(size: int)
+
+/// Every QPACK decoding error (RFC 9204 6): connection-fatal except BadInteger
+/// on a request stream (RFC 9204 7.4), which maps to a stream error.
+export type QpackError = Truncated | BadInteger | BadIndex | BadHuffman | BadRequiredInsertCount | BadBase | BlockedLimit | BadInstruction | CapacityExceeded
