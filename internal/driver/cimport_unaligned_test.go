@@ -1,7 +1,7 @@
 // Why: a C import binds a packed record with a member off its natural
 // alignment, or a bitfield whose unit is wider than the record's
 // alignment, as an opaque struct with accessors, and Mk code must be able
-// to write those members as C lays them out (MKH-913).
+// to write those members as C lays them out.
 // What: TestCImport_UnalignedAccessors (Mk sets, C reads, and the
 // reverse, at dev and release) and TestCImport_UnalignedAccessorsLinux
 // (the GNU layout's binding checks whole).
@@ -22,10 +22,9 @@ import (
 // unalignedHeader: under pack(1), P's value is at byte 1 and the u32 unit
 // of wide (byte 4) overlaps value's top byte; B's signed top ends at the
 // top bit of its u32 unit; Q holds a float, a double, a pointer, a fn
-// pointer and,
-// at even offsets of an align 1 record, a struct and an array of align 2.
-// Q's bitfield w only makes Q opaque (its unit straddles an 8-byte line,
-// so it has no accessors).
+// pointer and, at even offsets of an align 1 record, a struct and an array
+// of align 2. Q's bitfield w only makes Q opaque (its unit straddles an
+// 8-byte line, so it has no accessors).
 const unalignedHeader = `struct In { short a; char b; };
 #pragma pack(push, 1)
 struct P { unsigned char tag; int value; unsigned wide : 20; };

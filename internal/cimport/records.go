@@ -553,10 +553,11 @@ func (e *emitter) opaque(d *decl, name string, l *recLayout) {
 
 // memberAccess is the body of the getter and of the setter (v) of the
 // member f of Mk type typ, sz bytes at byte off of the opaque record name.
-// An aligned member is a raw.Read and a raw.Write; an unaligned one is one
-// align 1 load or store: an integer through raw.ReadUnaligned and
+// An aligned member is a raw.Read and a raw.Write. An unaligned one is
+// loaded and stored at align 1: an integer through raw.ReadUnaligned and
 // WriteUnaligned, a float through its bits, and any other type (a pointer,
-// a fn, a record, an array) as sz bytes through an aligned local.
+// a fn, a record, an array) as a copy of its sz bytes, the getter's through
+// an aligned local. sz is C's size, which is the Mk type's (sizeAlign).
 func (e *emitter) memberAccess(f *field, typ, name string, off, sz int64, aligned bool) (get, set string) {
 	at := func(t, of string) string {
 		return fmt.Sprintf("raw.PtrCast[u8, %s](raw.Offset(raw.PtrCast[%s, u8](%s(self)), %d))", t, name, of, off)
