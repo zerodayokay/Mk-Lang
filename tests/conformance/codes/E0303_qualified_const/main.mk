@@ -1,5 +1,5 @@
 // verdict: reject E0303
-// note: T(m.C) of another module's const, named qualified or through a third module, is judged by the const's value as T(C) of the module's own is
+// note: T(m.C) of another module's const, named qualified or through a third module, is judged by the const's value as T(C) of the module's own is; a u64 above the largest i64 never fits a signed type, and a const of an enum type is judged by its type, as its tag is
 import lib
 import relay
 
@@ -47,4 +47,15 @@ PastInt64Own(): i64 {
 
 Surrogate(): char {
     return char(lib.Surrogate) // <- E0303
+}
+
+enum W: i32 {
+    Lo = -2
+    Hi = 300
+}
+
+const Kw: W = W.Hi
+
+EnumConst(): i8 {
+    return i8(lib.Kw) + i8(Kw) // <- E0303 E0303
 }

@@ -669,7 +669,9 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 		}
 		it := u.c.cfg.Items.Get(types.ItemID(r.A))
 		d, ok := it.Decl.(*types.ConstDecl)
-		if !ok {
+		// A const of an enum type is judged by type, as its tag is
+		// (`i8(W.Hi)`): the fold gives an enum no integer value.
+		if !ok || u.reprEnum(from) != types.NoType {
 			return false
 		}
 		if u.isFloat(from) {

@@ -6,9 +6,11 @@
 // What: TestImportedConstMatchesLocal, a table over source widths and
 // signedness, aliases, enum tags, a const re-exported through a third
 // module, and the forms that use the value (operators, conversions, const
-// initializers, a const argument, a match pattern, loop bounds);
-// TestCImportNegativeConstWidens,
-// the same for a C import's negative macro and enum constant.
+// initializers, a const argument, a match pattern, loop bounds), with
+// narrowing conversions `T(m.C)` that check judges by value (MKH-900) and
+// lower folds; TestCImportNegativeConstWidens, the same for a C import's
+// negative macro and enum constant; TestCImportConstNarrowing, a C
+// import's constants narrowed, and refused when they do not fit.
 // How: one generated package with the consts in module consts, copies of
 // them in main and consts re-declared from them in relay; each row prints
 // every form over the local copy, the imported const and the relay, in the

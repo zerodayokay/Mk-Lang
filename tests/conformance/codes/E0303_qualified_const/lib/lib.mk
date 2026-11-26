@@ -14,3 +14,10 @@ export const Over: i32 = 128
 export const Under: i32 = -129
 export const Wide: u64 = 9223372036854775808
 export const Surrogate: i32 = 55296
+
+export enum W: i32 {
+    Lo = -2
+    Hi = 300
+}
+
+export const Kw: W = W.Hi
