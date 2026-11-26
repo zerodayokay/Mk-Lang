@@ -22,7 +22,8 @@ var core11GuardTargets = []string{"x86_64-windows", "x86_64-freestanding", "x86_
 
 // core11Guards is the guard program: tests_bytes.mk's former guards, their
 // helpers and their test block, as they were in tests_bytes.mk (but for
-// two sentences on where they are checked), and an empty Main.
+// two sentences on where they are checked, and needs measured again on this
+// std), and an empty Main.
 //
 // The guards live in a user program, not in std/core/tests_bytes.mk: as
 // consts of std.core they read std.simd's layouts at compile time, and the
@@ -40,7 +41,8 @@ const core11Guards = `// The fuel guards over std.core's byte paths (std/core_gu
 // The needs written here are exact (the least clean fuel of the same calls in
 // a user program). Those of this std and the reference are checked
 // (core11GuardNeeds); a mutant's was measured on a copy of std with its one
-// change and is not checked. A mutant's need marked "on the 0.5% grid" is a bisection to 0.5% only. Each
+// change and is not checked. A mutant's need marked "on the 0.5% grid" is a
+// bisection to 0.5% on an earlier std, not measured again on this one. Each
 // guard is evaluated wherever this program is checked, on six targets
 // (TestCore_FuelGuards). On x86_64-freestanding std.core keeps
 // its own forms, which need the reference's steps, so the three guards over 4
@@ -336,7 +338,10 @@ export Main(sys: &System) {
 // x86_64-freestanding with the guards' freestanding returns turned off, so
 // that every guard runs std.core's own forms there. The comments in
 // core11Guards quote these numbers, and checkGuardNeeds holds both to the
-// steps this std takes.
+// steps this std takes; they do not depend on the host, since the evaluator
+// answers Cpu() with the target's baseline. A change that moves a need fails
+// here: find the new need by bisecting that guard's fuel with mk check (clean
+// at the need, E0902 one below), then write it here and in the comments.
 var core11GuardNeeds = []struct {
 	name                 string
 	hosted, freestanding int
