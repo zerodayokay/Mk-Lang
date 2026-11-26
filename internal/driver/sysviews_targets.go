@@ -53,9 +53,9 @@ func (w *world) sysViewLinkHints(ds []*diag.Diagnostic, err error, work string) 
 		seen[sym] = true
 		row, _ := sysview.Named(view)
 		var msg string
-		if !slices.Contains(row.Targets, target) {
+		if archive := w.sysViewArchive(row, target); archive != target {
 			msg = fmt.Sprintf("the link failed: %s is a function of the system view c.%s, an API of %s, and this build is for %s: call it only where Target.os is %s's, as in `if Target.os == Os.%s { }`",
-				sym, view, strings.Join(row.Targets, ", "), target, row.Targets[0], osWord(row.Targets[0]))
+				sym, view, archive, target, archive, osWord(archive))
 		} else {
 			msg = fmt.Sprintf("the link failed: %s, a function of the system view c.%s, is exported by no library this bin links: add a pkg.Link for its DLL", sym, view)
 		}
@@ -85,9 +85,9 @@ func (p *pipeline) sysViewAllTargets(names map[string][]string, mods []extracted
 	var out []*diag.Diagnostic
 	for _, em := range mods {
 		row, _ := sysview.Named(em.Name)
-		mine := sysViewArchive(row, target)
+		mine := w.sysViewArchive(row, target)
 		for _, t := range cTargets {
-			other := sysViewArchive(row, t.Name)
+			other := w.sysViewArchive(row, t.Name)
 			if t.Name == target || other == mine {
 				continue // the same archive: the same declarations
 			}

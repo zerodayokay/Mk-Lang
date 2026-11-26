@@ -34,6 +34,9 @@ type Row struct {
 	Name    string
 	Targets []string
 	Headers []string
+	// FallbackToFirst lets a target check against the first target's
+	// declarations when its own archive has yet to be shipped.
+	FallbackToFirst bool
 	// Defines are #defines every target reads the headers with;
 	// TargetDefines add a target's own (a platform's surface extension).
 	Defines       []string
@@ -59,7 +62,7 @@ var Table = []Row{
 			"x86_64-linux":   {"VK_USE_PLATFORM_XLIB_KHR", "VK_USE_PLATFORM_WAYLAND_KHR"},
 			"aarch64-linux":  {"VK_USE_PLATFORM_XLIB_KHR", "VK_USE_PLATFORM_WAYLAND_KHR"},
 		},
-		Requires: []string{"windows"}, Input: InputVulkanHeaders},
+		Requires: []string{"windows"}, Input: InputVulkanHeaders, FallbackToFirst: true},
 	{Name: "posix", Targets: []string{"x86_64-linux", "aarch64-linux"},
 		Headers: []string{"unistd.h", "fcntl.h", "sys/types.h", "sys/stat.h", "sys/mman.h", "sys/socket.h", "netinet/in.h",
 			"arpa/inet.h", "poll.h", "pthread.h", "signal.h", "dirent.h", "errno.h", "time.h", "dlfcn.h"},
