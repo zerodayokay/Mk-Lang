@@ -21,7 +21,8 @@ import (
 
 // unalignedHeader: under pack(1), P's value is at byte 1 and the u32 unit
 // of wide (byte 4) overlaps value's top byte; B's signed top ends at the
-// top bit of its u32 unit; Q holds a float, a double, a pointer and,
+// top bit of its u32 unit; Q holds a float, a double, a pointer, a fn
+// pointer and,
 // at even offsets of an align 1 record, a struct and an array of align 2.
 // Q's bitfield w only makes Q opaque (its unit straddles an 8-byte line,
 // so it has no accessors).
@@ -29,7 +30,7 @@ const unalignedHeader = `struct In { short a; char b; };
 #pragma pack(push, 1)
 struct P { unsigned char tag; int value; unsigned wide : 20; };
 struct B { unsigned char c; signed top : 24; unsigned u : 7; };
-struct Q { unsigned char tag; float f; double d; int *ptr; char pad; struct In in; short arr[2]; long long ll; unsigned w : 20; };
+struct Q { unsigned char tag; float f; double d; int *ptr; int (*fn)(int); unsigned char pad; struct In in; short arr[2]; long long ll; unsigned w : 20; };
 #pragma pack(pop)
 long long p_get(struct P *p, int k);
 void p_set(struct P *p);
@@ -48,6 +49,7 @@ func unalignedPackage() map[string]string {
 		"u.h": unalignedHeader,
 		"u.c": `#include "u.h"
 static int ninety_nine = 99;
+static int plus_one(int x) { return x + 1; }
 long long p_get(struct P *p, int k) {
     switch (k) { case 0: return p->tag; case 1: return p->value; default: return p->wide; }
 }
@@ -65,11 +67,13 @@ long long q_get(struct Q *q, int k) {
     case 4: return q->pad;
     case 5: return q->in.a * 1000 + q->in.b;
     case 6: return q->arr[0] * 1000 + q->arr[1];
-    default: return q->ll;
+    case 7: return q->ll;
+    case 8: return q->fn != 0;
+    default: return q->fn(42);
     }
 }
 void q_set(struct Q *q) {
-    q->f = 0.25f; q->d = -8.5; q->ptr = &ninety_nine; q->in.a = -11; q->in.b = 12; q->arr[0] = 13; q->arr[1] = -14;
+    q->f = 0.25f; q->d = -8.5; q->ptr = &ninety_nine; q->fn = plus_one; q->in.a = -11; q->in.b = 12; q->arr[0] = 13; q->arr[1] = -14;
     q->ll = 1LL << 50;
 }
 `,
@@ -113,6 +117,11 @@ export Main(sys: &System): WriteError!void {
         try Print(mut out, "B {a} {b} {c}\n", (a: b.C(), b: b.Top(), c: b.U()))
         try Print(mut out, "Q {a} {b} {c} {d} {e} {f} {g} {h} {k} {l}\n", (a: q.Tag(), b: q.F(), c: q.D(), d: raw.Read(q.Ptr()),
             e: q.Pad(), f: i.a, g: i.b, h: r[0], k: r[1], l: q.Ll()))
+        f := q.Fn()
+        q.SetFn(none)
+        a := u.q_get(qp, 8)
+        q.SetFn(f)
+        try Print(mut out, "F {a} {b} {c}\n", (a: a, b: u.q_get(qp, 8), c: u.q_get(qp, 9)))
     }
 }
 `,
@@ -127,8 +136,8 @@ func TestCImport_UnalignedAccessors(t *testing.T) {
 	tools := needTools(t)
 	dir := writeTree(t, unalignedPackage())
 	cache := t.TempDir()
-	want := "P 165 -123456 1048575\nB 165 -5 127\nQ 165 150 -225 7 -91 3004 4994 -1099511627776\n" +
-		"P 165 2000000000 344865\nB 165 -8388608 9\nQ 165 0.25 -8.5 99 165 -11 12 13 -14 1125899906842624\n"
+	want := "P 165 -123456 1048575\nB 165 -5 127\nQ 165 150 -225 7 165 3004 4994 -1099511627776\n" +
+		"P 165 2000000000 344865\nB 165 -8388608 9\nQ 165 0.25 -8.5 99 165 -11 12 13 -14 1125899906842624\nF 0 1 43\n"
 	for _, prof := range []types.Profile{types.Dev, types.Release} {
 		t.Run(prof.String(), func(t *testing.T) {
 			s, err := NewSession(Config{Root: dir, Profile: prof, Tools: tools, CacheDir: cache})
@@ -164,7 +173,7 @@ func TestCImport_UnalignedAccessorsLinux(t *testing.T) {
 	delete(files, "app/main.mk")
 	delete(files, "u.c")
 	files["src/a.mk"] = "import c.u\n\nexport F(p: mut u.P, b: mut u.B, q: mut u.Q) {\n    p.SetValue(p.Value() + 1)\n    p.SetWide(p.Wide())\n" +
-		"    b.SetTop(b.Top())\n    q.SetF(q.F())\n    q.SetD(q.D())\n    q.SetPtr(q.Ptr())\n    q.SetIn(q.In())\n    q.SetArr(q.Arr())\n}\n"
+		"    b.SetTop(b.Top())\n    q.SetF(q.F())\n    q.SetD(q.D())\n    q.SetPtr(q.Ptr())\n    q.SetFn(q.Fn())\n    q.SetIn(q.In())\n    q.SetArr(q.Arr())\n}\n"
 	dir := writeTree(t, files)
 	cfg := Config{Root: dir, Target: types.X86_64Linux, Tools: tools, CacheDir: t.TempDir()}
 	cfg.TestHooks.CImportWhole = true
