@@ -2,7 +2,7 @@
 // first and back with memory later, page by page.
 //
 // What: Windows page calls: Reserve, Commit, CommitStack, Decommit,
-// Discard, Release, GuardPage, GuardStack and AddressLimited.
+// Discard, Release, GuardPage, GuardPages, GuardStack and AddressLimited.
 //
 // How: VirtualAlloc and VirtualFree. Reserving commits nothing; Commit is
 // charged against the commit limit. A task slot's guard is a PAGE_GUARD
@@ -107,8 +107,15 @@ export Release(p: *u8, size: int) {
 /// or STATUS_GUARD_PAGE_VIOLATION once. False when Windows refuses.
 /// O(1): one system call; commits the page.
 export GuardPage(p: *u8): bool {
-    unsafe "kernel32; p is a page of a reservation the caller owns, holding nothing live" {
-        return !raw.IsNull(VirtualAlloc(p, 4096, MemCommit, PageReadWrite | PageGuard))
+    return GuardPages(p, 4096)
+}
+
+/// GuardPages commits [p, p + size) as PAGE_GUARD: the kernel's stack
+/// growth path and exception-frame room below StackLimit. False when
+/// Windows refuses. O(1): one system call; commits size bytes.
+export GuardPages(p: *u8, size: int): bool {
+    unsafe "kernel32; [p, p + size) lies in a reservation the caller owns, holding nothing live" {
+        return !raw.IsNull(VirtualAlloc(p, Trunc[uint](size), MemCommit, PageReadWrite | PageGuard))
     }
 }
 

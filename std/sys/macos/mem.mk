@@ -3,7 +3,7 @@
 // 4 KiB units while arm64 macOS pages are 16 KiB.
 //
 // What: Reserve, Commit, CommitStack, Decommit, Discard, Release, GuardPage,
-// GuardStack and AddressLimited.
+// GuardPages, GuardStack and AddressLimited.
 //
 // How: mmap, mprotect and munmap, on whole OS pages (PageSize). A request
 // that does not cover whole pages is rounded so that no live byte outside
@@ -182,6 +182,21 @@ export GuardPage(p: *u8): bool {
         return false
     }
     return Protect(a, a + Page(), ProtNone)
+}
+
+/// GuardPages makes [p, p + size) inaccessible; p and size must be
+/// page-aligned (false otherwise: rounding would cover bytes the caller did not give).
+/// O(1): one system call; allocates nothing.
+export GuardPages(p: *u8, size: int): bool {
+    if size <= 0 {
+        return false
+    }
+    a := raw.Addr(p)
+    s := Trunc[uint](size)
+    if PageDown(a) != a || PageDown(s) != s {
+        return false
+    }
+    return Protect(a, a + s, ProtNone)
 }
 
 /// GuardStack is false: macOS has no lightweight guard, and the caller

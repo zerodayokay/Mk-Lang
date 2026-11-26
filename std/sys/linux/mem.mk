@@ -3,7 +3,7 @@
 // rules in mind.
 //
 // What: Reserve, Commit, CommitStack, Decommit, Discard, Release, GuardPage,
-// GuardStack and AddressLimited.
+// GuardPages, GuardStack and AddressLimited.
 //
 // How: mmap, mprotect, munmap and madvise. Reserve and Decommit use
 // MAP_NORESERVE; Commit does not, so it is charged against the commit limit,
@@ -170,6 +170,14 @@ export Release(p: *u8, size: int) {
 export GuardPage(p: *u8): bool {
     unsafe "system call; p is a page of a reservation the caller owns, holding nothing live" {
         return !IsErr(Syscall(Nrs().mprotect, raw.Addr(p), 4096, ProtNone, 0, 0, 0))
+    }
+}
+
+/// GuardPages makes [p, p + size) inaccessible.
+/// O(1): one system call; allocates nothing.
+export GuardPages(p: *u8, size: int): bool {
+    unsafe "system call; [p, p + size) lies in a reservation the caller owns, holding nothing live" {
+        return !IsErr(Syscall(Nrs().mprotect, raw.Addr(p), Trunc[uint](size), ProtNone, 0, 0, 0))
     }
 }
 

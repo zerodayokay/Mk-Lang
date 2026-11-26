@@ -3,7 +3,7 @@
 // the Nutshell backend replaces this directory.
 //
 // What: Reserve, Commit, CommitStack, Decommit, Discard, Release, GuardPage,
-// GuardStack and AddressLimited.
+// GuardPages, GuardStack and AddressLimited.
 //
 // How: no memory can be reserved or committed.
 
@@ -52,6 +52,12 @@ export Release(p: *u8, size: int) {
 /// GuardPage has std/sys/linux's contract; this placeholder returns `false`.
 /// O(1); allocates nothing.
 export GuardPage(p: *u8): bool {
+    return false
+}
+
+/// GuardPages has std/sys/linux's contract; this placeholder returns `false`.
+/// O(1); allocates nothing.
+export GuardPages(p: *u8, size: int): bool {
     return false
 }
 
