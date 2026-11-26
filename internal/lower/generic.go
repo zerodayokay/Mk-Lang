@@ -262,11 +262,17 @@ func (bl *builder) mentionsOutsideFn(t types.TypeID, i uint32) bool {
 	switch ty.Kind {
 	case types.KParam:
 		return ty.Index == i
-	case types.KRef, types.KMut, types.KSlice, types.KMutSlice, types.KRawPtr, types.KOptional, types.KArray, types.KErrorUnion:
+	case types.KRef, types.KMut, types.KSlice, types.KMutSlice, types.KRawPtr, types.KOptional, types.KErrorUnion:
 		return bl.mentionsOutsideFn(ty.Elem, i)
+	case types.KArray:
+		return bl.mentionsOutsideFn(ty.Elem, i) || ty.Len.Kind == types.CASizeOf && bl.mentionsOutsideFn(ty.Len.Type, i)
 	case types.KNamed:
 		for _, a := range ty.Args {
-			if !a.IsConst && bl.mentionsOutsideFn(a.Type, i) {
+			if a.IsConst {
+				if a.Const.Kind == types.CASizeOf && bl.mentionsOutsideFn(a.Const.Type, i) {
+					return true
+				}
+			} else if bl.mentionsOutsideFn(a.Type, i) {
 				return true
 			}
 		}
@@ -288,23 +294,33 @@ func (bl *builder) substParam(t types.TypeID, i uint32, x types.TypeID) types.Ty
 		if ty.Index == i {
 			return x
 		}
-	case types.KRef, types.KMut, types.KSlice, types.KMutSlice, types.KRawPtr, types.KOptional, types.KArray, types.KErrorUnion:
+	case types.KRef, types.KMut, types.KSlice, types.KMutSlice, types.KRawPtr, types.KOptional, types.KErrorUnion:
 		e := bl.substParam(ty.Elem, i, x)
 		if e != ty.Elem {
 			n := *ty
 			n.Elem = e
 			return bl.tab.Intern(n)
 		}
+	case types.KArray:
+		e := bl.substParam(ty.Elem, i, x)
+		n := bl.narrowConst(ty.Len, i, x)
+		if e != ty.Elem || n != ty.Len {
+			return bl.tab.Array(n, e)
+		}
 	case types.KNamed:
 		var args []types.GenericArg
 		for k, a := range ty.Args {
-			if !a.IsConst {
-				if na := bl.substParam(a.Type, i, x); na != a.Type {
-					if args == nil {
-						args = append([]types.GenericArg(nil), ty.Args...)
-					}
-					args[k].Type = na
+			na := a
+			if a.IsConst {
+				na.Const = bl.narrowConst(a.Const, i, x)
+			} else {
+				na.Type = bl.substParam(a.Type, i, x)
+			}
+			if a != na {
+				if args == nil {
+					args = append([]types.GenericArg(nil), ty.Args...)
 				}
+				args[k] = na
 			}
 		}
 		if args != nil {
@@ -340,6 +356,14 @@ func (bl *builder) substParam(t types.TypeID, i uint32, x types.TypeID) types.Ty
 		}
 	}
 	return t
+}
+
+// narrowConst retypes the measured type without folding the layout fact.
+func (bl *builder) narrowConst(a types.ConstArg, i uint32, x types.TypeID) types.ConstArg {
+	if a.Kind == types.CASizeOf {
+		a.Type = bl.substParam(a.Type, i, x)
+	}
+	return a
 }
 
 // fieldsLoop is for name, value in fields(&x). The base place is

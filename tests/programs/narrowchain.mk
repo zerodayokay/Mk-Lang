@@ -2,6 +2,8 @@
 // narrowing: inside `if T is U { if U is u32 { .. } }` T is u32, for its
 // values, the types written T, a `mut T` written through and the result.
 // Each instance takes its own branch.
+import std.mem
+
 Id[T](x: T): T {
     return x
 }
@@ -52,6 +54,29 @@ Wb[T: Plain, U: Plain](x: T, p: mut T): T {
     return v
 }
 
+struct Bytes[const N: int] {
+    data: [N]u8
+}
+
+ReadSizes[T: Plain](a: &[SizeOf[T]()]u8, b: &Bytes[SizeOf[T]()]): int {
+    return a.Len() + b.data.Len()
+}
+
+NarrowSizes[T: Plain, U: Plain](a: [SizeOf[T]()]u8, b: Bytes[SizeOf[T]()]): int {
+    if T is U {
+        if U is u32 {
+            return ReadSizes[T](&a, &b)
+        }
+    }
+    return -1
+}
+
+Sizes[T: Plain, U: Plain](): int {
+    a := mem.Zeroed[[SizeOf[T]()]u8]()
+    b := mem.Zeroed[Bytes[SizeOf[T]()]]()
+    return NarrowSizes[T, U](a, b)
+}
+
 export Main(sys: &System): WriteError!void {
     try sys.Print("{a} {b} {c}\n", (a: Ch[u32, u32](1, 2), b: Ch[i64, i64](1, 2), c: Ch[u32, i64](1, 2)))
     try sys.Print("{a} {b} {c} {d}\n", (a: Deep[u16, u16, u16](4), b: Deep[u16, u16, u32](4), c: Opt[?u8, u8](some(2)), d: Opt[?u8, u16](none)))
@@ -60,4 +85,5 @@ export Main(sys: &System): WriteError!void {
     var k: i64 = 1
     s := Wb[i64, i64](5, mut k)
     try sys.Print("{r} {m} {s} {k}\n", (r, m, s, k))
+    try sys.Print("{a} {b}\n", (a: Sizes[u32, u32](), b: Sizes[u32, i64]()))
 }
