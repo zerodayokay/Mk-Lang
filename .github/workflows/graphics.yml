@@ -92,6 +92,24 @@ jobs:
           "$RUNNER_TEMP/mk" build Dogfoods/sketch -o "$RUNNER_TEMP/sketch"
           "$RUNNER_TEMP/sketch" check-script Dogfoods/sketch/cases/scripts/close.script
 
+      - name: Cross-build scene and sketch for Intel macOS
+        if: runner.os == 'macOS'
+        run: |
+          dir="$RUNNER_TEMP/intel-graphics"
+          mkdir -p "$dir"
+          "$RUNNER_TEMP/mk" build --target x86_64-macos Dogfoods/scene -o "$dir/scene"
+          "$RUNNER_TEMP/mk" build --target x86_64-macos Dogfoods/sketch -o "$dir/sketch"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'macOS'
+        with:
+          name: graphics-macos-x86_64
+          path: |
+            ${{ runner.temp }}/intel-graphics/scene
+            ${{ runner.temp }}/intel-graphics/sketch
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Check the macOS main-thread service
         if: runner.os == 'macOS'
         run: |
@@ -189,14 +207,50 @@ jobs:
           grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"
 
   intel-metal:
+    needs: smoke
+    if: ${{ !cancelled() }}
     runs-on: macos-15-intel
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Probe for a Metal device on Intel macOS
         run: |
           devices=$(swift -e 'import Metal; for device in MTLCopyAllDevices() { print(device.name) }')
-          if [ -n "$devices" ]; then
-            printf 'Intel macOS Metal devices:\n%s\n' "$devices" | tee -a "$GITHUB_STEP_SUMMARY"
-          else
+          if [ -z "$devices" ]; then
             echo 'The Intel macOS runner exposes no Metal device.' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
+          printf 'Intel macOS Metal devices:\n%s\n' "$devices" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: graphics-macos-x86_64
+          path: ${{ runner.temp }}/intel-graphics
+
+      - name: Install Intel macOS Vulkan dependencies
+        run: |
+          brew install glfw vulkan-loader
+          echo "DYLD_LIBRARY_PATH=$(brew --prefix glfw)/lib:$(brew --prefix vulkan-loader)/lib" >> "$GITHUB_ENV"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o MoltenVK-macos.tar https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.2/MoltenVK-macos.tar
+          echo 'f95765a6229cb7b915990a2890ce12ebe36a730b021545d3d52ae69ce4c4024e  MoltenVK-macos.tar' | shasum -a 256 -c -
+          dir=MoltenVK/MoltenVK/dynamic/dylib/macOS
+          tar -xf MoltenVK-macos.tar "$dir/MoltenVK_icd.json" "$dir/libMoltenVK.dylib"
+          lipo "$dir/libMoltenVK.dylib" -verify_arch x86_64
+          echo "VK_DRIVER_FILES=$RUNNER_TEMP/$dir/MoltenVK_icd.json" >> "$GITHUB_ENV"
+
+      - name: Render and present on Intel macOS
+        run: |
+          dir="$RUNNER_TEMP/intel-graphics"
+          chmod +x "$dir/scene" "$dir/sketch"
+          "$dir/sketch" check-script Dogfoods/sketch/cases/scripts/close.script
+          scene=Dogfoods/scene/cases/scenes/shadow.scene
+          "$dir/scene" probe --backend vulkan --list
+          "$dir/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
+          test -s "$RUNNER_TEMP/shadow.png"
+          output=$("$dir/scene" view "$scene" --backend vulkan --frames 3)
+          printf '%s\n' "$output"
+          grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"
