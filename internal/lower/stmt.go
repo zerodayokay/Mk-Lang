@@ -117,7 +117,10 @@ func (bl *builder) exprStmt(e ast.Expr) {
 }
 
 func (bl *builder) exprStmtIn(e ast.Expr) {
+	saved := bl.dropped
+	bl.dropped = unparen(e)
 	rv := bl.exprConv(e)
+	bl.dropped = saved
 	if !bl.open() || rv.Kind == mir.RvUse || rv.Type == types.Void || rv.Type == types.Never {
 		return
 	}

@@ -16,7 +16,7 @@ import (
 )
 
 func TestNarrowedTypeExpr(t *testing.T) {
-	const id = "Id[T](x: T): T {\n\treturn x\n}\n\n" // lines 1-4
+	const id = "Id[T](x: T): T {\n\treturn x\n}\n\n"                                                  // lines 1-4
 	const box = "struct Box[T: Plain] {\n\tv: T\n}\n\nBox[T].Get(&self): T {\n\treturn self.v\n}\n\n" // lines 5-12
 	runBodyCases(t, []bodyCase{
 		{"type argument", id + "F[T: Plain](x: T): T {\n\tif T is u32 {\n\t\treturn Id[T](x) * 2\n\t}\n\treturn x\n}\n", ""},

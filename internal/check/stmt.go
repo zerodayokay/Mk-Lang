@@ -385,6 +385,12 @@ func (u *unit) assign(s *ast.AssignStmt) {
 	u.externVarWrite(s.Target, "write") // an extern var is written through a pointer
 	if s.Op == ast.TokAssign {
 		u.expr(s.Value, t)
+		if !u.isBinding(s.Target) {
+			// Only a binding that writes its type keeps an E!T to handle
+			// later; a field, an element or a dereference is E0802, as a
+			// construction's field is.
+			u.storedFallible(s.Value)
+		}
 		return
 	}
 	if v, ok := u.vecOf(t); ok {
@@ -419,6 +425,21 @@ func compoundKind(op ast.TokenKind) (intOnly, shift bool) {
 		return true, true
 	}
 	return false, false
+}
+
+// isBinding reports whether e, already typed, is a local or a global
+// (parentheses allowed), the places a stored E!T may be assigned to.
+func (u *unit) isBinding(e ast.Expr) bool {
+	switch e := e.(type) {
+	case *ast.Ident:
+		switch u.b.use(e.ID()).Kind {
+		case UseLocal, UseGlobal:
+			return true
+		}
+	case *ast.ParenExpr:
+		return u.isBinding(e.X)
+	}
+	return false
 }
 
 // isPlace reports whether e, already typed, is a place: a local

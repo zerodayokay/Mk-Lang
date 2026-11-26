@@ -5535,7 +5535,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
-- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. The same holds for a stored one: as an argument, a construction's field, an array, record or repeat element, `some(..)`'s argument, or assigned into a field, an element or through a reference (`h.r = r`, `xs[i] = r`, `*p = r`), it is E0802. Assigned to such a binding or a global, `r = Root(m)` or `r = s`, it is kept. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
 - A stored `E!T` is handled as a call's is: `try`, `else`, `match` and `.Must()` read it once and take its payload or its error. It is such a binding, a global or a const, or a field or element of a value that holds one, which `mem.Zeroed` or a generic's `T` can make. `.Must()` also reads one through a reference (`p.Must()` for a `p: &(Negative!int)`); the others take `*p`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
@@ -6380,7 +6380,7 @@ See also: [`mk query panics`](tools.md#51-member-wide-panic-sites), which lists 
 | E0704 | impl-conflict | `impl Format` for an error ([printing](#how-errors-print)) |
 | E0706 | requires-failed | An error with no `Format` in a format string ([printing](#how-errors-print)) |
 | E0801 | error-not-in-set | A `fail` or `try` whose error is not in the function's set ([`fail`](#fail), [`try`](#try)) |
-| E0802 | error-unhandled | An `E!T` used without `try`, `else` or `match` ([results](#results-et)) |
+| E0802 | error-unhandled | An `E!T` used without `try`, `else` or `match`, or stored in a field or element, by construction or assignment ([results](#results-et)) |
 | E0803 | else-falls-through | [`else`](#else) |
 | E0804 | try-on-non-error | `try` on a value that cannot fail, such as a `?T` ([`try`](#try)) |
 | E0806 | try-in-defer | `try`, `fail`, `return`, `break` or `continue` out of a `defer` or `onerr` body ([`onerr`](#cleanup-on-the-error-path-onerr)) |
