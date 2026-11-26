@@ -423,9 +423,9 @@ func compoundKind(op ast.TokenKind) (intOnly, shift bool) {
 }
 
 // isPlace reports whether e, already typed, is a place: a local
-// or a global (Use, not syntax: a const, a function, a universe name such
-// as `true` and an item named through a module or type are not), a
-// field, an element or a dereference (parentheses allowed).
+// or a global, including a module-qualified global, a field, an element
+// or a dereference (parentheses allowed). The resolved use distinguishes
+// a place from a constant, function, or other item.
 func (u *unit) isPlace(e ast.Expr) bool {
 	switch e := e.(type) {
 	case *ast.Ident:
@@ -435,7 +435,8 @@ func (u *unit) isPlace(e ast.Expr) bool {
 		}
 		return false
 	case *ast.FieldExpr:
-		return u.b.use(e.ID()).Kind == UseField
+		kind := u.b.use(e.ID()).Kind
+		return kind == UseField || kind == UseGlobal
 	case *ast.IndexExpr:
 		return u.b.use(e.ID()).Kind == UseNone // an element; `F[int]` is UseItem
 	case *ast.ParenExpr:

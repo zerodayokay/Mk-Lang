@@ -2508,7 +2508,7 @@ export Main(sys: &System): WriteError!void {
 2
 ```
 
-- A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. The rules are in [globals](memory.md#r16-globals).
+- A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. E0507 applies to a qualified name such as `settings.Count` too. The rules are in [globals](memory.md#r16-globals).
 - Its initial value is computed at compile time, as a constant's is.
 
 ```mk

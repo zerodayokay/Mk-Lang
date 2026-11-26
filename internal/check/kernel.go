@@ -164,7 +164,7 @@ func (u *unit) externVarWrite(e ast.Expr, how string) {
 	name := u.c.cfg.Interner.Str(u.c.cfg.Items.Get(it).Name)
 	place := name
 	if fe, ok := unparenExpr(e).(*ast.FieldExpr); ok {
-		if m, ok := fe.X.(*ast.Ident); ok {
+		if m, ok := unparenExpr(fe.X).(*ast.Ident); ok {
 			place = u.c.cfg.Interner.Str(m.Name) + "." + name
 		}
 	}
