@@ -2,7 +2,7 @@
 // union's own bytes: a copy would leave a returned reference dangling and
 // a write lost.
 // What: TestErrorSideBorrowsInPlace.
-// How: builds three programs for the host in dev and release, runs them, and
+// How: builds four programs for the host in dev and release, runs them, and
 // reads each borrowing function's IR for a slot of the error set.
 
 package driver
@@ -444,7 +444,14 @@ export Main(sys: &System): WriteError!void {
         _ = Smash(sum)
         sum = sum * 10 + int(*p)
     }
-    try sys.Print("loop {x}\n", (x: sum))
+    var acc := 0
+    for k in 0..3 {
+        var x: F|F2!int = Mk(-4 - k)
+        q := PickAny(&x, &d)
+        _ = Smash(k)
+        acc = acc * 10 + int(*q)
+    }
+    try sys.Print("loop {x} {y}\n", (x: sum, y: acc))
 
     var g8: F|F2!u8 = Fail8()
     p8 := PickAny(&g8, &d)
@@ -481,11 +488,153 @@ export Main(sys: &System): WriteError!void {
 }
 `
 
+// errSideWiden widens error sides whose payloads end at the far end of
+// the value: try from Sm|Wd!i64 into Sm|Wd|Tr!u8, from Sm|Tr!i64 into
+// Sm|Tr|Wd!void and from Sm!u8 into the more aligned Sm|Wd!i64; a caught
+// set value failed again into a wider E!T; and a task's error under
+// ScopeOf read back after the scope.
+const errSideWiden = `
+error Sm(b: u8)
+error Wd(w: u64)
+error Tr(t: [3]u32)
+
+A(n: int): Sm|Wd!i64 {
+    if n == 1 {
+        fail Sm(b: 9)
+    }
+    if n == 2 {
+        fail Wd(w: 1234605616436508552)
+    }
+    return 5
+}
+
+T3(n: int): Sm|Tr!i64 {
+    if n == 3 {
+        fail Tr(t: [7, 8, 4000000001])
+    }
+    if n == 1 {
+        fail Sm(b: 6)
+    }
+    return 6
+}
+
+S1(n: int): Sm!u8 {
+    if n == 1 {
+        fail Sm(b: 200)
+    }
+    return 1
+}
+
+// try from E1!i64 into a caller's E2!u8 that adds Tr.
+B(n: int): Sm|Wd|Tr!u8 {
+    v := try A(n)
+    return Cast[u8](v)
+}
+
+// try from Sm|Tr!i64 into Sm|Tr|Wd!void.
+C(n: int): Sm|Tr|Wd!void {
+    _ = try T3(n)
+}
+
+// try from Sm!u8 into the wider, more aligned Sm|Wd!i64.
+D(n: int): Sm|Wd!i64 {
+    v := try S1(n)
+    return i64(v)
+}
+
+// A caught set value failed again into a wider E!T.
+Refail(n: int): Sm|Wd|Tr!u16 {
+    v := A(n) else e {
+        fail e
+    }
+    return Cast[u16](v)
+}
+
+Code(r: &(Sm|Wd|Tr!u8)): u64 {
+    return match *r {
+        err(Sm(b: b)) { Cast[u64](b) }
+        err(Wd(w: w)) { w }
+        err(Tr(t: t)) { Cast[u64](t[2]) + Cast[u64](t[0]) }
+        ok(v) { 100 + Cast[u64](v) }
+    }
+}
+
+CodeV(r: &(Sm|Tr|Wd!void)): u64 {
+    return match *r {
+        err(Sm(b: b)) { Cast[u64](b) }
+        err(Wd(w: w)) { w }
+        err(Tr(t: t)) { Cast[u64](t[2]) + Cast[u64](t[0]) }
+        ok(_) { 100 }
+    }
+}
+
+CodeD(r: &(Sm|Wd!i64)): u64 {
+    return match *r {
+        err(Sm(b: b)) { Cast[u64](b) }
+        err(Wd(w: w)) { w }
+        ok(v) { 100 + Cast[u64](v) }
+    }
+}
+
+CodeR(r: &(Sm|Wd|Tr!u16)): u64 {
+    return match *r {
+        err(Sm(b: b)) { Cast[u64](b) }
+        err(Wd(w: w)) { w }
+        err(Tr(t: t)) { Cast[u64](t[2]) }
+        ok(v) { 100 + Cast[u64](v) }
+    }
+}
+
+Task(n: int): Wd|Tr|Canceled!void {
+    if n == 2 {
+        fail Wd(w: 1234605616436508552)
+    }
+    fail Tr(t: [1, 2, 4000000003])
+}
+
+Run(io: Io, n: int): Wd|Tr|Canceled!void {
+    try scope s := io.ScopeOf[Wd|Tr|Canceled]() {
+        s.go Task(n)
+    }
+}
+
+CodeT(r: &(Wd|Tr|Canceled!void)): u64 {
+    return match *r {
+        err(Wd(w: w)) { w }
+        err(Tr(t: t)) { Cast[u64](t[2]) }
+        err(Canceled) { 1 }
+        ok(_) { 100 }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    var b0: Sm|Wd|Tr!u8 = B(0)
+    var b1: Sm|Wd|Tr!u8 = B(1)
+    var b2: Sm|Wd|Tr!u8 = B(2)
+    try sys.Print("B {a} {b} {c}\n", (a: Code(&b0), b: Code(&b1), c: Code(&b2)))
+    var c0: Sm|Tr|Wd!void = C(0)
+    var c1: Sm|Tr|Wd!void = C(1)
+    var c3: Sm|Tr|Wd!void = C(3)
+    try sys.Print("C {a} {b} {c}\n", (a: CodeV(&c0), b: CodeV(&c1), c: CodeV(&c3)))
+    var d0: Sm|Wd!i64 = D(0)
+    var d1: Sm|Wd!i64 = D(1)
+    try sys.Print("D {a} {b}\n", (a: CodeD(&d0), b: CodeD(&d1)))
+    var r0: Sm|Wd|Tr!u16 = Refail(0)
+    var r1: Sm|Wd|Tr!u16 = Refail(1)
+    var r2: Sm|Wd|Tr!u16 = Refail(2)
+    try sys.Print("R {a} {b} {c}\n", (a: CodeR(&r0), b: CodeR(&r1), c: CodeR(&r2)))
+    var t2: Wd|Tr|Canceled!void = Run(sys.io, 2)
+    var t3: Wd|Tr|Canceled!void = Run(sys.io, 3)
+    try sys.Print("T {a} {b}\n", (a: CodeT(&t2), b: CodeT(&t3)))
+}
+`
+
 // TestErrorSideBorrowsInPlace: each program prints the values it stored in
 // both profiles, and no function that returns a borrow of an error side
-// has a slot of the error set F|F2 (8 bytes, align 4) to copy it into.
-// "shared" holds only shared borrows, so it builds on a compiler that
-// cannot write through an error side; "all" adds the writes.
+// has a slot of the error set F|F2 or H (8 or 12 bytes, align 4) to copy
+// it into. "shared" and "routes" hold only shared borrows, so they build on
+// a compiler that cannot write through an error side; "all" adds the
+// writes; "widen" copies error sides between layouts.
 func TestErrorSideBorrowsInPlace(t *testing.T) {
 	t.Parallel()
 	tools := needTools(t)
@@ -498,8 +647,9 @@ func TestErrorSideBorrowsInPlace(t *testing.T) {
 	}{
 		{"shared", errSideFns + errSideMainShared, shared, sets},
 		{"all", errSideFns + errSideMutFns + errSideMainAll, shared + "mut 9 9 11 123456789012 3\nbump 6301\nconst 909\n", sets},
-		{"routes", errSideFns + errSideRouteFns, "loop 456\ngeneric 5 6\ndeep 8\nh 4000000\nclosure 9 defer 9\ntask 10 const 4007\n",
+		{"routes", errSideFns + errSideRouteFns, "loop 456 456\ngeneric 5 6\ndeep 8\nh 4000000\nclosure 9 defer 9\ntask 10 const 4007\n",
 			[]string{"PickAny", "PickDeep", "PickH"}},
+		{"widen", errSideWiden, "B 105 9 1234605616436508552\nC 100 6 4000000008\nD 101 200\nR 105 9 1234605616436508552\nT 1234605616436508552 4000000003\n", nil},
 	}
 	// A slot of the error set F|F2 (8 bytes) or H (12 bytes), align 4.
 	setSlot := regexp.MustCompile(`alloca \[(8|12) x i8\], align 4\b`)
