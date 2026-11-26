@@ -18,7 +18,7 @@ strokes=1 undone=0 hash=9da36a06a1182115e000d7da73f5f2f85e9ccdfe20a7701936e367fd
 ```
 sketch check-script SCRIPT          run SCRIPT against the document alone (any target)
 sketch script SCRIPT [options]      run SCRIPT through a real window (Windows)
-sketch draw [FILE] [options]        paint with the mouse; FILE is loaded, and saved on close
+sketch draw [FILE] [options]        paint with the mouse; FILE is loaded and saved on close
 sketch export FILE OUT.png          paint a saved FILE and write it as a PNG
 sketch check-shaders                check the embedded shaders against their recorded hashes
 ```
@@ -26,6 +26,8 @@ sketch check-shaders                check the embedded shaders against their rec
 The blit shader is HLSL in `shaders/blit.hlsl`; `tools/shaders.ps1 -dxc <path to dxc.exe> -mk <path to mk>` compiles it to the SPIR-V and DXIL in `shaders/bin` and writes `src/shaders/manifest.mk` with their hashes, as in [scene](../scene/README.md#shaders).
 
 Window options: `--backend auto|d3d12|vulkan`, `--warp` (the software adapter), `--validate` (the debug layer, where installed), `--mode fifo|mailbox|immediate`, and `--visible` to show the window while a script runs; a script's window is hidden otherwise, so the real mouse cannot reach it.
+
+`draw` uses Vulkan and GLFW on Linux and macOS. On macOS the Vulkan driver is MoltenVK. `script` injects native messages on Windows. `check-script` runs the same document and input logic on every target. [Platform requirements](../../doc/std/gpu.md#requirements)
 
 Keys in a window: 1 to 8 pick a colour, B and V make the brush larger and smaller, U undoes, R redoes, C clears, and Enter starts typing the caption (Enter or Esc ends it, Backspace deletes). The caption shows in the title bar.
 
@@ -70,7 +72,7 @@ The strokes are saved in order, `clear` included, so a reloaded file can be undo
 - `src/app` is a function of window events: the same `App.Apply` runs whether the events came from the OS or were made up by a headless run. `App.Sync` paints only the newest segment while drawing and repaints everything after an undo, redo, clear or load.
 - `src/script` parses and checks a script before it runs.
 - `src/screen` uploads the canvas to a texture and draws it with one triangle into a `Bgra8Unorm` swapchain image (no sRGB conversion, so the bytes reach the screen), and into an `Rgba8Unorm` texture of the canvas's size for the readback check.
-- `src/plat` is chosen per target in `pkg.mk`. On Windows it is the package's one `unsafe` module and posts `WM_MOUSEMOVE`, button, key, `WM_CHAR`, `WM_SIZE`, focus, `WM_MOVE` and `WM_CLOSE` messages with `PostMessageW`, and resizes with `SetWindowPos`. On Linux every call reports false and `script` reports `unsupported on this target`.
+- `src/plat` is chosen per target in `pkg.mk`. On Windows it posts `WM_MOUSEMOVE`, button, key, `WM_CHAR`, `WM_SIZE`, focus, `WM_MOVE` and `WM_CLOSE` messages with `PostMessageW`, and resizes with `SetWindowPos`. It is used by the Windows-only `script` command.
 - Error payloads hold only static text, so a failed check prints its detail (the hash it got, the counts) on standard error before the failure line.
 
 ## Limits

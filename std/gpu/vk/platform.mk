@@ -1,21 +1,43 @@
-// Why: Vulkan WSI surfaces are OS-specific, so Win32 HWND/HINSTANCE types
-// and vkCreateWin32SurfaceKHR must be isolated behind Target.os == Os.Windows.
+// Why: Vulkan window surfaces use the platform's native window backend.
 //
-// What: Win32SurfaceSupported, CreateWin32Surface, GetWindowClientSize, and
+// What: CreateWindowSurface, GetWindowClientSize, and
 // CreateTestWindow / DestroyTestWindow for hardware swapchain tests.
 //
-// How: imports c.windows and c.vulkan only here, gating every Win32 call
-// under Target.os == core.Os.Windows and loading vkCreateWin32SurfaceKHR
-// through LoadInstanceProc.
+// How: call vkCreateWin32SurfaceKHR on Windows and GLFW's Vulkan bridge on
+// Linux and macOS.
 
 import c.vulkan
 import c.windows
 import std.core
 import std.mem
 import std.raw
+import std.rt
+import std.window
 
-Win32SurfaceSupported(): bool {
-    return Target.os == core.Os.Windows
+CreateWindowSurface(gipa: vulkan.PfnVkGetInstanceProcAddr, inst: vulkan.VkInstance, window_handle: uint, window_instance: uint): Error!u64 {
+    if Target.os == core.Os.Windows {
+        return try CreateWin32Surface(gipa, inst, window_instance, window_handle)
+    }
+    if Target.os == core.Os.Linux || Target.os == core.Os.Macos {
+        return try CreateGlfwSurface(gipa, inst, window_handle)
+    }
+    fail Unsupported
+}
+
+// GLFW's Vulkan bridge handles Xlib, XCB, Wayland and Cocoa window surfaces.
+// The window module keeps its GLFWwindow alive while the swapchain uses it.
+CreateGlfwSurface(gipa: vulkan.PfnVkGetInstanceProcAddr, inst: vulkan.VkInstance, window_handle: uint): Error!u64 {
+    if window_handle == 0 {
+        fail SurfaceLost
+    }
+    loader := LoadInstanceProcAddr(gipa, raw.Null[vulkan.VkInstanceT](), "vkGetInstanceProcAddr\x00")
+    unsafe "the caller's Surface keeps the GLFW window live, and inst and its loader remain live until the owner returns" {
+        (code, surface) := window.CreateUnixVulkanSurface(rt.NativeIo(), window_handle, raw.Addr(inst), loader) else { fail Unsupported }
+        if code != vulkan.VkSuccess {
+            fail MapVkError(code, CallCreateSwapchain)
+        }
+        return Cast[u64](surface)
+    }
 }
 
 CreateWin32Surface(gipa: vulkan.PfnVkGetInstanceProcAddr, inst: vulkan.VkInstance, hinstance: uint, hwnd: uint): Error!u64 {

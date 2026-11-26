@@ -386,8 +386,8 @@ test "vk swapchain 10x frames, present-no-submit, resize, 0x0 hidden, and zero l
     defer DestroyTestWindow(hwnd)
 
     sc := try d.CreateSwapchain(SwapchainOptions(
-        hwnd: hwnd,
-        hinstance: hinst,
+        window_handle: hwnd,
+        window_instance: hinst,
         vk_format: vulkan.VkFormatB8g8r8a8Unorm,
         format_idx: 17,
         mode: ModeFifo,
@@ -479,12 +479,12 @@ test "vk two concurrent swapchains presenting 10x frames" (sys: &System) {
     defer DestroyTestWindow(hw2)
 
     sc1 := try d.CreateSwapchain(SwapchainOptions(
-        hwnd: hw1, hinstance: hi1, vk_format: vulkan.VkFormatB8g8r8a8Unorm, format_idx: 17,
+        window_handle: hw1, window_instance: hi1, vk_format: vulkan.VkFormatB8g8r8a8Unorm, format_idx: 17,
         mode: ModeFifo, buffers: 2, copy_src: false, width: 200, height: 150,
     ))
     defer d.DestroySwapchain(sc1)
     sc2 := try d.CreateSwapchain(SwapchainOptions(
-        hwnd: hw2, hinstance: hi2, vk_format: vulkan.VkFormatB8g8r8a8Unorm, format_idx: 17,
+        window_handle: hw2, window_instance: hi2, vk_format: vulkan.VkFormatB8g8r8a8Unorm, format_idx: 17,
         mode: ModeFifo, buffers: 2, copy_src: false, width: 220, height: 180,
     ))
     defer d.DestroySwapchain(sc2)
@@ -534,7 +534,7 @@ test "vk submit waits for every acquired swapchain" (sys: &System) {
         (hwnd, hinstance) := try CreateTestWindow(64, 64)
         windows[i] = hwnd
         chains[i] = try d.CreateSwapchain(SwapchainOptions(
-            hwnd: hwnd, hinstance: hinstance, vk_format: vulkan.VkFormatB8g8r8a8Unorm, format_idx: 17,
+            window_handle: hwnd, window_instance: hinstance, vk_format: vulkan.VkFormatB8g8r8a8Unorm, format_idx: 17,
             mode: ModeFifo, buffers: 2, copy_src: false, width: 64, height: 64,
         ))
         ar := try d.SwapchainAcquire(io, chains[i], 64, 64)

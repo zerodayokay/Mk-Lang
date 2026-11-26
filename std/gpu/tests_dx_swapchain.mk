@@ -19,7 +19,7 @@ test "device dx close waits for the queued present" (sys: &System) {
     defer dx.DestroyHiddenTestHwnd(hwnd)
 
     for _ in 0..2 {
-        var sc := try dev.NewSwapchainFromHwnd(sys.io, hwnd, 0, 64, 64, DefaultSwapchainOptions)
+        var sc := try dev.NewSwapchainFromNative(sys.io, hwnd, 0, 64, 64, DefaultSwapchainOptions)
         onerr sc.Close(sys.io, mut dev)
         match try dev.Acquire(sys.io, mut sc) {
             .Ready(frame) {

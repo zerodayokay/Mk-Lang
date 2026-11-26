@@ -1,6 +1,6 @@
 # std.window
 
-`std.window` opens native windows and delivers their input as timestamped events: size, position, scale, focus, keys by position and by layout, text, pointer, buttons and wheel. One window thread, started by the first `Open`, owns every window and answers the OS, so a program keeps drawing while the user drags or resizes, and any task may own a window. A `Window` is what [`std.gpu`](gpu.md) presents into. The module is Experimental: its API may change before it is stabilised.
+`std.window` opens native windows and delivers their input as timestamped events: size, position, scale, focus, keys by position and by layout, text, pointer, buttons and wheel. One OS thread owns every window and answers the OS, and any task may own a window. A `Window` is what [`std.gpu`](gpu.md) presents into. The module is Experimental: its API may change before it is stabilised.
 
 Read the [library guide](README.md) first.
 
@@ -34,9 +34,11 @@ import std.window
 
 ## Requirements
 
-- **Targets.** `x86_64-windows`, on Win32. On every other target the module compiles and `Open` fails with `Unsupported`.
-- **DPI.** Windows are per-monitor DPI aware: sizes are physical pixels, and `Window.Scale` (1.0 at 96 dpi) says how many physical pixels make one logical pixel. A move to a monitor of another scale reports `ScaleChanged` and resizes the window to keep its logical size.
-- **Threads.** The window thread runs the Win32 message loop; it is started by the first `Open` and is not a task. A `Window` is `Send` but not `Share`: one task reads its events at a time.
+- **Windows.** The first `Open` starts a dedicated Win32 message thread. The native handle is an HWND. Moving to a monitor of another DPI preserves the logical size.
+- **Linux.** Build in [system-libc mode](libc.md#system-libc-mode-on-linux) and make GLFW 3.3 or newer (`libglfw.so.3`) available to the dynamic loader. The first `Open` starts a dedicated event thread. The installed GLFW build determines whether the window uses X11 or Wayland.
+- **macOS.** Run a standalone Mk executable with GLFW 3.3 or newer (`libglfw.3.dylib`) next to the executable, on dyld's search path, or installed in either standard Homebrew prefix. The runtime pumps events on the process's initial OS thread between tasks.
+- **DPI.** Sizes are framebuffer pixels. `Window.Scale` reports the monitor's content scale, with 1.0 the default. The window reports `ScaleChanged` when its content scale changes.
+- **Ownership.** `Window` is `Send` with one event reader at a time. Other targets return `Unsupported` from `Open`.
 
 ## Events
 
@@ -45,12 +47,12 @@ Each `Event` holds `at`, the monotonic time the window thread received it, and i
 | Kind | Reports |
 |---|---|
 | `CloseRequested` | The user asked to close (the title bar's button, Alt+F4); the window stays open until `Close` |
-| `Resized(width, height)`, `Moved(x, y)`, `ScaleChanged(scale)` | The client area's new size in physical pixels, its position, the monitor's scale |
+| `Resized(width, height)`, `Moved(x, y)`, `ScaleChanged(scale)` | The client area's new size in physical pixels, its position in desktop coordinates where the window system supplies it, and the monitor's scale |
 | `Minimized`, `Restored` | The window was minimised, or restored from it |
 | `Focus(on)` | Keyboard focus gained or lost; on a loss, every held key and button is released |
 | `Key(key, layout, scancode, down, repeat, mods)` | `key` names the key by position (the US-layout key at that place), `layout` by what the current layout puts there; `repeat` marks auto-repeat |
 | `Text(ch)` | One character of text input, after the layout and dead keys; never a control character |
-| `Pointer(x, y)`, `Button(button, down, x, y, mods)`, `Wheel(dx, dy)`, `Hover(inside)` | Pointer position in client pixels, button changes (the window captures the pointer while a button is held), wheel notches (fractional on precise touchpads), entering and leaving the client area |
+| `Pointer(x, y)`, `Button(button, down, x, y, mods)`, `Wheel(dx, dy)`, `Hover(inside)` | Pointer position in client pixels, button changes (Win32 captures the pointer while a button is held), wheel notches (fractional on precise touchpads), entering and leaving the client area |
 | `Dropped(count)` | `count` events were lost because the ring was full |
 
 Events queue in a ring of `WindowOptions.events` entries (4,096 by default). On the window thread, a run of `Pointer`, `Wheel`, `Hover`, `Resized`, `Moved` or `ScaleChanged` events of one kind is merged into one before it reaches the ring, so motion never floods it; keys, buttons and text are never merged. When the ring fills, motion, wheel and hover events are dropped first; key and button events only once a reserve kept for them is full too. A `Dropped` event then says how many were lost, and `Window.Held` gives the true state of every key and button to resynchronise from.
@@ -59,25 +61,29 @@ A key press usually produces both a `Key` event and a `Text` event; a text field
 
 ## Sizes and scale
 
-`Window.Size()` returns the client area's size as the window thread last saw it; it is 0 by 0 while the window is minimised. A swapchain sizes itself from it: after a `Resized` event, or when `Device.Acquire` reports `Outdated`, call `Device.Resize` with the new size. While the user drags the window's edge the thread keeps reporting `Resized`, so a program that draws on each one redraws during the drag.
+`Window.Size()` returns the client area's size as the window thread last saw it; it is 0 by 0 when minimisation is reported by the window system. A swapchain sizes itself from it: after a `Resized` event, or when `Device.Acquire` reports `Outdated`, call `Device.Resize` with the new size. While the user drags the window's edge the thread keeps reporting `Resized`, so a program that draws on each one redraws during the drag.
 
 `WindowOptions.width` and `height` are physical pixels; 0 opens at 1280 by 720 times the scale of the monitor the window opens on.
 
 ## Changing a window
 
+On Wayland the compositor controls window positions and GLFW may not report move or minimisation events. GLFW 3.3 uses the default cursor for `Cursor.NotAllowed`.
+
+GLFW 3.3.10 and 3.4 can crash during `Open` if the Wayland compositor does not advertise an input seat, as with Weston's headless backend. For headless testing, run Weston nested in Xvfb or use a GLFW build with the [upstream no-seat fix](https://github.com/glfw/glfw/commit/3573c5a).
+
 The setters (`SetTitle`, `SetSize`, `SetFullscreen`, `SetCursor`, `SetCursorMode`, `Show`) never wait: each records the newest value and wakes the window thread, which applies it soon after. Their effects arrive as events like any other change: a `SetSize` or a switch to `Fullscreen.Borderless` (a borderless window covering its monitor) reports `Resized` once applied. `SetCursorMode(CursorMode.Hidden)` hides the cursor over the client area only.
 
 ## Surfaces
 
-`Window.Surface()` returns a `Surface`, a claim on the native window that a renderer keeps: the OS window is not destroyed while a surface lives, even after `Window.Close` (it is hidden instead). `Surface.Native()` gives the OS handles, `Native.Win32(hwnd, hinstance)`, and `Surface.Size()` the client size. A `std.gpu` swapchain holds one, so a program may close the window and its swapchain in either order. A surface is plain words and `Send`; end it with `Close`.
+`Window.Surface()` returns a `Surface`, a claim on the native window that a renderer keeps: the OS window is not destroyed while a surface lives, even after `Window.Close` (it is hidden instead). `Surface.Native()` gives the native handle as `Native.Win32(hwnd, hinstance)` on Windows or `Native.Unix(handle)` on Linux and macOS. The Unix handle is the address of a live `GLFWwindow`. `Surface.Size()` returns the client size. A `std.gpu` swapchain holds one, so a program may close the window and its swapchain in either order. A surface is plain words and `Send`; end it with `Close`.
 
 ## Errors
 
 | Error | When |
 |---|---|
-| `Unsupported` | No window system on this target |
+| `Unsupported` | The target or runtime has no window backend, or the required GLFW library is unavailable |
 | `Closed` | The window was closed |
-| `Os(code)` | The OS refused to make the window; `code` is its error number |
+| `Os(code)` | Window creation failed. `code` comes from Win32 or GLFW. |
 | `Canceled` | The task was canceled while waiting |
 | `OutOfMemory` | The event ring or the window's record could not be allocated |
 
@@ -161,6 +167,23 @@ Variants:
 - `Middle`
 - `Back`
 - `Forward`
+
+### `CreateUnixVulkanSurface`
+
+```
+export CreateUnixVulkanSurface(io: Io, handle: uint, instance: uint, loader: uint): Unsupported!(code: i32, surface: uint)
+```
+
+- Errors: Unsupported
+
+Creates a Vulkan surface on the Unix window owner. Call in `unsafe`.
+Keep the `Surface` that owns the GLFW handle and the `VkInstance` live
+until the call returns. Supply the `vkGetInstanceProcAddr` address from
+the Vulkan 1.3 loader that created the instance. On success, the caller
+owns the resulting `VkSurfaceKHR`. Returns `Unsupported` outside native
+Unix or if the loader differs, and otherwise returns GLFW's `VkResult`
+and handle.
+O(1) besides the owner wait and native call. Allocates nothing.
 
 ### `Cursor`
 
@@ -447,6 +470,7 @@ The OS's handles for a window.
 Variants:
 
 - `Win32(hwnd: uint, hinstance: uint)`
+- `Unix(handle: uint)`: Address of a live GLFWwindow on Linux and macOS.
 
 ### `Open`
 
@@ -458,7 +482,7 @@ export Open(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap
 - Errors: Error (Canceled, Closed, OutOfMemory, Os(code: i64), Unsupported)
 
 Opens a window on std's window thread (started by the first call).
-Errors: Unsupported off Windows, Os(code), OutOfMemory, Canceled
+Errors: Unsupported without window support, Os(code), OutOfMemory, Canceled
 (repeatable: a window made meanwhile is destroyed by the thread).
 Suspends until the thread answers. Allocates the event ring
 (events × 32 bytes) and the shared record from heap.
@@ -469,7 +493,7 @@ Suspends until the thread answers. Allocates the event ring
 export error Os(code: i64)
 ```
 
-The OS refused: its error code.
+The OS or GLFW refused the request, with its error code.
 
 ### `Surface`
 
@@ -513,7 +537,7 @@ The client size the window thread last saw. O(1).
 export error Unsupported
 ```
 
-This target has no window system std supports.
+The target or runtime has no available window backend.
 
 ### `Window`
 

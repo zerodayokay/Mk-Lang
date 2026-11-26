@@ -294,7 +294,8 @@ BuildVkSwapchainImages(
     }
 }
 
-/// Creates a Win32 Vulkan surface and swapchain, returning its backend ID.
+/// Creates a Vulkan surface for the platform window and returns the backend
+/// ID of its swapchain.
 export Device.CreateSwapchain(mut self, opts: SwapchainOptions): Error!u64 {
     a := self.heap.Alloc()
     st := self.state.Mut()
@@ -302,7 +303,7 @@ export Device.CreateSwapchain(mut self, opts: SwapchainOptions): Error!u64 {
     if !st.has_surface || !st.has_swapchain {
         fail Unsupported
     }
-    surf_h := try CreateWin32Surface(st.gipa, HandleFrom[vulkan.VkInstanceT](st.instance), opts.hinstance, opts.hwnd)
+    surf_h := try CreateWindowSurface(st.gipa, HandleFrom[vulkan.VkInstanceT](st.instance), opts.window_handle, opts.window_instance)
     st.live_native += 1
 
     unsafe "st.physical_device and surf_h are live" {
@@ -333,7 +334,7 @@ export Device.CreateSwapchain(mut self, opts: SwapchainOptions): Error!u64 {
 
     if st.swapchains.Len() == 0 {
         s0 := VkSwapchainRec(
-            alive: false, hwnd: 0, hinstance: 0, surface: 0, swapchain: 0,
+            alive: false, surface: 0, swapchain: 0,
             vk_format: 0, format_idx: 0, mode: 0, req_buffers: 0, copy_src: false,
             width: 0, height: 0, frames_in_flight: 2,
             images: HeapList[VkSwapImage].New(a), acq: [mem.Zeroed[VkAcqSem](); 4],
@@ -379,8 +380,6 @@ export Device.CreateSwapchain(mut self, opts: SwapchainOptions): Error!u64 {
         empty0.FreeEmpty(a)
         sc := mut st.swapchains[found]
         sc.alive = true
-        sc.hwnd = opts.hwnd
-        sc.hinstance = opts.hinstance
         sc.surface = surf_h
         sc.swapchain = res.sc_h
         sc.vk_format = opts.vk_format
@@ -406,8 +405,6 @@ export Device.CreateSwapchain(mut self, opts: SwapchainOptions): Error!u64 {
         sc_id = Cast[u64](st.swapchains.Len())
         rec := VkSwapchainRec(
             alive: true,
-            hwnd: opts.hwnd,
-            hinstance: opts.hinstance,
             surface: surf_h,
             swapchain: res.sc_h,
             vk_format: opts.vk_format,

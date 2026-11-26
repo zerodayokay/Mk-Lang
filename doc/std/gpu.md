@@ -39,9 +39,10 @@ import std.gpu
 
 ## Requirements
 
-- **Targets.** `x86_64-windows`. On every other target the module compiles, and `Adapters` and `Open` fail with `Unsupported`, so a program can check for a GPU and carry on without one.
+- **Targets.** Direct3D 12 runs on x86-64 Windows. Vulkan runs on x86-64 Windows, x86-64 and AArch64 Linux, and x86-64 and AArch64 macOS. A program can check for a supported adapter and continue without GPU access.
 - **Direct3D 12.** An adapter at feature level 11_0 or higher. WARP, the software adapter Windows ships, is always present: `DeviceOptions.software = true` picks it, which is how tests and machines without a GPU run. `Backend.Auto` tries Direct3D 12 first.
-- **Vulkan.** A Vulkan 1.3 driver (`vulkan-1.dll`, loaded at run time; nothing is linked). Without one, `Adapters` lists no Vulkan adapter and `Open` with `Backend.Vulkan` fails.
+- **Vulkan.** Install a Vulkan 1.3 loader and driver. Windows loads `vulkan-1.dll`. Linux uses `libvulkan.so.1` and a glibc executable built with `pkg.Link(name: "libc.so.6", kind: "dynamic", path: "", target: "x86_64-linux")` or the AArch64 equivalent. macOS uses `libvulkan.1.dylib` and a Vulkan 1.3-capable MoltenVK ICD on a Metal-capable host. On macOS, `MK_VULKAN_LIBRARY` can point to an absolute loader path. Make that same loader discoverable to GLFW when presenting a window. [MoltenVK installation](https://github.com/KhronosGroup/MoltenVK#using-the-vulkan-sdk)
+- **Windowed Vulkan.** Install GLFW 3 on Linux or macOS. On Linux, GLFW uses the available X11 or Wayland backend. On macOS, it creates the Metal-backed window surface. Offscreen rendering needs only the Vulkan loader and driver. [GLFW platform support](https://www.glfw.org/docs/latest/compat_guide.html)
 - **Debug layers.** `DebugMode.Validate` uses the Direct3D 12 debug layer (the Windows "Graphics Tools" optional feature) or the Vulkan validation layers (the Vulkan SDK) when installed, and goes on without them; `DebugMode.Strict` fails with `Missing(feature: Feature.DebugLayer)` when they are absent.
 - **Shaders.** Both blobs of every shader, SPIR-V and DXIL, made ahead of time from HLSL; see [Compiling shaders](#compiling-shaders). Nothing compiles shaders at run time.
 
@@ -1249,7 +1250,7 @@ export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOpti
 
 Makes a swapchain on w's client area at its current size. Errors:
 Unsupported (format), SurfaceLost (the window is closed), DeviceLost.
-Runs on the system stack. Counts as a user of w's native window.
+May wait for the native window thread. Counts as a user of w's native window.
 
 ### `Device.NewTexture`
 

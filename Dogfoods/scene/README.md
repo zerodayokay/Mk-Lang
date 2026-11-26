@@ -4,11 +4,11 @@ A 3D renderer over a small text scene format: OBJ meshes, PNG textures, a shadow
 
 ## Running it
 
-From the program's folder, on Windows:
+From the program's folder:
 
 ```
 cd Dogfoods/scene
-mk run -- render cases/scenes/shadow.scene shadow.png --warp
+mk run -- render cases/scenes/shadow.scene shadow.png --backend vulkan
 ```
 
 ```text
@@ -37,7 +37,9 @@ scene view SCENE [options]          open a window with an orbit camera
 
 A comparison passes when no pixel over the tolerance lacks a neighbour within it, and at most 0.1 % of pixels are over it (0.5 % for an MSAA scene, whose sample positions differ between adapters). In `view`, drag to orbit, use the wheel to zoom; M toggles MSAA, F toggles borderless fullscreen and Esc closes.
 
-Exit codes: 0 done; 1 a scene, file or GPU failure, or a failed comparison; 2 a usage error. Off Windows, `probe` reports `adapters=unsupported` and the GPU commands fail with `unsupported on this target`.
+Linux and macOS use Vulkan. On these platforms the viewer also needs GLFW. Install the platform's Vulkan loader and a Vulkan 1.3 driver, including MoltenVK on macOS. The Linux manifest already selects system glibc. [Platform requirements](../../doc/std/gpu.md#requirements)
+
+Exit code 0 means success, 1 indicates a scene, file, GPU or comparison failure, and 2 indicates a usage error.
 
 ### Scene files
 

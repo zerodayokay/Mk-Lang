@@ -30,7 +30,8 @@ import (
 func TestFFIM_HelloSize(t *testing.T) {
 	tools := needTools(t)
 	with, without := ffiStdCopy(t), ffiStdCopy(t)
-	for _, p := range []string{"dl", "sys/windows/dl.mk", "sys/linux/dl.mk", "sys/nutshell/dl.mk"} {
+	// Keep the Linux resolver in both trees for the system-libc pthread code.
+	for _, p := range []string{"dl", "sys/windows/dl.mk", "sys/nutshell/dl.mk"} {
 		if err := os.RemoveAll(filepath.Join(without, filepath.FromSlash(p))); err != nil {
 			t.Fatal(err)
 		}
