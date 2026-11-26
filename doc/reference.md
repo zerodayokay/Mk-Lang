@@ -7567,7 +7567,7 @@ main.mk:10:7: E0902 fuel-exhausted: compile-time evaluation ran out of fuel afte
 - `fuel` also follows a `gen` line: `gen derive.Eq(Big) fuel 10_000_000`.
 - The fuel is a number literal or a named constant, `fuel Limit`; any other expression is E0705. A gen line runs before its module's consts are evaluated, so its named constant comes from another module (E0908, [the stage rule](#the-stage-rule)).
 - An evaluation's frames, measured at the target's layout, may hold 1 MiB, or a quarter of the stated fuel in bytes when that is more, up to 256 MiB. Deeper recursion is the `stack limit` panic, reported as E0901.
-- A const's or global's own value is not recursion: its initializer's frames may also hold four times the value's size, up to 256 MiB, and its fuel is at least one step per two bytes of the value. So a table of megabytes, `var T: [1 << 21]u64 = mem.Zeroed[[1 << 21]u64]()` or `[7; 1 << 21]`, needs no `fuel`, which a global cannot state.
+- A const's or global's own value is not recursion: its initializer's frames may also hold four times the value's size, up to 256 MiB, and its fuel is at least one step per two bytes of the value. So a table of megabytes, `var T: [1 << 21]u64 = mem.Zeroed[[1 << 21]u64]()` or `[7; 1 << 21]`, needs no `fuel`, which a global cannot state. Another initializer that reads part of a large const, `const N: u64 = T[9]`, copies the whole const into its own frame, so that read is held to its own limits: index a large table at run time.
 
 ### The stage rule
 

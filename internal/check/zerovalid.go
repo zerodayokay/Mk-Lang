@@ -406,7 +406,7 @@ func (c *Checker) zeroValid(env *Env, t types.TypeID, rec recorder, seen map[typ
 		}
 		// Io is plain whatever its fields (kinds.go), but its table pointer
 		// is never null: IoTab's unsafe block reads through it.
-		if ty.Item == c.known.Io {
+		if c.known.Io != types.NoItem && ty.Item == c.known.Io {
 			return false
 		}
 	}
