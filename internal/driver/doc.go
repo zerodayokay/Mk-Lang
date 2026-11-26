@@ -120,7 +120,7 @@ func (s *Session) Doc(opt DocOptions) (*DocPackage, Result, error) {
 	byMod := map[string]*DocModule{}
 	for _, e := range qx.entries {
 		it := qx.w.items.Get(e.id)
-		if !it.Exported || e.mod == testRunnerModule {
+		if !it.Exported || e.mod == testRunnerModule || e.module.sysview {
 			continue
 		}
 		if opt.Std == "" && e.std {
