@@ -46,6 +46,9 @@ import (
 const (
 	linkDynamic = "dynamic"
 	linkStatic  = "static"
+	// linkLazy is a DLL loaded on the first call of one of its functions,
+	// never named in the import table (lazylink.go); x86_64-windows only.
+	linkLazy = "lazy"
 )
 
 // linkTargets are the targets a pkg.Link may name: one per link, never
@@ -68,13 +71,17 @@ func validateLinks(m *Manifest, t *srcTree) []*diag.Diagnostic {
 		switch {
 		case l.Name == "":
 			fail(f+".name", "link name is empty")
-		case l.Kind == linkDynamic && strings.ContainsAny(l.Name, `/\`):
-			fail(f+".name", "dynamic link name %q holds a path separator; name the file the loader looks up, and put its location in path", l.Name)
-		case l.Kind == linkDynamic && l.Target == types.X86_64Windows.Name && !validDLLName(l.Name):
-			fail(f+".name", "dynamic link name %q is not a DLL file name an import table can hold (letters, digits, _, - and .)", l.Name)
+		case (l.Kind == linkDynamic || l.Kind == linkLazy) && strings.ContainsAny(l.Name, `/\`):
+			fail(f+".name", "%s link name %q holds a path separator; name the file the loader looks up, and put its location in path", l.Kind, l.Name)
+		case (l.Kind == linkDynamic || l.Kind == linkLazy) && l.Target == types.X86_64Windows.Name && !validDLLName(l.Name):
+			fail(f+".name", "%s link name %q is not a DLL file name an import table can hold (letters, digits, _, - and .)", l.Kind, l.Name)
 		}
-		if l.Kind != linkDynamic && l.Kind != linkStatic {
-			fail(f+".kind", "link %s: kind %q is not \"dynamic\" or \"static\"", l.Name, l.Kind)
+		if l.Kind != linkDynamic && l.Kind != linkStatic && l.Kind != linkLazy {
+			fail(f+".kind", "link %s: kind %q is not \"dynamic\", \"lazy\" or \"static\"", l.Name, l.Kind)
+			continue
+		}
+		if l.Kind == linkLazy && l.Target != types.X86_64Windows.Name {
+			fail(f+".kind", "link %s: lazy binding is built for Windows targets only (x86_64-windows), not %q; link the library \"dynamic\" for this target", l.Name, l.Target)
 			continue
 		}
 		if !slices.Contains(linkTargets, l.Target) {
@@ -312,6 +319,7 @@ type dynLib struct {
 	data   map[string]bool // data exports, never resolved; named in an extern var's E0001
 	copy   string
 	labels []string
+	lazy   bool // a lazy link's (lazylink.go): its names get no import library
 }
 
 // linkPlan is what the links add to one bin's link: the archives, in the
@@ -340,6 +348,9 @@ type linkPlan struct {
 	// soDefFaults can tell a member's definition from the compiler's
 	// weak 128-bit routines (compilerWeak), which p.defs also holds.
 	memberDefs map[string]bool
+	// lazyNames are the candidates that bind lazily (neededImportLibs,
+	// lazylink.go): no import library takes them.
+	lazyNames map[string]bool
 	// sos are the shared objects of a Linux bin in system-libc mode,
 	// libc.so.6 first (links_libc.go); triple is the target's, and libc
 	// and arch the mode's facts for it (set with sos[0]).
@@ -352,6 +363,14 @@ type linkPlan struct {
 // empty reports whether the plan changes nothing in the link.
 func (p *linkPlan) empty() bool {
 	return p == nil || len(p.archives) == 0 && len(p.dlls) == 0 && len(p.sos) == 0
+}
+
+// otherKind is the Windows DLL kind that is not k.
+func otherKind(k string) string {
+	if k == linkLazy {
+		return linkDynamic
+	}
+	return linkLazy
 }
 
 // linkPlanFor reads the links of the bin's graph for the build's target.
@@ -398,9 +417,14 @@ func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cob
 		key := strings.ToLower(l.Name)
 		dl := byFile[key]
 		if dl == nil {
-			dl = &dynLib{file: l.Name, names: map[string]bool{}, data: map[string]bool{}}
+			dl = &dynLib{file: l.Name, names: map[string]bool{}, data: map[string]bool{}, lazy: l.Kind == linkLazy}
 			byFile[key] = dl
 			p.dlls = append(p.dlls, dl)
+		} else if dl.lazy != (l.Kind == linkLazy) {
+			// One DLL is in the import table or not: a name of it would bind
+			// by whichever link came first.
+			ds = append(ds, linkFail(l, ".kind", "link %s: %s is also linked %q by %s; link one DLL with one kind", l.Name, l.Name, otherKind(l.Kind), dl.labels[0]))
+			continue
 		}
 		for _, n := range names {
 			dl.names[n] = true
@@ -571,11 +595,11 @@ func (p *linkPlan) namedImportLibs(libs []importLib, sysCand []string) ([]import
 	used := map[*dynLib][]string{}
 	taken := map[string]bool{}
 	for _, n := range p.cand {
-		if have[n] {
+		if have[n] || p.lazyNames[n] {
 			continue
 		}
 		for _, dl := range p.dlls {
-			if dl.names[n] {
+			if dl.names[n] && !dl.lazy {
 				used[dl] = append(used[dl], n)
 				taken[n] = true
 				break
