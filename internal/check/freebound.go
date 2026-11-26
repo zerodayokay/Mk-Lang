@@ -276,7 +276,7 @@ func (c *Checker) releaseGap(env *Env, t types.TypeID, free bool, freeIface type
 		return releaseGapAt{elem: n, open: true}
 	}
 	if !free {
-		return releaseGapAt{elem: n}
+		return releaseGapAt{elem: n, open: c.linearThroughParams(env, n)}
 	}
 	if nt.Kind == types.KNamed && c.isReleaseContainer(n) {
 		for _, a := range nt.Args {
@@ -294,7 +294,26 @@ func (c *Checker) releaseGap(env *Env, t types.TypeID, free bool, freeIface type
 	if _, ok := c.implOf(env, freeIface, nil, n, rec, 0); ok {
 		return releaseGapAt{ok: true}
 	}
-	return releaseGapAt{elem: n}
+	return releaseGapAt{elem: n, open: c.linearThroughParams(env, n)}
+}
+
+// linearThroughParams reports whether n, linear in env, is linear only
+// through the type parameters it mentions (`?T`, `[N]T`, a record of a T):
+// with each one that is not narrowed taken as int it is not linear, so the
+// report says it may be linear, not that it is. Kinds only grow from their
+// parts, so a type still linear then (`(a: Ticket, b: T)`) is linear for
+// every T.
+func (c *Checker) linearThroughParams(env *Env, n types.TypeID) bool {
+	if c.closed(n) {
+		return false
+	}
+	e := env
+	for i := range env.gen {
+		if !env.gen[i].Const && env.narrow[i] == types.NoType {
+			e = e.Narrow(uint32(i), types.Int)
+		}
+	}
+	return c.FactsIn(e, n).Kind != types.Linear
 }
 
 // releaseGapAt is releaseGap's answer.

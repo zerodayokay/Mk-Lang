@@ -1,7 +1,7 @@
 // Why: freeing a container must release its elements, so a container whose
 // elements are linear and not Free must not satisfy a Free bound, or it
 // panics at run time.
-// What: TestFreeBounds, TestSetBounds, TestNoFreeNoBound, TestOpenT, TestHomeExempt, TestPoolFreeUnchanged (release bounds), TestImplFreeRow,
+// What: TestFreeBounds, TestSetBounds, TestNoFreeNoBound, TestOpenT, TestOpenComposite, TestHomeExempt, TestPoolFreeUnchanged (release bounds), TestImplFreeRow,
 // the container tests under Free bounds (TestGenericFreeBound to TestHomeIsTheModule) and TestHeapBTreeSet.
 // How: builds worlds with and without std.core's Free (newReleaseWorld) and
 // compares E0701 diagnostics and their release alternatives.
@@ -143,6 +143,31 @@ func TestOpenT(t *testing.T) {
 			for _, d := range ds {
 				if !strings.Contains(d.Message, "may be linear") {
 					t.Errorf("message %q", d.Message)
+				}
+			}
+		})
+	}
+}
+
+// TestOpenComposite: a type that is linear only through a type parameter
+// it holds (`?T`, `[N]T`, the `?T` elements a HeapList's Free would drop)
+// may be linear, and the report says so; one that is linear whatever its
+// parameters (a HeapList[T] value, a record holding a File) is linear.
+func TestOpenComposite(t *testing.T) {
+	cases := []struct{ name, src, want, says string }{
+		{"optional", "G[T](m: mut Map[int, ?T], x: T into m) {\n\tm.Set(1, some(x))\n}\n", "E0701:?T", "`?T` may be linear"},
+		{"array", "G[T, const N: int](m: mut Map[int, [N]T], xs: [N]T into m) {\n\tm.Set(1, xs)\n}\n", "E0701:[N]T", "`[N]T` may be linear"},
+		{"freed element", "G[T](a: &Alloc, l: HeapList[?T]) {\n\tl.Free(a)\n}\n", "E0701:?T", "`?T` may be linear and not `Free`"},
+		{"heap list value", "G[T](m: mut Map[int, HeapList[T]], l: HeapList[T] into m) {\n\tm.Set(1, l)\n}\n", "E0701:HeapList[T]", "`HeapList[T]` is linear"},
+		{"record of a file", "G[T](m: mut Map[int, (f: File, x: T)], f: File, x: T into m) {\n\tm.Set(1, (f: f, x: x))\n}\n", "E0701:(f: File, x: T)", "`(f: File, x: T)` is linear"},
+		{"plain", "G[T: Plain](m: mut Map[int, ?T], x: T into m) {\n\tm.Set(1, some(x))\n}\n", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			for _, d := range releaseCase(t, true, c.src, c.want) {
+				if !strings.Contains(d.Message, c.says) {
+					t.Errorf("message %q, want it to say %q", d.Message, c.says)
 				}
 			}
 		})
