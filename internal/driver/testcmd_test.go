@@ -426,4 +426,19 @@ func TestMkTestStdUnixScratch(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(caller, "mk-cwd-other")); err != nil {
 		t.Errorf("the other file's marker: %v", err)
 	}
+	// std/task/tests_defects.mk binds the fixed name mk-sd8-unbind.sock.
+	// A directory of that name in the caller's directory, which neither
+	// sys.UnixUnbind nor a bind can replace, fails the block unless it runs
+	// in a directory of its own.
+	t.Run("std.task's fixed socket name", func(t *testing.T) {
+		caller := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(caller, "mk-sd8-unbind.sock", "in"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(caller)
+		rep := mkTest(t, Config{StdTests: "std.task"}, TestOptions{Run: "sys.UnixUnbind removes"})
+		if len(rep.Tests) != 1 || rep.Tests[0].Result != "pass" {
+			t.Fatalf("want the one sys.UnixUnbind block, passing; got %+v", rep.Tests)
+		}
+	})
 }
