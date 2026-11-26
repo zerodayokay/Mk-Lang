@@ -96,16 +96,25 @@ func (bl *builder) requiresHolds(t *mir.Terminator) bool {
 	if gb := bl.env.Body(f.Item); gb == nil || int(gb.ParamCount) != len(cargs) {
 		return false
 	}
-	pb, _ := instantiate(bl.env, f.Item, args, bl.opt, nil)
+	opt := bl.opt
+	opt.tasks = taskFold{}
+	opt.libc = taskFold{}
+	pb, _ := instantiate(bl.env, f.Item, args, opt, nil)
 	if pb == nil {
 		return false
 	}
-	v, ok := bl.foldPredicate(pb, vals)
+	var layouts []types.TypeID
+	v, ok := bl.foldPredicate(pb, vals, &layouts)
 	if !ok || !v {
 		return false
 	}
 	if r, ok := bl.env.(BodyReader); ok {
 		r.ReadBody(f.Item)
+	}
+	if lr, ok := bl.env.(LayoutReader); ok {
+		for _, lt := range layouts {
+			lr.ReadLayout(lt)
+		}
 	}
 	return true
 }
@@ -117,6 +126,13 @@ func (bl *builder) requiresHolds(t *mir.Terminator) bool {
 // invalidates a cached evaluation that ran the instance.
 type BodyReader interface {
 	ReadBody(item types.ItemID)
+}
+
+// LayoutReader is an Env that records the layouts an instance body depends on
+// beyond what eval runs directly: types whose size or alignment folded in a
+// requires predicate or a substituted SizeOf const generic argument.
+type LayoutReader interface {
+	ReadLayout(t types.TypeID)
 }
 
 // immConst interns the scalar immediate bits of type t as a const of its
@@ -249,7 +265,7 @@ func (bl *builder) fits(t types.TypeID, x *big.Int) (predVal, bool) {
 // foldPredicate runs the predicate instance body pb with its parameters
 // bound to params: the bool it returns, or false when a statement or
 // terminator is outside the interpreter's forms.
-func (bl *builder) foldPredicate(pb *mir.Body, params []predVal) (holds, ok bool) {
+func (bl *builder) foldPredicate(pb *mir.Body, params []predVal, layouts *[]types.TypeID) (holds, ok bool) {
 	vals := make([]predVal, len(pb.Locals))
 	known := make([]bool, len(pb.Locals))
 	for i, v := range params {
@@ -299,7 +315,7 @@ func (bl *builder) foldPredicate(pb *mir.Body, params []predVal) (holds, ok bool
 			if st.Place.Proj.Len != 0 || l >= len(vals) {
 				return false, false
 			}
-			v, ok := bl.foldRvalue(&st.Rvalue, pb.Locals[l].Type, read)
+			v, ok := bl.foldRvalue(&st.Rvalue, pb.Locals[l].Type, read, layouts)
 			if !ok {
 				return false, false
 			}
@@ -348,7 +364,7 @@ func (bl *builder) foldPredicate(pb *mir.Body, params []predVal) (holds, ok bool
 // foldRvalue is the value of rv assigned to a local of type dst, by read
 // for the operands; false outside the interpreter's forms or where the
 // operation would trap.
-func (bl *builder) foldRvalue(rv *mir.Rvalue, dst types.TypeID, read func(mir.Operand) (predVal, bool)) (predVal, bool) {
+func (bl *builder) foldRvalue(rv *mir.Rvalue, dst types.TypeID, read func(mir.Operand) (predVal, bool), layouts *[]types.TypeID) (predVal, bool) {
 	switch rv.Kind {
 	case mir.RvUse:
 		v, ok := read(rv.A)
@@ -363,6 +379,9 @@ func (bl *builder) foldRvalue(rv *mir.Rvalue, dst types.TypeID, read func(mir.Op
 		l := bl.env.Layout(rv.Type)
 		if l == nil {
 			return predVal{}, false
+		}
+		if layouts != nil {
+			*layouts = append(*layouts, rv.Type)
 		}
 		n := l.Shape.Size
 		if rv.Kind == mir.RvAlignOf {
