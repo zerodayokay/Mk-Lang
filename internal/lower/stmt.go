@@ -296,7 +296,7 @@ func (bl *builder) destructure(s *ast.DestructureStmt) {
 		// which ends t.
 		switch {
 		case dt.consumed:
-		case len(s.Pat.Fields) == 0 && !s.Pat.Elems:
+		case len(s.Pat.Fields) == 0 && !s.Pat.Elems && bl.fieldless(bl.b.PlaceType(t)):
 			bl.emit(mir.Statement{Kind: mir.StConsume, Place: t, Span: bl.span(s.Span())})
 		default:
 			source.ICEf(s.Span(), "lower: a destructure of a non-plain value with no plain leaf to take")
@@ -398,7 +398,7 @@ func (bl *builder) bindSub(f *ast.PatField, t mir.Place, k uint32, isVar bool, d
 		for j, sf := range p.Fields {
 			bl.bindSub(sf, fp, bl.fieldIndex(ft, sf, uint32(j)), isVar, dt)
 		}
-		if len(p.Fields) == 0 && !bl.plain(ft, p.Span()) {
+		if bl.fieldless(ft) && !bl.plain(ft, p.Span()) {
 			// A struct with no fields, `(e: Empty(), n) := r`: nothing
 			// is taken out of it, so StConsume ends it.
 			bl.emit(mir.Statement{Kind: mir.StConsume, Place: fp, Span: bl.span(p.Span())})

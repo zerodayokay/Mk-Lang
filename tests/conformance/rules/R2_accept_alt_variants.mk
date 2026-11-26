@@ -1,6 +1,6 @@
 // verdict: ok
 // rule: R2
-// note: an arm whose pattern is an alternative consumes a linear value when each alternative alone would: the struct pattern of the side that matched takes its part apart, also when the sides differ in variant
+// note: an arm whose pattern is an alternative consumes a linear value when each alternative alone would: the struct pattern of the side that matched takes its part apart, also when the sides differ in variant; a `_` side reached only where nothing linear is left consumes nothing and needs nothing
 error Bad
 
 linear struct Ticket {
@@ -86,6 +86,12 @@ Both(w: Two): int {
     }
 }
 
+WildOnNone(o: ?Ticket): int {
+    return match o {
+        some(Ticket(id: _)) | _ { 4 }
+    }
+}
+
 Call(n: int): int {
     return match Get(n) {
         ok(Ticket(id: 1)) | err(_) { 0 }
@@ -96,5 +102,5 @@ Call(n: int): int {
 Drive(n: int): int {
     a := Optional(some(Ticket(id: n))) + Optional(none) + Variant(K.A(t: Ticket(id: n)))
     b := Three(some(Ticket(id: n))) + NoFields(some(Empty())) + Field(S(a: some(Ticket(id: n)), n: 0)) + Range(none)
-    return a + b + Both(Two(a: some(Ticket(id: n)), b: none)) + Call(n)
+    return a + b + Both(Two(a: some(Ticket(id: n)), b: none)) + Call(n) + WildOnNone(some(Ticket(id: n))) + WildOnNone(none)
 }

@@ -639,7 +639,7 @@ func (bl *builder) takeWhole(p mir.Place, at source.Span) {
 	if st.Kind != types.KNamed || !ok || bl.plain(t, at) {
 		return
 	}
-	if len(d.Fields) == 0 {
+	if bl.fieldless(t) {
 		bl.emit(mir.Statement{Kind: mir.StConsume, Place: p, Span: bl.span(at)})
 		return
 	}
@@ -655,6 +655,17 @@ func (bl *builder) takeWhole(p mir.Place, at source.Span) {
 	}
 	h := bl.newTemp(ft, at)
 	bl.assign(bl.b.Place(h), use(mir.Move(bl.field(p, uint32(k), ft))), at)
+}
+
+// fieldless reports whether t is a struct with no fields, the one type a
+// StConsume ends.
+func (bl *builder) fieldless(t types.TypeID) bool {
+	st := bl.tab.Get(t)
+	if st.Kind != types.KNamed {
+		return false
+	}
+	d, ok := bl.cfg.Items.Get(st.Item).Decl.(*types.StructDecl)
+	return ok && len(d.Fields) == 0
 }
 
 // scalarKind reports a kind held in one register: takeWhole moves a field

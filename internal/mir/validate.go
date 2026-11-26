@@ -49,7 +49,8 @@ type Env struct {
 //   - M2: there is an entry block, every ID and range is in bounds, every
 //     kind is known, and an instance body holds nothing generic.
 //   - M3: each projection step is admitted by the type before it.
-//   - M4: an assignment's place has its rvalue's type.
+//   - M4: an assignment's place has its rvalue's type; a consume's place
+//     is a struct with no fields.
 //   - M5: calls: an error edge exactly when the callee can fail, and the
 //     destination, argument and tail-call types.
 //   - M6: returns: exit kinds and new-error marks.
@@ -319,7 +320,13 @@ func (v *validator) stmt(st *Statement, holders []int) {
 		}
 	case StNop:
 	case StConsume:
-		v.place(st.Place)
+		t := v.place(st.Place)
+		ty := v.tab.Get(t)
+		if ty.Kind != types.KNamed {
+			v.fail("M4", "consumes a place of %s, which is not a struct with no fields", v.ts(t))
+		} else if d, ok := v.tab.Items().Get(ty.Item).Decl.(*types.StructDecl); !ok || len(d.Fields) != 0 {
+			v.fail("M4", "consumes a place of %s, which is not a struct with no fields", v.ts(t))
+		}
 	case StAsm:
 		v.asm(st, v.curStmt)
 	default:
