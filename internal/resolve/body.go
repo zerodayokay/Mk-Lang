@@ -3,7 +3,8 @@
 //
 // What: the walker's statement and pattern methods: block, stmt, ifStmt,
 // cond, forStmt, labelUse, recordPat, pattern, patFields, declarePattern,
-// namePattern and patternCase.
+// namePattern and patternCase (and PatternMiss, which tells its E0207 from
+// others).
 //
 // How: one switch per statement kind. A declaration resolves its initializer
 // before it declares its names, so x := x + 1 reads an outer x. A bare name
@@ -414,7 +415,7 @@ func (w *walker) patternCase(id *ast.Ident, found bool) {
 	w.markUsed(w.fs.fi.Refs[id.ID()])
 	want := ToSnake(name)
 	d := naming(id.Span(), name, want, "snake_case")
-	d.Message = "`" + name + "` names no const or error in scope, so it binds and matches every value: a binding should be snake_case: `" + want + "`"
+	d.Message = patternMissMessage(name, want)
 	d.Alt("write `." + name + "` for a variant")
 	d.Alt("name a const or error in scope, or qualify another module's as `m." + name + "`")
 	if w.free(want) {
@@ -425,4 +426,17 @@ func (w *walker) patternCase(id *ast.Ident, found bool) {
 		return
 	}
 	w.t.diags = append(w.t.diags, d)
+}
+
+func patternMissMessage(name, want string) string {
+	return "`" + name + "` names no const or error in scope, so it binds and matches every value: a binding should be snake_case: `" + want + "`"
+}
+
+// PatternMiss reports whether d is patternCase's E0207. One that Settle
+// reports names a binding found nowhere while the module's gen lines were
+// unsettled, so a line that emitted nothing may be why, as for an unknown
+// name's E0201 (the driver's noteGen).
+func PatternMiss(d *diag.Diagnostic) bool {
+	name, ok := d.FactValue("declared")
+	return d.Code == diag.E0207 && ok && d.Message == patternMissMessage(name.Str, ToSnake(name.Str))
 }

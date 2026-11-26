@@ -3,7 +3,8 @@
 // file to the module, and map later diagnostics back to the gen line.
 //
 // What: stage 4 of the module pipeline (stage4, settleGen, genWrap): the
-// note on a name a line that emitted nothing may have declared (noteGen),
+// note on a name a line that emitted nothing may have declared (noteGen,
+// notePatternGen and markGen),
 // the error that made a poisoned line emit nothing (poisonRoot, firstDiag),
 // the gen.Line translation of resolve's first pass (genLine, genArg), the
 // World over check's stage-4 view (genWorld with Decl, Func and Funcs),
@@ -195,15 +196,36 @@ func (m *modNode) noteGen(d *diag.Diagnostic) {
 			return
 		}
 	}
+	owner.markGen(d, at)
+}
+
+// notePatternGen marks, as noteGen marks an E0201, a pattern binding's
+// E0207 that Settle reported (resolve.PatternMiss): its name was found
+// nowhere while m's gen lines were unsettled, so it may be a const a line's
+// output would have declared. Finish's E0207s name a name found in the
+// module scope, which no gen line declares, and get no mark.
+func (m *modNode) notePatternGen(d *diag.Diagnostic) {
+	if !resolve.PatternMiss(d) {
+		return
+	}
+	if _, ok := d.FactValue("gen_line"); ok {
+		return
+	}
+	m.markGen(d, "this module")
+}
+
+// markGen makes d a consequence of the error that made a gen line of m
+// emit nothing, and cites the line; at names m in the note.
+func (m *modNode) markGen(d *diag.Diagnostic, at string) {
 	switch {
-	case owner.genFail != nil:
-		d.ConsequenceOf(owner.genFail.Code, owner.genFail.At)
-		d.Loc("gen_line", owner.genFailAt).Text("gen", "a gen line of "+at+" failed and emitted nothing: the name may be one it would have declared")
-	case owner.genRoot != nil:
-		d.ConsequenceOf(owner.genRoot.Code, owner.genRoot.At)
-		d.Loc("gen_line", owner.genRootAt).Text("gen", "a gen line of "+at+" emitted nothing: `"+owner.genRootIn+"`, which it depends on, failed to check")
-	case len(owner.genPoison) > 0:
-		d.Loc("gen_line", owner.genPoison[0]).Text("gen", "a gen line of this module emitted nothing: it read a type that failed to check, or one it cannot see before checking")
+	case m.genFail != nil:
+		d.ConsequenceOf(m.genFail.Code, m.genFail.At)
+		d.Loc("gen_line", m.genFailAt).Text("gen", "a gen line of "+at+" failed and emitted nothing: the name may be one it would have declared")
+	case m.genRoot != nil:
+		d.ConsequenceOf(m.genRoot.Code, m.genRoot.At)
+		d.Loc("gen_line", m.genRootAt).Text("gen", "a gen line of "+at+" emitted nothing: `"+m.genRootIn+"`, which it depends on, failed to check")
+	case len(m.genPoison) > 0:
+		d.Loc("gen_line", m.genPoison[0]).Text("gen", "a gen line of this module emitted nothing: it read a type that failed to check, or one it cannot see before checking")
 	}
 }
 

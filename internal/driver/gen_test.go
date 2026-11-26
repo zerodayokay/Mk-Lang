@@ -3,6 +3,7 @@
 // What: TestGenExportUsedByImporter, TestGenDeriveEqChecks,
 // TestE0704_GeneratedImplAtGenLine, TestGenCodes (E0903, E0905, E0906),
 // TestGenFailRootOfUnknownNames, TestGenPoisonRootOfUnknownNames,
+// TestGenRootOfPatternNames, TestGenGeneratorOfSameModule,
 // TestGenDeriveEqGolden, TestGenBoolArgument and TestGenFlowDiagWrapped.
 // How: checks small packages with the real std generators and compares
 // diagnostics, and derive.Eq's output with internal/gen's golden.
@@ -335,6 +336,75 @@ func TestGenPoisonRootOfUnknownNames(t *testing.T) {
 				if got := diag.Location(cold.Sources, r.At); got != c.root || !strings.Contains(g.Str, "`"+c.in+"`") {
 					t.Errorf("E0201's root at %s, gen note %q; want root %s naming `%s`\n%s", got, g.Str, c.root, c.in,
 						cold.Report.Text(cold.Sources))
+				}
+			}
+			if warm := frontCheck(t, cfg); string(jsonOf(t, warm)) != string(jsonOf(t, cold)) {
+				t.Errorf("warm --json %s, cold %s", jsonOf(t, warm), jsonOf(t, cold))
+			}
+		})
+	}
+}
+
+// TestGenRootOfPatternNames: a refutable pattern's name that names no const
+// (E0207) in a module whose gen line emitted nothing may be a const the
+// output would have declared, as an unknown name's E0201 may be: the line's
+// own error (E0903) or the error poisonRoot names (an E0208 in the
+// generator's module, an error before types in its import) is reported with
+// it as its root, whatever its phase, and the E0207 cites the line. A name
+// the module scope holds (a struct), and one beside a line that ran, are
+// E0207s of their own. With the module cache on, the warm report equals the
+// cold one.
+func TestGenRootOfPatternNames(t *testing.T) {
+	const emit = "    made := g.Ident(\"Made\")\n    g.Emit(quote {\n        export const $made: int = 1\n    })\n}\n"
+	const pick = "export Pick(x: int): int {\n    return match x {\n        Made { 1 }\n        _ { 0 }\n    }\n}\n"
+	const twice = "export F(): int {\n    return 1\n}\n\nF(): int {\n    return 2\n}\n"
+	const fails = "export Make(g: mut Gen) {\n    g.Fail(\"planted\")\n" + emit
+	for _, c := range []struct {
+		name  string
+		files map[string]string
+		want  []string
+		root  string // the E0207's root, "" for its own
+		note  string // in the E0207's gen note
+	}{
+		{"failed line", map[string]string{"gn/gn.mk": fails},
+			[]string{"out/out.mk:3:1:E0903", "out/use.mk:3:9:E0207"}, "out/out.mk:3:1", "failed and emitted nothing"},
+		{"poisoned line", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n    unused := 1\n" + emit},
+			[]string{"gn/gn.mk:2:5:E0208", "out/use.mk:3:9:E0207"}, "gn/gn.mk:2:5", "`gn`, which it depends on"},
+		{"error before types in the generator's import", map[string]string{"gn/gn.mk": "import a\n\nexport Make(g: mut Gen) {\n    _ = a.F()\n" + emit,
+			"a/a.mk": twice},
+			[]string{"a/a.mk:5:1:E0206", "out/use.mk:3:9:E0207"}, "a/a.mk:5:1", "`a`, which it depends on"},
+		{"a name of the module", map[string]string{"gn/gn.mk": fails, "out/use.mk": "export struct Made {\n    x: int\n}\n\n" + pick},
+			[]string{"out/use.mk:7:9:E0207"}, "", ""},
+		{"a line that ran", map[string]string{"gn/gn.mk": "export Make(g: mut Gen) {\n" + strings.Replace(emit, `"Made"`, `"Other"`, 1)},
+			[]string{"out/use.mk:3:9:E0207"}, "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			files := map[string]string{"pkg.mk": libManifest(), "out/out.mk": "import gn\n\ngen gn.Make()\n", "out/use.mk": pick}
+			for p, text := range c.files {
+				files[p] = text
+			}
+			cfg := Config{Root: writeTree(t, files), CacheDir: t.TempDir()}
+			cold := frontCheck(t, cfg)
+			expectLines(t, cold, c.want...)
+			for i, e := range cold.Report.Diags {
+				d := e.Diag
+				if d.Code != diag.E0207 {
+					continue
+				}
+				g, _ := d.FactValue("gen")
+				gl, cites := d.FactValue("gen_line")
+				if c.root == "" {
+					if e.Root != i+1 || d.Cause != nil || cites {
+						t.Errorf("E0207 root %d, cause %v, gen_line %v; want its own root and no gen line\n%s",
+							e.Root, d.Cause, cites, cold.Report.Text(cold.Sources))
+					}
+					continue
+				}
+				r := cold.Report.Diags[e.Root-1].Diag
+				if got := diag.Location(cold.Sources, r.At); got != c.root || !cites ||
+					diag.Location(cold.Sources, gl.At) != "out/out.mk:3:1" || !strings.Contains(g.Str, c.note) {
+					t.Errorf("E0207's root at %s, gen_line %v, gen note %q; want root %s, the line out/out.mk:3:1 and %q\n%s",
+						got, cites, g.Str, c.root, c.note, cold.Report.Text(cold.Sources))
 				}
 			}
 			if warm := frontCheck(t, cfg); string(jsonOf(t, warm)) != string(jsonOf(t, cold)) {
