@@ -145,6 +145,7 @@ Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange fr
 Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
 Client.DoStreaming(&self, a: &Arena, io: Io, req: &ClientRequest, body: mut Reader, len: ?i64): http.Error!Exchange from a, self
 Client.Drive(&self, io: Io): Canceled!void
+Client.WaitDriving(&self, io: Io): Canceled!bool
 Client.Stop(&self)
 Client.Close(self)
 http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void

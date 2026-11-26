@@ -118,6 +118,11 @@ Session(sys: &System, io: Io, o: &Options): int *o into sys {
     scope background := io.Scope() {
         if limits.h3.IsSome() {
             background.go Drive(&c, io)
+            ready := c.WaitDriving(io) else { false }
+            if !ready {
+                c.Stop()
+                return Fatal(sys, 28, "connection driver did not start")
+            }
         }
         result = TransferSession(sys, io, o, &c, &client_cfg, mut jar)
         c.Stop()
