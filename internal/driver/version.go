@@ -74,6 +74,7 @@ func VersionText(llvmDir string) string {
 	fmt.Fprintf(&b, "mk build %s (%s %s/%s)\n", id.String()[:16], runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	// tools/release build compares this with the bundle's clang.
 	fmt.Fprintf(&b, "llvm tested %d (supported %d or newer)\n", toolchain.MaxTestedMajor, toolchain.MinMajor)
+	b.WriteString(sysViewVersionLine()) // sdkinfo.go
 	// A binary built with a toolchain experiment baked in says so; a
 	// default binary prints nothing here.
 	if t, err := toolchain.Baked(); err != nil {

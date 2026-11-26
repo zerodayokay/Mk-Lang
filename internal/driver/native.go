@@ -777,7 +777,7 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	var lerr error
 	j.timed("link", func() { lerr = tools.Link(ctx, job) })
 	if lerr != nil {
-		return "", plan.linkErrWith(lerr, work)
+		return "", w.sysViewLinkHints(plan.linkErrWith(lerr, work), lerr, work)
 	}
 	w.packs.noteLink()
 	pdb := pdbOf(job)

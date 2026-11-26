@@ -76,7 +76,8 @@ export struct CSource {
 /// to bind ("int MAX(int a, int b)"), whether the per-target bindings
 /// under gen/<target>/c/ are read when a target's headers are absent, and
 /// the package-relative directories searched for headers after the package
-/// root (by the translation, the shim and the package's C sources alike).
+/// root (by the translation, the shim and the package's C sources alike),
+/// and whether the headers are read with the host's SDK (sdk: true).
 export struct CImport {
     export name: str
     export headers: []str
@@ -84,6 +85,7 @@ export struct CImport {
     export macros: []str
     export vendor: bool
     export include_dirs: []str
+    export sdk: bool
 }
 
 /// An assembly source file (.s, or .S through the preprocessor), assembled

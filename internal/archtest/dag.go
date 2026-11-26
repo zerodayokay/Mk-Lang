@@ -25,7 +25,7 @@ type Edge struct {
 // below lists every internal package the driver may import: everything but
 // itself, the packages above it (corpus, stdtest, lsp, repl and cmd/mk),
 // archtest and the tools.
-var below = []string{"cimport", "fetch", "git", "release", "format", "toolchain", "cache", "iface", "codegen", "pgo", "llvm", "abi", "mono", "gen",
+var below = []string{"cimport", "sysview", "fetch", "git", "release", "format", "toolchain", "cache", "iface", "codegen", "pgo", "llvm", "abi", "mono", "gen",
 	"eval", "borrow", "lower", "check", "fmtspec", "resolve", "syntax", "mir", "types", "ast", "diag", "source", "std"}
 
 // DAG is the package hierarchy, row by row. A package missing here, or an
@@ -38,7 +38,8 @@ var DAG = []Edge{
 	{"corpus", []string{"driver", "diag", "source"}},
 	{"stdtest", []string{"driver", "check", "resolve", "syntax", "ast", "types", "diag", "source", "std"}},
 	{"driver", below},
-	{"cimport", []string{"toolchain", "cache", "types", "diag", "source"}},
+	{"cimport", []string{"sysview", "toolchain", "cache", "types", "diag", "source"}},
+	{"sysview", nil}, // the system view archives: standard library only
 	{"fetch", []string{"git", "cache", "diag", "source"}},
 	{"git", []string{"source"}},     // git sources for the package fetcher
 	{"release", []string{"source"}}, // release archives for mk upgrade
@@ -72,6 +73,9 @@ var DAG = []Edge{
 	{"tools/dogfood", []string{"tools/machinelock"}},
 	{"tools/machinelock", nil},
 	{"tools/synth", nil},
+	// The system view generator: the importer and the check through the
+	// driver, the archives.
+	{"tools/sysview", []string{"driver", "sysview"}},
 	// The release tool: the archive format and keys, the tree hash, the tag
 	// read.
 	{"tools/release", []string{"release", "fetch", "git"}},

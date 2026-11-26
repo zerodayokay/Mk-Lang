@@ -26,8 +26,11 @@ import (
 // headers for a Windows SDK go under the cache's msvch directory (the
 // OS's temporary directory with no cache), named by their content, so the
 // path stays the same from build to build.
-func (s *Session) cSystem(target string) (cimport.System, *diag.Diagnostic) {
-	dirs := sysrootFor(target, os.Getenv)
+func (s *Session) cSystem(target string, man *Manifest) (cimport.System, *diag.Diagnostic) {
+	dirs, d := s.sysrootOf(target, man) // sdkimport.go
+	if d != nil {
+		return cimport.System{}, d
+	}
 	base := ""
 	if cimport.SysrootFlavour(target, dirs) == cimport.FlavourMicrosoft {
 		base = filepath.Join(os.TempDir(), "mk-msvch")
@@ -47,7 +50,7 @@ func (s *Session) cSystem(target string) (cimport.System, *diag.Diagnostic) {
 // cRequest is the translation request of the C imports of man (the
 // package at osRoot) for target, without its work directory.
 func (s *Session) cRequest(imports []cimport.Import, man *Manifest, osRoot, target string) (cimport.Request, *diag.Diagnostic) {
-	sys, d := s.cSystem(target)
+	sys, d := s.cSystem(target, man)
 	return cimport.Request{Target: target, Triple: sys.Triple, Imports: imports,
 		Include: cIncludeDirs(man, osRoot), Sysroot: sys.Dirs}, d
 }
