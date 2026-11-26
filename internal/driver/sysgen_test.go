@@ -14,6 +14,7 @@ package driver
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -143,5 +144,108 @@ func TestSysGen_DropsWhatDoesNotCheck(t *testing.T) {
 	}
 	if bad, err := checkWholeViews(tools, "x86_64-windows", views); err != nil || len(bad) != 0 {
 		t.Fatalf("after the drop: %v %v", bad, err)
+	}
+}
+
+// TestSysGen_ImplibLinks: import libraries populate Item.Link (classic
+// DLLs eager, everything else Lazy: true), functions in no library stay
+// empty, and still-ambiguous functions stay unlinked and are listed.
+func TestSysGen_ImplibLinks(t *testing.T) {
+	tools := needTools(t)
+	inc := "Include/10.0.1.0/"
+	libDir := "Lib/10.0.1.0/um/x64/"
+	root := writeTree(t, map[string]string{
+		inc + "ucrt/readme.txt":   "the ucrt\n",
+		inc + "shared/readme.txt": "shared\n",
+		inc + "um/winnt.h":        "#pragma once\ntypedef void *HANDLE;\nint CloseHandle(HANDLE h);\n",
+		inc + "um/windows.h": "#pragma once\n#include <winnt.h>\ntypedef unsigned long DWORD;\n" +
+			"typedef struct HWND__ { int unused; } *HWND;\nDWORD GetCurrentProcessId(void);\n" +
+			"int BCryptGenRandom(void);\nint AmbigFn(void);\nint CrtOnly(void);\n",
+		inc + "um/windowsx.h":       "#pragma once\n",
+		inc + "um/dxgidebug.h":      "#pragma once\n",
+		inc + "um/dxgi1_6.h":        "#pragma once\n#include <windows.h>\nint CreateDXGIFactory2(unsigned int f);\n",
+		inc + "um/d3d12sdklayers.h": "#pragma once\n",
+		inc + "um/d3d12.h":          "#pragma once\n#include <dxgi1_6.h>\nint D3D12CreateDevice(void);\n",
+		inc + "um/d3dcompiler.h":    "#pragma once\n#include <d3d12.h>\nint D3DCompile(void);\n",
+	})
+	writeLib := func(name string, specs []shortImportSpec) {
+		p := filepath.Join(root, filepath.FromSlash(libDir+name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, makeShortImportLib(specs), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLib("kernel32.lib", []shortImportSpec{
+		{memberName: "k1", sym: "CloseHandle", dll: "KERNEL32.dll", nameType: 1},
+		{memberName: "k2", sym: "GetCurrentProcessId", dll: "KERNEL32.dll", nameType: 1},
+	})
+	writeLib("dxgi.lib", []shortImportSpec{
+		{memberName: "dx1", sym: "CreateDXGIFactory2", dll: "dxgi.dll", nameType: 1},
+	})
+	writeLib("d3d12.lib", []shortImportSpec{
+		{memberName: "d1", sym: "D3D12CreateDevice", dll: "d3d12.dll", nameType: 0, ordinal: 101},
+	})
+	writeLib("d3dcompiler.lib", []shortImportSpec{
+		{memberName: "dc1", sym: "D3DCompile", dll: "D3DCOMPILER_47.dll", nameType: 1},
+	})
+	writeLib("bcrypt.lib", []shortImportSpec{
+		{memberName: "b1", sym: "BCryptGenRandom", dll: "bcrypt.dll", nameType: 1},
+	})
+	writeLib("ncrypt.lib", []shortImportSpec{
+		{memberName: "nc1", sym: "BCryptGenRandom", dll: "ncrypt.dll", nameType: 1},
+	})
+	writeLib("foo.lib", []shortImportSpec{{memberName: "f1", sym: "AmbigFn", dll: "foo.dll", nameType: 1}})
+	writeLib("bar.lib", []shortImportSpec{{memberName: "b1", sym: "AmbigFn", dll: "bar.dll", nameType: 1}})
+
+	res, err := GenerateSystemViews(SysGenOptions{WindowsSDK: root, Tools: tools})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]SysGenView{}
+	for _, v := range res.Views {
+		byName[v.View.Meta.Name] = v
+	}
+	linkOf := func(view, fn string) sysview.Link {
+		a, err := sysview.Open(byName[view].Archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		idx := a.Lookup(fn)
+		if len(idx) != 1 {
+			t.Fatalf("%s.%s lookup = %v", view, fn, idx)
+		}
+		lk, err := a.ItemLink(idx[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return lk
+	}
+	for _, tc := range []struct {
+		view, fn string
+		want     sysview.Link
+	}{
+		{"windows", "GetCurrentProcessId", sysview.Link{Lib: "kernel32.dll", Lazy: false}},
+		{"windows", "BCryptGenRandom", sysview.Link{Lib: "bcrypt.dll", Lazy: true}},
+		{"windows", "AmbigFn", sysview.Link{}},
+		{"windows", "CrtOnly", sysview.Link{}},
+		{"dxgi", "CreateDXGIFactory2", sysview.Link{Lib: "dxgi.dll", Lazy: true}},
+		{"d3d12", "D3D12CreateDevice", sysview.Link{Lib: "d3d12.dll", Lazy: true}},
+		{"d3dcompiler", "D3DCompile", sysview.Link{Lib: "d3dcompiler_47.dll", Lazy: true}},
+	} {
+		if got := linkOf(tc.view, tc.fn); got != tc.want {
+			t.Errorf("%s.%s Link = %+v, want %+v", tc.view, tc.fn, got, tc.want)
+		}
+	}
+	win := byName["windows"]
+	if len(win.Ambiguous) != 1 || win.Ambiguous[0].Name != "AmbigFn" || !slices.Equal(win.Ambiguous[0].Libs, []string{"bar.dll", "foo.dll"}) {
+		t.Fatalf("windows Ambiguous = %+v", win.Ambiguous)
+	}
+	a, _ := sysview.Open(win.Archive)
+	txt := sysview.ManifestTextUnlinked("x86_64-windows", []sysview.Meta{win.View.Meta}, [][32]byte{a.ID()},
+		[][]sysview.Dropped{win.Dropped}, [][]sysview.Ambiguous{win.Ambiguous})
+	if !strings.Contains(txt, "  unlinked  AmbigFn: ambiguous (bar.dll, foo.dll)\n") {
+		t.Errorf("views.txt missing unlinked entry:\n%s", txt)
 	}
 }

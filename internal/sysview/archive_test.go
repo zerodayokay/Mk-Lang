@@ -92,6 +92,9 @@ func TestSysview_RoundTrip(t *testing.T) {
 					got.Raw != want.Raw || got.Link != want.Link || !slices.Equal(got.Defs, want.Defs) || !slices.Equal(got.Deps, want.Deps) {
 					t.Errorf("%+v: %s item %d:\n got %+v\nwant %+v", o, v.Meta.Name, i, got, want)
 				}
+				if lk, err := a.ItemLink(i); err != nil || lk != want.Link {
+					t.Errorf("%+v: %s item %d ItemLink = %+v, %v; want %+v", o, v.Meta.Name, i, lk, err, want.Link)
+				}
 			}
 		}
 	}

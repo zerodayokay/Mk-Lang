@@ -54,6 +54,9 @@ type sysViews struct {
 	missing map[string]string
 	// funcs maps each function a kept item binds to its view's name.
 	funcs map[string]string
+	// links maps each kept function with a link entry to its DLL and
+	// lazy-binding flag.
+	links map[string]sysview.Link
 	// key is the extraction's cache key; hit: the texts came from the cache.
 	key source.Hash
 	hit bool
@@ -204,6 +207,7 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 	}
 	sv.mods = map[string]*modNode{}
 	sv.funcs = map[string]string{}
+	sv.links = map[string]sysview.Link{}
 	var added []*modNode
 	for _, em := range mods {
 		row, _ := sysview.Named(em.Name)
@@ -221,6 +225,11 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 		for _, fn := range em.Funcs {
 			sv.funcs[fn] = em.Name
 		}
+		for _, lk := range em.Links {
+			if lk.Lib != "" {
+				sv.links[lk.Func] = sysview.Link{Lib: lk.Lib, Lazy: lk.Lazy}
+			}
+		}
 	}
 	for _, m := range added {
 		for _, f := range m.files {
@@ -233,18 +242,26 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 	return ds
 }
 
+// extractedLink is one kept function's link entry as the cache stores it.
+type extractedLink struct {
+	Func string
+	Lib  string
+	Lazy bool
+}
+
 // extracted is one view's module as the cache stores it.
 type extracted struct {
 	Name  string
 	Text  string
-	Funcs []string // the functions its kept items bind
+	Funcs []string        // the functions its kept items bind
+	Links []extractedLink // kept functions carrying a link entry
 }
 
 // extract is the modules of names (wanted names by view, sorted) from set,
 // from the cache when its key is there. The key is the archives'
 // identities, by view name, and the names wanted.
 func (sv *sysViews) extract(w *world, set sysview.Set, names map[string][]string, whole bool) ([]extracted, *diag.Diagnostic) {
-	h := source.NewHasher("mk.driver.sysview.v1")
+	h := source.NewHasher("mk.driver.sysview.v2")
 	for _, v := range slices.Sorted(maps.Keys(set)) {
 		id := set[v].ID()
 		h.String(v)
@@ -280,6 +297,11 @@ func (sv *sysViews) extract(w *world, set sysview.Set, names map[string][]string
 		for _, it := range m.Items {
 			if kind, defs, err := a.Head(it); err == nil && kind == "func" {
 				out[i].Funcs = append(out[i].Funcs, defs...)
+				if lk, err := a.ItemLink(it); err == nil && lk.Lib != "" {
+					for _, d := range defs {
+						out[i].Links = append(out[i].Links, extractedLink{Func: d, Lib: lk.Lib, Lazy: lk.Lazy})
+					}
+				}
 			}
 		}
 	}

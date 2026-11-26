@@ -53,13 +53,14 @@ func main() {
 		var metas []sysview.Meta
 		var ids [][32]byte
 		var dropped [][]sysview.Dropped
+		var unlinked [][]sysview.Ambiguous
 		for _, v := range byTarget[t] {
 			a, err := sysview.Open(v.Archive)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "sysview: %v\n", err)
 				os.Exit(1)
 			}
-			metas, ids, dropped = append(metas, v.View.Meta), append(ids, a.ID()), append(dropped, v.Dropped)
+			metas, ids, dropped, unlinked = append(metas, v.View.Meta), append(ids, a.ID()), append(dropped, v.Dropped), append(unlinked, v.Ambiguous)
 			p := filepath.Join(dir, sysview.ArchiveName(v.View.Meta.Name))
 			if *check {
 				old, err := os.ReadFile(p)
@@ -86,7 +87,7 @@ func main() {
 			fmt.Printf("%s: %d items (%d dropped), %d bytes\n", p, len(v.View.Items), len(v.Dropped), len(v.Archive))
 		}
 		if !*check {
-			text := sysview.ManifestText(t, metas, ids, dropped)
+			text := sysview.ManifestTextUnlinked(t, metas, ids, dropped, unlinked)
 			if err := os.WriteFile(filepath.Join(dir, sysview.ManifestName), []byte(text), 0o644); err != nil {
 				fmt.Fprintf(os.Stderr, "sysview: %v\n", err)
 				os.Exit(1)

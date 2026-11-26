@@ -6,7 +6,8 @@
 // which runs the importer once per target over sysview.Table's rows (one
 // translation unit, one import per row, the Microsoft flavour with mk's
 // toolset headers), cuts the bindings into items, drops what only a shim
-// defines and what does not check, and encodes one archive per view.
+// defines and what does not check, populates Link entries from the SDK's
+// import libraries, and encodes one archive per view.
 //
 // How: the whole extracted text of every view is checked as the vendored C
 // imports of a scratch package (pruning off), each a C-import module exactly
@@ -47,10 +48,11 @@ type SysGenOptions struct {
 
 // SysGenView is one generated view.
 type SysGenView struct {
-	View    sysview.View
-	Archive []byte
-	Dropped []sysview.Dropped
-	Stats   cimport.Stats
+	View      sysview.View
+	Archive   []byte
+	Dropped   []sysview.Dropped
+	Ambiguous []sysview.Ambiguous
+	Stats     cimport.Stats
 }
 
 // SysGenResult is every generated view, by target then table order, and
@@ -94,6 +96,7 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 		var rows []sysview.Row
 		var sysroot, inputs []string
 		version := map[string]string{}
+		var implibs *implibIndex
 		for _, r := range sysview.ForTarget(target) {
 			why := ""
 			switch r.Input {
@@ -109,6 +112,14 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 				if !slices.Contains(inputs, string(r.Input)) {
 					sysroot = append(sysroot, windowsSDKDirs(inc)...)
 					inputs = append(inputs, string(r.Input))
+					if libDir := windowsSDKLibDir(o.WindowsSDK); libDir != "" {
+						idx, err := readImplibDir(libDir)
+						if err != nil {
+							return nil, err
+						}
+						implibs = idx
+						logf("read import libraries from %s", libDir)
+					}
 				}
 				version[string(r.Input)] = v
 			case sysview.InputVulkanHeaders:
@@ -148,7 +159,7 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 		if len(rows) == 0 {
 			continue
 		}
-		views, err := generateTarget(tools, target, rows, sysroot, version, logf)
+		views, err := generateTarget(tools, target, rows, sysroot, version, implibs, logf)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +170,7 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 
 // generateTarget translates rows (one target's, in table order) as one
 // unit and returns their checked views.
-func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, sysroot []string, version map[string]string, logf func(string, ...any)) ([]SysGenView, error) {
+func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, sysroot []string, version map[string]string, implibs *implibIndex, logf func(string, ...any)) ([]SysGenView, error) {
 	ctx := context.Background()
 	rd, err := tools.ResourceDir(ctx)
 	if err != nil {
@@ -226,6 +237,23 @@ func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, s
 	out := make([]SysGenView, len(views))
 	for i, v := range views {
 		r := rows[i]
+		var ambig []sysview.Ambiguous
+		linked := 0
+		if implibs != nil {
+			for k := range v.Items {
+				if v.Items[k].Kind != "func" {
+					continue
+				}
+				dll, lazy, amb := implibs.resolve(v.Items[k].Name)
+				if dll != "" {
+					v.Items[k].Link = sysview.Link{Lib: dll, Lazy: lazy}
+					linked++
+				} else if len(amb) > 0 {
+					ambig = append(ambig, sysview.Ambiguous{Name: v.Items[k].Name, Libs: amb})
+					logf("c.%s: %s left unlinked (ambiguous: %s)", v.Meta.Name, v.Items[k].Name, strings.Join(amb, ", "))
+				}
+			}
+		}
 		in := map[string]string{"importer": cimport.ImporterFormat, "clang": tools.Version.String(),
 			string(r.Input): version[string(r.Input)]}
 		if sys.Flavour == cimport.FlavourMicrosoft {
@@ -240,11 +268,15 @@ func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, s
 		}
 		v.Meta.Target, v.Meta.Headers, v.Meta.Defines, v.Meta.Inputs = target, r.Headers, r.DefinesFor(target), in
 		v.Meta.Counts = map[string]int{"declarations": st.Decls, "bound": st.Bound(), "items": len(v.Items), "dropped": len(mine)}
+		if implibs != nil {
+			v.Meta.Counts["linked"] = linked
+			v.Meta.Counts["ambiguous"] = len(ambig)
+		}
 		data, err := sysview.Write(v.Meta, v.Items, sysview.DefaultOptions)
 		if err != nil {
 			return nil, err
 		}
-		out[i] = SysGenView{View: v, Archive: data, Dropped: mine, Stats: st}
+		out[i] = SysGenView{View: v, Archive: data, Dropped: mine, Ambiguous: ambig, Stats: st}
 		logf("c.%s for %s: %d items, %d dropped, %d bytes", v.Meta.Name, target, len(v.Items), len(mine), len(data))
 	}
 	return out, nil

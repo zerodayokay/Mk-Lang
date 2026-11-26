@@ -34,6 +34,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -190,6 +191,24 @@ func (w *world) computeLazy() *lazyBinds {
 			if !eager[s] && !claimed[s] && b.of[s] == nil {
 				b.of[s] = lib
 			}
+		}
+	}
+	if w.sysviews != nil && len(w.sysviews.links) > 0 {
+		var sysExp map[string]string
+		for _, s := range slices.Sorted(maps.Keys(w.sysviews.links)) {
+			lk := w.sysviews.links[s]
+			if lk.Lib == "" || !lk.Lazy || eager[s] || claimed[s] || b.of[s] != nil {
+				continue
+			}
+			if runtime.GOOS == "windows" && !testNoSystem32 {
+				if sysExp == nil {
+					sysExp = systemExports()
+				}
+				if _, ok := sysExp[s]; ok {
+					continue
+				}
+			}
+			b.of[s] = libFor(lk.Lib, lazySearchApplication)
 		}
 	}
 	if len(b.of) == 0 {

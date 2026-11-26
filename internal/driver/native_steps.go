@@ -424,7 +424,7 @@ func (l importLib) fileName() string {
 // system set. A name that binds lazily (lazylink.go) gets no import
 // library: it is returned in the lazy uses, for the lazy-binding object,
 // and a lazy link's .dll joins the plan's copies.
-func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *linkPlan) ([]importLib, lazyLink, []*diag.Diagnostic) {
+func (w *world) neededImportLibs(in *mono.Instances, cUndef, cobjs []string, plan *linkPlan) ([]importLib, lazyLink, []*diag.Diagnostic) {
 	t := w.stdTree()
 	ents, err := fs.ReadDir(t.fsys, "sys/windows")
 	if err != nil {
@@ -468,7 +468,10 @@ func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *link
 	if !plan.empty() {
 		libs, all = plan.namedImportLibs(libs, all)
 	}
-	return addSystemLibs(libs, all), lazy, nil
+	libs = addSystemLibs(libs, all)
+	libs = addSysViewLibs(libs, all, w.sysviews)
+	libs, ds := w.addSDKImportLibs(libs, in, cobjs, all)
+	return libs, lazy, ds
 }
 
 // windowsLibs is a Windows bin's import libraries (neededImportLibs), with
@@ -479,7 +482,7 @@ func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *link
 // other calls fail at link (E0001); a named link may supply them.
 func (w *world) windowsLibs(ctx context.Context, tools *toolchain.Tools, st *cache.Store, cfg codegen.Config, work string, insts *mono.Instances,
 	globals []codegen.Global, cobjs []string, plan *linkPlan) ([]importLib, []string, []source.Hash, []*diag.Diagnostic) {
-	specs, lazy, ds := w.neededImportLibs(insts, cObjectUndefined(shimObjects(cobjs)), plan)
+	specs, lazy, ds := w.neededImportLibs(insts, cObjectUndefined(shimObjects(cobjs)), cobjs, plan)
 	if len(ds) == 0 {
 		ds = w.externVarFaults(globals, cobjs, plan, specs)
 	}

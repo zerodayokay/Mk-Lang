@@ -18,15 +18,20 @@
 package driver
 
 import (
+	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"mk/internal/cimport"
 	"mk/internal/diag"
+	"mk/internal/mono"
 	"mk/internal/source"
 	"mk/internal/sysview"
+	"mk/internal/types"
 )
 
 // wantsSDK reports whether a C import of man says sdk: true.
@@ -147,4 +152,126 @@ func (ci *cImports) shareViews(w *world, builds []*build) *diag.Diagnostic {
 		ci.full[i] = shared
 	}
 	return nil
+}
+
+// addSDKImportLibs resolves remaining Windows extern symbols belonging to
+// `sdk: true` C imports against the host SDK's import libraries. An
+// ambiguous symbol is E0001 naming the candidate DLLs and the pkg.Link
+// entry to add, never a silent guess.
+func (w *world) addSDKImportLibs(libs []importLib, in *mono.Instances, cobjs, all []string) ([]importLib, []*diag.Diagnostic) {
+	allC := w.allCImports()
+	var sdkCIs []*cImports
+	ciByIdx := map[string]*cImports{}
+	modToCI := map[types.ModuleID]*cImports{}
+	for i, ci := range allC {
+		if !wantsSDK(ci.man) {
+			continue
+		}
+		sdkCIs = append(sdkCIs, ci)
+		ciByIdx["c"+strconv.Itoa(i)] = ci
+		if ci.b != nil {
+			for _, m := range ci.b.mods {
+				modToCI[m.id] = ci
+			}
+		}
+	}
+	if len(sdkCIs) == 0 {
+		return libs, nil
+	}
+	have := map[string]bool{}
+	for _, l := range libs {
+		for _, n := range l.names {
+			have[n] = true
+		}
+	}
+	need := map[string]bool{}
+	for _, n := range all {
+		if !have[n] {
+			need[n] = true
+		}
+	}
+	if len(need) == 0 {
+		return libs, nil
+	}
+	symOwner := map[string]*cImports{}
+	for i := range in.List {
+		if in.List[i].Body != nil || !need[in.List[i].Symbol] {
+			continue
+		}
+		it := w.items.Get(in.List[i].Item)
+		fd, ok := it.Decl.(*types.FuncDecl)
+		if !ok || !fd.Sig.Extern {
+			continue
+		}
+		if ci := modToCI[it.Module]; ci != nil && symOwner[in.List[i].Symbol] == nil {
+			symOwner[in.List[i].Symbol] = ci
+		}
+	}
+	for _, o := range shimObjects(cobjs) {
+		ci := ciByIdx[filepath.Base(filepath.Dir(o))]
+		if ci == nil && len(sdkCIs) == 1 {
+			ci = sdkCIs[0]
+		}
+		if ci == nil {
+			continue
+		}
+		for _, u := range cObjectUndefined([]string{o}) {
+			if need[u] && symOwner[u] == nil {
+				symOwner[u] = ci
+			}
+		}
+	}
+	if len(symOwner) == 0 {
+		return libs, nil
+	}
+	cacheIdx := map[string]*implibIndex{}
+	indexFor := func(ci *cImports) *implibIndex {
+		dirs := sdkLibDirs(ci.sysdir)
+		if len(dirs) == 0 {
+			return nil
+		}
+		key := strings.Join(dirs, "\x00")
+		if idx, ok := cacheIdx[key]; ok {
+			return idx
+		}
+		idx := mergeImplibDirs(dirs)
+		cacheIdx[key] = idx
+		return idx
+	}
+	extra := map[string][]string{}
+	var ds []*diag.Diagnostic
+	for _, sym := range slices.Sorted(maps.Keys(symOwner)) {
+		ci := symOwner[sym]
+		dll, _, amb := indexFor(ci).resolve(sym)
+		if len(amb) > 0 {
+			ds = append(ds, diag.New(diag.E0001, ci.at, fmt.Sprintf(
+				"symbol %s from sdk: true C import %s is exported by multiple SDK libraries (%s): add `pkg.Link(name: %q, kind: \"dynamic\", path: \"\", target: %q)` to pkg.mk",
+				sym, sdkImportLabel(ci), strings.Join(amb, ", "), amb[0], w.cfg.Target.Name)).
+				Text("tool", "mk").Text("symbol", sym))
+			continue
+		}
+		if dll != "" {
+			extra[dll] = append(extra[dll], sym)
+		}
+	}
+	if len(ds) > 0 {
+		return nil, ds
+	}
+	return mergeImportLibs(libs, extra), nil
+}
+
+// sdkImportLabel names the C import(s) of ci for an ambiguity error.
+func sdkImportLabel(ci *cImports) string {
+	var names []string
+	if ci.man != nil {
+		for _, c := range ci.man.CImports {
+			if c.SDK {
+				names = append(names, "c."+c.Name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return "c"
+	}
+	return strings.Join(names, ", ")
 }

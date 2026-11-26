@@ -3,8 +3,8 @@
 // never a crash.
 //
 // What: Archive, Open (header checks, the index's tables taken in place),
-// and the reads: Meta, ID, Len, Head, Item, ItemDeps, Lookup and Text (the texts
-// of a set of items, inflating only the chunks that hold them).
+// and the reads: Meta, ID, Len, Head, Item, ItemDeps, ItemLink, Lookup and Text
+// (the texts of a set of items, inflating only the chunks that hold them).
 //
 // How: the index's fixed-width tables are sliced out of the archive's bytes
 // and read with binary.LittleEndian on demand; an item's record is decoded
@@ -206,6 +206,18 @@ func (a *Archive) record(i int) (record, error) {
 func (a *Archive) ItemDeps(i int) ([]Ref, bool, error) {
 	e, err := a.record(i)
 	return e.deps, e.flags&1 != 0, err
+}
+
+// ItemLink returns item i's link entry from the index without reading its text.
+func (a *Archive) ItemLink(i int) (Link, error) {
+	e, err := a.record(i)
+	if err != nil {
+		return Link{}, err
+	}
+	if e.lib == 0 {
+		return Link{}, nil
+	}
+	return Link{Lib: string(a.str(e.lib - 1)), Lazy: e.flags&2 != 0}, nil
 }
 
 // Head is item i's kind and the names it defines, its text not read.
