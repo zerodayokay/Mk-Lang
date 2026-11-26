@@ -24,6 +24,7 @@ const ExtCookie: u16 = 44
 const ExtPskModes: u16 = 45
 const ExtSignatureAlgorithmsCert: u16 = 50
 const ExtKeyShare: u16 = 51
+const ExtQuicParams: u16 = 57 // 0x39, RFC 9001 8.2
 const ExtRenegotiationInfo: u16 = 0xff01
 
 // The named groups std.tls builds (RFC 8446 4.2.7).

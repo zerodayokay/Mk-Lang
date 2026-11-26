@@ -16,6 +16,7 @@ import std.tls
 - [Configuration](#configuration)
 - [Connections](#connections)
 - [Connectors for HTTP and WebSockets](#connectors-for-http-and-websockets)
+- [QUIC handshakes](#quic-handshakes)
 - [Errors](#errors)
 - [Time limits and cancellation](#time-limits-and-cancellation)
 - [Examples](#examples): [a TLS echo](#a-tls-echo), [talk to a server](#talk-to-a-server), [serve https](#serve-https)
@@ -34,6 +35,7 @@ import std.tls
 | End a connection | `Conn.Close`, or `Conn.Abandon` on an error path |
 | `https` and `wss` clients | `Connector(&cfg)` in `http.ClientLimits.secure` or `websocket.Options.secure` |
 | An `https` server | `Acceptor(&cfg)` in `http.ServerOptions.secure` |
+| QUIC TLS 1.3 handshake | `QuicClient` and `QuicServer` over a `QuicTransport` |
 
 ## What it speaks
 
@@ -94,6 +96,17 @@ Secure(h: &Heap, io: Io, conn: net.Conn, host: str): tls.Error!tls.Conn from h, 
 - `Acceptor(&cfg)` makes each accepted connection go through `Server` with `cfg`. Put it in `http.ServerOptions.secure`.
 
 Both borrow `cfg`, so whatever holds them cannot outlive the `Config`. Through `net.Secure.Negotiate` (provisional) a caller offers, or accepts, its own protocols in place of `cfg.alpn` for one handshake, with the same checks, and learns the one chosen as an index into its list. A failed handshake through them is `net.SecureFailed(why)`: `Handshake` for an alert or a protocol fault, and, from a client, `BadCertificate`, `UnknownAuthority`, `Expired` or `NameMismatch` for the chain. One past the handshake limit is `time.TimedOut`. Past the handshake, an alert or protocol fault on the connection is `net.SecureFailed(why: Protocol)`. See [Make an HTTPS request](../cookbook.md#make-an-https-request).
+
+## QUIC handshakes
+
+`QuicClient` and `QuicServer` run the TLS 1.3 handshake over a caller's [`QuicTransport`](#quictransport) (RFC 9001), exchanging CRYPTO bytes by [`QuicLevel`](#quiclevel) (`Initial`, `Handshake`, `Application`), delivering level traffic secrets with their [`QuicSuite`](#quicsuite) (`Aes128Gcm`, `Aes256Gcm`, `Chacha20Poly1305`), passing the peer's `quic_transport_parameters` (0x39), and returning [`QuicDone`](#quicdone) with the agreed `Alpn()`.
+
+QUIC handshakes enforce RFC 9001's restrictions regardless of `Config`:
+
+- TLS 1.3 only (`min_version` is ignored; `TLS_AES_128_CCM_8_SHA256` is never selected).
+- Empty `legacy_session_id` and no `ChangeCipherSpec`; a server that receives a non-empty `legacy_session_id` fails with `Protocol` without calling `Alert`.
+- ALPN (`alpn`) and `quic_transport_parameters` (0x39) are mandatory on both sides (missing or mismatched ALPN sends `no_application_protocol`, 0x0178; missing 0x39 sends `missing_extension`, 0x016d). Over TCP, receiving 0x39 sends a fatal `unsupported_extension` alert.
+- Every TLS alert is fatal (`QuicTransport.Alert`), while unconsumed CRYPTO bytes at an encryption level change fail with `Protocol` without calling `Alert`.
 
 ## Errors
 
@@ -603,6 +616,101 @@ export error Protocol
 The peer broke the protocol: a malformed or unexpected message or
 record, a bad Finished or signature, or a value RFC 8446 forbids. The
 connection sent the matching alert before it failed.
+
+### `QuicClient`
+
+```
+export QuicClient[T: QuicTransport](h: &Heap, io: Io, t: mut T, c: &Config, host: str, alpn: []str, params: []u8): Error!QuicDone
+```
+
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+
+Runs the client's TLS 1.3 handshake over t for host, offering alpn
+(mandatory) and sending params as quic_transport_parameters, under
+c.handshake. Always TLS 1.3 with an empty legacy_session_id and no
+ChangeCipherSpec (RFC 9001 4, 8). Errors: the peer's Alert or t's
+errors, Protocol and Unsupported (after t.Alert for TLS alerts;
+without t.Alert for connection-level violations such as unconsumed
+bytes at a level change), x509.Error, Canceled, time.TimedOut past
+c.handshake, OutOfMemory. O(handshake); allocates the handshake arena
+on h, freed before returning.
+
+### `QuicDone`
+
+```
+export struct QuicDone
+```
+
+What a finished QUIC handshake chose.
+
+### `QuicDone.Alpn`
+
+```
+export QuicDone.Alpn(&self): str from self
+```
+
+- Flows: The result borrows from self.
+
+The protocol both sides agreed on (never empty in QUIC). O(1);
+allocates nothing.
+
+### `QuicLevel`
+
+```
+export enum QuicLevel
+```
+
+The levels QUIC carries TLS messages at (RFC 9001 4.1.4); 0-RTT is not built.
+
+Variants:
+
+- `Initial`
+- `Handshake`
+- `Application`
+
+### `QuicServer`
+
+```
+export QuicServer[T: QuicTransport](h: &Heap, io: Io, t: mut T, c: &Config, alpn: []str, params: []u8): Error!QuicDone
+```
+
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+
+Runs the server's TLS 1.3 handshake over t, requiring a protocol from
+alpn (mandatory) and sending params as quic_transport_parameters,
+under c.handshake. Errors: as QuicClient, plus Protocol without
+t.Alert when the client sent a non-empty legacy_session_id (RFC 9001
+8.4). O(handshake); allocates the handshake arena on h, freed before
+returning.
+
+### `QuicSuite`
+
+```
+export enum QuicSuite
+```
+
+The cipher suite a level's secrets are for (RFC 9001 5.3).
+
+Variants:
+
+- `Aes128Gcm`
+- `Aes256Gcm`
+- `Chacha20Poly1305`
+
+### `QuicTransport`
+
+```
+export interface QuicTransport {
+    Recv(mut self, io: Io, level: QuicLevel, buf: mut []u8): Error!int
+    Send(mut self, io: Io, level: QuicLevel, data: []u8): Error!void
+    Secret(mut self, level: QuicLevel, write: bool, suite: QuicSuite, secret: []u8): Error!void
+    PeerParams(mut self, params: []u8): Error!void
+    Alert(mut self, io: Io, code: u8)
+}
+```
+
+What std.tls asks of the QUIC connection that runs its handshake. An
+error from any method fails the handshake with it.
 
 ### `Server`
 

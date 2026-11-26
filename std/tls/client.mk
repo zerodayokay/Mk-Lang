@@ -57,6 +57,7 @@ struct Hs {
     have: int
     transcript: Transcript
     alert: u8
+    no_alert: bool
     ccs: bool
     big: bool
     hello_due: bool
@@ -66,14 +67,20 @@ struct Hs {
 // Hs.New is a handshake with an empty 16 KiB buffer on a; server says
 // whether it is a server's, which waits for the first ClientHello.
 Hs.New(a: &Arena, server: bool): OutOfMemory!Hs from a {
-    return Hs(a: a, buf: try a.Slice[u8](16384), have: 0, transcript: Transcript.New(), alert: 0, ccs: false, big: false,
-        hello_due: server, early: 0)
+    return Hs(a: a, buf: try a.Slice[u8](16384), have: 0, transcript: Transcript.New(), alert: 0, no_alert: false, ccs: false,
+        big: false, hello_due: server, early: 0)
 }
 
 // Bad sets the alert of the failure about to be reported and fails with
 // Protocol.
 Bad(alert: mut u8, code: u8): Protocol!void {
     *alert = code
+    fail Protocol
+}
+
+// BadNoAlert marks a QUIC protocol violation reported without a TLS alert.
+BadNoAlert(no_alert: mut bool): Protocol!void {
+    *no_alert = true
     fail Protocol
 }
 
@@ -254,10 +261,20 @@ struct Hello {
 // supported_versions, key_share with one share, ALPN when protocols are
 // offered, and the cookie after a HelloRetryRequest.
 WriteHello(w: mut Out, m: &Hello, s: &Shares) {
+    WriteHelloWith(w, m, s, false, b"")
+}
+
+// WriteHelloWith is WriteHello, in QUIC mode when quic is true (RFC 9001
+// 8.2, 8.4): empty legacy_session_id and quic_transport_parameters (0x39).
+WriteHelloWith(w: mut Out, m: &Hello, s: &Shares, quic: bool, params: []u8) {
     at := OpenMessage(w, HsClientHello)
     w.U16(WireTls12)
     w.Bytes(m.random[..])
-    w.Vec8(m.sid[..])
+    if quic {
+        w.Vec8(b"")
+    } else {
+        w.Vec8(m.sid[..])
+    }
     suites := w.Open(2)
     for x in m.suites {
         w.U16(x)
@@ -291,7 +308,7 @@ WriteHello(w: mut Out, m: &Hello, s: &Shares) {
     e3 := w.Open(2)
     l3 := w.Open(1)
     w.U16(WireTls13)
-    if Offers12(m) {
+    if !quic && Offers12(m) {
         w.U16(WireTls12)
     }
     w.Close(l3, 1)
@@ -318,7 +335,9 @@ WriteHello(w: mut Out, m: &Hello, s: &Shares) {
         w.Vec16(m.cookie)
         w.Close(e6, 2)
     }
-    if Offers12(m) {
+    if quic {
+        WriteExt(w, ExtQuicParams, params)
+    } else if Offers12(m) {
         WriteHello12Exts(w)
     }
     w.Close(exts, 2)
@@ -349,6 +368,12 @@ struct ServerSays {
 // the suite and the key_share data (or the HRR's selected group, key
 // empty), and the cookie when an HRR has one.
 CheckServerHello(alert: mut u8, sh: &ServerHello, m: &Hello, retry: bool): Error!(says: ServerSays, cookie: []u8) from sh {
+    return try CheckServerHelloWith(alert, sh, m, retry, false)
+}
+
+// CheckServerHelloWith is CheckServerHello, expecting an empty
+// legacy_session_id_echo when quic is true (RFC 9001 8.4).
+CheckServerHelloWith(alert: mut u8, sh: &ServerHello, m: &Hello, retry: bool, quic: bool): Error!(says: ServerSays, cookie: []u8) from sh {
     var it := ExtIter.New(sh.exts)
     var version: u16 = 0
     var share: ?[]u8 = none
@@ -372,7 +397,11 @@ CheckServerHello(alert: mut u8, sh: &ServerHello, m: &Hello, retry: bool): Error
     if version != WireTls13 || sh.version != WireTls12 || sh.compression != 0 {
         try Bad(alert, AlertIllegalParameter)
     }
-    if !crypto.Equal(sh.legacy_id, m.sid[..]) {
+    if quic {
+        if sh.legacy_id.Len() != 0 {
+            try Bad(alert, AlertIllegalParameter)
+        }
+    } else if !crypto.Equal(sh.legacy_id, m.sid[..]) {
         try Bad(alert, AlertIllegalParameter)
     }
     var offered := false
@@ -415,14 +444,27 @@ CheckServerHello(alert: mut u8, sh: &ServerHello, m: &Hello, retry: bool): Error
 // 3.1); any other extension was not asked for (unsupported_extension, 4.2).
 // Returns the chosen protocol, empty for none.
 CheckEncryptedExtensions(alert: mut u8, exts: []u8, m: &Hello): Protocol![]u8 from exts {
+    r := try CheckEncryptedExtensionsWith(alert, exts, m, false)
+    return r.alpn
+}
+
+// CheckEncryptedExtensionsWith is CheckEncryptedExtensions, in QUIC mode
+// when quic is true: requires quic_transport_parameters (0x39, RFC 9001
+// 8.2) and ALPN (0x0178, RFC 9001 8.1), refusing 0x39 when !quic (8.2).
+CheckEncryptedExtensionsWith(alert: mut u8, exts: []u8, m: &Hello, quic: bool): Protocol!(alpn: []u8, params: ?[]u8) from exts {
     var it := ExtIter.New(exts)
     var chosen: []u8 = exts[0..0]
+    var params: ?[]u8 = none
     for x := try it.Next() {
         if x.ty == ExtServerName && m.sni.Len() > 0 && x.data.Len() == 0 {
             continue
         }
         if x.ty == ExtSupportedGroups {
             _ = try ParseGroups(x.data)
+            continue
+        }
+        if x.ty == ExtQuicParams && quic {
+            params = some(x.data)
             continue
         }
         if x.ty == ExtAlpn && m.alpn.Len() > 0 {
@@ -442,14 +484,22 @@ CheckEncryptedExtensions(alert: mut u8, exts: []u8, m: &Hello): Protocol![]u8 fr
                 }
             }
             if !offered {
-                try Bad(alert, AlertIllegalParameter)
+                try Bad(alert, if quic { AlertNoApplicationProtocol } else { AlertIllegalParameter })
             }
             chosen = p
             continue
         }
         try Bad(alert, AlertUnsupportedExtension)
     }
-    return chosen
+    if quic {
+        if params.IsNone() {
+            try Bad(alert, AlertMissingExtension)
+        }
+        if chosen.Len() == 0 {
+            try Bad(alert, AlertNoApplicationProtocol)
+        }
+    }
+    return (alpn: chosen, params: params)
 }
 
 // SignedContent writes what a CertificateVerify signs (RFC 8446 4.4.3):
@@ -555,27 +605,34 @@ struct Chosen {
 // CertificateRequest, Certificate, CertificateVerify and Finished, then
 // the client's Finished, and both directions on the application keys.
 // alert gets the alert a failure reports.
-ClientFlights[W: Wire](h: &Heap, a: &Arena, io: Io, w: mut W, c: &Config, host: str, suites: []u16, params: []u8, alert: mut u8): Error!Chosen {
+ClientFlights[W: Wire](h: &Heap, a: &Arena, io: Io, w: mut W, c: &Config, host: str, suites: []u16, params: []u8, alert: mut u8, no_alert: mut bool): Error!Chosen {
     var hs := try Hs.New(a, false)
-    onerr { *alert = hs.alert }
+    onerr {
+        *alert = hs.alert
+        *no_alert = hs.no_alert
+    }
+    quic := w.Quic()
     var shares := Shares(x25519: [0; 32], x25519_pub: [0; 32], p256: none, p256_pub: [0; 65])
     defer shares.Wipe()
     try crypto.Random(io, mut shares.x25519[..])
     shares.x25519_pub = crypto.X25519(&shares.x25519, &X25519Base)
     var m := Hello(suites: suites, random: [0; 32], sid: [0; 32], sni: "", alpn: c.alpn, group: GroupX25519, cookie: b"")
-    if c.min_version == Version.Tls12 {
+    if !quic && c.min_version == Version.Tls12 {
         // The TLS 1.2 client is on (client12.mk).
         m.suites = try WithSuites12(a, suites)
     }
     try crypto.Random(io, mut m.random[..])
-    try crypto.Random(io, mut m.sid[..])
+    if !quic {
+        try crypto.Random(io, mut m.sid[..])
+    }
     name := HostOf(host)
     if !IsIpLiteral(name) {
         m.sni = name
     }
-    var out := try a.Slice[u8](HelloSize(&m))
+    extra := if quic { 4 + params.Len() } else { 0 }
+    var out := try a.Slice[u8](HelloSize(&m) + extra)
     var wo := Out.New(mut out[..])
-    WriteHello(mut wo, &m, &shares)
+    WriteHelloWith(mut wo, &m, &shares, quic, params)
     if wo.full {
         // The extensions past their 2-byte length: an ALPN list that fits
         // its own (ClientWith checked it) but not beside the other
@@ -595,14 +652,14 @@ ClientFlights[W: Wire](h: &Heap, a: &Arena, io: Io, w: mut W, c: &Config, host: 
         n := try hs.Expect(w, io, HsServerHello)
         sh := try ParseServerHello(hs.buf[4..n])
         retry := sh.IsRetry()
-        if !retry && !retried && Offers12(&m) && try Is12(&sh) {
+        if !quic && !retry && !retried && Offers12(&m) && try Is12(&sh) {
             // The server chose TLS 1.2, which the client offered.
             return try w.Tls12(h, a, io, c, mut hs, &m, n, name)
         }
         if retry && retried {
             try Bad(mut hs.alert, AlertUnexpectedMessage)
         }
-        r := try CheckServerHello(mut hs.alert, &sh, &m, retry)
+        r := try CheckServerHelloWith(mut hs.alert, &sh, &m, retry, quic)
         if retried && r.says.suite != retry_suite {
             try Bad(mut hs.alert, AlertIllegalParameter)
         }
@@ -654,9 +711,9 @@ ClientFlights[W: Wire](h: &Heap, a: &Arena, io: Io, w: mut W, c: &Config, host: 
         // Compatibility mode (RFC 8446 D.4): the dummy ChangeCipherSpec
         // goes before the second ClientHello.
         try w.Compat(io)
-        out2 := try a.Slice[u8](HelloSize(&m))
+        out2 := try a.Slice[u8](HelloSize(&m) + extra)
         var w2 := Out.New(out2)
-        WriteHello(mut w2, &m, &shares)
+        WriteHelloWith(mut w2, &m, &shares, quic, params)
         if w2.full {
             fail Unsupported
         }
@@ -664,9 +721,14 @@ ClientFlights[W: Wire](h: &Heap, a: &Arena, io: Io, w: mut W, c: &Config, host: 
         try w.Send(io, w2.b[0..w2.at])
     }
     if hs.have != 0 {
-        // A message after ServerHello in its plaintext record would span
-        // the key change (RFC 8446 5.1).
-        try Bad(mut hs.alert, AlertUnexpectedMessage)
+        // A message after ServerHello in its plaintext record or Initial
+        // CRYPTO stream would span the key change (RFC 8446 5.1, RFC
+        // 9001 4.1.3).
+        if quic {
+            try BadNoAlert(mut hs.no_alert)
+        } else {
+            try Bad(mut hs.alert, AlertUnexpectedMessage)
+        }
     }
     // The version is TLS 1.3: the server's Certificate may take its bound.
     hs.big = true
@@ -697,9 +759,12 @@ ClientFlights[W: Wire](h: &Heap, a: &Arena, io: Io, w: mut W, c: &Config, host: 
     var chosen := Chosen(alpn: [0; 255], n: 0)
     n1 := try hs.Expect(w, io, HsEncryptedExtensions)
     exts := try ParseEncryptedExtensions(hs.buf[4..n1])
-    p := try CheckEncryptedExtensions(mut hs.alert, exts, &m)
-    (mut chosen.alpn[0..p.Len()]).CopyFrom(p)
-    chosen.n = p.Len()
+    ee := try CheckEncryptedExtensionsWith(mut hs.alert, exts, &m, quic)
+    if pp := ee.params {
+        try w.Peer(pp)
+    }
+    (mut chosen.alpn[0..ee.alpn.Len()]).CopyFrom(ee.alpn)
+    chosen.n = ee.alpn.Len()
     hs.transcript.Add(hs.buf[0..n1])
     hs.Drop(n1)
     // An optional CertificateRequest (4.3.2), then Certificate (4.4.2).
@@ -778,7 +843,11 @@ ClientFlights[W: Wire](h: &Heap, a: &Arena, io: Io, w: mut W, c: &Config, host: 
     hs.transcript.Add(hs.buf[0..n3])
     hs.Drop(n3)
     if hs.have != 0 {
-        try Bad(mut hs.alert, AlertUnexpectedMessage)
+        if quic {
+            try BadNoAlert(mut hs.no_alert)
+        } else {
+            try Bad(mut hs.alert, AlertUnexpectedMessage)
+        }
     }
     // The application secrets over the transcript through the server's
     // Finished (7.1); the read side switches now.
@@ -889,7 +958,8 @@ ClientHandshake(h: &Heap, io: Io, conn: &net.Conn, c: &Config, host: str, suites
     }
     var w := RecordWire(conn: conn, rd: gr.Mut(), wr: gw.Mut())
     var alert: u8 = 0
-    chosen := ClientFlights(h, &a, io, mut w, c, host, suites, b"", mut alert) else e {
+    var no_alert := false
+    chosen := ClientFlights(h, &a, io, mut w, c, host, suites, b"", mut alert, mut no_alert) else e {
         code := AlertFor(&e, alert)
         if code != 0 {
             w.Alert(io, code)

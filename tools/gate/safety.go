@@ -54,7 +54,7 @@ var untrusted = []untrustedEntry{
 	{"the CSV reader", "std.csv", []string{"FuzzSTDCSV_Records"}},
 	{"big.Parse", "std.big", []string{"FuzzBig_Parse"}},
 	{"x509.Parse and x509.ParsePem", "std.x509", []string{"FuzzX509_Parse", "FuzzX509_ParsePem", "FuzzX509_Verify"}},
-	{"the TLS record and handshake parsers", "std.tls", []string{"FuzzStdTls_Messages", "FuzzStdTls_Records", "FuzzStdTls_Logic", "FuzzStdTls_Messages12", "FuzzStdTls_Records12"}},
+	{"the TLS record and handshake parsers", "std.tls", []string{"FuzzStdTls_Messages", "FuzzStdTls_Records", "FuzzStdTls_Logic", "FuzzStdTls_Messages12", "FuzzStdTls_Records12", "FuzzStdTls_QuicHandshake"}},
 	{"key parsing", "std.crypto", []string{"FuzzSTDCRYPTO_Keys"}},
 	{"the HPACK decoder and Huffman decoding", "std.http.fields", []string{"FuzzStdHttpFields_Hpack", "FuzzStdHttpFields_Huffman"}},
 	// Further entry points held to the same bar (their fuzz files say so).

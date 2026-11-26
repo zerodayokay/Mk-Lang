@@ -75,6 +75,20 @@ SchemeOf(key: &crypto.PrivateKey): u16 {
 // a HelloRetryRequest asked for, 0 for the first ClientHello; the second
 // must carry a share of it and no early_data (4.1.2).
 ReadOffer(alert: mut u8, ch: &ClientHello, c: &Config, retry: u16): Error!Offer {
+    var no_alert := false
+    r := try ReadOfferWith(alert, mut no_alert, ch, c, retry, false)
+    return r.offer
+}
+
+// ReadOfferWith is ReadOffer, in QUIC mode when quic is true: refuses a
+// non-empty legacy_session_id with Protocol and no alert (RFC 9001 8.4),
+// requires quic_transport_parameters (0x39, 8.2) and ALPN (0x0178, 8.1),
+// and refuses 0x39 over TCP (8.2).
+ReadOfferWith(alert: mut u8, no_alert: mut bool, ch: &ClientHello, c: &Config, retry: u16, quic: bool): Error!(offer: Offer, params: ?[]u8) from ch {
+    if quic && ch.legacy_id.Len() != 0 {
+        *no_alert = true
+        fail Protocol
+    }
     var o := Offer(suite: Suite.Aes128Gcm, group: 0, key: [0; 65], key_len: 0, retry: false, ident: -1, scheme: 0, alpn: [0; 255],
         alpn_len: 0, sni: false, sid: [0; 32], sid_len: 0, early: false)
     if ch.compression.Len() != 1 || ch.compression[0] != 0 {
@@ -87,6 +101,7 @@ ReadOffer(alert: mut u8, ch: &ClientHello, c: &Config, retry: u16): Error!Offer 
     var schemes: []u8 = ch.exts[0..0]
     var shares: ?[]u8 = none
     var alpn: ?[]u8 = none
+    var peer_params: ?[]u8 = none
     var psk := false
     var it := ExtIter.New(ch.exts)
     for x := try it.Next() {
@@ -113,6 +128,11 @@ ReadOffer(alert: mut u8, ch: &ClientHello, c: &Config, retry: u16): Error!Offer 
         } else if x.ty == ExtServerName {
             _ = try ParseServerName(x.data)
             o.sni = true
+        } else if x.ty == ExtQuicParams {
+            if !quic {
+                try Bad(alert, AlertUnsupportedExtension)
+            }
+            peer_params = some(x.data)
         }
     }
     if !HasU16(versions, WireTls13) {
@@ -145,6 +165,10 @@ ReadOffer(alert: mut u8, ch: &ClientHello, c: &Config, retry: u16): Error!Offer 
     }
     list := shares else {
         // A ClientHello with supported_groups has key_share (4.2.8).
+        *alert = AlertMissingExtension
+        fail Protocol
+    }
+    if quic && peer_params.IsNone() {
         *alert = AlertMissingExtension
         fail Protocol
     }
@@ -203,7 +227,11 @@ ReadOffer(alert: mut u8, ch: &ClientHello, c: &Config, retry: u16): Error!Offer 
             }
         }
     }
-    return o
+    if quic && o.alpn_len == 0 {
+        *alert = AlertNoApplicationProtocol
+        fail Unsupported
+    }
+    return (offer: o, params: peer_params)
 }
 
 // WriteServerHelloOf writes the ServerHello, or with retry the
@@ -289,16 +317,24 @@ ServerShare(io: Io, alert: mut u8, o: &Offer, s: mut Shares, pub: mut []u8): Err
 // EncryptedExtensions, Certificate, CertificateVerify and Finished, then the
 // client's Finished, and both directions on the application keys. alert gets
 // the alert a failure reports.
-ServerFlights[W: Wire](a: &Arena, io: Io, w: mut W, c: &Config, params: []u8, alert: mut u8): Error!Chosen {
+ServerFlights[W: Wire](a: &Arena, io: Io, w: mut W, c: &Config, params: []u8, alert: mut u8, no_alert: mut bool): Error!Chosen {
     var hs := try Hs.New(a, true)
-    onerr { *alert = hs.alert }
+    onerr {
+        *alert = hs.alert
+        *no_alert = hs.no_alert
+    }
+    quic := w.Quic()
     var shares := Shares(x25519: [0; 32], x25519_pub: [0; 32], p256: none, p256_pub: [0; 65])
     defer shares.Wipe()
     n0 := try hs.Expect(w, io, HsClientHello)
     hs.hello_due = false
     ch := try ParseClientHello(hs.buf[4..n0])
-    var o := try ReadOffer(mut hs.alert, &ch, c, 0)
-    if o.early {
+    ro := try ReadOfferWith(mut hs.alert, mut hs.no_alert, &ch, c, 0, quic)
+    var o := ro.offer
+    if pp := ro.params {
+        try w.Peer(pp)
+    }
+    if o.early && !quic {
         hs.early = MaxEarlySkip
     }
     kind := SuiteHash(o.suite)
@@ -328,9 +364,13 @@ ServerFlights[W: Wire](a: &Arena, io: Io, w: mut W, c: &Config, params: []u8, al
         }
         n1 := try hs.Expect(w, io, HsClientHello)
         ch2 := try ParseClientHello(hs.buf[4..n1])
-        o2 := try ReadOffer(mut hs.alert, &ch2, c, o.group)
+        ro2 := try ReadOfferWith(mut hs.alert, mut hs.no_alert, &ch2, c, o.group, quic)
+        o2 := ro2.offer
         if o2.suite != o.suite {
             try Bad(mut hs.alert, AlertIllegalParameter)
+        }
+        if pp := ro2.params {
+            try w.Peer(pp)
         }
         o = o2
         hs.transcript.Add(hs.buf[0..n1])
@@ -339,7 +379,11 @@ ServerFlights[W: Wire](a: &Arena, io: Io, w: mut W, c: &Config, params: []u8, al
         hs.early = 0
     }
     if hs.have != 0 {
-        try Bad(mut hs.alert, AlertUnexpectedMessage)
+        if quic {
+            try BadNoAlert(mut hs.no_alert)
+        } else {
+            try Bad(mut hs.alert, AlertUnexpectedMessage)
+        }
     }
     hl := HashLen(kind)
     var pub: [65]u8 = [0; 65]
@@ -370,7 +414,7 @@ ServerFlights[W: Wire](a: &Arena, io: Io, w: mut W, c: &Config, params: []u8, al
     // The server's flight (4.3.1, 4.4.2, 4.4.3, 4.4.4), each message added
     // to the transcript as it is written.
     ident := &c.identities[o.ident]
-    var size := 1024 + o.alpn_len
+    var size := 1024 + o.alpn_len + if quic { 4 + params.Len() } else { 0 }
     for x in ident.chain {
         size += 5 + x.Der().Len()
     }
@@ -389,6 +433,9 @@ ServerFlights[W: Wire](a: &Arena, io: Io, w: mut W, c: &Config, params: []u8, al
         wo.Vec8(o.alpn[0..o.alpn_len])
         wo.Close(l, 2)
         wo.Close(e, 2)
+    }
+    if quic {
+        WriteExt(mut wo, ExtQuicParams, params)
     }
     wo.Close(ee, 2)
     wo.Close(at, 3)
@@ -440,7 +487,11 @@ ServerFlights[W: Wire](a: &Arena, io: Io, w: mut W, c: &Config, params: []u8, al
     }
     hs.Drop(n2)
     if hs.have != 0 {
-        try Bad(mut hs.alert, AlertUnexpectedMessage)
+        if quic {
+            try BadNoAlert(mut hs.no_alert)
+        } else {
+            try Bad(mut hs.alert, AlertUnexpectedMessage)
+        }
     }
     try w.Read(o.suite, &c_ap, true)
     c_ap.Wipe()
@@ -501,7 +552,8 @@ ServerHandshake(h: &Heap, io: Io, conn: &net.Conn, c: &Config, hv: &Halves): Err
     gr.Mut().server = true
     var w := RecordWire(conn: conn, rd: gr.Mut(), wr: gw.Mut())
     var alert: u8 = 0
-    chosen := ServerFlights(&a, io, mut w, c, b"", mut alert) else e {
+    var no_alert := false
+    chosen := ServerFlights(&a, io, mut w, c, b"", mut alert, mut no_alert) else e {
         code := AlertFor(&e, alert)
         if code != 0 {
             w.Alert(io, code)
