@@ -328,7 +328,7 @@ export Conn.Release(&self, s: StreamRef) {
     }
     sg.Unlock()
     if wake {
-        core_.wr_wake.NotifyOne()
+        self.WakeControlWriter()
     }
 }
 

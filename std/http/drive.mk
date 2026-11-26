@@ -43,15 +43,16 @@ DriveMuxConn(client: &Client, sl: &MuxSlot, io: Io, gen_: u64) {
     }
 }
 
-/// Reads pooled HTTP/2 and HTTP/3 connections in the background, one
-/// task per connection, until Stop or a cancel of io: each answers PING and
-/// SETTINGS while idle and sees a GOAWAY at once, and one idle past
+/// Drives pooled HTTP/2 and HTTP/3 connections until Stop or a cancel of io.
+/// Each handles control traffic while idle. HTTP/2 also sends queued resets
+/// independently of reads. An HTTP/2 connection idle past
 /// ClientLimits.idle with no stream is closed with GOAWAY(NO_ERROR). Run it
 /// as a task of a scope that outlives the requests; then Stop, the scope's
 /// end, and Close. After Stop it returns at once, so a later Drive of the
 /// same client returns too. Errors: Canceled when io is cancelled; it
-/// returns normally after Stop. O(16) per wake; allocates one task per
-/// connection it drives. WaitDriving synchronizes startup with requests.
+/// returns normally after Stop. O(16) per wake. Allocates two tasks per
+/// HTTP/2 connection and one per HTTP/3 connection. WaitDriving
+/// synchronizes startup with requests.
 export Client.Drive(&self, io: Io): Canceled!void {
     if !self.drive_active.Cas(0, 1) {
         return

@@ -312,9 +312,9 @@ Conn.WaitSendWindow(&self, io: Io, idx: int): Error!void {
     try lead.Wait(self, io, WriterParty(idx))
 }
 
-/// Runs the connection's background driver party until the connection fails,
-/// finishes draining after GOAWAY with zero active streams, or sits idle past
-/// idle (unless idle <= 0), or io is cancelled. Errors: Canceled.
+/// Drives client reads and sends queued resets until the connection fails,
+/// finishes draining after GOAWAY, sits idle past idle (unless idle <= 0),
+/// or io is cancelled. Errors: Canceled. Allocates one scoped writer task.
 export Conn.Drive(&self, io: Io, idle: time.Duration): Canceled!void {
     nc := io.NoCancel()
     core_ := self.Core()
@@ -332,5 +332,17 @@ export Conn.Drive(&self, io: Io, idle: time.Duration): Canceled!void {
         g.Unlock()
     }
     self.FlushWrites(io) else {}
-    try lead.Wait(self, io, PartyDrive)
+    scope drive := io.Scope() {
+        drive.go DriveControlWrites(io, self)
+        defer drive.Cancel()
+        try lead.Wait(self, io, PartyDrive)
+    }
+}
+
+// Flushes control frames queued by nonblocking callers while Drive reads.
+DriveControlWrites(io: Io, conn: &Conn) {
+    for {
+        conn.Core().client_wr_wake.Wait(io) else { return }
+        conn.FlushWrites(io) else { return }
+    }
 }

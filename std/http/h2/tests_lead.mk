@@ -14,6 +14,7 @@ import std.http.fields
 import std.net
 import std.net.pipe
 import std.rt
+import std.sync
 import std.sync.lead
 import std.time
 
@@ -382,6 +383,80 @@ test "H2 client ProgressFloor timer aborts starved Send without peer WINDOW_UPDA
     Assert(send_failed)
     srv_conn.Abandon()
     cli_box.Take(h.Alloc()).Abandon()
+}
+
+// Signals when the driver has finished its write turn and reached Read.
+var DriveReadEntered: sync.Notify = sync.Notify.New()
+
+linear view struct DriveReadProbe {
+    inner: net.Conn
+}
+
+impl net.Transport for DriveReadProbe {
+    Read(&self, io: Io, buf: mut []u8): net.Error!int {
+        DriveReadEntered.NotifyOne()
+        return try self.inner.Read(io, buf)
+    }
+
+    WriteAll(&self, io: Io, data: []u8): net.Error!void {
+        try self.inner.WriteAll(io, data)
+    }
+
+    Shutdown(&self, io: Io, how: net.Shutdown): net.Error!void {
+        try self.inner.Shutdown(io, how)
+    }
+
+    PeerAddr(&self): ?net.Addr {
+        return self.inner.PeerAddr()
+    }
+
+    Close(&self, io: Io): net.Error!void {
+        try self.inner.Shutdown(io, net.Shutdown.Both)
+    }
+
+    Abandon(self) {
+        DriveReadProbe(inner) := self
+        inner.Abandon()
+    }
+}
+
+test "H2 client Drive sends a reset while waiting for a socket read" (sys: &System) {
+    io := sys.io
+    h := sys.heap
+    a := h.Alloc()
+    (a: inner, b: peer) := pipe.ConnPair(h, 8192).Must()
+    defer peer.Abandon()
+    cli := net.NewConn(h, DriveReadProbe(inner: inner)).Must()
+    cli_box := Conn.Client(h, io, cli, TestDefaultLimits()).Must()
+    defer cli_box.Take(a).Abandon()
+    conn := cli_box.Ref()
+
+    p := fields.Pseudo(method: "GET", scheme: "http", authority: "example.com", path: "/")
+    hs: [0]TestField = []
+    stream := conn.TryOpen(io, &p, hs[..], true).Must().Must()
+    var exited := Mutex[int].New(0)
+    scope s := io.Scope() {
+        s.CancelAfter(time.Seconds(3))
+        s.go TestDriveTask(io, conn, time.Millis(0), &exited)
+        DriveReadEntered.Wait(io).Must()
+        conn.Reset(stream, Cancel)
+        conn.Release(stream)
+
+        var preface: [24]u8 = [0; 24]
+        Assert(TestReadExact(io, &peer, mut preface[..]).Must())
+        for {
+            frame := TestReadFrame(a, io, &peer).Must().Must()
+            is_reset := frame.kind == TypeRstStream
+            if is_reset {
+                Assert(frame.stream == 1 && TestBeU32(frame.payload.Items()) == Cancel)
+            }
+            frame.Free(a)
+            if is_reset {
+                break
+            }
+        }
+        s.Cancel()
+    }
 }
 
 test "H2 client Drive replies to PING and exits cleanly on GOAWAY" (sys: &System) {

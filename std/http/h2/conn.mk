@@ -98,11 +98,12 @@ linear view struct ConnCore {
     wout: Mutex[HeapList[u8]]
     st: Mutex[State]
     wr_wake: sync.Notify
+    client_wr_wake: sync.Notify
     parties: HeapList[sync.Notify]
 }
 
 ConnCore.Free(self, a: &Alloc) {
-    ConnCore(rd, wr, wl: _, wout, st, wr_wake: _, parties) := self
+    ConnCore(rd, wr, wl: _, wout, st, wr_wake: _, client_wr_wake: _, parties) := self
     rd.Into().Free(a)
     wr.Into().Free(a)
     wout.Into().Free(a)
@@ -160,6 +161,7 @@ export Conn.Client(h: &Heap, io: Io, conn: net.Conn into h, l: Limits): Error!Bo
         wout: Mutex[HeapList[u8]].New(HeapList[u8].New(a)),
         st: Mutex[State].New(st),
         wr_wake: sync.Notify.New(),
+        client_wr_wake: sync.Notify.New(),
         parties: parties,
     )
     var cbox := Box[ConnCore].New(a, cc) else e {
@@ -228,6 +230,7 @@ export Conn.Server(h: &Heap, io: Io, conn: net.Conn into h, l: Limits, pre: []u8
         wout: Mutex[HeapList[u8]].New(HeapList[u8].New(a)),
         st: Mutex[State].New(st),
         wr_wake: sync.Notify.New(),
+        client_wr_wake: sync.Notify.New(),
         parties: parties,
     )
     var cbox := Box[ConnCore].New(a, cc) else e {
@@ -418,7 +421,7 @@ export Conn.Reset(&self, s: StreamRef, code: u32) {
     }
     g.Unlock()
     if wake {
-        self.Core().wr_wake.NotifyOne()
+        self.WakeControlWriter()
         self.WakeStream(s.index)
     }
 }
@@ -641,6 +644,16 @@ Conn.FailConn(&self, nc: Io, err: Error, goaway_code: ?u32, shutdown_now: bool) 
         self.Core().wr_wake.NotifyOne()
     }
     self.WakeAll()
+}
+
+// Reset and Release can owe a frame even if the client is blocked in Read.
+Conn.WakeControlWriter(&self) {
+    core_ := self.Core()
+    if self.is_client {
+        core_.client_wr_wake.NotifyOne()
+    } else {
+        core_.wr_wake.NotifyOne()
+    }
 }
 
 // Each party has at most one waiter. NotifyOne also covers the interval

@@ -700,15 +700,15 @@ export Client.Drive(&self, io: Io): Canceled!void
 
 - Errors: Canceled
 
-Reads pooled HTTP/2 and HTTP/3 connections in the background, one
-task per connection, until Stop or a cancel of io: each answers PING and
-SETTINGS while idle and sees a GOAWAY at once, and one idle past
-ClientLimits.idle with no stream is closed with GOAWAY(NO_ERROR). Run it
-as a task of a scope that outlives the requests; then Stop, the scope's
-end, and Close. After Stop it returns at once, so a later Drive of the
-same client returns too. Errors: Canceled when io is cancelled; it
-returns normally after Stop. O(16) per wake; allocates one task per
-connection it drives. WaitDriving synchronizes startup with requests.
+Drives pooled HTTP/2 and HTTP/3 connections until Stop or a cancel of io.
+Each handles control traffic while idle. HTTP/2 also sends queued resets
+independently of reads. An HTTP/2 connection idle past ClientLimits.idle
+with no stream is closed with GOAWAY(NO_ERROR). Run Drive as a task of a
+scope that outlives the requests. Call Stop, let the scope end, and then
+call Close. Later Drive calls return immediately after Stop. Drive
+returns Canceled when io is cancelled and returns normally after Stop.
+O(16) per wake. Allocates two tasks per HTTP/2 connection and one per
+HTTP/3 connection. WaitDriving synchronizes startup with requests.
 
 ### `Client.Fetch`
 
