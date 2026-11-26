@@ -1071,16 +1071,17 @@ func (bl *builder) builtin(x *ast.CallExpr, c Call) mir.Rvalue {
 		bl.cur = ok
 		return use(bl.valueOf(bl.somePayload(p), true, at))
 	case BResMust:
-		inner, ok := unparen(recvExpr(x)).(*ast.CallExpr)
-		if !ok {
-			source.ICEf(at, "lower: Must on a value that is not a call")
-		}
-		ic := bl.in.Call(inner.ID())
-		if ic.Errors == types.EmptyErrors {
-			// A callee that cannot fail returning an E!T value (a result
-			// type parameter bound to one): its discriminant picks ok's
-			// payload or the panic with the error, as elseUnion's does.
-			p := bl.optTaken(inner)
+		recv := recvExpr(x)
+		inner, ic, isCall := bl.fallibleCall(recv)
+		if !isCall {
+			// An E!T value, as try and else take one: a stored one (a
+			// field, a local, an element, a deref, a const, an if or
+			// match value), a builtin's (`?(E!T).Must()`) or a callee
+			// that cannot fail returning one (a result type parameter
+			// bound to one). It is taken once, and its discriminant
+			// picks ok's payload or the panic with the error, as
+			// elseUnion's does.
+			p := bl.optTaken(recv)
 			e := bl.newTemp(bl.tab.ErrorSetType(bl.tab.Get(bl.b.PlaceType(p)).Errors), at)
 			ok, pb := bl.newBlock(), bl.newBlock()
 			bl.unionSwitch(p, ok, pb, at)

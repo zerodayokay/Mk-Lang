@@ -5536,6 +5536,7 @@ export Main(sys: &System): WriteError!void {
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
 - An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- A stored `E!T`, such as that binding, a parameter, a field or element holding one, a global, a const, or one behind a reference, is handled as a call's is: `try`, `else`, `match` and `.Must()` read it once and take its payload or its error.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
 ```mk
@@ -5936,7 +5937,7 @@ IsBusy(e: Busy | Gone): bool {
 
 ### `Must`
 
-`e.Must()` is the value of `e`, or a panic when `e` holds an error or `none`. It works on `E!T` and on `?T`. Use it where a failure is a bug: a value the program itself built and knows to be valid.
+`e.Must()` is the value of `e`, or a panic when `e` holds an error or `none`. It works on `E!T` and on `?T`, on a call and on a stored value alike: `r.Must()` on a `var r: Denied!int` panics with the error as `Load(false).Must()` does. Use it where a failure is a bug: a value the program itself built and knows to be valid.
 
 ```mk
 // verdict: ok

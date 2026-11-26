@@ -1,0 +1,11 @@
+# .Must() on stored E!T values (a local, a field, an element, a deref, an if and a match
+# value, a global, a const, a capture, a linear payload) was an internal compiler error
+# in lower (MKH-915). With an argument, Must on a field holding an error panics with it.
+# Both profiles, both targets.
+case ok
+stdout muststored.out
+case err
+args err
+stdout muststored.out
+stderr muststored.err
+exit 101
