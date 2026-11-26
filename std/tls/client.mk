@@ -108,22 +108,17 @@ Hs.Drop(mut self, n: int) {
     self.have = rest
 }
 
-// Hs.Next reads records until buf starts with one whole handshake message
+// Hs.Next reads from w until buf starts with one whole handshake message
 // and returns its type and length with its header; the message is
-// buf[0..n]. A ChangeCipherSpec of one byte 1 is dropped once, and only
-// after the first ClientHello (RFC 8446 5); a plaintext alert ends the
-// handshake with Alert; anything else out of place is unexpected_message.
-Hs.Next(mut self, rd: mut ReadHalf, conn: &net.Conn, io: Io): Error!(ty: u8, n: int) {
-    return try self.NextOf(rd, conn, io, -1)
+// buf[0..n].
+Hs.Next[W: Wire](mut self, w: mut W, io: Io): Error!(ty: u8, n: int) {
+    return try self.NextOf(w, io, -1)
 }
 
 // Hs.NextOf is Next for a message of type want (any when want is -1): a
 // header of another type is refused as soon as its 4 bytes are in, so
 // no byte of a message the handshake cannot take is buffered past them.
-// A server skips the early data records it did not accept (Hs.early,
-// RFC 8446 4.2.10): before its keys every application_data record, after
-// them every record that fails to open, until one opens.
-Hs.NextOf(mut self, rd: mut ReadHalf, conn: &net.Conn, io: Io, want: int): Error!(ty: u8, n: int) {
+Hs.NextOf[W: Wire](mut self, w: mut W, io: Io, want: int): Error!(ty: u8, n: int) {
     for {
         if self.have >= 4 {
             len := (int(self.buf[1]) << 16) | (int(self.buf[2]) << 8) | int(self.buf[3])
@@ -138,73 +133,14 @@ Hs.NextOf(mut self, rd: mut ReadHalf, conn: &net.Conn, io: Io, want: int): Error
                 return (ty: self.buf[0], n: 4 + len)
             }
         }
-        n := try rd.Record(conn, io, mut self.alert)
-        at := rd.start
-        ty := rd.buf[at]
-        if ty == TypeChangeCipherSpec {
-            if self.ccs || self.hello_due || n != 1 || rd.buf[at + 5] != 1 {
-                try Bad(mut self.alert, AlertUnexpectedMessage)
-            }
-            self.ccs = true
-            rd.Consume(6)
-            continue
-        }
-        if !rd.aead.on {
-            // Before the keys, the peer's alert is plaintext; after them
-            // a plaintext alert is a forgery (RFC 8446 5).
-            if ty == TypeAlert {
-                code := try AlertOf(rd.buf[at + 5..at + 5 + n], mut self.alert)
-                rd.Consume(5 + n)
-                fail Alert(code: code)
-            }
-            if ty == TypeAppData && 5 + n <= self.early {
-                // Early data before a second ClientHello (4.2.10).
-                self.early -= 5 + n
-                rd.Consume(5 + n)
-                continue
-            }
-            if ty != TypeHandshake || n == 0 {
-                try Bad(mut self.alert, AlertUnexpectedMessage)
-            }
-            try self.Append(rd.buf[at + 5..at + 5 + n])
-            rd.Consume(5 + n)
-            continue
-        }
-        if ty != TypeAppData {
-            try Bad(mut self.alert, AlertUnexpectedMessage)
-        }
-        var head: [5]u8 = [0; 5]
-        (mut head[..]).CopyFrom(rd.buf[at..at + 5])
-        var bad: u8 = 0
-        r := rd.aead.Open(head[..], rd.buf[at + 5..at + 5 + n], mut rd.plain[..], mut bad) else e {
-            if bad != AlertBadRecordMac || 5 + n > self.early {
-                self.alert = bad
-                fail e
-            }
-            // Early data under a key this server does not have: skipped
-            // (4.2.10); a record that fails to open moves no sequence
-            // number.
-            self.early -= 5 + n
-            rd.Consume(5 + n)
-            continue
-        }
-        // The first record that opens ends the early data.
-        self.early = 0
-        rd.Consume(5 + n)
-        if r.ty == TypeAlert {
-            fail Alert(code: try AlertOf(rd.plain[0..r.n], mut self.alert))
-        }
-        if r.ty != TypeHandshake || r.n == 0 {
-            try Bad(mut self.alert, AlertUnexpectedMessage)
-        }
-        try self.Append(rd.plain[0..r.n])
+        try w.Feed(mut *self, io)
     }
 }
 
 // Hs.Expect reads the next message, which must be of type ty (refused at
 // its header otherwise); returns its length.
-Hs.Expect(mut self, rd: mut ReadHalf, conn: &net.Conn, io: Io, ty: u8): Error!int {
-    m := try self.NextOf(rd, conn, io, int(ty))
+Hs.Expect[W: Wire](mut self, w: mut W, io: Io, ty: u8): Error!int {
+    m := try self.NextOf(w, io, int(ty))
     return m.n
 }
 
@@ -607,35 +543,19 @@ VerifySignature(alert: mut u8, key: &crypto.PublicKey, scheme: u16, sig: []u8, c
 // Ccs is the dummy ChangeCipherSpec record's content (RFC 8446 D.4).
 const Ccs: [1]u8 = [1]
 
-// InstallRead turns r's protection to the traffic secret t of suite.
-InstallRead(r: mut ReadHalf, suite: Suite, t: &Secret) {
-    var k := TrafficKeyOf(suite, t)
-    r.aead.Wipe()
-    r.aead = Aead.New(&k)
-    k.Wipe()
-}
-
-// InstallWrite turns w's protection to the traffic secret t of suite.
-InstallWrite(w: mut WriteHalf, suite: Suite, t: &Secret) {
-    var k := TrafficKeyOf(suite, t)
-    w.aead.Wipe()
-    w.aead = Aead.New(&k)
-    k.Wipe()
-}
-
 // Chosen is the protocol the handshake chose, copied out of its buffers.
 struct Chosen {
     alpn: [255]u8
     n: int
 }
 
-// ClientFlights is the client's side of RFC 8446 2's handshake on the
-// locked halves rd and wr: ClientHello, a HelloRetryRequest answered once,
-// ServerHello, then under the handshake keys EncryptedExtensions, an
-// optional CertificateRequest, Certificate, CertificateVerify and
-// Finished, then the client's Finished, and both directions on the
-// application keys. alert gets the alert a failure reports.
-ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: str, suites: []u16, rd: mut ReadHalf, wr: mut WriteHalf, alert: mut u8): Error!Chosen {
+// ClientFlights is the client's side of RFC 8446 2's handshake over the
+// Wire w: ClientHello, a HelloRetryRequest answered once, ServerHello,
+// then under the handshake keys EncryptedExtensions, an optional
+// CertificateRequest, Certificate, CertificateVerify and Finished, then
+// the client's Finished, and both directions on the application keys.
+// alert gets the alert a failure reports.
+ClientFlights[W: Wire](h: &Heap, a: &Arena, io: Io, w: mut W, c: &Config, host: str, suites: []u16, params: []u8, alert: mut u8): Error!Chosen {
     var hs := try Hs.New(a, false)
     onerr { *alert = hs.alert }
     var shares := Shares(x25519: [0; 32], x25519_pub: [0; 32], p256: none, p256_pub: [0; 65])
@@ -654,16 +574,16 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
         m.sni = name
     }
     var out := try a.Slice[u8](HelloSize(&m))
-    var w := Out.New(mut out[..])
-    WriteHello(mut w, &m, &shares)
-    if w.full {
+    var wo := Out.New(mut out[..])
+    WriteHello(mut wo, &m, &shares)
+    if wo.full {
         // The extensions past their 2-byte length: an ALPN list that fits
         // its own (ClientWith checked it) but not beside the other
         // extensions, or a host of tens of KiB.
         fail Unsupported
     }
-    hs.transcript.Add(w.b[0..w.at])
-    try wr.Send(conn, io, TypeHandshake, w.b[0..w.at])
+    hs.transcript.Add(wo.b[0..wo.at])
+    try w.Send(io, wo.b[0..wo.at])
     // ServerHello, after at most one HelloRetryRequest (RFC 8446 4.1.4).
     var retried := false
     var retry_suite := Suite.Aes128Gcm
@@ -672,12 +592,12 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
     var key: [65]u8 = [0; 65]
     var key_len := 0
     for {
-        n := try hs.Expect(rd, conn, io, HsServerHello)
+        n := try hs.Expect(w, io, HsServerHello)
         sh := try ParseServerHello(hs.buf[4..n])
         retry := sh.IsRetry()
         if !retry && !retried && Offers12(&m) && try Is12(&sh) {
             // The server chose TLS 1.2, which the client offered.
-            return try ClientFlights12(h, a, io, conn, c, mut hs, &m, n, name, rd, wr)
+            return try w.Tls12(h, a, io, c, mut hs, &m, n, name)
         }
         if retry && retried {
             try Bad(mut hs.alert, AlertUnexpectedMessage)
@@ -733,7 +653,7 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
         }
         // Compatibility mode (RFC 8446 D.4): the dummy ChangeCipherSpec
         // goes before the second ClientHello.
-        try wr.Send(conn, io, TypeChangeCipherSpec, Ccs[..])
+        try w.Compat(io)
         out2 := try a.Slice[u8](HelloSize(&m))
         var w2 := Out.New(out2)
         WriteHello(mut w2, &m, &shares)
@@ -741,7 +661,7 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
             fail Unsupported
         }
         hs.transcript.Add(w2.b[0..w2.at])
-        try wr.Send(conn, io, TypeHandshake, w2.b[0..w2.at])
+        try w.Send(io, w2.b[0..w2.at])
     }
     if hs.have != 0 {
         // A message after ServerHello in its plaintext record would span
@@ -764,18 +684,18 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
     defer c_hs.Wipe()
     var s_hs := DeriveSecret(&sched.handshake, "s hs traffic", th[0..hl])
     defer s_hs.Wipe()
-    InstallRead(rd, suite, &s_hs)
+    try w.Read(suite, &s_hs, false)
     // From here the server reads the client's records, alerts included,
     // under the client's handshake keys (RFC 8446 2); the compatibility
     // mode's dummy ChangeCipherSpec (D.4) goes first, in plaintext, unless
     // one went before a second ClientHello.
     if !retried {
-        try wr.Send(conn, io, TypeChangeCipherSpec, Ccs[..])
+        try w.Compat(io)
     }
-    InstallWrite(wr, suite, &c_hs)
+    try w.Write(suite, &c_hs, false)
     // EncryptedExtensions (RFC 8446 4.3.1).
     var chosen := Chosen(alpn: [0; 255], n: 0)
-    n1 := try hs.Expect(rd, conn, io, HsEncryptedExtensions)
+    n1 := try hs.Expect(w, io, HsEncryptedExtensions)
     exts := try ParseEncryptedExtensions(hs.buf[4..n1])
     p := try CheckEncryptedExtensions(mut hs.alert, exts, &m)
     (mut chosen.alpn[0..p.Len()]).CopyFrom(p)
@@ -786,7 +706,7 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
     var requested := false
     var context: [255]u8 = [0; 255]
     var context_len := 0
-    var mc := try hs.Next(rd, conn, io)
+    var mc := try hs.Next(w, io)
     if mc.ty == HsCertificateRequest {
         cr := try ParseCertificateRequest(hs.buf[4..mc.n])
         if (try FindExt(cr.exts, ExtSignatureAlgorithms)).IsNone() {
@@ -797,7 +717,7 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
         requested = true
         hs.transcript.Add(hs.buf[0..mc.n])
         hs.Drop(mc.n)
-        mc = try hs.Next(rd, conn, io)
+        mc = try hs.Next(w, io)
     }
     if mc.ty != HsCertificate {
         try Bad(mut hs.alert, AlertUnexpectedMessage)
@@ -835,7 +755,7 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
     try x509.Verify(a, io, certs[..], &pool, time.Wall(io), name)
     // CertificateVerify (4.4.3) over the transcript through Certificate.
     hs.transcript.Sum(kind, mut th[..])
-    n2 := try hs.Expect(rd, conn, io, HsCertificateVerify)
+    n2 := try hs.Expect(w, io, HsCertificateVerify)
     cv := try ParseCertificateVerify(hs.buf[4..n2])
     leaf_key := certs[0].PublicKey() else {
         try Bad(mut hs.alert, AlertUnsupportedCertificate)
@@ -848,7 +768,7 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
     hs.Drop(n2)
     // The server's Finished (4.4.4).
     hs.transcript.Sum(kind, mut th[..])
-    n3 := try hs.Expect(rd, conn, io, HsFinished)
+    n3 := try hs.Expect(w, io, HsFinished)
     fin := try ParseFinished(hs.buf[4..n3], hl)
     var want: [48]u8 = [0; 48]
     FinishedValue(&s_hs, th[0..hl], mut want[..])
@@ -868,8 +788,7 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
     defer c_ap.Wipe()
     var s_ap := DeriveSecret(&sched.master, "s ap traffic", th[0..hl])
     defer s_ap.Wipe()
-    InstallRead(rd, suite, &s_ap)
-    rd.secret = s_ap
+    try w.Read(suite, &s_ap, true)
     s_ap.Wipe()
     // The client's second flight under its handshake keys: an empty
     // Certificate when one was requested, and Finished.
@@ -884,9 +803,8 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
     var mine: [48]u8 = [0; 48]
     FinishedValue(&c_hs, th[0..hl], mut mine[..])
     WriteFinished(mut fw, mine[0..hl])
-    try wr.Send(conn, io, TypeHandshake, fw.b[0..fw.at])
-    InstallWrite(wr, suite, &c_ap)
-    wr.secret = c_ap
+    try w.Send(io, fw.b[0..fw.at])
+    try w.Write(suite, &c_ap, true)
     c_ap.Wipe()
     return chosen
 }
@@ -969,11 +887,12 @@ ClientHandshake(h: &Heap, io: Io, conn: &net.Conn, c: &Config, host: str, suites
         gr.Unlock()
         fail e
     }
+    var w := RecordWire(conn: conn, rd: gr.Mut(), wr: gw.Mut())
     var alert: u8 = 0
-    chosen := ClientFlights(h, &a, io, conn, c, host, suites, gr.Mut(), gw.Mut(), mut alert) else e {
+    chosen := ClientFlights(h, &a, io, mut w, c, host, suites, b"", mut alert) else e {
         code := AlertFor(&e, alert)
         if code != 0 {
-            SendAlert(gw.Mut(), conn, io, code) else {}
+            w.Alert(io, code)
         }
         gw.Unlock()
         gr.Unlock()

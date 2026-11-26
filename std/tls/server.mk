@@ -283,19 +283,18 @@ ServerShare(io: Io, alert: mut u8, o: &Offer, s: mut Shares, pub: mut []u8): Err
     return 65
 }
 
-// ServerFlights is the server's side of RFC 8446 2's handshake on the
-// locked halves rd and wr: ClientHello, a HelloRetryRequest and the
-// second ClientHello when needed, ServerHello, then under the server's
-// handshake keys EncryptedExtensions, Certificate, CertificateVerify and
-// Finished, then the client's Finished, and both directions on the
-// application keys. alert gets the alert a failure reports.
-ServerFlights(a: &Arena, io: Io, conn: &net.Conn, c: &Config, rd: mut ReadHalf, wr: mut WriteHalf, alert: mut u8): Error!Chosen {
+// ServerFlights is the server's side of RFC 8446 2's handshake over the
+// Wire w: ClientHello, a HelloRetryRequest and the second ClientHello when
+// needed, ServerHello, then under the server's handshake keys
+// EncryptedExtensions, Certificate, CertificateVerify and Finished, then the
+// client's Finished, and both directions on the application keys. alert gets
+// the alert a failure reports.
+ServerFlights[W: Wire](a: &Arena, io: Io, w: mut W, c: &Config, params: []u8, alert: mut u8): Error!Chosen {
     var hs := try Hs.New(a, true)
     onerr { *alert = hs.alert }
-    rd.server = true
     var shares := Shares(x25519: [0; 32], x25519_pub: [0; 32], p256: none, p256_pub: [0; 65])
     defer shares.Wipe()
-    n0 := try hs.Expect(rd, conn, io, HsClientHello)
+    n0 := try hs.Expect(w, io, HsClientHello)
     hs.hello_due = false
     ch := try ParseClientHello(hs.buf[4..n0])
     var o := try ReadOffer(mut hs.alert, &ch, c, 0)
@@ -322,12 +321,12 @@ ServerFlights(a: &Arena, io: Io, conn: &net.Conn, c: &Config, rd: mut ReadHalf, 
         var hw := Out.New(mut head[..])
         WriteServerHelloOf(mut hw, &o, HrrRandom[..], b"", true)
         hs.transcript.Add(hw.b[0..hw.at])
-        try wr.Send(conn, io, TypeHandshake, hw.b[0..hw.at])
+        try w.Send(io, hw.b[0..hw.at])
         if o.sid_len > 0 {
-            try wr.Send(conn, io, TypeChangeCipherSpec, Ccs[..])
+            try w.Compat(io)
             ccs_sent = true
         }
-        n1 := try hs.Expect(rd, conn, io, HsClientHello)
+        n1 := try hs.Expect(w, io, HsClientHello)
         ch2 := try ParseClientHello(hs.buf[4..n1])
         o2 := try ReadOffer(mut hs.alert, &ch2, c, o.group)
         if o2.suite != o.suite {
@@ -352,9 +351,9 @@ ServerFlights(a: &Arena, io: Io, conn: &net.Conn, c: &Config, rd: mut ReadHalf, 
     var sw := Out.New(mut head[..])
     WriteServerHelloOf(mut sw, &o, random[..], pub[0..pub_len], false)
     hs.transcript.Add(sw.b[0..sw.at])
-    try wr.Send(conn, io, TypeHandshake, sw.b[0..sw.at])
+    try w.Send(io, sw.b[0..sw.at])
     if !ccs_sent && o.sid_len > 0 {
-        try wr.Send(conn, io, TypeChangeCipherSpec, Ccs[..])
+        try w.Compat(io)
     }
     var sched := Schedule.New(kind)
     defer sched.Wipe()
@@ -366,8 +365,8 @@ ServerFlights(a: &Arena, io: Io, conn: &net.Conn, c: &Config, rd: mut ReadHalf, 
     defer c_hs.Wipe()
     var s_hs := DeriveSecret(&sched.handshake, "s hs traffic", th[0..hl])
     defer s_hs.Wipe()
-    InstallWrite(wr, o.suite, &s_hs)
-    InstallRead(rd, o.suite, &c_hs)
+    try w.Write(o.suite, &s_hs, false)
+    try w.Read(o.suite, &c_hs, false)
     // The server's flight (4.3.1, 4.4.2, 4.4.3, 4.4.4), each message added
     // to the transcript as it is written.
     ident := &c.identities[o.ident]
@@ -376,51 +375,51 @@ ServerFlights(a: &Arena, io: Io, conn: &net.Conn, c: &Config, rd: mut ReadHalf, 
         size += 5 + x.Der().Len()
     }
     flight := try a.Slice[u8](size)
-    var w := Out.New(flight)
+    var wo := Out.New(flight)
     var start := 0
-    at := OpenMessage(mut w, HsEncryptedExtensions)
-    ee := w.Open(2)
+    at := OpenMessage(mut wo, HsEncryptedExtensions)
+    ee := wo.Open(2)
     if o.sni {
-        WriteExt(mut w, ExtServerName, b"")
+        WriteExt(mut wo, ExtServerName, b"")
     }
     if o.alpn_len > 0 {
-        w.U16(ExtAlpn)
-        e := w.Open(2)
-        l := w.Open(2)
-        w.Vec8(o.alpn[0..o.alpn_len])
-        w.Close(l, 2)
-        w.Close(e, 2)
+        wo.U16(ExtAlpn)
+        e := wo.Open(2)
+        l := wo.Open(2)
+        wo.Vec8(o.alpn[0..o.alpn_len])
+        wo.Close(l, 2)
+        wo.Close(e, 2)
     }
-    w.Close(ee, 2)
-    w.Close(at, 3)
-    ca := WriteCertificateHead(mut w, b"")
+    wo.Close(ee, 2)
+    wo.Close(at, 3)
+    ca := WriteCertificateHead(mut wo, b"")
     for x in ident.chain {
-        WriteCertEntry(mut w, x.Der(), b"")
+        WriteCertEntry(mut wo, x.Der(), b"")
     }
-    CloseCertificate(mut w, ca)
-    if w.full {
+    CloseCertificate(mut wo, ca)
+    if wo.full {
         try Bad(mut hs.alert, AlertInternalError)
     }
-    hs.transcript.Add(w.b[start..w.at])
-    start = w.at
+    hs.transcript.Add(wo.b[start..wo.at])
+    start = wo.at
     hs.transcript.Sum(kind, mut th[..])
     var content: [160]u8 = [0; 160]
     cl := SignedContent("TLS 1.3, server CertificateVerify", th[0..hl], mut content[..])
     var sig: [80]u8 = [0; 80]
     sl := try Sign(mut hs.alert, ident.key, content[0..cl], mut sig[..])
     cv := CertificateVerify(scheme: o.scheme, signature: sig[0..sl])
-    WriteCertificateVerify(mut w, &cv)
-    hs.transcript.Add(w.b[start..w.at])
-    start = w.at
+    WriteCertificateVerify(mut wo, &cv)
+    hs.transcript.Add(wo.b[start..wo.at])
+    start = wo.at
     hs.transcript.Sum(kind, mut th[..])
     var mine: [48]u8 = [0; 48]
     FinishedValue(&s_hs, th[0..hl], mut mine[..])
-    WriteFinished(mut w, mine[0..hl])
-    hs.transcript.Add(w.b[start..w.at])
-    if w.full {
+    WriteFinished(mut wo, mine[0..hl])
+    hs.transcript.Add(wo.b[start..wo.at])
+    if wo.full {
         try Bad(mut hs.alert, AlertInternalError)
     }
-    try wr.Send(conn, io, TypeHandshake, w.b[0..w.at])
+    try w.Send(io, wo.b[0..wo.at])
     // The application secrets over the transcript through the server's
     // Finished (7.1); the write side switches now, the read side after
     // the client's Finished.
@@ -430,10 +429,9 @@ ServerFlights(a: &Arena, io: Io, conn: &net.Conn, c: &Config, rd: mut ReadHalf, 
     defer c_ap.Wipe()
     var s_ap := DeriveSecret(&sched.master, "s ap traffic", th[0..hl])
     defer s_ap.Wipe()
-    InstallWrite(wr, o.suite, &s_ap)
-    wr.secret = s_ap
+    try w.Write(o.suite, &s_ap, true)
     s_ap.Wipe()
-    n2 := try hs.Expect(rd, conn, io, HsFinished)
+    n2 := try hs.Expect(w, io, HsFinished)
     fin := try ParseFinished(hs.buf[4..n2], hl)
     var want: [48]u8 = [0; 48]
     FinishedValue(&c_hs, th[0..hl], mut want[..])
@@ -444,8 +442,7 @@ ServerFlights(a: &Arena, io: Io, conn: &net.Conn, c: &Config, rd: mut ReadHalf, 
     if hs.have != 0 {
         try Bad(mut hs.alert, AlertUnexpectedMessage)
     }
-    InstallRead(rd, o.suite, &c_ap)
-    rd.secret = c_ap
+    try w.Read(o.suite, &c_ap, true)
     c_ap.Wipe()
     var chosen := Chosen(alpn: [0; 255], n: o.alpn_len)
     (mut chosen.alpn[0..o.alpn_len]).CopyFrom(o.alpn[0..o.alpn_len])
@@ -501,11 +498,13 @@ ServerHandshake(h: &Heap, io: Io, conn: &net.Conn, c: &Config, hv: &Halves): Err
         gr.Unlock()
         fail e
     }
+    gr.Mut().server = true
+    var w := RecordWire(conn: conn, rd: gr.Mut(), wr: gw.Mut())
     var alert: u8 = 0
-    chosen := ServerFlights(&a, io, conn, c, gr.Mut(), gw.Mut(), mut alert) else e {
+    chosen := ServerFlights(&a, io, mut w, c, b"", mut alert) else e {
         code := AlertFor(&e, alert)
         if code != 0 {
-            SendAlert(gw.Mut(), conn, io, code) else {}
+            w.Alert(io, code)
         }
         gw.Unlock()
         gr.Unlock()
