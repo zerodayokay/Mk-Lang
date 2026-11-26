@@ -96,7 +96,7 @@ mk check --all-targets
 
 ### `mk test`
 
-`mk test` builds the package's `test` blocks and runs each one in its own process. It prints one line per test and a total.
+`mk test` builds the package's `test` blocks and runs each one in its own process. It prints one line per test and a total. A test passes when it returns, or, after a call of [`testing.ExpectPanic(want)`](std/testing.md#expected-panics), when it panics with a report that contains `want`.
 
 ```sh
 mk test
