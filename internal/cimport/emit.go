@@ -64,6 +64,7 @@ type shimFunc struct {
 	ret   *ctype
 	ps    []param
 	macro bool // a function-like macro, not a static inline function
+	imp   int  // the import whose binding declares it
 }
 
 // Stats counts one import's declarations.
@@ -581,7 +582,7 @@ func (e *emitter) function(d *decl) {
 	fmt.Fprintf(w, "\n// C: %s\n", spell)
 	if d.static {
 		fmt.Fprintf(w, "// static inline: defined by the shim of this package\n")
-		e.shims = append(e.shims, shimFunc{name: d.name, ret: d.ret, ps: d.params})
+		e.shims = append(e.shims, shimFunc{name: d.name, ret: d.ret, ps: d.params, imp: d.imp})
 		st.Generated++
 	} else {
 		st.Direct++

@@ -151,7 +151,7 @@ C import is a native step, because a generator's fuel and determinism rules do n
 
 - Clang's record layout is taken as is. A layout Mk cannot express becomes an opaque type with accessors.
 - Object-like macros are probed in one batch.
-- `static inline` functions become shims in one generated C file.
+- `static inline` functions and declared function-like macros become shims in one generated C file. A build's shim defines only those its pruned bindings keep, so its text, and its object's key, follow the functions the program uses.
 - Items load lazily, because one system header can declare tens of thousands.
 - All C imports of a package form one translation unit, so a C type has one identity in the package.
 

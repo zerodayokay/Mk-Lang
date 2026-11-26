@@ -161,6 +161,11 @@ type cImports struct {
 	// vendoredShim are the externs (c.<name>.<item>) only a shim defines
 	// in vendored views read in place of a translation.
 	vendoredShim []string
+	// imports and shimFuncs are the translation's imports and the
+	// functions of its whole shim; prune sets shim to those of them the
+	// pruned bindings keep.
+	imports   []cimport.Import
+	shimFuncs []cimport.ShimFunc
 }
 
 // otherBinding is a package's C bindings for another target.
@@ -297,8 +302,8 @@ func prefixOfDep(dep string) string {
 func cModPath(dep, name string) string { return prefixOfDep(dep) + "c." + name }
 
 // prune gives each binding module only the items the other builds'
-// files use, transitively (lazy items); the views on disk stay whole, and
-// every kept line keeps its line there. It runs in the read step
+// files use, transitively (lazy items), and the shim only their functions;
+// the views on disk stay whole, and every kept line keeps its line there. It runs in the read step
 // just before the C build is read: the builds before it are read, and the
 // package's files, read after it, are read here too.
 func (ci *cImports) prune(w *world, builds []*build) {
@@ -327,6 +332,10 @@ func (ci *cImports) prune(w *world, builds []*build) {
 	for i, text := range pruned {
 		ci.trees[i].mem[ci.names[i]+".mk"] = text
 	}
+	// The shim defines only the externs the pruned bindings keep: an
+	// unused static inline function may call what nothing links. Its text,
+	// and so its object's key, follows the functions used.
+	ci.shim = cimport.KeptShim(ci.imports, ci.shimFuncs, pruned)
 	target := w.cfg.Target.Name
 	for _, o := range ci.others {
 		theirs := cimport.PruneAll(ci.names, o.full, cloneWant(used))
@@ -428,6 +437,7 @@ func (s *Session) translateC(imports []cimport.Import, man *Manifest, osRoot, ta
 		cimport.Save(st, key, res)
 	}
 	ci.hit, ci.stats = hit, res.Stats
+	ci.imports, ci.shimFuncs = imports, res.ShimFuncs
 	for i := range imports {
 		if ci.dep == "" {
 			writeCView(views[i], res.Modules[i], target)

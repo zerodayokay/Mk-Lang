@@ -67,8 +67,11 @@ type Request struct {
 // Result is the bindings of a Request.
 type Result struct {
 	Modules []string // the Mk source of c.<name>, one per Import, in order
-	Shim    string   // the shim C file; "" when there is nothing to shim
-	Stats   []Stats  // one per Import
+	Shim    string   // the shim C file of every binding item; "" when there is nothing to shim
+	// ShimFuncs are Shim's functions one by one, so a build can define
+	// only those its pruned bindings keep (KeptShim).
+	ShimFuncs []ShimFunc
+	Stats     []Stats // one per Import
 	// Deps are every file the translation unit read (-MD), absolute, in
 	// Clang's order; SearchDirs the ordered header search path.
 	Deps       []string
@@ -356,7 +359,8 @@ func Translate(ctx context.Context, cl Clang, resourceDir string, r Request) (*R
 	mods := e.emit()
 	mark("emit", start)
 	steps = append(steps, Step{"total", time.Since(t0)})
-	return &Result{Modules: mods, Shim: shimText(r.Imports, e.shims), Stats: e.stats, Deps: deps,
+	fs := shimDefs(e.shims)
+	return &Result{Modules: mods, Shim: ShimText(r.Imports, fs), ShimFuncs: fs, Stats: e.stats, Deps: deps,
 		SearchDirs: SearchDirs(r, resourceDir), Steps: steps}, nil
 }
 
@@ -405,7 +409,7 @@ func (e *emitter) declaredMacros() {
 				continue
 			}
 			fmt.Fprintf(&e.mods[i].items, "\n// C: #define %s(...), declared in pkg.mk as %s; defined by the shim\nexport extern %s\n", name, proto, sig)
-			e.shims = append(e.shims, shimFunc{name: name, ret: ret, ps: ps, macro: true})
+			e.shims = append(e.shims, shimFunc{name: name, ret: ret, ps: ps, macro: true, imp: i})
 			st.Generated++
 		}
 	}

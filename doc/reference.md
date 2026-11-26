@@ -9913,7 +9913,7 @@ How C declarations appear in Mk:
 | An incomplete `struct opaque` | An empty `struct Opaque`, used through `*Opaque` |
 | A typedef | A type alias: `typedef int32_t` is `Int32T = i32` |
 | `#define NAME 3` | `const Name: i32 = 3` |
-| A `static inline` function | An `extern` that a generated shim defines in the same build |
+| A `static inline` function | An `extern` that a generated shim defines in the same build, if the program uses it |
 | A function-like macro | Bound only when `macros` declares its prototype, also through a shim |
 | A function-pointer field | `?fn(...)`. Reading it needs `unsafe` (E1101): calling it runs C code |
 
