@@ -289,7 +289,7 @@ export Main(sys: &System) {
 		{"a program cannot build a Secure", `import std.net
 
 Forge(s: net.Secure): net.Secure {
-    return net.Secure(call: s.call, thunk: Hand, nego: s.nego, negotiate: Pick)
+    return net.Secure(call: s.call, thunk: Hand, nego: none, negotiate: Pick)
 }
 
 Hand(s: &net.Secure, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {

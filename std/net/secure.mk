@@ -14,16 +14,16 @@ import std.core
 /// A plain value that makes a connection secure, made only by std:
 /// tls.Connector gives one for a client, tls.Acceptor for a server. Pass it
 /// to std.http and std.websocket, which import no TLS of their own. Copy
-/// it freely; it borrows the configuration it was made from. call and
-/// nego are std's; a program has no use for them.
+/// it freely; it borrows the configuration it was made from. call is
+/// std's; a program has no use for it.
 export struct Secure {
     /// The call std makes the connection secure through; a program has no use
     /// for it.
     export call: core.ErasedCall
     thunk: fn(&Secure, h: &Heap into conn, io: Io, conn: Conn, host: str): Error!Conn from h, conn
-    /// The call std negotiates an application protocol through, none for a
-    /// connector made by Of; a program has no use for it.
-    export nego: ?core.ErasedCall
+    // The call std negotiates an application protocol through, none for a
+    // connector made by Of.
+    nego: ?core.ErasedCall
     negotiate: fn(&Secure, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): Error!(conn: Conn, chosen: int) from h, conn
 }
 
@@ -43,7 +43,7 @@ export Secure.Of[T: Share](c: core.ErasedCall): Secure from c {
 /// protocol through n: given what c's function is given and the protocols
 /// to negotiate in preference order (empty for the connector's own), the
 /// secure connection and the index in offer of the protocol chosen, -1 for
-/// none. Both are the same state's, and std made each with
+/// none. Both are calls on a state of type T, and std made each with
 /// core.TypedCall.Of, so a function of another type is refused at compile
 /// time. Only std calls this: no program can build a core.TypedCall.
 /// Provisional. O(1); allocates nothing.

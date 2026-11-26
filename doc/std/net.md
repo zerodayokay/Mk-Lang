@@ -1056,8 +1056,8 @@ export struct Secure
 A plain value that makes a connection secure, made only by std:
 tls.Connector gives one for a client, tls.Acceptor for a server. Pass it
 to std.http and std.websocket, which import no TLS of their own. Copy
-it freely; it borrows the configuration it was made from. call and
-nego are std's; a program has no use for them.
+it freely; it borrows the configuration it was made from. call is
+std's; a program has no use for it.
 
 ### `Secure.Connect`
 

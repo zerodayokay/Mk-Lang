@@ -2,9 +2,9 @@
 // the index it returns must agree with what a mature TLS stack negotiated,
 // in both roles.
 // What: TestStdTls_GoPeerNegotiate (tls.Connector's Negotiate against Go's
-// crypto/tls server with NextProtos set four ways) and
-// TestStdTls_GoClientNegotiate (Go's client against tls.Acceptor's
-// Negotiate).
+// crypto/tls server with each NextProtos, over TLS 1.3, through a
+// HelloRetryRequest and over TLS 1.2) and TestStdTls_GoClientNegotiate
+// (Go's client against tls.Acceptor's Negotiate).
 // How: the Mk side is a driver program per role; Go's side runs in the test
 // process on loopback with the chains of tlsPeerPKI, and each case checks
 // the Mk line (the chosen index and the bytes echoed) and Go's
