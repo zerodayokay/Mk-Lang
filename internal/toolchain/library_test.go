@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // libLL is a two-function library: Twice is the export, Helper a hidden
@@ -194,8 +195,14 @@ func TestLibraryStaticArchive(t *testing.T) {
 		t.Errorf("archive layout: % .200q", b)
 	}
 	// Writers of one archive at once, as two builds of a package are,
-	// all succeed and leave the whole archive and no temporary.
+	// all succeed and leave the whole archive and no temporary, not even
+	// the one a killed writer left an hour ago.
 	shared := filepath.Join(t.TempDir(), "libsmoke.a")
+	killed := filepath.Join(filepath.Dir(shared), ".libsmoke.a.tmp-111")
+	hour := time.Now().Add(-time.Hour)
+	if err := os.WriteFile(killed, []byte("half"), 0o644); err != nil || os.Chtimes(killed, hour, hour) != nil {
+		t.Fatal(err)
+	}
 	for round := 0; round < 10; round++ {
 		var wg sync.WaitGroup
 		errs := make(chan error, 8)

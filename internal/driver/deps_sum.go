@@ -351,7 +351,8 @@ func writeFileAtomic(path string, data []byte) error {
 // makes a file) and renames it over p, so a reader never sees half the
 // file. On Windows the rename fails while another writer or a reader has
 // p open, so a failed rename is retried, briefly, until it succeeds or p
-// holds data, whoever wrote it.
+// holds data, whoever wrote it. A write also removes the temporaries a
+// killed writer left beside p (removeStaleTemps).
 func writeSameFile(p string, data []byte) (bool, error) {
 	if old, err := os.ReadFile(p); err == nil && bytes.Equal(old, data) {
 		return false, nil
@@ -374,6 +375,7 @@ func writeSameFile(p string, data []byte) (bool, error) {
 	}
 	for try := 1; ; try++ {
 		if err = os.Rename(tmp, p); err == nil {
+			removeStaleTemps(p)
 			return true, nil
 		}
 		if old, rerr := os.ReadFile(p); rerr == nil && bytes.Equal(old, data) {
@@ -390,6 +392,32 @@ func writeSameFile(p string, data []byte) (bool, error) {
 // sameFileTries bounds writeSameFile's renames: their pauses add up to
 // about a second.
 const sameFileTries = 45
+
+// removeStaleTemps removes the temporaries of p ('.<base>.tmp-*') that
+// are older than staleTempAge: a writer killed between its temporary and
+// its rename leaves one, each with a name of its own, in a directory that
+// may be the user's (an executable's DLLs). A live writer's temporary is
+// seconds old at most.
+func removeStaleTemps(p string) {
+	dir, prefix := filepath.Dir(p), "."+filepath.Base(p)+".tmp-"
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	old := time.Now().Add(-staleTempAge)
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), prefix) || !e.Type().IsRegular() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && fi.ModTime().Before(old) {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// staleTempAge is the age past which removeStaleTemps takes a temporary
+// for a killed writer's.
+const staleTempAge = 10 * time.Minute
 
 // mergePkgSum writes s's lines into dir's pkg.sum under a lock file, adding
 // every line the file holds now that s lacks: a build writes only what it

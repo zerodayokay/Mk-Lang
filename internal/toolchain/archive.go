@@ -173,13 +173,40 @@ func WriteArchive(out string, objs []string) error {
 	}
 	if err != nil {
 		os.Remove(tmp)
+		return err
 	}
-	return err
+	removeStaleTemps(out)
+	return nil
 }
 
 // renameTries bounds WriteArchive's renames: their pauses add up to about
 // a second.
 const renameTries = 45
+
+// removeStaleTemps removes the temporaries of out ('.<base>.tmp-*') older
+// than staleTempAge: a writer killed between its temporary and its rename
+// leaves one, each with a name of its own, beside the library. A live
+// writer's temporary is seconds old at most.
+func removeStaleTemps(out string) {
+	dir, prefix := filepath.Dir(out), "."+filepath.Base(out)+".tmp-"
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	old := time.Now().Add(-staleTempAge)
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), prefix) || !e.Type().IsRegular() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && fi.ModTime().Before(old) {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// staleTempAge is the age past which removeStaleTemps takes a temporary
+// for a killed writer's.
+const staleTempAge = 10 * time.Minute
 
 // namedData is a file's bytes and the name an error gives it.
 type namedData struct {
