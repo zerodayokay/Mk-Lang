@@ -47,6 +47,19 @@ Atomics(): u64 {
     return Words[7].Load(atomic.Acquire) + cs[1].hits.Load(atomic.Relaxed) + u64(cs[2].seen.Load())
 }
 
+enum Slot {
+    Free
+    Taken(owner: atomic.Atomic[u32])
+}
+
+Slots(a: &Arena): OutOfMemory!u64 {
+    xs := try a.Slice[atomic.Atomic[u64]](4)
+    xs[1].Store(3, atomic.Relaxed)
+    s := mem.Zeroed[[2]Slot]()
+    _ = s
+    return xs[1].Load(atomic.Relaxed)
+}
+
 Locked(): int {
     m := mem.Zeroed[Mutex[int]]() // <- E0701
     return m.Into()

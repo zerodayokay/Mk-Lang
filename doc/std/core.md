@@ -439,14 +439,16 @@ So a linear value is never dropped behind your back: either the call refuses to 
 | `Arena.Slice[T]`, `Arena.SliceAligned[T]` | A zero-valid `T`: its all-zero bytes are a value of it. Both fill their elements with zeros |
 | `Free`, `Set`, `Ensure`, `Replace`, `Remove` and others | The rules above |
 
-A zero-valid type is always plain. These types are zero-valid:
+These types are zero-valid:
 
-- the integers, the floats, `bool`, `char`, `void`, raw pointers and every `?T`;
+- the integers, the floats, `bool`, `char`, `void`, raw pointers and every `?T` of a plain `T`;
+- an atomic word or a `Cell` of a zero-valid `T` (`atomic.Atomic[T]`, `AtomicInt`, `AtomicBool`, `Cell[T]`), though they are not plain: zero bytes make a fresh word, never a copy;
 - an array, record, struct or `E!T` whose parts are all zero-valid.
 
 These are not:
 
 - a struct with an `invariant`;
+- a linear type, a view struct, a type with an `unsafe impl` of `Send` or `Share`, and `Mutex`, `Chan` or `Arena`, whatever their parts;
 - an enum with no variant of discriminant 0, or whose variant 0 has a part that is not zero-valid;
 - a reference, a `fn` value, `str`, a slice, an error-set value or a type parameter.
 

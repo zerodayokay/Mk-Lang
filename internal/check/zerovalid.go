@@ -6,7 +6,7 @@
 // What: implicitBounds and atomicTypeBound (the E0701 of a call, fn value or
 // type expression), the recognizers (arenaSlice, memZeroed, poolFree,
 // readUnaligned, atomicType, atomicFunc, atomicArith), and the predicates
-// zeroValid and integerArg.
+// zeroValid (with zeroIdentity, its unique types) and integerArg.
 //
 // How: `Arena.Slice[T]` and `Arena.SliceAligned[T]` zero-fill their
 // elements, and `std.mem.Zeroed[T]` is a T of zero bytes, so `T` must be
@@ -453,16 +453,16 @@ func (c *Checker) zeroValid(env *Env, t types.TypeID, rec recorder, seen map[typ
 // zeroIdentity reports whether ty, a unique type, may still be zero-valid:
 // it is unique only by the identity of the words it holds, and a value of
 // zero bytes is a fresh one, never a copy. That is `raw.Atomic[T]` and
-// `Cell[T]` (a word of T), and an array, record, struct or enum that is
-// unique only through its parts (zeroValid judges each). Not: a mut
-// reference or optional (judged before or refused here), a view struct, a
-// type with an `unsafe impl` Send or Share (its author's invariant), and
-// the other compiler-known handles (Mutex, Chan, SpinCore, Arena, Scope,
-// Alloc, Heap, Io, System), whose zero bytes are no value the language
-// promises.
+// `Cell[T]` (a word of T), and an array, record, `E!T`, struct or enum
+// whose own declaration adds nothing unique, so that zeroValid's judgment
+// of its parts (an enum's tag-0 variant) decides. Not: a mut reference or
+// an optional (judged before or refused here), a view struct, a type with
+// an `unsafe impl` Send or Share (its author's invariant), and the other
+// compiler-known handles (Mutex, Chan, SpinCore, Arena, Scope, Alloc,
+// Heap, Io, System), whose zero bytes are no value the language promises.
 func (c *Checker) zeroIdentity(ty *types.Type) bool {
 	switch ty.Kind {
-	case types.KArray, types.KRecord:
+	case types.KArray, types.KRecord, types.KErrorUnion:
 		return true
 	case types.KNamed:
 	default:
