@@ -74,6 +74,11 @@ jobs:
           "$RUNNER_TEMP/mk" build Dogfoods/sketch -o "$RUNNER_TEMP/sketch"
           "$RUNNER_TEMP/sketch" check-script Dogfoods/sketch/cases/scripts/close.script
 
+      - name: Check the macOS main-thread service
+        if: runner.os == 'macOS'
+        run: |
+          "$RUNNER_TEMP/mk" test --timeout 15s --std std.task --run RT-MainThreadService
+
       - name: Render and present on Linux
         if: runner.os == 'Linux'
         run: |
