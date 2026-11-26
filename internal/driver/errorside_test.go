@@ -439,8 +439,7 @@ export Main(sys: &System): WriteError!void {
     var v1: F|F2!int = Mk(-5)
     var v2: F|F2!int = Mk(-6)
     var sum := 0
-    for r in [&v0, &v1, &v2] {
-        p := PickAny(r, &d)
+    for p in [PickAny(&v0, &d), PickAny(&v1, &d), PickAny(&v2, &d)] {
         _ = Smash(sum)
         sum = sum * 10 + int(*p)
     }
