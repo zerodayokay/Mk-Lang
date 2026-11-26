@@ -3,8 +3,8 @@
 // and a test must be able to name the exact rule a block broke.
 //
 // What: the decoder's errors Truncated, BadInteger, BadIndex, BadHuffman,
-// BadSizeUpdate and MissingSizeUpdate, their set DecodeError, the decoder's
-// Outcome (Fits or TooLarge), and the encoder's TooSmall.
+// BadSizeUpdate, MissingSizeUpdate and Unusable, their set DecodeError, the
+// decoder's Outcome (Fits or TooLarge), and the encoder's TooSmall.
 //
 // How: each error carries the block offset of the representation that
 // broke the rule, so a fuzz finding or a peer's bad block can be read
@@ -27,8 +27,9 @@ export error BadIndex(offset: int, index: int)
 export error BadHuffman(offset: int)
 
 /// The dynamic-table size update at offset asks for size, above the
-/// decoder's maximum, or comes after a field of the block (RFC 7541 4.2,
-/// 6.3).
+/// decoder's maximum (for the first update after the maximum was lowered,
+/// above the lowest maximum since the last block), or comes after a field of
+/// the block (RFC 7541 4.2, 6.3; RFC 9113 4.3.1).
 export error BadSizeUpdate(offset: int, size: int)
 
 /// The decoder's maximum was lowered below the table's capacity and the
@@ -36,10 +37,15 @@ export error BadSizeUpdate(offset: int, size: int)
 /// 7541 4.2).
 export error MissingSizeUpdate
 
+/// Decode was called on a decoder whose last Decode failed. The table may
+/// be out of step with the peer's, so the decoder refuses every later block
+/// and the connection must close.
+export error Unusable
+
 /// Every connection-fatal outcome of Decoder.Decode besides OutOfMemory: a
 /// compression error (RFC 9113 4.3). The table may be out of sync with the
-/// peer's, so the decoder must not be used again.
-export type DecodeError = Truncated | BadInteger | BadIndex | BadHuffman | BadSizeUpdate | MissingSizeUpdate
+/// peer's, so the decoder refuses every later block with Unusable.
+export type DecodeError = Truncated | BadInteger | BadIndex | BadHuffman | BadSizeUpdate | MissingSizeUpdate | Unusable
 
 /// How a block that decoded went. Fits: every field reached the sink.
 /// TooLarge: the decoded list size (each field's name and value bytes plus
