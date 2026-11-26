@@ -1943,7 +1943,9 @@ The iterators `Split`, `Lines`, `Words`, `Scalars`, `MapIter`, `TextMapIter`, `C
 
 A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, and [`mem.Zeroed[T]()`](std/mem.md#layout) returns one zeroed value, so both need one.
 
-A zero-valid type is plain, and is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, or an `E!T` whose `T` is zero-valid. A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not.
+A zero-valid type is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, an `E!T` whose `T` is zero-valid, or an atomic word or `Cell` of a zero-valid `T` (`raw.Atomic[T]`, `atomic.Atomic[T]`, `atomic.AtomicInt`, `atomic.AtomicBool`, `Cell[T]`). A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not, and neither is a linear type, a `view` or `mut view` struct, a type with an `unsafe impl` of `Send` or `Share`, or a `Mutex`, `Chan` or `Arena`, whatever their fields.
+
+An atomic or a `Cell` is unique, so `[e; n]`, which copies `e`, cannot build an array of them (E0408), but zero bytes are a fresh value, not a copy: a global table of atomic words is `var Table: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()`, every word 0, with no `unsafe`.
 
 ```mk
 // verdict: reject E0701
@@ -2509,6 +2511,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. The rules are in [globals](memory.md#r16-globals).
+- A table of atomics starts zeroed with [`mem.Zeroed`](#zero-valid-types), since `[e; n]` copies its `e` and an atomic is not Plain: `var Table: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()`.
 - Its initial value is computed at compile time, as a constant's is.
 
 ```mk
