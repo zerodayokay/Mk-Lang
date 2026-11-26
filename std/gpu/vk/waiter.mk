@@ -19,6 +19,17 @@ import std.sys
 const WaiterTimeoutNs: u64 = 1_000_000_000 // 1 second finite timeout
 const WaiterStackBytes: int = 262144       // 256 KiB stack
 
+PublishCompleted(completed: &raw.Atomic[u64], serial: u64): u64 {
+    var prev := completed.Load()
+    for prev < serial {
+        if completed.Cas(prev, serial) {
+            return serial
+        }
+        prev = completed.Load()
+    }
+    return prev
+}
+
 WaiterThreadMain(arg: *u8) {
     unsafe "arg is a live VkWaiterShared until StopWaiterThread joins this thread" {
         sh := raw.PtrCast[u8, VkWaiterShared](arg)
@@ -39,9 +50,7 @@ WaiterThreadMain(arg: *u8) {
                 (*sh).waker.Wake()
                 break
             }
-            if cur_val > (*sh).completed.Load() {
-                (*sh).completed.Store(cur_val)
-            }
+            cur_val = PublishCompleted(&(*sh).completed, cur_val)
             var wait_dev: u64 = 0xFFFF_FFFF_FFFF_FFFF
             if tgt > 0 {
                 if cur_val >= tgt {
@@ -179,10 +188,7 @@ PollCompletedSerial(st: mut VkDeviceState): u64 {
         var val: u64 = 0
         r := st.dev_d.vk_get_semaphore_counter_value.Must()(HandleFrom[vulkan.VkDeviceT](st.device), HandleFrom[vulkan.VkSemaphoreT](st.timeline_sem), raw.OfMut(mut val))
         if r == vulkan.VkSuccess {
-            if val > (*sh).completed.Load() {
-                (*sh).completed.Store(val)
-            }
-            return (*sh).completed.Load()
+            return PublishCompleted(&(*sh).completed, val)
         }
         if IsDeviceLostResult(r) {
             st.lost = true

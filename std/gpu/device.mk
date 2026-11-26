@@ -12,6 +12,7 @@
 import std.gpu.dx
 import std.gpu.vk
 import std.mem
+import std.raw
 import std.rt
 
 /// Limits the portable layer enforces: the smaller of the adapter's and
@@ -309,7 +310,7 @@ OpenVkDevice(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
         _ = st.FreeAll(a)
         fail e
     }
-    return Device(heap: heap, serial: 1, state: box, cell: Cell[u8].New(0))
+    return Device(heap: heap, serial: NextDeviceSerial(), state: box, cell: Cell[u8].New(0))
 }
 
 enum Native {
@@ -374,6 +375,12 @@ export linear view struct Device {
     serial: u32
     state: Box[DeviceState]
     cell: Cell[u8]
+}
+
+var DeviceSerial: raw.Atomic[u64] = raw.Atomic[u64].New(1)
+
+NextDeviceSerial(): u32 {
+    return Cast[u32](DeviceSerial.Add(1))
 }
 
 const DefaultPortableLimits: DeviceLimits = DeviceLimits(
@@ -535,7 +542,7 @@ OpenD3d12(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
         _ = st.FreeAll(a)
         fail e
     }
-    return Device(heap: heap, serial: 1, state: box, cell: Cell[u8].New(0))
+    return Device(heap: heap, serial: NextDeviceSerial(), state: box, cell: Cell[u8].New(0))
 }
 
 /// Makes a device by o. Errors: Unsupported (target), NoAdapter,
@@ -871,6 +878,10 @@ DeviceState.FreeAll(self, a: &Alloc): int {
 
 WaitBeforeClose(dev: mut Device, io: Io) {
     st := dev.state.Mut()
+    match mut st.native {
+        .Vk(v) { _ = v.WaitQueueIdle(io) else {} }
+        _ {}
+    }
     if !st.lost {
         last := st.serials.LastSubmitted()
         match mut st.native {
@@ -1077,9 +1088,8 @@ Device.QueueOrRelease(mut self, kind: u8, slot: u32, last_use: u64) {
         return
     }
     a := self.heap.Alloc()
-    st.deferred.Push(a, DeferredItem(serial: last_use, kind: kind, slot: slot)) else {
-        self.ReleaseDeferredItem(DeferredItem(serial: last_use, kind: kind, slot: slot))
-    }
+    // If bookkeeping cannot grow, the device still owns the slot until Close.
+    st.deferred.Push(a, DeferredItem(serial: last_use, kind: kind, slot: slot)) else {}
 }
 
 Device.SetPlantedBug(mut self, bug: PlantedBug) {

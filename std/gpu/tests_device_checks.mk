@@ -137,7 +137,7 @@ PresentLoop(io: Io, dev: mut Device, sc: mut Swapchain, n: int): Error!bool {
 }
 
 // PresentFrames shows n cleared frames on a hidden window, or returns false
-// when this session cannot present (no window station, no surface).
+// when presentation is unavailable (no window station or surface).
 PresentFrames(sys: &System, dev: mut Device, n: int): Error!bool {
     var opts := window.DefaultWindowOptions
     opts.visible = false
@@ -194,7 +194,7 @@ test "device MXCSR: unchanged across Open, pipeline creation, submit and present
     Assert(MxcsrControl() == m0)
 
     if !(try PresentFrames(sys, mut dev, 3)) {
-        _ = sys.Print("present step skipped: this session cannot present\n") else {}
+        _ = sys.Print("present step skipped: presentation unavailable\n") else {}
     }
     Assert(MxcsrControl() == m0)
 }

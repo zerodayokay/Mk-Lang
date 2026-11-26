@@ -332,6 +332,14 @@ test "validate pass/encoder recording misuse, WriteBuffer->MapRead, Abandon->Wai
     ExpectSubmitMisuse(e6, Misuse.WriteReadConflict)
 }
 
+test "validate distinct device identities" (sys: &System) {
+    d1 := try OpenStub(sys.heap, DefaultDeviceOptions)
+    defer d1.Abandon(sys.io)
+    d2 := try OpenStub(sys.heap, DefaultDeviceOptions)
+    defer d2.Abandon(sys.io)
+    Assert(d1.serial != d2.serial)
+}
+
 test "device loss sticky error and deferred close release" (sys: &System) {
     var dev := try OpenStub(sys.heap, DefaultDeviceOptions)
     defer {

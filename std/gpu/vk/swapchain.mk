@@ -824,16 +824,13 @@ RunQueueWaitIdleJob(j0: QueueWaitJob): QueueWaitJob {
     }
 }
 
-/// Recreates swapchain images at width x height after vkQueueWaitIdle.
-export Device.SwapchainResize(mut self, io: Io, sc_id: u64, width: int, height: int): Error!void {
-    a := self.heap.Alloc()
-    st := self.state.Mut()
-    if st.lost { fail DeviceLost(reason: st.loss_reason) }
-    sc_idx := Cast[int](sc_id)
-    if sc_idx <= 0 || sc_idx >= st.swapchains.Len() || !st.swapchains[sc_idx].alive {
-        fail SurfaceLost
-    }
+/// Waits for the graphics queue on a blocking thread. Reports device loss,
+/// driver errors, or cancellation before the wait starts. Allocates nothing.
+export Device.WaitQueueIdle(mut self, io: Io): Error!void {
+    try WaitQueueIdle(self.state.Mut(), io)
+}
 
+WaitQueueIdle(st: mut VkDeviceState, io: Io): Error!void {
     var qwi_addr: uint = 0
     unsafe "extracts vkQueueWaitIdle fn address" {
         var qfn := st.dev_d.vk_queue_wait_idle.Must()
@@ -845,6 +842,18 @@ export Device.SwapchainResize(mut self, io: Io, sc_id: u64, width: int, height: 
         if IsDeviceLostResult(job.out_res) { st.lost = true }
         fail MapVkError(job.out_res, CallQueueSubmit)
     }
+}
+
+/// Recreates swapchain images at width x height after vkQueueWaitIdle.
+export Device.SwapchainResize(mut self, io: Io, sc_id: u64, width: int, height: int): Error!void {
+    a := self.heap.Alloc()
+    st := self.state.Mut()
+    sc_idx := Cast[int](sc_id)
+    if st.lost { fail DeviceLost(reason: st.loss_reason) }
+    if sc_idx <= 0 || sc_idx >= st.swapchains.Len() || !st.swapchains[sc_idx].alive {
+        fail SurfaceLost
+    }
+    try WaitQueueIdle(st, io)
 
     old_sc := st.swapchains[sc_idx].swapchain
     surf_h := st.swapchains[sc_idx].surface

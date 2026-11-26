@@ -246,7 +246,7 @@ OpenStubWith(heap: &Heap, o: DeviceOptions, cfg: StubConfig): Error!Device from 
         _ = st.FreeAll(a)
         fail e
     }
-    return Device(heap: heap, serial: 1, state: box, cell: Cell[u8].New(0))
+    return Device(heap: heap, serial: NextDeviceSerial(), state: box, cell: Cell[u8].New(0))
 }
 
 Native.CloseAll(self, a: &Alloc): int {
