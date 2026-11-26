@@ -2,15 +2,18 @@
 // unusual alignment, bitfields, SSE unions, missing headers) that must fail
 // cleanly or map correctly.
 // What: TestParseProto, TestCImport_Enum, _PointerOnly, _FuncPtrNullable,
-// _Bitfield, _OpaqueSSE, _HeaderMissing, TestDepHasher and _Exists.
+// _Bitfield, _OpaqueUnaligned, _OpaqueSSE, _HeaderMissing, TestDepHasher
+// and _Exists.
 // How: small headers through translate, and the cache's dependency hasher.
 
 package cimport
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +113,50 @@ func TestCImport_Bitfield(t *testing.T) {
 		"export T.Sc(&self): i8 {\n    return Trunc[i8](self.bits2 << 6) >> 6\n}",
 		"export U.Ub(&self): i32 {",
 		"return i32(Trunc[i8](raw.ReadUnaligned(")
+}
+
+// TestCImport_OpaqueUnaligned: a member of an opaque record that the
+// record's alignment does not align is read and written at align 1: an
+// integer through ReadUnaligned and WriteUnaligned, any other type as its
+// C size in bytes. A member whose alignment is over the record's is such a
+// member even at a multiple of it (tag, in, arr); an enum with a fixed
+// underlying type has that type's size (hs, ls; E is a plain struct); an
+// unnamed record member copies its record's size (A's in).
+func TestCImport_OpaqueUnaligned(t *testing.T) {
+	res := translate(t, "x86_64-windows", map[string]string{"o.h": `typedef long long wide_t;
+enum H : unsigned short { HA };
+enum L : wide_t { LA };
+struct In { short a; char b; };
+#pragma pack(push, 1)
+struct Q { unsigned short tag; struct In in; short arr[2]; unsigned char c; enum H hs[2]; enum L ls[2]; unsigned w : 4; };
+#pragma pack(pop)
+struct __attribute__((packed)) A { char c; struct { short s; char t; } in; unsigned w : 20; };
+struct E { enum H h; char c; };
+`}, Import{Name: "o", Headers: []string{"o.h"}})
+	at := func(rec, of string, off int) string {
+		return "raw.PtrCast[u8, u8](raw.Offset(raw.PtrCast[" + rec + ", u8](" + of + "(self)), " + strconv.Itoa(off) + "))"
+	}
+	get := func(rec, member, typ string, off, n, size int) string {
+		buf := "raw.PtrCast[[" + strconv.Itoa(n) + "]u64, %s](raw.OfMut(mut b))"
+		return fmt.Sprintf("export %s.%s(&self): %s {\n    unsafe \"the C member %s is at byte %d of %s\" {\n        var b := [u64(0); %d]\n"+
+			"        raw.Copy[u8](%s, %s, %d)\n        return raw.Read(%s)\n", rec, pascal(member), typ, member, off, rec, n,
+			fmt.Sprintf(buf, "u8"), at(rec, "raw.Of", off), size, fmt.Sprintf(buf, typ))
+	}
+	set := func(rec, member, typ string, off, size int) string {
+		return fmt.Sprintf("export %s.Set%s(mut self, v: %s) {\n    unsafe \"the C member %s is at byte %d of %s\" {\n"+
+			"        raw.Copy[u8](%s, raw.PtrCast[%s, u8](raw.Of(&v)), %d)\n", rec, pascal(member), typ, member, off, rec,
+			at(rec, "raw.OfMut", off), typ, size)
+	}
+	wantLines(t, res.Modules[0],
+		"export struct Q {\n    export bytes: [35]u8\n}",
+		"return raw.ReadUnaligned(raw.PtrCast[u8, u16](raw.Offset(raw.PtrCast[Q, u8](raw.Of(self)), 0)))",
+		"raw.WriteUnaligned(raw.PtrCast[u8, u16](raw.Offset(raw.PtrCast[Q, u8](raw.OfMut(self)), 0)), v)",
+		get("Q", "in", "In", 2, 1, 4), set("Q", "in", "In", 2, 4),
+		get("Q", "arr", "[2]i16", 6, 1, 4), set("Q", "arr", "[2]i16", 6, 4),
+		get("Q", "hs", "[2]H", 11, 1, 4), set("Q", "hs", "[2]H", 11, 4),
+		get("Q", "ls", "[2]L", 15, 2, 16), set("Q", "ls", "[2]L", 15, 16),
+		get("A", "in", "AIn", 1, 1, 4), set("A", "in", "AIn", 1, 4),
+		"export struct E {\n    export h: H\n    export c: u8\n}")
 }
 
 // TestCImport_OpaqueSSE: on SysV, a union of floats is class SSE

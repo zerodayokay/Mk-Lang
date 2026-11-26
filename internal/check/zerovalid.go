@@ -5,7 +5,7 @@
 //
 // What: implicitBounds and atomicTypeBound (the E0701 of a call, fn value or
 // type expression), the recognizers (arenaSlice, memZeroed, poolFree,
-// readUnaligned, atomicType, atomicFunc, atomicArith), and the predicates
+// rawUnaligned, atomicType, atomicFunc, atomicArith), and the predicates
 // zeroValid and integerArg.
 //
 // How: `Arena.Slice[T]` and `Arena.SliceAligned[T]` zero-fill their
@@ -14,8 +14,9 @@
 // (whose call would read as fallible); `raw.Atomic[T]` and `atomic.Atomic[T]`
 // need an integer `T` of 1, 2, 4 or 8 bytes or a raw pointer, and their
 // arithmetic (Add, AddOrd to XorOrd, FetchAdd to FetchXor) an integer;
-// `raw.ReadUnaligned[T]` an integer `T`; `Pool[T].Free` a T that is not
-// linear. zeroValid records every type item its answer depends on.
+// `raw.ReadUnaligned[T]` and `raw.WriteUnaligned[T]` an integer `T`;
+// `Pool[T].Free` a T that is not linear. zeroValid records every type item
+// its answer depends on.
 
 package check
 
@@ -69,14 +70,18 @@ func (c *Checker) poolFree(it types.ItemID) bool {
 	return mod != nil && mod.Std && mod.Path == "std.mem"
 }
 
-// readUnaligned reports whether item it is the free function
-// `std.raw.ReadUnaligned` (an align 1 load of an integer).
-func (c *Checker) readUnaligned(it types.ItemID) bool {
+// rawUnaligned reports whether item it is the free function
+// `std.raw.ReadUnaligned` or `std.raw.WriteUnaligned` (an align 1 load or
+// store of an integer).
+func (c *Checker) rawUnaligned(it types.ItemID) bool {
 	if it == types.NoItem {
 		return false
 	}
 	item := c.cfg.Items.Get(it)
-	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType || c.cfg.Interner.Str(item.Name) != "ReadUnaligned" {
+	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType {
+		return false
+	}
+	if name := c.cfg.Interner.Str(item.Name); name != "ReadUnaligned" && name != "WriteUnaligned" {
 		return false
 	}
 	mod := c.cfg.Items.Module(item.Module)
@@ -95,7 +100,7 @@ func (c *Checker) atomicFunc(it types.ItemID) bool {
 }
 
 // atomicType reports whether type item it is `raw.Atomic` or std.atomic's
-// `Atomic`, found by module path and name, as readUnaligned is,
+// `Atomic`, found by module path and name, as rawUnaligned is,
 // since KnownItems names only the first.
 func (c *Checker) atomicType(it types.ItemID) bool {
 	if it == types.NoItem {
@@ -258,7 +263,7 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is not zero-valid: "+why).
 			Text("param", "T").Text("bound", boundZeroValid).Text("type", ts))
 		return
-	case c.readUnaligned(item):
+	case c.rawUnaligned(item):
 		if len(g) != 1 || g[0].IsConst {
 			return
 		}

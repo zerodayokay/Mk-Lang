@@ -149,7 +149,7 @@ A generator run is an evaluation ([the evaluator](#the-evaluator)) plus a record
 
 C import is a native step, because a generator's fuel and determinism rules do not fit it. The driver runs Clang as a process with a scrubbed environment, `-nostdinc` and explicit `-isystem` and `--sysroot`, and reads its JSON syntax tree.
 
-- Clang's record layout is taken as is. A layout Mk cannot express becomes an opaque type with accessors.
+- Clang's record layout is taken as is. A layout Mk cannot express becomes an opaque type with a getter and a setter per member. A member the record's alignment does not align is read and written at alignment 1: an integer through `raw.ReadUnaligned` and `WriteUnaligned`, a float through its bits, any other type as a copy of its bytes. A bitfield unit wider than that alignment is loaded and stored through the same two functions.
 - Object-like macros are probed in one batch.
 - `static inline` functions become shims in one generated C file.
 - Items load lazily, because one system header can declare tens of thousands.
