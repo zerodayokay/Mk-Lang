@@ -246,6 +246,9 @@ jobs:
           echo "VK_DRIVER_FILES=$RUNNER_TEMP/$dir/MoltenVK_icd.json" >> "$GITHUB_ENV"
 
       - name: Render and present on Intel macOS
+        env:
+          # Avoid the init-time argument-encoder probe on the virtual GPU.
+          MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: '0'
         run: |
           dir="$RUNNER_TEMP/intel-graphics"
           chmod +x "$dir/scene" "$dir/sketch"
