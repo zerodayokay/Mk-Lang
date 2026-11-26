@@ -4,6 +4,8 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
+- `import c.posix` supplies glibc declarations on x86-64 and ARM64 Linux. Reaching a versioned POSIX function selects system-libc mode and links the matching symbol without a manifest. Imports used for types or constants keep the existing link mode. [System views](doc/reference.md#system-views)
+
 ### Language
 
 - `if` and `match` are expressions wherever an expression stands, operands included: `1 + if c { 2 } else { 3 }`, `xs[if c { 0 } else { 1 }]`, `if n == if c { 1 } else { 2 } { }`, `match k { .. }.Len()`. They were values only on the right of a binding or an assignment, after `return`, as an argument and in a literal, and E0101 elsewhere, even in parentheses, so a choice inside a larger expression needed a local. Suffixes and operators after the closing brace apply to the whole construct, operands are still evaluated left to right, and a value `if` still needs its `else` (E0311). At the start of a statement `if` and `match` are still statements, so `if c { a } else { b }.Len()` there is E0101: wrap it in parentheses.
