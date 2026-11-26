@@ -534,6 +534,7 @@ struct VkUploadBuf {
     alloc: VkMemAlloc
     size: int
     used: int
+    serial: u64
 }
 
 struct VkStagingBuf {

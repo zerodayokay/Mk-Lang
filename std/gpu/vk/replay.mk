@@ -393,7 +393,9 @@ ReplayStreamChunks(
                     OpCopyBuffer {
                         n := u64(UnpackOpArg(w0))
                         if n > 0 {
-                            src := HandleFrom[vulkan.VkBufferT](st.buffers[Cast[int](words[wi + 1])].vk_buffer)
+                            src_ref := words[wi + 1]
+                            src_buf := if UnpackOpFlags(w0) == 1 { src_ref } else { st.buffers[Cast[int](src_ref)].vk_buffer }
+                            src := HandleFrom[vulkan.VkBufferT](src_buf)
                             dst := HandleFrom[vulkan.VkBufferT](st.buffers[Cast[int](words[wi + 2])].vk_buffer)
                             var reg := vulkan.VkBufferCopy(src_offset: words[wi + 3], dst_offset: words[wi + 4], size: n)
                             st.dev_d.vk_cmd_copy_buffer.Must()(cmd, src, dst, 1, raw.Of(&reg))

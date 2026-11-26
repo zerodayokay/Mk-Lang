@@ -260,19 +260,17 @@ Device.AllocUploadSpan(mut self, bytes: u64, align: u64): Error!(res: *d3d12.ID3
     if bytes <= UploadChunkBytes {
         if self.cur_upload_idx >= 0 && self.cur_upload_idx < self.upload_chunks.Len() {
             ch := mut self.upload_chunks[self.cur_upload_idx]
-            if ch.serial <= comp && ch.used > 0 {
-                // Can reset chunk if no longer in flight (note: caller may have staged
-                // earlier in the same unsubmitted encoder, so only reset if serial > 0).
+            if ch.serial <= comp {
                 if ch.serial > 0 {
                     ch.used = 0
                     ch.serial = 0
                 }
-            }
-            aligned_off := (ch.used + mask) & ~mask
-            if aligned_off + bytes <= ch.size {
-                ch.used = aligned_off + bytes
-                unsafe "ch.cpu_ptr is persistently mapped for ch.size bytes" {
-                    return (res: ch.res, cpu: raw.Offset(ch.cpu_ptr, Cast[int](aligned_off)), off: aligned_off)
+                aligned_off := (ch.used + mask) & ~mask
+                if aligned_off + bytes <= ch.size {
+                    ch.used = aligned_off + bytes
+                    unsafe "ch.cpu_ptr is persistently mapped for ch.size bytes" {
+                        return (res: ch.res, cpu: raw.Offset(ch.cpu_ptr, Cast[int](aligned_off)), off: aligned_off)
+                    }
                 }
             }
         }
@@ -1066,11 +1064,16 @@ export Device.ReadTextureSync(
     if rec_args.hr < 0 {
         fail MapHrError(self, rec_args.hr, CallExecuteCommandLists)
     }
+    self.WaitSerial(io, serial) else e {
+        match e {
+            Canceled { _ = self.WaitSerial(io.NoCancel(), serial) else {} }
+            _ {}
+        }
+        fail e
+    }
     if has_dbg_err {
         fail DxFail(kind: ErrKind.DebugLayer, code: 0, call: CallExecuteCommandLists, at: -1)
     }
-
-    try self.WaitSerial(io, serial)
 
     var out := try a.Slice[u8](need_bytes)
     var map_args := ReadbackMapArgs(

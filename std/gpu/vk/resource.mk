@@ -575,7 +575,15 @@ export Device.DestroySampler(mut self, id: u64) {
 AllocUploadRegion(a: &Alloc into st, st: mut VkDeviceState, bytes: []u8, align: int): Error!(vk_buf: u64, offset: u64) {
     n := bytes.Len()
     sz := if n == 0 { 4 } else { n }
+    completed := PollCompletedSerial(st)
+    if st.lost { fail DeviceLost(reason: st.loss_reason) }
     for ci in 0..st.upload_chunks.Len() {
+        serial := st.upload_chunks[ci].serial
+        if serial > completed { continue }
+        if serial != 0 {
+            st.upload_chunks[ci].used = 0
+            st.upload_chunks[ci].serial = 0
+        }
         off := AlignUpInt(st.upload_chunks[ci].used, align)
         if off + sz <= st.upload_chunks[ci].size {
             al := st.upload_chunks[ci].alloc
@@ -628,7 +636,7 @@ AllocUploadRegion(a: &Alloc into st, st: mut VkDeviceState, bytes: []u8, align: 
             raw.Copy(raw.FromAddr[u8](al.mapped_ptr), raw.Data(bytes), n)
             FlushOrInvalidateHostMem(&*st, &al, false)
         }
-        uc := VkUploadBuf(vk_buffer: HandleAddr(buf), alloc: al, size: chunk_sz, used: sz)
+        uc := VkUploadBuf(vk_buffer: HandleAddr(buf), alloc: al, size: chunk_sz, used: sz, serial: 0)
         st.upload_chunks.Push(a, uc) else e {
             FreeDeviceMem(a, st, al)
             st.dev_d.vk_destroy_buffer.Must()(dev, buf, raw.Null[vulkan.VkAllocationCallbacks]())
@@ -668,15 +676,12 @@ export Device.WriteBufferPre(mut self, buf_id: u64, at: int, data: []u8): Error!
     ))
 }
 
-/// Allocates upload ring bytes and returns a temporary VkBufRec ID and offset for Encoder.WriteBuffer.
-export Device.StageEncoderWrite(mut self, data: []u8): Error!(buf_id: u64, offset: u64) {
+/// Stages the write and returns the native upload buffer and byte offset.
+export Device.StageEncoderWrite(mut self, data: []u8): Error!(vk_buf: u64, offset: u64) {
     a := self.heap.Alloc()
     st := self.state.Mut()
     if st.lost { fail DeviceLost(reason: st.loss_reason) }
-    reg := try AllocUploadRegion(a, st, data, 4)
-    // Register transient upload VkBuffer without inflating live_native (owned by upload_chunks).
-    bid := try AllocBufSlot(st, a, VkBufRec(alive: true, vk_buffer: reg.vk_buf, size: 0, alloc: mem.Zeroed[VkMemAlloc](), needs_zero: false, map_read: false, map_write: false))
-    return (buf_id: bid, offset: reg.offset)
+    return try AllocUploadRegion(a, st, data, 4)
 }
 
 /// Queues a pre-submit tight-row texture write from data.
@@ -792,7 +797,13 @@ export Device.ReadTexture(mut self, io: Io, serial: u64, tex_id: u64, mip: int, 
     }
 
     ser := try SubmitReadbackTexture(a, st, serial, tex_id, stg_buf, mip, layer, x, y, w, h, layers, pmask)
-    try WaitForSerial(st, io, ser)
+    WaitForSerial(st, io, ser) else e {
+        match e {
+            Canceled { _ = WaitForSerial(st, io.NoCancel(), ser) else {} }
+            _ {}
+        }
+        fail e
+    }
     FlushOrInvalidateHostMem(&*st, &stg_al, true)
     unsafe "stg_al.mapped_ptr holds need bytes from GPU copy" {
         raw.Copy(raw.DataMut[u8](dst), raw.FromAddr[u8](stg_al.mapped_ptr), need)

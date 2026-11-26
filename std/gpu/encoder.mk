@@ -340,16 +340,18 @@ export Encoder.WriteBuffer(mut self, dst: &Buffer, at: int, data: []u8): Error!v
             }
         }
         .Vk(v) {
-            stg := v.StageEncoderWrite(data) else e { fail MapVkErr(e) }
-            a := self.dev.heap.Alloc()
-            words := [
-                PackHdr(OpCopyBuffer, 5, 0, Cast[u32](data.Len())),
-                stg.buf_id,
-                nh,
-                stg.offset,
-                Cast[u64](at),
-            ]
-            _ = try st.stream.WriteSlice(a, mut st.chunk_pool, words[..])
+            if data.Len() > 0 {
+                stg := v.StageEncoderWrite(data) else e { fail MapVkErr(e) }
+                a := self.dev.heap.Alloc()
+                words := [
+                    PackHdr(OpCopyBuffer, 5, 1, Cast[u32](data.Len())),
+                    stg.vk_buf,
+                    nh,
+                    stg.offset,
+                    Cast[u64](at),
+                ]
+                _ = try st.stream.WriteSlice(a, mut st.chunk_pool, words[..])
+            }
         }
     }
 }

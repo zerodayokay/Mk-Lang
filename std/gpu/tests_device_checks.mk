@@ -265,7 +265,7 @@ test "device writes: WriteBuffer ordered against submissions, odd-size texture c
     // before the work submitted ahead of it.
     b := try NewStorageBuffer(mut dev, 256, "wr_b")
     defer b.Close(mut dev)
-    rb := try NewReadbackBuffer(mut dev, 512, "wr_rb")
+    rb := try NewReadbackBuffer(mut dev, 768, "wr_rb")
     defer rb.Close(mut dev)
     var first := try sys.arena.Slice[u8](256)
     var second := try sys.arena.Slice[u8](256)
@@ -284,12 +284,18 @@ test "device writes: WriteBuffer ordered against submissions, odd-size texture c
     onerr e2.Abandon()
     e2.CopyBuffer(&b, 0, &rb, 256, 256)
     try e2.Submit()
-    mr := try dev.MapRead(sys.io, &rb, 0, 512)
+    var in_stream := try dev.Encoder("in-stream write")
+    onerr in_stream.Abandon()
+    try in_stream.WriteBuffer(&b, 0, first[..])
+    in_stream.CopyBuffer(&b, 0, &rb, 512, 256)
+    try in_stream.Submit()
+    mr := try dev.MapRead(sys.io, &rb, 0, 768)
     got := mr.Bytes()
     for i in 0..256 {
         want_first := if i >= 64 && i < 128 { second[i] } else { first[i] }
         Assert(got[i] == want_first)
         Assert(got[256 + i] == second[i])
+        Assert(got[512 + i] == first[i])
     }
     mr.Unmap()
 

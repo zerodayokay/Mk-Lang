@@ -14,6 +14,15 @@ import std.mem
 import std.raw
 import std.task
 
+StampUploadChunks(st: mut VkDeviceState, serial: u64) {
+    for i in 0..st.upload_chunks.Len() {
+        ch := mut st.upload_chunks[i]
+        if ch.used > 0 && ch.serial == 0 {
+            ch.serial = serial
+        }
+    }
+}
+
 AcquireCmdSlot(a: &Alloc, st: mut VkDeviceState): Error!int {
     completed := PollCompletedSerial(st)
     for i in 0..st.cmd_slots.Len() {
@@ -407,6 +416,7 @@ export Device.SubmitStream(
         some(e) { fail e }
         none {}
     }
+    StampUploadChunks(st, serial)
 }
 
 /// Flushes pending creation-time zeroing and pre-submit writes on the given serial.
@@ -500,6 +510,7 @@ SubmitReadbackTexture(
             if IsDeviceLostResult(r3) { st.lost = true }
             fail MapVkError(r3, CallQueueSubmit)
         }
+        StampUploadChunks(st, serial)
         return serial
     }
 }
