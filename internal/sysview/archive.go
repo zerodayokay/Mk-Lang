@@ -245,7 +245,7 @@ func (a *Archive) ItemLink(i int) (Link, error) {
 	if e.lib == 0 {
 		return Link{}, nil
 	}
-	return Link{Lib: string(a.str(e.lib - 1)), Lazy: e.flags&2 != 0}, nil
+	return archiveLink(string(a.str(e.lib-1)), e.flags&2 != 0), nil
 }
 
 // Head is item i's kind and the names it defines, its text not read.
@@ -276,7 +276,7 @@ func (a *Archive) Item(i int) (Item, error) {
 		it.Defs = append(it.Defs, string(a.str(d)))
 	}
 	if e.lib > 0 {
-		it.Link = Link{Lib: string(a.str(e.lib - 1)), Lazy: e.flags&2 != 0}
+		it.Link = archiveLink(string(a.str(e.lib-1)), e.flags&2 != 0)
 	}
 	return it, nil
 }

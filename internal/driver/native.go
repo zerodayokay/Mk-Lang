@@ -548,22 +548,16 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	if j.gro {
 		opt.GeneralRegsOnly, opt.Bin = true, j.name
 	}
-	var insts *mono.Instances
-	var ds []*diag.Diagnostic
-	var ie *source.InternalError
-	j.timed("instances", func() {
-		// Decode cached non-std bodies reachable from this bin's modules in
-		// parallel before mono.Collect runs single-threaded; otherwise edit
-		// builds decode every unchanged module's bodies sequentially on one
-		// goroutine.
-		w.prefetchBinBodies(j)
-		ie = source.Guard("instances of "+j.mainMod, source.Span{}, func() {
-			insts, ds = mono.Collect(env, w.fromCRoots(w.buildRoots(j.mainMod, j.pkg, j.allFuncs, j.gro), j.lib != nil), opt)
-		})
-	})
-	if ie != nil {
-		return "", []*diag.Diagnostic{diag.FromInternal(ie)}
+	var cobjs []string
+	var ckeys []source.Hash
+	cBuilt := false
+	buildC := func() ([]string, []*diag.Diagnostic) {
+		var ds []*diag.Diagnostic
+		cobjs, ckeys, ds = w.cObjects(ctx, tools, st, triple, w.cfg.Profile.Optimized(), work, cTargetFlags(w.cfg.Target, cpu, j.gro))
+		cBuilt = true
+		return cobjs, ds
 	}
+	insts, posix, ds := w.nativeInstances(&j, env, &opt, buildC)
 	if len(ds) > 0 {
 		return "", ds
 	}
@@ -618,13 +612,14 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	// The package's C import shim, c_sources and asm_sources (cimport.go)
 	// follow the packs' objects, by their own content keys. They come
 	// first here because their undefined names choose import libraries.
-	cobjs, ckeys, cds := w.cObjects(ctx, tools, st, triple, w.cfg.Profile.Optimized(), work, cTargetFlags(w.cfg.Target, cpu, j.gro))
-	if len(cds) > 0 {
-		return "", cds
+	if !cBuilt {
+		if _, ds := buildC(); len(ds) > 0 {
+			return "", ds
+		}
 	}
 	// The package graph's links (links.go): nil when none applies to the
 	// target, so the link is exactly the one a package without links gets.
-	plan, ds := w.linkPlanFor(insts, unit.Globals, cobjs)
+	plan, ds := w.linkPlanFor(insts, unit.Globals, cobjs, posix)
 	if len(ds) > 0 {
 		return "", ds
 	}

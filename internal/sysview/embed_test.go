@@ -64,6 +64,44 @@ func TestSysview_EmbeddedData(t *testing.T) {
 	}
 }
 
+func TestSysview_PosixLinks(t *testing.T) {
+	for target, baseline := range map[string]string{"x86_64-linux": "GLIBC_2.2.5", "aarch64-linux": "GLIBC_2.17"} {
+		t.Run(target, func(t *testing.T) {
+			data, ok := Embedded(target, "posix")
+			if !ok {
+				t.Fatal("missing embedded c.posix")
+			}
+			a, err := Open(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, ver := range map[string]string{
+				"getpid": baseline, "open": baseline, "puts": baseline, "printf": baseline, "__errno_location": baseline,
+				"stat": "GLIBC_2.33", "pthread_create": "GLIBC_2.34", "dlopen": "GLIBC_2.34",
+			} {
+				var got Link
+				for _, k := range a.Lookup(name) {
+					it, err := a.Item(k)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if it.Kind == "func" && it.Name == name {
+						got = it.Link
+					}
+				}
+				if want := (Link{Lib: "libc.so.6", Version: ver}); got != want {
+					t.Errorf("%s link = %+v, want %+v", name, got, want)
+				}
+			}
+			for _, name := range []string{"scanf", "strerror_r", "getopt"} {
+				if len(a.Lookup(name)) != 0 {
+					t.Errorf("embedded c.posix contains %s, whose headers redirect its C symbol", name)
+				}
+			}
+		})
+	}
+}
+
 func TestSysview_VulkanAndDXItems(t *testing.T) {
 	openView := func(name string) *Archive {
 		b, ok := Embedded("x86_64-windows", name)

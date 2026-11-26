@@ -100,6 +100,23 @@ func TestSysview_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestSysview_VersionedLink(t *testing.T) {
+	posix := View{Meta: Meta{Name: "posix", Target: "x86_64-linux"}, Items: []Item{
+		{Name: "PthreadJoin", Kind: "func", Defs: []string{"PthreadJoin"},
+			Link: Link{Lib: "libc.so.6", Version: "GLIBC_2.34"}},
+	}}
+	a := writeAll(t, []View{posix}, DefaultOptions)["posix"]
+	link, err := a.ItemLink(0)
+	if err != nil || link != posix.Items[0].Link {
+		t.Fatalf("ItemLink = %+v, %v", link, err)
+	}
+	posix.Items[0].Link.Version = "GLIBC_2.2.5"
+	b := writeAll(t, []View{posix}, DefaultOptions)["posix"]
+	if a.ID() == b.ID() {
+		t.Fatal("archive identity did not include the symbol version")
+	}
+}
+
 // TestSysview_Deterministic: the same view gives the same bytes, and the
 // identity does not depend on the layout.
 func TestSysview_Deterministic(t *testing.T) {

@@ -61,7 +61,8 @@ type sysViews struct {
 	funcs map[string]string
 	// links maps each kept function with a link entry to its DLL and
 	// lazy-binding flag.
-	links map[string]sysview.Link
+	links      map[string]sysview.Link
+	posixLinks map[string]sysview.Link // native POSIX entries, never Windows imports
 	// key is the extraction's cache key; hit: the texts came from the cache.
 	key source.Hash
 	hit bool
@@ -222,6 +223,7 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 	sv.mods = map[string]*modNode{}
 	sv.funcs = map[string]string{}
 	sv.links = map[string]sysview.Link{}
+	sv.posixLinks = map[string]sysview.Link{}
 	var added []*modNode
 	for _, em := range mods {
 		row, _ := sysview.Named(em.Name)
@@ -240,8 +242,12 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 			sv.funcs[fn] = em.Name
 		}
 		for _, lk := range em.Links {
-			if lk.Lib != "" {
-				sv.links[lk.Func] = sysview.Link{Lib: lk.Lib, Lazy: lk.Lazy}
+			if em.Name == "posix" {
+				if set[em.Name].Meta().Target == target {
+					sv.posixLinks[lk.Func] = lk.Link
+				}
+			} else if lk.Lib != "" {
+				sv.links[lk.Func] = lk.Link
 			}
 		}
 	}
@@ -259,8 +265,7 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 // extractedLink is one kept function's link entry as the cache stores it.
 type extractedLink struct {
 	Func string
-	Lib  string
-	Lazy bool
+	sysview.Link
 }
 
 // extracted is one view's module as the cache stores it.
@@ -313,7 +318,7 @@ func (sv *sysViews) extract(w *world, set sysview.Set, names map[string][]string
 				out[i].Funcs = append(out[i].Funcs, defs...)
 				if lk, err := a.ItemLink(it); err == nil && lk.Lib != "" {
 					for _, d := range defs {
-						out[i].Links = append(out[i].Links, extractedLink{Func: d, Lib: lk.Lib, Lazy: lk.Lazy})
+						out[i].Links = append(out[i].Links, extractedLink{Func: d, Link: lk})
 					}
 				}
 			}

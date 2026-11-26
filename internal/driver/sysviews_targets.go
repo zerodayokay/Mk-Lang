@@ -57,6 +57,8 @@ func (w *world) sysViewLinkHints(ds []*diag.Diagnostic, err error, work string) 
 		if archive := w.sysViewArchive(row, target); archive != target {
 			msg = fmt.Sprintf("the link failed: %s is a function of the system view c.%s, an API of %s, and this build is for %s: call it only where Target.os is %s's, as in `if Target.os == Os.%s { }`",
 				sym, view, archive, target, archive, osWord(archive))
+		} else if view == "posix" {
+			msg = fmt.Sprintf("the link failed: %s, a function of c.posix, has no pinned glibc export on %s: add a pkg.Link if another library exports it", sym, target)
 		} else {
 			msg = fmt.Sprintf("the link failed: %s, a function of the system view c.%s, is exported by no library this bin links: add a pkg.Link for its DLL", sym, view)
 		}

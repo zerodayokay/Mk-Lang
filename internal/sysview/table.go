@@ -56,17 +56,17 @@ var Table = []Row{
 	{Name: "dxgi", Targets: windowsTargets, Headers: []string{"dxgi1_6.h", "dxgidebug.h"}, Defines: []string{"INITGUID"}, Requires: []string{"windows"}, Input: InputWindowsSDK},
 	{Name: "d3d12", Targets: windowsTargets, Headers: []string{"d3d12.h", "d3d12sdklayers.h"}, Defines: []string{"INITGUID"}, Requires: []string{"windows", "dxgi"}, Input: InputWindowsSDK},
 	{Name: "d3dcompiler", Targets: windowsTargets, Headers: []string{"d3dcompiler.h"}, Defines: []string{"INITGUID"}, Requires: []string{"windows", "d3d12"}, Input: InputWindowsSDK},
+	{Name: "posix", Targets: []string{"x86_64-linux", "aarch64-linux"},
+		Headers: []string{"unistd.h", "fcntl.h", "sys/types.h", "sys/stat.h", "sys/mman.h", "sys/socket.h", "netinet/in.h",
+			"arpa/inet.h", "poll.h", "pthread.h", "signal.h", "dirent.h", "errno.h", "time.h", "dlfcn.h", "stdio.h", "stdlib.h", "string.h"},
+		Defines: []string{"_POSIX_C_SOURCE=200809L"}, Input: InputGlibc},
 	{Name: "vulkan", Targets: []string{"x86_64-windows", "x86_64-linux", "aarch64-linux"}, Headers: []string{"vulkan/vulkan.h"},
 		TargetDefines: map[string][]string{
 			"x86_64-windows": {"VK_USE_PLATFORM_WIN32_KHR"},
 			"x86_64-linux":   {"VK_USE_PLATFORM_XLIB_KHR", "VK_USE_PLATFORM_WAYLAND_KHR"},
 			"aarch64-linux":  {"VK_USE_PLATFORM_XLIB_KHR", "VK_USE_PLATFORM_WAYLAND_KHR"},
 		},
-		Requires: []string{"windows"}, Input: InputVulkanHeaders, FallbackToFirst: true},
-	{Name: "posix", Targets: []string{"x86_64-linux", "aarch64-linux"},
-		Headers: []string{"unistd.h", "fcntl.h", "sys/types.h", "sys/stat.h", "sys/mman.h", "sys/socket.h", "netinet/in.h",
-			"arpa/inet.h", "poll.h", "pthread.h", "signal.h", "dirent.h", "errno.h", "time.h", "dlfcn.h"},
-		Input: InputGlibc},
+		Requires: []string{"windows", "posix"}, Input: InputVulkanHeaders, FallbackToFirst: true},
 }
 
 // Named is the row of view name, or false.
