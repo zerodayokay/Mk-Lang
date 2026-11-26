@@ -9519,7 +9519,7 @@ A module may write `unsafe` only if its package's manifest lists it in `unsafe_m
 | Operation | Outside `unsafe` |
 |---|---|
 | Reading or writing through a raw pointer, `*p` | E1103 |
-| Calling a bodiless `extern` function | E1101 |
+| Calling or naming a bodiless `extern` function | E1101 |
 | Calling or naming a `cpu` function whose features the caller lacks ([CPU features](#cpu-features)) | E1101 |
 | Calling or naming a `naked` function | E1101 |
 | `asm` | E1101 |
@@ -9829,7 +9829,7 @@ export Main(sys: &System): WriteError!void {
 
 **Unwinding.** Nothing in Mk unwinds, so nothing unwinds across C. A panic in a function C called aborts the process.
 
-**The C stack.** A call of a bodiless `extern` function runs on the operating system thread's own stack, 8 MiB, not the task's. A call through a `fn` value does not: a C function's address and a Mk function's look the same there, so C code reached that way (a symbol from [`std.dl`](std/dl.md), a function pointer in a C import's struct, a COM method) runs on the calling task's stack. Give that task the stack the C code needs, `StackSize.Large` through `io.ScopeWith` for a library such as Direct3D ([limits and stacks](#limits-and-stacks)), or reach the C function through an `extern`. While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks.
+**The C stack.** A call of a bodiless `extern` function runs on the operating system thread's own stack, 8 MiB, not the task's. A call through a `fn` value does not: a C function's address and a Mk function's look the same there, so C code reached that way (a symbol from [`std.dl`](std/dl.md), a function pointer in a C import's struct, a COM method) runs on the calling task's stack. An `extern` passed to a `const` parameter of `fn` type is no such value: the body is compiled for that argument, and its call is a direct `extern` call. Give that task the stack the C code needs, `StackSize.Large` through `io.ScopeWith` for a library such as Direct3D ([limits and stacks](#limits-and-stacks)), or reach the C function through an `extern`. The same rule makes a `fn` value the way to call an assembly stub that uses no stack without the switch ([stubs that use no stack](#c-sources-and-assembly-files)). While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks.
 
 ### C imports
 
@@ -9932,12 +9932,30 @@ The manifest builds C and assembly files with the package:
 | Field | Entry | Meaning |
 |---|---|---|
 | `c_sources` | `pkg.CSource(path: "c/sum.c", flags: ["-O2"])` | A C file compiled by Clang for the target, with these flags |
-| `asm_sources` | `pkg.AsmSource(path: "src/boot.s", target: "x86_64-freestanding")` | An assembly file, `.s`, or `.S` through the preprocessor, for one target or `""` for every target. Its symbols are `extern` |
+| `asm_sources` | `pkg.AsmSource(path: "src/boot.s", target: "x86_64-freestanding")` | An assembly file, `.s`, or `.S` through the preprocessor, for one target or `""` for every target. Its symbols are `extern`; one that uses no stack may be called through a `fn` value ([below](#c-sources-and-assembly-files)) |
 | `links` | `pkg.Link(...)` | A library ([below](#linking-libraries)) |
 
 - C sources link against `std.libc`, the C library written in Mk, and the bin's links. They get no other C runtime. Without a sysroot, only `std.libc`'s functions are declared in the headers they see: a call to anything else fails to compile, or to link, with E0001. [std.libc](std/libc.md) lists the functions, the include path and the system-libc mode of Linux.
 - A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works, and then the C imports' `include_dirs`.
 - A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root, or list their directory in a C import's `include_dirs`, instead.
+
+**Stubs that use no stack.** A direct call of an assembly symbol's `extern` from a task switches to the system stack, as any `extern` call does ([the C stack](#functions-c-can-call-export-extern)): three runtime calls and a stack switch around a stub of one instruction. A stub that uses no stack beyond its return address and calls nothing, such as a load, a store or a `lock`-prefixed instruction followed by `ret`, can be called through a `fn` value instead. The call is then an ordinary call on the task's stack. Pass the value to an ordinary parameter, never a `const` one, whose call of an `extern` is direct and switches. When the value is named in the calling function, as below, `--release` compiles it to a direct `call` or jump to the stub. A value loaded from a table, a field or a global may stay an indirect call, still on the task's stack. Naming the `extern` as a value needs `unsafe`, and its reason is your claim that the stub uses no stack, never calls back into Mk or C, faults only where a Mk load or store of the same address would, and has the C ABI of the `fn` type. For one instruction, inline [`asm`](#inline-assembly) needs no call at all.
+
+```mk
+// verdict: ok
+// load_u32 is an asm_sources stub: one 32-bit load through its argument, then ret.
+extern load_u32(p: *u32): u32
+
+// SharedLoad calls load_u32 on the task's stack.
+SharedLoad(p: *u32): u32 {
+    unsafe "load_u32 reads one u32 at p, uses no stack and calls nothing; p is live and aligned" {
+        f := load_u32
+        return f(p)
+    }
+}
+```
+
+There is no way to declare an `extern` itself stack-free: a stub has no Mk signature that says so, and the `fn` value already gives the call.
 
 ### Linking libraries
 
