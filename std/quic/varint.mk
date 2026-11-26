@@ -12,6 +12,7 @@
 // allocating.
 
 import std.crypto
+import std.net
 
 // MaxVarint is the largest 62-bit unsigned integer QUIC varints encode
 // (RFC 9000 16: 2^62 - 1).
@@ -48,9 +49,13 @@ const ErrCryptoBase: u64 = 0x0100
 // the frame type that triggered it (0 when unknown or not frame-specific).
 error TransportError(code: u64, frame: u64)
 
+// Receiving a STREAM frame would create a 33rd reassembly gap; the caller must
+// drop the entire packet unacknowledged (RFC 9000 13.1).
+error GapLimit
+
 // Error is the internal error set shared across std.quic's wire, protection,
-// recovery and stream layers.
-type Error = TransportError | crypto.Error
+// recovery, stream, and connection layers.
+type Error = TransportError | crypto.Error | GapLimit | net.StreamReset | Closed | OutOfMemory
 
 // VarintLen returns the shortest encoded length in bytes (1, 2, 4 or 8) for
 // v, or 0 if v exceeds MaxVarint (RFC 9000 16). O(1); allocates nothing.

@@ -524,7 +524,7 @@ Recovery.OnAck(
     self.last_lost_pkts = 0
     si := SpaceIndex(space)
     if !self.spaces[si].ValidateRanges(ranges) {
-        fail TransportError(code: ErrProtocolViolation)
+        fail TransportError(code: ErrProtocolViolation, frame: FrameAck)
     }
     if ranges.Len() == 0 {
         return (acked: 0, lost: 0)

@@ -65,7 +65,7 @@ test "RFC 9000 13.1: an ACK for an unsent or skipped packet number is PROTOCOL_V
     r_unsent := [AckRange(lo: 3, hi: 3)]
     _ = rec.OnAck(Space.App, r_unsent[..], time.Millis(0), t1, mut acked[..], mut lost[..]) else e {
         match e {
-            TransportError(code) { Assert(code == ErrProtocolViolation) }
+            TransportError(code, frame: _) { Assert(code == ErrProtocolViolation) }
             _ { Assert(false) }
         }
         (acked: 0, lost: 0)
@@ -74,7 +74,7 @@ test "RFC 9000 13.1: an ACK for an unsent or skipped packet number is PROTOCOL_V
     r_skip := [AckRange(lo: 0, hi: 2)]
     _ = rec.OnAck(Space.App, r_skip[..], time.Millis(0), t1, mut acked[..], mut lost[..]) else e {
         match e {
-            TransportError(code) { Assert(code == ErrProtocolViolation) }
+            TransportError(code, frame: _) { Assert(code == ErrProtocolViolation) }
             _ { Assert(false) }
         }
         (acked: 0, lost: 0)
@@ -85,7 +85,7 @@ test "RFC 9000 13.1: an ACK for an unsent or skipped packet number is PROTOCOL_V
     var hit_err := false
     _ = rec.OnAck(Space.App, many[..], time.Millis(0), t1, mut acked[..], mut lost[..]) else e {
         match e {
-            TransportError(code) {
+            TransportError(code, frame: _) {
                 Assert(code == ErrProtocolViolation)
                 hit_err = true
             }

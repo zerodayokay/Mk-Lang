@@ -3,9 +3,8 @@
 // ACK frames with the newest ranges first so stale ranges drop cleanly when
 // a packet is tight.
 //
-// What: AckSet (Add, Due, Write, plus space queries and PING-per-RTT pacing),
-// SpaceAck, and the local varint encoding helpers Q23VarintLen and
-// Q23WriteVarint.
+// What: AckSet (Add, Due, Write, plus space queries and PING-per-RTT pacing)
+// and SpaceAck.
 //
 // How: each of the three spaces keeps a fixed 64-entry sorted array of
 // disjoint AckRanges, a duplicate floor raised only when the oldest range is
@@ -20,61 +19,6 @@ const MaxAckRanges = 64
 
 // Default max_ack_delay advertised in transport parameters (25 ms, RFC 9000 18.2).
 const DefaultMaxAckDelayNs: i64 = 25_000_000
-
-// Default ack_delay_exponent (3, RFC 9000 18.2).
-const DefaultAckDelayExponent: int = 3
-
-// Largest 62-bit QUIC packet number / varint value (RFC 9000 16).
-const MaxVarint: u64 = 0x3FFF_FFFF_FFFF_FFFF
-
-// Returns the encoded length in bytes of QUIC variable-length integer v (RFC 9000 16).
-// O(1); allocates nothing.
-Q23VarintLen(v: u64): int {
-    if v <= 63 {
-        return 1
-    }
-    if v <= 16383 {
-        return 2
-    }
-    if v <= 1073741823 {
-        return 4
-    }
-    return 8
-}
-
-// Encodes QUIC variable-length integer v into out and returns the byte count,
-// or 0 if out is shorter than Q23VarintLen(v) or v exceeds 2^62 - 1 (RFC 9000 16).
-// O(1); allocates nothing.
-Q23WriteVarint(out: mut []u8, v: u64): int {
-    if v > MaxVarint {
-        return 0
-    }
-    n := Q23VarintLen(v)
-    if out.Len() < n {
-        return 0
-    }
-    if n == 1 {
-        out[0] = Trunc[u8](v)
-    } else if n == 2 {
-        out[0] = Trunc[u8](0x40 | (v >> 8))
-        out[1] = Trunc[u8](v)
-    } else if n == 4 {
-        out[0] = Trunc[u8](0x80 | (v >> 24))
-        out[1] = Trunc[u8](v >> 16)
-        out[2] = Trunc[u8](v >> 8)
-        out[3] = Trunc[u8](v)
-    } else {
-        out[0] = Trunc[u8](0xC0 | (v >> 56))
-        out[1] = Trunc[u8](v >> 48)
-        out[2] = Trunc[u8](v >> 40)
-        out[3] = Trunc[u8](v >> 32)
-        out[4] = Trunc[u8](v >> 24)
-        out[5] = Trunc[u8](v >> 16)
-        out[6] = Trunc[u8](v >> 8)
-        out[7] = Trunc[u8](v)
-    }
-    return n
-}
 
 // Maps a Space enum to its 0..2 index.
 SpaceIndex(space: Space): int {
@@ -227,7 +171,7 @@ AckSet.New(): AckSet {
         spaces: [SpaceAck.New(), SpaceAck.New(), SpaceAck.New()],
         epoch: none,
         max_ack_delay: time.Nanos(DefaultMaxAckDelayNs),
-        ack_delay_exponent: DefaultAckDelayExponent,
+        ack_delay_exponent: Cast[int](DefaultAckDelayExponent),
         last_ping_ns: none,
     )
 }
@@ -394,7 +338,7 @@ AckSet.Write(mut self, space: Space, out: mut []u8, now: time.Instant): int {
         us := Cast[u64]((now_ns - self.spaces[si].largest_ns) / 1000)
         delay_val = us >> Cast[u64](self.ack_delay_exponent)
     }
-    hdr_len := 1 + Q23VarintLen(largest) + Q23VarintLen(delay_val) + 1 + Q23VarintLen(first_range)
+    hdr_len := 1 + VarintLen(largest) + VarintLen(delay_val) + 1 + VarintLen(first_range)
     if out.Len() < hdr_len {
         return 0
     }
@@ -406,7 +350,7 @@ AckSet.Write(mut self, space: Space, out: mut []u8, now: time.Instant): int {
         r := self.spaces[si].ranges[idx]
         gap := Cast[u64](prev_lo - r.hi - 2)
         rlen := Cast[u64](r.hi - r.lo)
-        need := Q23VarintLen(gap) + Q23VarintLen(rlen)
+        need := VarintLen(gap) + VarintLen(rlen)
         if used + need > out.Len() {
             break
         }
@@ -416,19 +360,19 @@ AckSet.Write(mut self, space: Space, out: mut []u8, now: time.Instant): int {
         idx -= 1
     }
     var off := 0
-    off += Q23WriteVarint(mut out[off..], 0x02)
-    off += Q23WriteVarint(mut out[off..], largest)
-    off += Q23WriteVarint(mut out[off..], delay_val)
-    off += Q23WriteVarint(mut out[off..], Cast[u64](extra))
-    off += Q23WriteVarint(mut out[off..], first_range)
+    off += WriteVarint(mut out[off..], 0x02)
+    off += WriteVarint(mut out[off..], largest)
+    off += WriteVarint(mut out[off..], delay_val)
+    off += WriteVarint(mut out[off..], Cast[u64](extra))
+    off += WriteVarint(mut out[off..], first_range)
     prev_lo = top.lo
     idx = n - 2
     for _ in 0..extra {
         r := self.spaces[si].ranges[idx]
         gap := Cast[u64](prev_lo - r.hi - 2)
         rlen := Cast[u64](r.hi - r.lo)
-        off += Q23WriteVarint(mut out[off..], gap)
-        off += Q23WriteVarint(mut out[off..], rlen)
+        off += WriteVarint(mut out[off..], gap)
+        off += WriteVarint(mut out[off..], rlen)
         prev_lo = r.lo
         idx -= 1
     }

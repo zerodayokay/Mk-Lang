@@ -631,8 +631,12 @@ the close is ignored. O(1); allocates nothing.
 export Datagram.Connect(&self, io: Io, to: Addr): Error!void
 ```
 
-Connects the UDP socket to `to`: only `to`'s datagrams are received.
-Errors: InvalidAddress, Canceled, or the OS's. O(1); allocates nothing.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Connects the socket to `to`: only `to`'s datagrams are received. A
+refused peer is reported as Refused on Linux and macOS; on Windows the
+socket ignores ICMP, so it is not. Errors: InvalidAddress, Canceled, or
+the OS's. O(1); allocates nothing.
 
 ### `Datagram.LocalAddr`
 
@@ -700,6 +704,8 @@ data sends an empty datagram.
 export Datagram.SetBuffers(&self, recv: int, send: int): Error!void
 ```
 
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
 Asks the OS for receive and send buffer sizes of `recv` and `send`
 bytes (0 keeps the current size). Errors: Unsupported for another Io's
 socket; Os for the OS's refusal. O(1): at most two system calls;
@@ -711,8 +717,8 @@ allocates nothing.
 export Datagram.Share(self): SharedDatagram
 ```
 
-Converts the socket into a SharedDatagram that tasks share by
-reference. O(1); allocates nothing.
+Converts the socket into a SharedDatagram that tasks share by reference.
+O(1); allocates nothing.
 
 ### `DefaultListenOptions`
 
@@ -913,9 +919,9 @@ it); allocates nothing.
 export Listener.Addr(&self): Addr
 ```
 
-The address the listener is bound to: zero Addr for a Unix-domain
-listener or another Io's listener. O(1): one system call; allocates
-nothing.
+The bound address of the listener: the IP and port (zero Addr for a
+Unix-domain listener or another Io's listener). O(1); one runtime call;
+allocates nothing.
 
 ### `Listener.Close`
 
@@ -944,9 +950,10 @@ listener. O(1); allocates nothing.
 export linear view struct Mux
 ```
 
-One multiplexed connection (a QUIC connection or an in-memory engine of
-std.net.pipe): linear, Send and Share; many tasks call it by reference.
-Provisional.
+One multiplexed connection (a QUIC connection of std.quic, or an in-memory
+test fake): linear, Send and Share; many tasks call it by reference. Only
+std builds one (Mux.Of takes a core.SealedBox over ?T). Release with
+Close or Abandon.
 
 ### `Mux.Abandon`
 
@@ -954,8 +961,8 @@ Provisional.
 export Mux.Abandon(self)
 ```
 
-Releases the connection without waiting or speaking to the peer.
-Provisional.
+Releases the connection without waiting or speaking to the peer. O(1)
+here plus the engine's Abandon.
 
 ### `Mux.Accept`
 
@@ -963,8 +970,11 @@ Provisional.
 export Mux.Accept(&self, io: Io, uni: bool, wait: bool): Error!?MuxStream
 ```
 
-Returns the next stream the peer opened, or none at once when `wait` is
-false. Provisional.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Returns the next stream the peer opened; none at once when `wait` is
+false. Errors: Canceled, MuxClosed, or engine errors. O(1) besides any
+wait.
 
 ### `Mux.Close`
 
@@ -972,8 +982,11 @@ false. Provisional.
 export Mux.Close(self, io: Io, code: u64): Error!void
 ```
 
-Closes the connection with application `code`. On failure, `self` stays
-the caller's to Abandon or retry. Provisional.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Closes the connection with application `code` (no draining wait). On
+failure, `self` stays the caller's to Abandon or retry. O(1) besides
+sending the close frame.
 
 ### `Mux.Credit`
 
@@ -981,8 +994,9 @@ the caller's to Abandon or retry. Provisional.
 export Mux.Credit(&self, s: &MuxStream, total: i64)
 ```
 
-Raises the bytes the peer may send on `s` to at least `total`. Never
-waits. Provisional.
+Raises the bytes the peer may send on `s` to at least `total` (from the
+stream's start). Never waits; queues a MAX_STREAM_DATA. O(1); allocates
+nothing.
 
 ### `Mux.Limits`
 
@@ -990,16 +1004,7 @@ waits. Provisional.
 export Mux.Limits(&self): MuxLimits
 ```
 
-Returns the peer's current stream and idle limits. O(1). Provisional.
-
-### `Mux.Of`
-
-```
-export Mux.Of[T: MuxEngine + Send + Share](h: &Heap, b: core.SealedBox): Mux from h, b
-```
-
-Wraps an engine boxed in `b` on `h` as a Mux. Only std builds one.
-Provisional.
+Returns the peer's current stream and idle limits. O(1).
 
 ### `Mux.Open`
 
@@ -1007,8 +1012,11 @@ Provisional.
 export Mux.Open(&self, io: Io, uni: bool, wait: bool): Error!?MuxStream
 ```
 
-Opens a bidirectional or unidirectional stream; returns none immediately
-when `wait` is false and the stream limit is reached. Provisional.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Opens a stream. With `wait` false, returns none immediately when the
+peer's stream limit is reached; with `wait` true, waits for credit.
+Errors: Canceled, MuxClosed, or engine errors. O(1) besides any wait.
 
 ### `Mux.PeerAddr`
 
@@ -1016,7 +1024,7 @@ when `wait` is false and the stream limit is reached. Provisional.
 export Mux.PeerAddr(&self): ?Addr
 ```
 
-Returns the peer's address, if known. O(1). Provisional.
+Returns the peer's address, if known. O(1).
 
 ### `Mux.Read`
 
@@ -1024,8 +1032,12 @@ Returns the peer's address, if known. O(1). Provisional.
 export Mux.Read(&self, io: Io, s: &MuxStream, buf: mut []u8, wait: bool): Error!?int
 ```
 
-Reads into `buf`: byte count, 0 at end of stream, or none when `wait` is
-false and nothing is queued. Provisional.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Reads into `buf`: the byte count, 0 at the stream's end, or none at once
+when `wait` is false and nothing is queued. Fails with StreamReset when
+the peer reset the stream, MuxClosed when the connection ended, or
+Canceled (with nothing consumed). O(buf.Len()) besides any wait.
 
 ### `Mux.Release`
 
@@ -1033,7 +1045,7 @@ false and nothing is queued. Provisional.
 export Mux.Release(&self, s: MuxStream)
 ```
 
-Releases the stream handle `s` back to the connection. O(1). Provisional.
+Releases the stream handle `s` back to the connection. O(1).
 
 ### `Mux.Reset`
 
@@ -1041,7 +1053,7 @@ Releases the stream handle `s` back to the connection. O(1). Provisional.
 export Mux.Reset(&self, s: &MuxStream, code: u64)
 ```
 
-Abandons sending on `s` with error `code`. Never waits. Provisional.
+Abandons sending on `s` (RESET_STREAM) with `code`. Never waits. O(1).
 
 ### `Mux.Stop`
 
@@ -1049,7 +1061,7 @@ Abandons sending on `s` with error `code`. Never waits. Provisional.
 export Mux.Stop(&self, s: &MuxStream, code: u64)
 ```
 
-Abandons receiving on `s` with error `code`. Never waits. Provisional.
+Abandons receiving on `s` (STOP_SENDING) with `code`. Never waits. O(1).
 
 ### `Mux.Usable`
 
@@ -1057,8 +1069,8 @@ Abandons receiving on `s` with error `code`. Never waits. Provisional.
 export Mux.Usable(&self, io: Io): bool
 ```
 
-Processes queued packets without waiting and reports whether the
-connection can take a new stream. Provisional.
+Processes what is queued without waiting and reports whether the
+connection can take a new stream. O(datagrams queued).
 
 ### `Mux.Wait`
 
@@ -1066,8 +1078,11 @@ connection can take a new stream. Provisional.
 export Mux.Wait(&self, io: Io, ids: []i64, incoming: bool): Error!MuxReady
 ```
 
-Waits until one of `ids` is readable or, when `incoming` is true, a new
-peer stream can be accepted. Provisional.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Waits until one of `ids` is readable (data, end, or reset) or, when
+`incoming` is true, a new peer stream can be accepted. Errors: Canceled,
+MuxClosed. O(ids.Len()) per wake.
 
 ### `Mux.Write`
 
@@ -1075,8 +1090,11 @@ peer stream can be accepted. Provisional.
 export Mux.Write(&self, io: Io, s: &MuxStream, data: []u8, fin: bool): Error!void
 ```
 
-Writes all of `data`, then the stream's end when `fin` is true, waiting
-for flow-control credit. Provisional.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Writes all of `data`, then the stream's end when `fin` is true. Waits for
+flow-control credit. Fails with StreamReset when the peer sent
+STOP_SENDING, MuxClosed, or Canceled. O(data.Len()) besides any wait.
 
 ### `MuxClosed`
 
@@ -1097,7 +1115,6 @@ export plain view struct MuxDialer
 ```
 
 A client connector of multiplexed connections, made only by std.
-Provisional.
 
 ### `MuxDialer.Dial`
 
@@ -1105,37 +1122,52 @@ Provisional.
 export MuxDialer.Dial(&self, h: &Heap, io: Io, to: Addr, host: str, alpn: str): Error!Mux from h
 ```
 
-Opens a multiplexed connection to `to`, verifies `host`, and negotiates
-`alpn`. Provisional.
+- Flows: The result borrows from h.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
 
-### `MuxDialer.Of`
-
-```
-export MuxDialer.Of[T: Share](c: core.ErasedCall): MuxDialer from c
-```
-
-Wraps `c` as a MuxDialer. Only std calls this. Provisional.
+Opens a multiplexed connection to `to`, checks the peer's certificate for
+`host`, and asks for `alpn`. Errors: Canceled, SecureFailed, or network
+errors. O(1) here plus handshake cost; allocates on `h`.
 
 ### `MuxEngine`
 
 ```
-export interface MuxEngine
+export interface MuxEngine {
+    Open(&self, io: Io, uni: bool, wait: bool): Error!?(id: i64, gen_: u32)
+    Accept(&self, io: Io, uni: bool, wait: bool): Error!?(id: i64, gen_: u32)
+    Read(&self, io: Io, id: i64, gen_: u32, buf: mut []u8, wait: bool): Error!?int
+    Write(&self, io: Io, id: i64, gen_: u32, data: []u8, fin: bool): Error!void
+    Credit(&self, id: i64, gen_: u32, total: i64)
+    Wait(&self, io: Io, ids: []i64, incoming: bool): Error!MuxReady
+    Reset(&self, id: i64, gen_: u32, code: u64)
+    Stop(&self, id: i64, gen_: u32, code: u64)
+    Release(&self, id: i64, gen_: u32)
+    Limits(&self): MuxLimits
+    Usable(&self, io: Io): bool
+    PeerAddr(&self): ?Addr
+    Close(&self, io: Io, code: u64): Error!void
+    Abandon(self)
+}
 ```
 
-The contract std's multiplexed transports implement behind Mux.Of.
-Provisional.
+The contract std's multiplexed transports implement. It is std's:
+implementing it gives a program nothing, since only std can build the
+core.SealedBox that Mux.Of takes, and its methods may change between
+releases.
 
 ### `MuxLimits`
 
 ```
-export struct MuxLimits {
-    export bidi: i64
-    export uni: i64
-    export idle: time.Duration
-}
+export struct MuxLimits
 ```
 
-Stream and idle-timeout limits reported by the peer. Provisional.
+What the peer currently allows on a Mux connection.
+
+Fields:
+
+- `bidi: i64`: Streams this side may open now, bidirectional.
+- `uni: i64`: Streams this side may open now, unidirectional.
+- `idle: time.Duration`: The negotiated idle timeout.
 
 ### `MuxListener`
 
@@ -1143,7 +1175,9 @@ Stream and idle-timeout limits reported by the peer. Provisional.
 export linear view struct MuxListener
 ```
 
-A bound multiplexed server endpoint. Release with Close. Provisional.
+A bound multiplexed server endpoint. Run reads the socket and routes
+datagrams until its scope is cancelled; Accept takes the next connection
+whose handshake may begin. Linear: release with Close.
 
 ### `MuxListener.Accept`
 
@@ -1151,8 +1185,11 @@ A bound multiplexed server endpoint. Release with Close. Provisional.
 export MuxListener.Accept(&self, io: Io): Error!Mux
 ```
 
-Accepts the next incoming multiplexed connection on `self`'s heap.
-Provisional.
+- Flows: The result borrows from self.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Accepts the next incoming multiplexed connection, allocated on `self`'s
+heap. Errors: Canceled, Closed, or engine errors.
 
 ### `MuxListener.Close`
 
@@ -1160,16 +1197,7 @@ Provisional.
 export MuxListener.Close(self)
 ```
 
-Releases the listener and its socket. Provisional.
-
-### `MuxListener.Of`
-
-```
-export MuxListener.Of[T: MuxListening + Send + Share](h: &Heap, b: core.SealedBox): MuxListener from h, b
-```
-
-Wraps a listening endpoint boxed in `b` on `h`. Only std calls this.
-Provisional.
+Releases the listener and its socket. O(1) here plus Abandon.
 
 ### `MuxListener.Port`
 
@@ -1177,7 +1205,7 @@ Provisional.
 export MuxListener.Port(&self): int
 ```
 
-Returns the bound port. O(1). Provisional.
+Returns the bound port. O(1).
 
 ### `MuxListener.Run`
 
@@ -1185,30 +1213,36 @@ Returns the bound port. O(1). Provisional.
 export MuxListener.Run(&self, io: Io): Error!void
 ```
 
-Reads packets and routes them until `io`'s scope is cancelled.
-Provisional.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Reads the listener's socket and routes packets until `io`'s scope is
+cancelled. Errors: Canceled or socket errors.
 
 ### `MuxListening`
 
 ```
-export interface MuxListening
+export interface MuxListening {
+    Run(&self, io: Io): Error!void
+    Accept(&self, h: &Heap, io: Io): Error!Mux from h
+    Port(&self): int
+    Abandon(self)
+}
 ```
 
 The contract a multiplexed server listener implements for MuxListener.Of.
-Provisional.
 
 ### `MuxReady`
 
 ```
-export enum MuxReady {
-    Readable(index: int)
-    Incoming(uni: bool)
-}
+export enum MuxReady
 ```
 
-Result of Mux.Wait: either `ids[index]` is readable or an incoming
-stream (`uni` tells whether unidirectional) is ready to accept.
-Provisional.
+What Mux.Wait found ready.
+
+Variants:
+
+- `Readable(index: int)`: `ids[index]` has data, its end, or a reset to read.
+- `Incoming(uni: bool)`: A new stream of the peer is ready to Accept (`uni` says which kind).
 
 ### `MuxServer`
 
@@ -1217,7 +1251,6 @@ export plain view struct MuxServer
 ```
 
 A server endpoint factory of multiplexed connections, made only by std.
-Provisional.
 
 ### `MuxServer.Listen`
 
@@ -1225,15 +1258,12 @@ Provisional.
 export MuxServer.Listen(&self, h: &Heap, io: Io, addr: str, alpn: str): Error!MuxListener from h, self
 ```
 
-Binds UDP on `addr` and returns a MuxListener. Provisional.
+- Flows: The result borrows from h and self.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
 
-### `MuxServer.Of`
-
-```
-export MuxServer.Of[T: Share](c: core.ErasedCall): MuxServer from c
-```
-
-Wraps `c` as a MuxServer. Only std calls this. Provisional.
+Binds UDP on `addr` ("host:port") and returns a MuxListener. Errors:
+InvalidAddress, AddrInUse, Canceled, or network errors. O(1) here plus
+socket setup; allocates on `h`.
 
 ### `MuxStream`
 
@@ -1241,7 +1271,8 @@ Wraps `c` as a MuxServer. Only std calls this. Provisional.
 export linear struct MuxStream
 ```
 
-One stream of a Mux. Linear: Mux.Release consumes it. Provisional.
+One stream of a Mux. Linear: Mux.Release consumes it, so a forgotten
+stream is a compile error, not a leaked record.
 
 ### `MuxStream.Id`
 
@@ -1249,7 +1280,7 @@ One stream of a Mux. Linear: Mux.Release consumes it. Provisional.
 export MuxStream.Id(&self): i64
 ```
 
-The stream's QUIC stream id. O(1); allocates nothing. Provisional.
+The stream's id (its QUIC stream id). O(1); allocates nothing.
 
 ### `NewConn`
 
@@ -1486,10 +1517,9 @@ Variants:
 export linear struct SharedDatagram
 ```
 
-A bound UDP socket shared across tasks by reference (`Datagram.Share`).
-Read-side calls take the read lock and write-side calls take the write
-lock, so one Recv or TryRecv and one Send or SendBatch run concurrently.
-Linear: Close releases it.
+A UDP socket for many tasks: linear, Send and Share. One Recv (or TryRecv)
+and one Send (or SendBatch) run at once, each under its own lock, as
+Conn's Read and WriteAll. Release it with Close.
 
 ### `SharedDatagram.Close`
 
@@ -1497,8 +1527,7 @@ Linear: Close releases it.
 export SharedDatagram.Close(self)
 ```
 
-Closes the socket. Infallible and not cancellable. O(1); allocates
-nothing.
+Closes the socket. Infallible and not cancellable. O(1); allocates nothing.
 
 ### `SharedDatagram.LocalAddr`
 
@@ -1523,8 +1552,11 @@ The port the socket is bound to. O(1); allocates nothing.
 export SharedDatagram.Recv(&self, io: Io, buf: mut []u8): Error!(n: int, peer: Addr)
 ```
 
-Waits for one datagram into `buf` under the read lock, as Datagram.Recv.
-O(1) runtime call; allocates nothing.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Waits for one datagram into `buf`, returning its byte count and sender.
+Canceled consumes nothing. Errors as Datagram.Recv's. One runtime call
+under the read lock; allocates nothing.
 
 ### `SharedDatagram.Send`
 
@@ -1532,9 +1564,12 @@ O(1) runtime call; allocates nothing.
 export SharedDatagram.Send(&self, io: Io, data: []u8, to: ?Addr): Error!void
 ```
 
-Sends `data` as one datagram to `to`, or to the connected peer when `to`
-is none, under the write lock. Fails with InvalidAddress when `to` is
-none on an unconnected socket. O(1) runtime call; allocates nothing.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Sends data as one datagram to `to`, or to the connected peer when `to` is
+none. Fails with InvalidAddress when `to` is none on an unconnected
+socket, or with Datagram.Send's errors. One runtime call under the write
+lock; allocates nothing.
 
 ### `SharedDatagram.SendBatch`
 
@@ -1542,10 +1577,13 @@ none on an unconnected socket. O(1) runtime call; allocates nothing.
 export SharedDatagram.SendBatch(&self, io: Io, buf: []u8, seg: int, to: ?Addr): Error!void
 ```
 
-Sends `buf` split into datagrams of at most `seg` bytes each, in order,
-to `to` (or connected peer when none) under the write lock. Fails with
-Os(code: 0) when `seg <= 0`. O(buf.Len() / seg) syscalls; allocates
-nothing.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Sends `buf` as datagrams of `seg` bytes each (the last may be shorter), in
+order, to `to` (or the connected peer when `to` is none). Fails with
+Os(code: 0) when `seg <= 0`, or with Send's errors; an earlier datagram may
+have been sent on failure. One syscall per datagram in this release;
+allocates nothing.
 
 ### `SharedDatagram.TryRecv`
 
@@ -1553,9 +1591,11 @@ nothing.
 export SharedDatagram.TryRecv(&self, io: Io, buf: mut []u8): Error!?(n: int, peer: Addr)
 ```
 
-Receives one queued datagram into `buf` without waiting under the read
-lock, returning none immediately when nothing is queued. One runtime
-call; allocates nothing.
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
+Receives one queued datagram into `buf` without waiting, or returns none
+immediately when nothing is queued. Errors as Datagram.Recv's. One runtime
+call under the read lock; allocates nothing.
 
 ### `Shutdown`
 
@@ -1567,8 +1607,8 @@ Which directions Stream.Shutdown and Conn.Shutdown end.
 
 Variants:
 
-- `Read`: No more reads: later reads return 0, and a read waiting in
-  another task returns 0.
+- `Read`: No more reads: later reads return 0, and a read waiting in another
+  task returns 0.
 - `Write`: No more writes: the peer reads the end of the stream after what was
   sent.
 - `Both`: No more reads and no more writes.
@@ -1714,8 +1754,10 @@ doubling to 50 ms); allocates nothing.
 export Stream.SetBuffers(&self, recv: int, send: int): Error!void
 ```
 
+- Errors: Error (Canceled, Closed, OutOfMemory, AddrInUse, InvalidAddress, MuxClosed(code: u64, app: bool, peer: bool), Os(code: i64), Refused, Reset, SecureFailed(why: SecureFailure), StreamReset(code: u64), Unreachable, Unsupported, time.TimedOut)
+
 Asks the OS for receive and send buffer sizes of `recv` and `send`
-bytes (0 keeps the current size). Errors: Unsupported on another Io's
+bytes (0 keeps the current size). Errors: Unsupported for another Io's
 stream; Os for the OS's refusal. O(1): at most two system calls;
 allocates nothing.
 

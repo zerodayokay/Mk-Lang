@@ -37,7 +37,7 @@ T3PeerLimits(): StreamLimits {
 
 T3Code(e: Error): u64 {
     return match e {
-        TransportError(code) { code }
+        TransportError(code, frame: _) { code }
         _ { 9999 }
     }
 }
@@ -97,11 +97,11 @@ test "RFC 9000 4.6: a peer stream id past the advertised limit is STREAM_LIMIT_E
     try srv.OnStream(h, 4, 0, "ok".AsBytes(), false)
     var err1: u64 = 0
     srv.OnStream(h, 8, 0, "no".AsBytes(), false) else e { err1 = T3Code(e) }
-    Assert(err1 == ErrStreamLimitError)
+    Assert(err1 == ErrStreamLimit)
     // Peer uni limit is 1 (id 2 allowed; id 6 exceeds limit).
     var err2: u64 = 0
     srv.OnStream(h, 6, 0, "no".AsBytes(), false) else e { err2 = T3Code(e) }
-    Assert(err2 == ErrStreamLimitError)
+    Assert(err2 == ErrStreamLimit)
 }
 
 test "RFC 9000 19.11: opening past the peer's stream limit waits and sends STREAMS_BLOCKED" (sys: &System) {
@@ -146,7 +146,7 @@ test "RFC 9000 4.6: MAX_STREAMS credit returns only when a stream's record is fr
     Assert(r2.frames == 0)
     var err_lim: u64 = 0
     srv.OnStream(h, 4, 0, "early".AsBytes(), true) else e { err_lim = T3Code(e) }
-    Assert(err_lim == ErrStreamLimitError)
+    Assert(err_lim == ErrStreamLimit)
 
     // Release frees record and triggers MAX_STREAMS(bidi, 2).
     srv.Release(h, 0)
@@ -298,31 +298,31 @@ test "RFC 9000 19.4, 19.5, 19.8, 19.10, 19.13: stream-state legality checks" (sy
     // QT-74: STREAM for uncreated local bidi (0) or send-only local uni (2).
     var e1: u64 = 0
     cli.OnStream(h, 0, 0, "x".AsBytes(), false) else e { e1 = T3Code(e) }
-    Assert(e1 == ErrStreamStateError)
+    Assert(e1 == ErrStreamState)
     var e2: u64 = 0
     cli.OnStream(h, 2, 0, "x".AsBytes(), false) else e { e2 = T3Code(e) }
-    Assert(e2 == ErrStreamStateError)
+    Assert(e2 == ErrStreamState)
 
     // QT-75 & QT-76: RESET_STREAM or STREAM_DATA_BLOCKED for send-only local uni (2).
     _ = try cli.Open(h, true) // creates id 2
     var e3: u64 = 0
     cli.OnReset(h, 2, 0, 0) else e { e3 = T3Code(e) }
-    Assert(e3 == ErrStreamStateError)
+    Assert(e3 == ErrStreamState)
     var e4: u64 = 0
     cli.OnStreamDataBlocked(h, 2, 0) else e { e4 = T3Code(e) }
-    Assert(e4 == ErrStreamStateError)
+    Assert(e4 == ErrStreamState)
 
     // QT-77 & QT-78: STOP_SENDING or MAX_STREAM_DATA for uncreated local bidi (0) or recv-only peer uni (3).
     var e5: u64 = 0
     cli.OnStop(h, 0, 0) else e { e5 = T3Code(e) }
-    Assert(e5 == ErrStreamStateError)
+    Assert(e5 == ErrStreamState)
     var e6: u64 = 0
     cli.OnMaxStreamData(h, 0, 100) else e { e6 = T3Code(e) }
-    Assert(e6 == ErrStreamStateError)
+    Assert(e6 == ErrStreamState)
     var e7: u64 = 0
     cli.OnStop(h, 3, 0) else e { e7 = T3Code(e) }
-    Assert(e7 == ErrStreamStateError)
+    Assert(e7 == ErrStreamState)
     var e8: u64 = 0
     cli.OnMaxStreamData(h, 3, 100) else e { e8 = T3Code(e) }
-    Assert(e8 == ErrStreamStateError)
+    Assert(e8 == ErrStreamState)
 }

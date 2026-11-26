@@ -307,7 +307,7 @@ StreamSend.Write(mut self, a: &Alloc, data: []u8, fin: bool): Error!int {
     }
     dlen := Cast[u64](data.Len())
     if dlen > MaxOffset - self.write_offset {
-        fail TransportError(code: ErrFinalSizeError)
+        fail TransportError(code: ErrFinalSize, frame: FrameStreamBase)
     }
     try self.ring.Push(a, data)
     self.write_offset += dlen

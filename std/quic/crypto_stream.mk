@@ -65,25 +65,9 @@ CryptoLevel.Free(self, a: &Alloc) {
     tx_lost.Free(a)
 }
 
-// Writes a CRYPTO frame (type 0x06, RFC 9000 19.6) into out.
-Q23WriteCrypto(out: mut []u8, offset: u64, data: []u8): int {
-    need := 1 + Q23VarintLen(offset) + Q23VarintLen(Cast[u64](data.Len())) + data.Len()
-    if out.Len() < need {
-        return 0
-    }
-    var pos := 0
-    pos += Q23WriteVarint(mut out[pos..], 0x06)
-    pos += Q23WriteVarint(mut out[pos..], offset)
-    pos += Q23WriteVarint(mut out[pos..], Cast[u64](data.Len()))
-    if data.Len() > 0 {
-        (mut out[pos..pos + data.Len()]).CopyFrom(data)
-        pos += data.Len()
-    }
-    return pos
-}
-
-Q23CryptoHeaderLen(offset: u64, data_len: int): int {
-    return 1 + Q23VarintLen(offset) + Q23VarintLen(Cast[u64](data_len))
+// Returns the byte length of a CRYPTO frame header (RFC 9000 19.6). O(1).
+CryptoHeaderLen(offset: u64, data_len: int): int {
+    return 1 + VarintLen(offset) + VarintLen(Cast[u64](data_len))
 }
 
 // Per-level CRYPTO stream table (Initial, Handshake, App) per RFC 9000 7.5, 19.6.
@@ -107,13 +91,13 @@ CryptoStreams.Free(self, a: &Alloc) {
 }
 
 // Processes a received CRYPTO frame at level (RFC 9000 7.5, 19.6).
-// Fails with TransportError(ErrFrameEncodingError) if offset + len > 2^62 - 1,
-// TransportError(ErrCryptoBufferExceeded) if buffered out-of-order span exceeds
+// Fails with TransportError(ErrFrameEncoding, FrameCrypto) if offset + len > 2^62 - 1,
+// TransportError(ErrCryptoBufferExceeded, FrameCrypto) if buffered out-of-order span exceeds
 // 64 KiB past read_offset, or GapLimit if out-of-order segments exceed 32.
 CryptoStreams.OnCrypto(mut self, a: &Alloc, level: Space, offset: u64, data: []u8): Error!void {
     dlen := Cast[u64](data.Len())
     if dlen > MaxOffset - offset {
-        fail TransportError(code: ErrFrameEncodingError)
+        fail TransportError(code: ErrFrameEncoding, frame: FrameCrypto)
     }
     li := SpaceIndex(level)
     if self.levels[li].discarded {
@@ -121,7 +105,7 @@ CryptoStreams.OnCrypto(mut self, a: &Alloc, level: Space, offset: u64, data: []u
     }
     end := offset + dlen
     if end > self.levels[li].read_offset + Cast[u64](CryptoBufferLimit) {
-        fail TransportError(code: ErrCryptoBufferExceeded)
+        fail TransportError(code: ErrCryptoBufferExceeded, frame: FrameCrypto)
     }
     if end > self.levels[li].max_offset {
         self.levels[li].max_offset = end
@@ -177,7 +161,7 @@ CryptoStreams.Next(mut self, level: Space, out: mut []u8, max: int, frames: mut 
     for self.levels[li].tx_lost.Len() > 0 && fn_cnt < frames.Len() && off < limit {
         lr := self.levels[li].tx_lost[0]
         avail := Cast[int](lr.hi - lr.lo)
-        hdr := Q23CryptoHeaderLen(lr.lo, avail)
+        hdr := CryptoHeaderLen(lr.lo, avail)
         if off + hdr >= limit {
             break
         }
@@ -192,7 +176,7 @@ CryptoStreams.Next(mut self, level: Space, out: mut []u8, max: int, frames: mut 
         rel := Cast[int](lr.lo - self.levels[li].tx_base)
         var scratch: [1500]u8 = [0; 1500]
         self.levels[li].tx_ring.CopyAt(rel, mut scratch[0..take])
-        w := Q23WriteCrypto(mut out[off..limit], lr.lo, scratch[0..take])
+        w := WriteCrypto(mut out[off..limit], lr.lo, scratch[0..take]) else { 0 }
         if w == 0 {
             break
         }
@@ -209,7 +193,7 @@ CryptoStreams.Next(mut self, level: Space, out: mut []u8, max: int, frames: mut 
 
     if fn_cnt < frames.Len() && off < limit && self.levels[li].tx_send < self.levels[li].tx_write {
         unsent := Cast[int](self.levels[li].tx_write - self.levels[li].tx_send)
-        hdr := Q23CryptoHeaderLen(self.levels[li].tx_send, unsent)
+        hdr := CryptoHeaderLen(self.levels[li].tx_send, unsent)
         if off + hdr < limit {
             room := limit - off - hdr
             var take := if unsent < room { unsent } else { room }
@@ -220,7 +204,7 @@ CryptoStreams.Next(mut self, level: Space, out: mut []u8, max: int, frames: mut 
                 rel := Cast[int](self.levels[li].tx_send - self.levels[li].tx_base)
                 var scratch: [1500]u8 = [0; 1500]
                 self.levels[li].tx_ring.CopyAt(rel, mut scratch[0..take])
-                w := Q23WriteCrypto(mut out[off..limit], self.levels[li].tx_send, scratch[0..take])
+                w := WriteCrypto(mut out[off..limit], self.levels[li].tx_send, scratch[0..take]) else { 0 }
                 if w > 0 {
                     send_off := self.levels[li].tx_send
                     self.levels[li].tx_send += Cast[u64](take)

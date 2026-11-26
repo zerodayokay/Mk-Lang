@@ -471,9 +471,8 @@ Stability: Provisional.
 export const DefaultNetFaults: NetFaults
 ```
 
-The default fault profile every Sim starts with: no loss, no duplicates,
-20 us to 500 us latency, unlimited rate and unbounded stream buffers
-(stream_buffer 0), matching historical Sim replay bit for bit.
+Today's model: no loss, no duplication, 20 to 500 us, unlimited,
+unbounded.
 
 ### `Fault`
 
@@ -497,23 +496,24 @@ Variants:
 ### `NetFaults`
 
 ```
-export struct NetFaults {
-    export drop: u32
-    export duplicate: u32
-    export latency_lo: time.Duration
-    export latency_hi: time.Duration
-    export rate: i64
-    export stream_buffer: int
-}
+export struct NetFaults
 ```
 
-What the simulated network does: datagrams are dropped and duplicated at
-parts per million (`0..1_000_000`), each drawn from the seed; latency is
-uniform in `latency_lo..latency_hi` (`DefaultNetFaults` is 20 us to
-500 us); `rate` is bytes per second through each receiving UDP port (0
-for unlimited); `stream_buffer` bounds each stream end's unread bytes (0
-for unbounded), so a send waits while the peer does not read. Start
-from `DefaultNetFaults`.
+What the simulated network does: datagrams are dropped and duplicated
+at parts per million, each drawn from the seed; latency is uniform in
+lo..hi; rate is bytes per second through each receiving port (0 for
+unlimited); stream_buffer bounds each stream end's unread bytes (0 for
+unbounded), so a send waits while the peer does not read. Start from
+DefaultNetFaults.
+
+Fields:
+
+- `drop: u32`: Datagram drop probability in parts per million (0..1_000_000).
+- `duplicate: u32`: Datagram duplication probability in parts per million (0..1_000_000).
+- `latency_lo: time.Duration`: Minimum simulated delivery latency.
+- `latency_hi: time.Duration`: Maximum simulated delivery latency.
+- `rate: i64`: Bandwidth cap in bytes per second per receiving UDP port (0 unlimited).
+- `stream_buffer: int`: Maximum unread bytes per stream end (0 unbounded).
 
 ### `Op`
 
@@ -717,10 +717,8 @@ Free. O(1); allocates nothing.
 export Sim.Blackhole(mut self, port: int, on: bool)
 ```
 
-Drops all packets sent to or from `port` while `on` is true; calling
-again with false restores delivery for new sends. In-flight packets
-scheduled before Blackhole are untouched. O(1); allocates from the
-process heap when enabling.
+Drops every datagram sent to `port` while `on` is true. O(blackholed
+ports); grows the blackhole list on the process heap if needed.
 
 ### `Sim.CrashAfterRandomOps`
 
@@ -795,11 +793,9 @@ its allocator not released, while the Sim lives.
 export Sim.Rebind(mut self, port: int)
 ```
 
-Reassigns the UDP socket bound at `port` to a fresh ephemeral port,
-clearing any packet queues at the old port while keeping connected-peer
-filtering and forwarding future replies to the new port. Does nothing if
-`port` is not a bound UDP socket. O(n) in open sockets; allocates
-nothing.
+Moves the port a UDP socket sends from, as a NAT rebinding does: the peer
+sees datagrams from a new address and replies reach it there. No-op when
+`port` is not bound. O(ports); allocates nothing.
 
 ### `Sim.Restart`
 
@@ -832,8 +828,8 @@ in the connections, datagrams and armed deadlines; allocates nothing.
 export Sim.SetNetFaults(mut self, f: NetFaults)
 ```
 
-Replaces the active network fault profile for the current Sim (takes
-effect on subsequent sends and stream writes). O(1); allocates nothing.
+Applies `f` to every datagram and stream send from now on. O(1); allocates
+nothing.
 
 ### `Sim.TermInput`
 
