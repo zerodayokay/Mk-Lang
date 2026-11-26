@@ -117,7 +117,29 @@ func TestNestedUnionPatterns(t *testing.T) {
 		_ { return 0 }
 	}
 }`, ""},
-		{"stored/mut", `Use(p: *R, bad: bool): int {
+		{"stored/ref-err", `Use(p: *R, bad: bool): int {
+	var r: E!R = Get[R](p, bad)
+	return match &r {
+		ok(ok(0)) | err(_) {
+			var k := 0
+			for i in [5, 6] {
+				if i == 6 {
+					break
+				}
+				k += i
+			}
+			k
+		}
+		ok(ok(n)) { *n }
+		ok(err(e)) {
+			match e {
+				F { 1 }
+				F2(code) { *code }
+			}
+		}
+	}
+}`, ""},
+		{"stored/mut",`Use(p: *R, bad: bool): int {
 	var r: E!R = Get[R](p, bad)
 	match mut r {
 		ok(ok(n)) { *n = *n + 1 }
