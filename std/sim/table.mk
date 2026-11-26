@@ -577,7 +577,12 @@ SimRecv(io: Io, h: uint, buf: mut []u8): core.IoResult {
     if g.err != core.SysErr.None {
         return g
     }
-    return RecvLoop(io, mut e, h, buf)
+    has_buf := WorldOf(&e).net_faults.stream_buffer > 0
+    r := RecvLoop(io, mut e, h, buf)
+    if has_buf && r.err == core.SysErr.None && r.value > 0 {
+        PipeTook(io)
+    }
+    return r
 }
 
 SimSend(io: Io, h: uint, data: []u8): core.IoResult {
@@ -592,6 +597,9 @@ SimSend(io: Io, h: uint, data: []u8): core.IoResult {
     g := BeginH(io, FWrite, h, mut e)
     if g.err != core.SysErr.None {
         return g
+    }
+    if WorldOf(&e).net_faults.stream_buffer > 0 && FindHand(&*WorldOf(&e), h, HConn) >= 0 {
+        return PipeSendLoop(io, mut e, h, data)
     }
     w := WorldOf(&e)
     var r := NetSend(w, h, data)
@@ -1161,6 +1169,34 @@ SimRecvFrom(io: Io, h: uint, buf: mut []u8, from: mut core.IoAddr): core.IoResul
         // RecvLoop's and SimAccept's.
         MainAloneCut(WorldOf(&e))
     }
+    Leave(&e)
+    return r
+}
+
+SimUdpConnect(io: Io, h: uint, to: core.IoAddr): core.IoResult {
+    if Halted(io) {
+        return Fail(core.SysErr.Canceled)
+    }
+    var e := NoEntry()
+    g := Begin(io, FConnect, mut e)
+    if g.err != core.SysErr.None {
+        return g
+    }
+    r := NetUdpConnect(WorldOf(&e), h, to)
+    Leave(&e)
+    return r
+}
+
+SimTryRecvFrom(io: Io, h: uint, buf: mut []u8, from: mut core.IoAddr): core.IoResult {
+    if Halted(io) {
+        return Fail(core.SysErr.Canceled)
+    }
+    var e := NoEntry()
+    g := Begin(io, FRead, mut e)
+    if g.err != core.SysErr.None {
+        return g
+    }
+    r := NetTryRecvFrom(WorldOf(&e), h, buf, from)
     Leave(&e)
     return r
 }

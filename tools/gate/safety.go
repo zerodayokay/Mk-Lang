@@ -163,6 +163,7 @@ var cancelSafety = []cancelTest{
 	{"./std", "TestX509_SystemRootsLinksLinux", "std.x509", true},
 	{"./std", "TestStdWs_Blocks", "std.websocket", false},
 	{"./std", "TestX509_SystemRootsLinux", "std.x509", true},
+	{"./std", "TestStdSyncLead_PctCancel", "std.sync.lead", false},
 }
 
 // cancelExempt are the top-level tests of std that the cancel-safety scan

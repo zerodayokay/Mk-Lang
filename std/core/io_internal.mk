@@ -401,8 +401,13 @@ export const IoOpRemoveAt: u32 = 40
 /// handle, os the bound port. A Sim answers it as its listen entry, which has
 /// no queue or TIME_WAIT to choose.
 export const IoOpListen: u32 = 41
+/// IoOpUdpConnect: h a UDP socket; p the peer (an IoAddr).
+export const IoOpUdpConnect: u32 = 42
+/// IoOpTryRecvFrom: h; out the buffer; q the source <- the count, or -1
+/// with err None when nothing is queued.
+export const IoOpTryRecvFrom: u32 = 43
 /// The number of ops; an op at or past it is Unsupported everywhere.
-export const IoOpCount: u32 = 42
+export const IoOpCount: u32 = 44
 
 /// IoOpTermMode's b: set the saved mode p back.
 export const IoTermSaved: i64 = 0

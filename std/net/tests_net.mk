@@ -735,3 +735,50 @@ test "a scope opened from a NoCancel Io cancels net's check under it, and the sc
     c.Close()
     l.Close()
 }
+
+test "Listener.Addr reports bound IPv4 and IPv6 loopback addresses and Stream.SetBuffers sets sizes" (sys: &System) {
+    io := sys.io
+    l4 := TnListen(io)
+    defer l4.Close()
+    a4 := l4.Addr()
+    Assert(!a4.v6 && int(a4.port) == l4.Port())
+    Assert(a4.ip[0] == 127 && a4.ip[3] == 1)
+
+    l6 := Listen(io, "[::1]:0") else {
+        Assert(false)
+        return
+    }
+    defer l6.Close()
+    a6 := l6.Addr()
+    Assert(a6.v6 && int(a6.port) == l6.Port() && a6.ip[15] == 1)
+
+    var ab: [32]u8 = [0; 32]
+    c := TnDial(io, TnAddr(mut ab, l4.Port())) else {
+        Assert(false)
+        return
+    }
+    defer c.Close()
+    s := l4.Accept(io) else {
+        Assert(false)
+        return
+    }
+    defer s.Close()
+
+    try c.SetBuffers(32768, 32768)
+    try c.SetBuffers(0, 16384)
+    try s.SetBuffers(16384, 0)
+    var bad := false
+    c.SetBuffers(-1, 1024) else err {
+        match err {
+            Os(code: _) { bad = true }
+            _ {}
+        }
+    }
+    Assert(bad)
+
+    var msg: [4]u8 = [1, 2, 3, 4]
+    try c.WriteAll(io, msg[..])
+    var rbuf: [8]u8 = [0; 8]
+    n := try s.Read(io, mut rbuf[..])
+    Assert(n == 4 && rbuf[0] == 1 && rbuf[3] == 4)
+}

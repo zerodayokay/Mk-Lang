@@ -8,6 +8,7 @@
 
 import std.core
 import std.rt
+import std.task
 
 /// A bound UDP socket. Linear: Close releases it. Send but not Share, as
 /// Stream: one task uses it at a time.
@@ -20,7 +21,9 @@ export linear struct Datagram {
     // the numeric zone Bind was given (0 for none): the one link-local zone
     // this socket can name
     zone: u32
-    nosh: [0]Cell[u8]
+    // the connected peer when Datagram.Connect succeeded, so SharedDatagram
+    // can send with to none; Cell keeps Datagram !Share.
+    peer: Cell[?Addr]
 }
 
 /// Binds a UDP socket to addr: "a.b.c.d:port", "[v6]:port" (a numeric
@@ -38,7 +41,7 @@ export Bind(io: Io, addr: str): Error!Datagram {
     }
     r := core.IoUdp(io, a)
     h := try Check(r)
-    return Datagram(h: Trunc[uint](h), bound: Trunc[int](r.os), v6: a.v6, zone: a.zone, nosh: [])
+    return Datagram(h: Trunc[uint](h), bound: Trunc[int](r.os), v6: a.v6, zone: a.zone, peer: Cell[?Addr].New(none))
 }
 
 // ParseBindAddr reads Bind's forms into a, exactly Listen's (std.task's
@@ -127,13 +130,26 @@ IsLocalhost(b: []u8): bool {
 /// the one Bind was given (0 when none, which the OS may refuse). Empty
 /// data sends an empty datagram.
 export Datagram.Send(&self, io: Io, data: []u8, to: Addr): Error!void {
+    try UdpSend(self.h, self.v6, self.zone, io, data, to)
+}
+
+// UdpSend sends data as one datagram on socket h to to.
+UdpSend(h: uint, v6: bool, zone: u32, io: Io, data: []u8, to: Addr): Error!void {
     var dst := core.IoAddr(ip: to.ip, port: to.port, v6: to.v6, zone: 0)
-    if !SendDst(self.v6, self.zone, &to, mut dst) {
+    if !SendDst(v6, zone, &to, mut dst) {
         try CancelPoint(io)
         fail InvalidAddress
     }
-    n := try Check(core.IoSendTo(io, self.h, data, dst))
+    n := try Check(core.IoSendTo(io, h, data, dst))
     if n != i64(data.Len()) {
+        fail Os(code: 0)
+    }
+}
+
+// UdpSendConnected sends data on a connected UDP socket h (no destination address).
+UdpSendConnected(h: uint, io: Io, data: []u8): Error!void {
+    n := try CheckCount(core.IoSend(io, h, data), data.Len())
+    if n != data.Len() {
         fail Os(code: 0)
     }
 }
@@ -184,13 +200,83 @@ SendDst(v6: bool, zone: u32, to: &Addr, dst: mut core.IoAddr): bool {
 /// datagram is consumed and the call is InvalidAddress: a reply in zone 0
 /// would go to the wrong link.
 export Datagram.Recv(&self, io: Io, buf: mut []u8): Error!(n: int, peer: Addr) {
+    return try UdpRecv(self.h, self.zone, io, buf)
+}
+
+// UdpRecv waits for one datagram on socket h into buf.
+UdpRecv(h: uint, zone: u32, io: Io, buf: mut []u8): Error!(n: int, peer: Addr) {
     var from := core.IoAddr(ip: [0; 16], port: 0, v6: false, zone: 0)
     max := buf.Len()
-    n := try CheckCount(core.IoRecvFrom(io, self.h, buf, mut from), max)
-    if !PeerZoneOk(&from, self.zone) {
+    n := try CheckCount(core.IoRecvFrom(io, h, buf, mut from), max)
+    if !PeerZoneOk(&from, zone) {
         fail InvalidAddress
     }
     return (n: n, peer: Unmapped(Addr(ip: from.ip, port: from.port, v6: from.v6)))
+}
+
+// UdpLocalAddr returns the bound address of UDP socket h, or ZeroAddr.
+UdpLocalAddr(h: uint): Addr {
+    if !rt.IsNativeSocket(h) {
+        return ZeroAddr
+    }
+    var ip: [16]u8 = [0; 16]
+    var w := core.IoWords(a: 0, b: 0, c: 0, d: 0)
+    r := rt.SockAddress(rt.NativeIo(), h, false, mut ip[..], mut w)
+    if r.err != core.SysErr.None || w.a < 0 || w.a > 65535 {
+        return ZeroAddr
+    }
+    return Unmapped(Addr(ip: ip, port: Trunc[u16](w.a), v6: w.b == 1))
+}
+
+/// Connects the socket to `to`: only `to`'s datagrams are received. A
+/// refused peer is reported as Refused on Linux and macOS; on Windows the
+/// socket ignores ICMP, so it is not. Errors: InvalidAddress, Canceled, or
+/// the OS's. O(1); allocates nothing.
+export Datagram.Connect(&self, io: Io, to: Addr): Error!void {
+    var dst := core.IoAddr(ip: to.ip, port: to.port, v6: to.v6, zone: 0)
+    if !SendDst(self.v6, self.zone, &to, mut dst) {
+        try CancelPoint(io)
+        fail InvalidAddress
+    }
+    _ = try Check(task.NativeUdpConnect(io, self.h, dst))
+    self.peer.Store(some(to))
+}
+
+/// The bound address of this socket (zero Addr for another Io's socket).
+/// O(1): one system call; allocates nothing.
+export Datagram.LocalAddr(&self): Addr {
+    return UdpLocalAddr(self.h)
+}
+
+/// Asks the OS for receive and send buffer sizes of `recv` and `send`
+/// bytes (0 keeps the current size). Errors: Unsupported for another Io's
+/// socket; Os for the OS's refusal. O(1): at most two system calls;
+/// allocates nothing.
+export Datagram.SetBuffers(&self, recv: int, send: int): Error!void {
+    if !rt.IsNativeSocket(self.h) {
+        fail Unsupported
+    }
+    if recv != 0 {
+        _ = try Check(rt.SockOption(rt.NativeIo(), self.h, core.IoSockRecvBuffer, i64(recv), 0))
+    }
+    if send != 0 {
+        _ = try Check(rt.SockOption(rt.NativeIo(), self.h, core.IoSockSendBuffer, i64(send), 0))
+    }
+}
+
+/// Converts the socket into a SharedDatagram that tasks share by reference.
+/// O(1); allocates nothing.
+export Datagram.Share(self): SharedDatagram {
+    Datagram(h, bound, v6, zone, peer) := self
+    return SharedDatagram(
+        h: h,
+        bound: bound,
+        v6: v6,
+        zone: zone,
+        peer: peer.Load(),
+        reads: Mutex[u8].New(0),
+        writes: Mutex[u8].New(0),
+    )
 }
 
 // PeerZoneOk: an Addr on a socket of zone mine names the peer p: p is not
@@ -214,5 +300,5 @@ export Datagram.Port(&self): int {
 /// the close is ignored. O(1); allocates nothing.
 export Datagram.Close(self) {
     rt.Abandon(self.h)
-    Datagram(h: _, bound: _, v6: _, zone: _, nosh: _) := self
+    Datagram(h: _, bound: _, v6: _, zone: _, peer: _) := self
 }
