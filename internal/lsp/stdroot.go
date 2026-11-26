@@ -112,8 +112,9 @@ var stdPulls = []string{"std.compress", "std.fs", "std.net", "std.time"}
 // stdNestedInternal are the std-internal modules under a public module's
 // directory, with the public modules that load them: std.simd.kernel, the
 // vector kernels, which std.hash and std.crypto import (std.text and
-// std.encoding import it too, but std.hash already loads the whole module).
-var stdNestedInternal = map[string][]string{"simd/kernel": {"std.crypto", "std.hash"}}
+// std.encoding import it too, but std.hash already loads the whole module),
+// and std.http.fields, the HPACK and QPACK codecs, which std.http is to import.
+var stdNestedInternal = map[string][]string{"simd/kernel": {"std.crypto", "std.hash"}, "http/fields": {"std.http"}}
 
 // stdModuleOf is the import path of the std module holding path, or ""
 // for a std-internal module.
