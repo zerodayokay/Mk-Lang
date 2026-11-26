@@ -102,8 +102,9 @@ const LabelMax: int = 249
 /// label is empty or over 249 bytes, context is over 255 bytes, or out is
 /// longer than 255 times the hash's output (8,160 bytes for SHA-256),
 /// writing nothing on any failure. Constant time in prk; the lengths and
-/// the label are public. O(out + label + context) compressions per output
-/// block; allocates nothing (the 514-byte HkdfLabel is on the stack).
+/// the label are public. O(out): one HMAC over at most HashLen + 515 bytes
+/// per HashLen bytes of out; allocates nothing (the 514-byte HkdfLabel is
+/// on the stack).
 export HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): Error!void {
     if !prk.live {
         fail BadKey

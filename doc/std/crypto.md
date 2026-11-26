@@ -586,9 +586,9 @@ Returns the 64-byte ChaCha20 block of key, counter and nonce (RFC 8439
 2.3): the keystream from byte 64 * counter (2.4). Its first five bytes
 are QUIC's ChaCha20 header protection mask (RFC 9001 5.4.4, with the
 counter the little-endian first four bytes of the sample and the nonce
-the other twelve). A building block for protocols, not a mode of encryption: use
-ChaCha20Poly1305 to encrypt. Cannot fail. Constant time in key, counter
-and nonce. O(1); allocates nothing.
+the other twelve). A building block for protocols, not a mode of
+encryption: use ChaCha20Poly1305 to encrypt. Cannot fail. Constant time
+in key, counter and nonce. O(1); allocates nothing.
 
 ### `ChaCha20Poly1305`
 
@@ -904,8 +904,9 @@ after a one-byte length. QUIC derives its packet keys with it (RFC 9001
 label is empty or over 249 bytes, context is over 255 bytes, or out is
 longer than 255 times the hash's output (8,160 bytes for SHA-256),
 writing nothing on any failure. Constant time in prk; the lengths and
-the label are public. O(out + label + context) compressions per output
-block; allocates nothing (the 514-byte HkdfLabel is on the stack).
+the label are public. O(out): one HMAC over at most HashLen + 515 bytes
+per HashLen bytes of out; allocates nothing (the 514-byte HkdfLabel is
+on the stack).
 
 ### `HkdfExtract`
 
