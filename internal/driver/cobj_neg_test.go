@@ -53,7 +53,7 @@ func TestCObj_NegativeLookups(t *testing.T) {
 	}
 	dh := cimport.NewDepHasher(st)
 	base := source.HashBytes("test", []byte("base"))
-	key, cand, ok := cobjKey(dh, base, depFile, src, []string{root, a, b})
+	key, cand, ok := cobjKey(dh, base, depFile, src, []string{root, a, b}, []string{src})
 	if !ok {
 		t.Fatal("cobjKey failed")
 	}
@@ -101,7 +101,7 @@ func TestCObj_ExistingIsNoNegative(t *testing.T) {
 	}
 	dh := cimport.NewDepHasher(st)
 	base := source.HashBytes("test", []byte("base"))
-	key, cand, ok := cobjKey(dh, base, depFile, src, []string{a, b})
+	key, cand, ok := cobjKey(dh, base, depFile, src, []string{a, b}, []string{src})
 	if !ok {
 		t.Fatal("cobjKey failed")
 	}

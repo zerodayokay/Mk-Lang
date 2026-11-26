@@ -6,8 +6,8 @@
 // directories of a package's C), cImports and cImportsOf (the
 // translated imports of one package), prune, translateC and vendoredViews,
 // the C object builds (cObjects, cObjectsOf, asmSourcesFor) with their
-// cache keys (cobjObjKey, cobjCandidate, cobjKey, cobjSearchDirs), and
-// Session.CImports for the tools.
+// cache keys (cobjObjKey, cobjCandidate, cobjKey, cobjSearchDirs,
+// plainFlag), and Session.CImports for the tools.
 //
 // How: the package's C imports are translated once per target
 // (internal/cimport) into one memory build whose modules are c.<name>; the
@@ -16,10 +16,12 @@
 // object's key covers the content hash of every header its -MD file lists,
 // and its candidate (cimport.Cand, the translation's shape) the negative
 // lookups: a header added earlier on the search path, the source's own
-// flags' directories included, or beside an includer, is a miss.
-// The translation, the shim and the C sources search the same -I
-// directories: the package root, then every C import's include_dirs (the
-// package's C imports are one translation unit, so they share one path).
+// flags' directories included, or beside an includer, is a miss. An
+// object whose flags this does not model is not cached, and the link's
+// key takes its bytes. The translation, the shim and the C sources search
+// the same -I directories: the package root, then every C import's
+// include_dirs (the package's C imports are one translation unit, so they
+// share one path).
 
 package driver
 
@@ -660,8 +662,8 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 		}
 		h.Bytes(src)
 		base := h.Sum()
-		// A flag that moves the header search in a way cobjSearchDirs does
-		// not model leaves the object uncached: a miss, never a stale hit.
+		// A flag cobjSearchDirs does not model leaves the object uncached: a
+		// miss, never a stale hit.
 		dirs, modelled := cobjSearchDirs(cj)
 		if st != nil && modelled {
 			if key, ok := cobjCandidate(dh, cimport.Cands(st, cobjListKey(base)), base); ok {
@@ -688,8 +690,23 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 			}
 			return nil, nil, []*diag.Diagnostic{toolErrIn(cerr, "clang", what+" did not compile", work)}
 		}
-		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in, dirs)
-		if st != nil && ok && modelled {
+		// A quoted include may search beside the source, but the shim is in
+		// this build's own work directory, where no header can appear.
+		var roots []string
+		if !j.shim {
+			roots = []string{j.in}
+		}
+		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in, dirs, roots)
+		if !ok || !modelled {
+			// An object not cached may have read what its key does not name
+			// (a file a flag names, a header the -MD list leaves out or names
+			// by a path this cannot read), so the link's key takes its bytes.
+			data, err := os.ReadFile(out)
+			if err != nil {
+				return nil, nil, []*diag.Diagnostic{diag.Toolchain("fs", "read "+filepath.Base(out), pathErrText(err), "cannot read the object of "+filepath.Base(j.in))}
+			}
+			key = source.HashBytes("mk.driver.cobj.bytes.v1", data)
+		} else if st != nil {
 			cimport.PutCand(st, cobjListKey(base), cand)
 			_ = st.PutFile(cache.KindCObj, key, out)
 			if _, err := os.Stat(out); err != nil {
@@ -757,9 +774,10 @@ func cobjCandidate(dh *cimport.DepHasher, cands []cimport.Cand, base source.Hash
 // cobjKey reads the dependency file a compile wrote (none for a plain .s
 // file, whose only input is the source) and returns the object's key and
 // its candidate, with the negative lookups of dirs, the compile's ordered
-// header search path (cobjSearchDirs), and of the source's directory;
-// false when a dependency cannot be read (the object is then not stored).
-func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dirs []string) (source.Hash, cimport.Cand, bool) {
+// header search path (cobjSearchDirs), and of the directories of roots
+// (cimport.Negatives); false when a dependency cannot be read (the object
+// is then not stored).
+func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dirs, roots []string) (source.Hash, cimport.Cand, bool) {
 	var c cimport.Cand
 	if depFile != "" {
 		var deps []string
@@ -782,7 +800,7 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dir
 			c.Deps = append(c.Deps, cimport.Dep{Path: p, Hash: h})
 			deps = append(deps, p)
 		}
-		c.Neg = cimport.Negatives(deps, dirs, []string{input})
+		c.Neg = cimport.Negatives(deps, dirs, roots)
 	}
 	return cobjObjKey(base, c), c, true
 }
@@ -794,13 +812,19 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dir
 // -isystem directories (the resource headers, cj.System, then the
 // flags'), then the -idirafter ones. A flag's relative directory is
 // Clang's, under its working directory, the output's (CompileC). False
-// when a flag changes the search in a way this does not model: the
-// object is then not cached.
+// when a flag is neither one of these nor plain (plainFlag): the object
+// is then not cached.
 func cobjSearchDirs(cj toolchain.CJob) ([]string, bool) {
 	var quote, inc, sys, after []string
 	cwd := filepath.Dir(cj.Output)
 	for i := 0; i < len(cj.Flags); i++ {
 		f := cj.Flags[i]
+		if f == "-D" || f == "-U" { // the separate form: the next flag is the macro
+			if i++; i == len(cj.Flags) {
+				return nil, false
+			}
+			continue
+		}
 		var to *[]string
 		var d string
 		for _, o := range []struct {
@@ -813,7 +837,7 @@ func cobjSearchDirs(cj toolchain.CJob) ([]string, bool) {
 			}
 		}
 		if to == nil {
-			if unmodelledSearchFlag(f) {
+			if !plainFlag(f) {
 				return nil, false
 			}
 			continue
@@ -826,10 +850,15 @@ func cobjSearchDirs(cj toolchain.CJob) ([]string, bool) {
 		}
 		// -isystem-after, -I- and a directory under the sysroot (-I=dir) are
 		// other rules.
-		if strings.HasPrefix(d, "-") || strings.HasPrefix(d, "=") || strings.HasPrefix(d, "$SYSROOT") {
+		if d == "" || strings.HasPrefix(d, "-") || strings.HasPrefix(d, "=") || strings.HasPrefix(d, "$SYSROOT") {
 			return nil, false
 		}
 		if !filepath.IsAbs(d) {
+			// A rooted (\inc) or drive-relative (C:inc) Windows directory is
+			// not under the working directory.
+			if filepath.VolumeName(d) != "" || os.IsPathSeparator(d[0]) {
+				return nil, false
+			}
 			d = filepath.Join(cwd, d)
 		}
 		*to = append(*to, filepath.Clean(d))
@@ -844,14 +873,29 @@ func cobjSearchDirs(cj toolchain.CJob) ([]string, bool) {
 	return append(out, after...), true
 }
 
-// unmodelledSearchFlag reports whether the clang flag f may change where a
-// header is found in a way cobjSearchDirs does not model: every other
-// -i, -I or --i option (a forced or prefixed include, a sysroot, a
-// multilib, an overlay), a framework, a working directory, a response
-// file, or a flag passed through to the front end unseen.
-func unmodelledSearchFlag(f string) bool {
-	for _, p := range []string{"-i", "-I", "--i", "-F", "--sysroot", "-working-directory", "--embed-dir", "-cxx-isystem",
-		"-Xclang", "-Xpreprocessor", "-Xarch", "-Wp,", "-fmodule", "@"} {
+// plainFlag reports whether the clang flag f acts through its text alone,
+// which the object's key holds: a macro (-D, -U), the language standard
+// (-std=), warnings (-W, -w, -pedantic), optimization (-O), debug
+// information (-g), a target option (-m) or a code generation option
+// without a value (-f). Such a flag reads no file and moves neither the
+// header search nor the -MD list. Every other flag is not plain, a
+// separate operand included: a response or config file, a forced include,
+// a sysroot, a dependency-file option (-MMD leaves the system headers out
+// of the list), an -f option with a value or naming modules, a profile or
+// API notes, -mllvm, or a flag passed on to another tool (-Xclang, -Wp,).
+func plainFlag(f string) bool {
+	switch {
+	case f == "-w", f == "-pedantic", f == "-pedantic-errors":
+		return true
+	case strings.HasPrefix(f, "-W"):
+		return !strings.Contains(f, ",")
+	case strings.HasPrefix(f, "-m"):
+		return !strings.HasPrefix(f, "-mllvm") && !strings.HasPrefix(f, "-module")
+	case strings.HasPrefix(f, "-f"):
+		return !strings.Contains(f, "=") && !strings.Contains(f, "module") && !strings.Contains(f, "profile") &&
+			!strings.Contains(f, "apinotes")
+	}
+	for _, p := range []string{"-D", "-U", "-O", "-g", "-std="} {
 		if strings.HasPrefix(f, p) {
 			return true
 		}

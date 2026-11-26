@@ -214,9 +214,11 @@ func (d *DepHasher) Save() {
 
 // Negatives are the negative lookups of a unit that read deps through the
 // ordered search path dirs, with roots the files of the unit that are not
-// in deps (a C source; the translation's own unit includes only with <>):
-// the paths that would shadow a dependency and are absent now. A C object's
-// candidate (internal/driver) keeps them as a translation's does.
+// in deps and whose directory may gain a header (a C source; not the
+// translation's unit or the shim, which mk writes to a fresh work
+// directory): the paths that would shadow a dependency and are absent now.
+// A C object's candidate (internal/driver) keeps them as a translation's
+// does.
 //
 // A dependency P has a name under each directory L holding it, rel(L, P),
 // one of which is the name an #include spelled. Through search directory

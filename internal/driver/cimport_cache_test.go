@@ -1,10 +1,11 @@
 // Why: the C caches (a translation's candidates, a C object's) must hit
 // after a header edit, and must miss when a header appears where Clang
 // would now find it first: beside the includer, in the include stack's
-// directories (msvc), or in a directory the C source's own flags name.
+// directories (msvc), or in a directory the C source's own flags name;
+// an object they do not cache must not leave a stale executable.
 // What: TestCImport_EditedHeaderHits, TestCImport_BesideIncluder,
-// TestCObj_IncludeStackShadow (the msvc rule), TestCObj_FlagIncludeDirs and
-// TestCObj_SearchDirsFlags.
+// TestCObj_IncludeStackShadow (the msvc rule), TestCObj_FlagIncludeDirs,
+// TestCObj_UncachedRelinks and TestCObj_SearchDirsFlags.
 // How: packages checked or built twice against one cache, a header added
 // or edited between the builds; the flag parser on a job.
 
@@ -145,9 +146,34 @@ func TestCObj_FlagIncludeDirs(t *testing.T) {
 	}
 }
 
+// TestCObj_UncachedRelinks: the flags of a response file the C source's
+// flags name are in no key, so its object is not cached; after an edit of
+// the file the warm build links the new object, not the stored executable.
+func TestCObj_UncachedRelinks(t *testing.T) {
+	needTools(t)
+	files := cBin("rsp", "int k_fn(void);\n", "int k_fn(void) { return V; }\n", cMain("", "        b := k.k_fn()\n", "{b}", "b: b"))
+	files["flags.rsp"] = "-DV=1\n"
+	dir := writeTree(t, files)
+	rsp := filepath.Join(dir, "flags.rsp")
+	man := strings.Replace(files["pkg.mk"], `flags: []`, `flags: ["@`+filepath.ToSlash(rsp)+`"]`, 1)
+	if err := os.WriteFile(filepath.Join(dir, "pkg.mk"), []byte(man), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := t.TempDir()
+	if out := buildRun(t, dir, cache); out != "1\n" {
+		t.Fatalf("first build printed %q, want 1", out)
+	}
+	if err := os.WriteFile(rsp, []byte("-DV=2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := buildRun(t, dir, cache); out != "2\n" {
+		t.Errorf("after editing flags.rsp printed %q, want 2", out)
+	}
+}
+
 // TestCObj_SearchDirsFlags: the flags' directories take Clang's places on
 // the path, joined or separate, a relative one under the compile's working
-// directory; a flag that moves the search otherwise is not modelled.
+// directory, beside plain flags; any other flag is not modelled.
 func TestCObj_SearchDirsFlags(t *testing.T) {
 	abs := func(p string) string {
 		if runtime.GOOS == "windows" {
@@ -156,14 +182,21 @@ func TestCObj_SearchDirsFlags(t *testing.T) {
 		return filepath.Join("/", p)
 	}
 	cj := toolchain.CJob{Output: abs("w/c0/x.o"), ResourceDir: abs("rd"), Include: []string{abs("root")}, System: []string{abs("libc")},
-		Flags: []string{"-march=x86-64-v2", "-iquote", abs("q"), "-I" + abs("a"), "-I", abs("b"), "-isystem" + abs("s"), "-idirafter", abs("z"), "-Irel", "-DX=1"}}
+		Flags: []string{"-march=x86-64-v2", "-iquote", abs("q"), "-I" + abs("a"), "-I", abs("b"), "-isystem" + abs("s"), "-idirafter", abs("z"), "-Irel", "-DX=1",
+			"-D", "Y", "-UZ", "-O2", "-g", "-std=c11", "-Wall", "-Wno-error=unused", "-w", "-fno-builtin", "-fno-pic", "-mno-red-zone"}}
 	got, ok := cobjSearchDirs(cj)
 	want := []string{abs("q"), abs("root"), abs("a"), abs("b"), abs("w/c0/rel"), abs("rd/include"), abs("libc"), abs("s"), abs("z")}
 	if !ok || !slices.Equal(got, want) {
 		t.Errorf("dirs %q %v, want %q", got, ok, want)
 	}
-	for _, f := range [][]string{{"-include", "x.h"}, {"-isystem-after", abs("s")}, {"-I"}, {"-I-"}, {"-I=" + abs("s")}, {"-imultilib", "m"},
-		{"-index-header-map"}, {"--include-directory=" + abs("a")}, {"-working-directory", abs("w")}, {"-Xclang", "-I" + abs("a")}, {"@flags.rsp"}} {
+	unmodelled := [][]string{{"-include", "x.h"}, {"-isystem-after", abs("s")}, {"-I"}, {"-I", ""}, {"-I-"}, {"-I=" + abs("s")}, {"-imultilib", "m"},
+		{"-index-header-map"}, {"--include-directory=" + abs("a")}, {"-working-directory", abs("w")}, {"-Xclang", "-I" + abs("a")}, {"@flags.rsp"},
+		{"--config=x.cfg"}, {"-MMD"}, {"--write-user-dependencies"}, {"-D"}, {"-mllvm", "-x"}, {"-mllvm=-x"}, {"-fmodules"}, {"-fprofile-use"},
+		{"-fprofile-use=p.profdata"}, {"-fvisibility=hidden"}, {"-Wp,-Ia"}, {"-Wa,-Ia"}, {"extra.c"}}
+	if runtime.GOOS == "windows" {
+		unmodelled = append(unmodelled, []string{`-I\inc`}, []string{"-I/inc"}, []string{"-IC:inc"})
+	}
+	for _, f := range unmodelled {
 		cj.Flags = f
 		if _, ok := cobjSearchDirs(cj); ok {
 			t.Errorf("flags %q are modelled", f)

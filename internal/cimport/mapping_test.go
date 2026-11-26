@@ -267,13 +267,10 @@ func TestCImport_EditedHeaderCached(t *testing.T) {
 	}
 	load := func(want string) {
 		t.Helper()
-		res, ok := Load(st, key)
-		if got := ""; ok {
-			got = res.Shim
-			if got != want {
-				t.Errorf("loaded %q, want %q", got, want)
-			}
-		} else if want != "" {
+		switch res, ok := Load(st, key); {
+		case ok && res.Shim != want:
+			t.Errorf("loaded %q, want %q", res.Shim, want)
+		case !ok && want != "":
 			t.Errorf("miss, want %q", want)
 		}
 	}
