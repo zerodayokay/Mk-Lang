@@ -92,6 +92,12 @@ func TestCImport_Probes(t *testing.T) {
 		{"paste of a body's piece", []string{"#define P __\n#define CAT(a, b) a %:%: b\n#if CAT(1, 2)\n"}, nil, false},
 		{"paste no #if reaches", []string{"#define CAT(a, b) a##b\nint CAT(__has_, include);\n#define P __\n"}, nil, true},
 		{"paste of no piece", []string{"#define DH(name) struct name##__; int __ x;\n#define CAT(a, b) a##b\n#if CAT(1, 2)\n"}, nil, true},
+		{"piece before an empty macro", []string{"#define EMPTY\n#define P __ EMPTY EMPTYF()\n#define CAT(a, b) a##b\n#define XCAT(a, b) CAT(a, b)\n" +
+			"#if XCAT(P, has_include)(\"opt.h\")\n"}, nil, false},
+		{"angled inside a call", []string{"#define ID(x) x\n#define NAME opt\n#if ID(__has_include(<NAME.h>))\n"}, nil, false},
+		{"angled inside parentheses", []string{"#if (__has_include(<a.h>)) && defined(X) && (1 + (__has_include(<b.h>)))\n"},
+			[]probe{{name: "a.h"}, {name: "b.h"}}, true},
+		{"quoted inside a call", []string{"#define ID(x) x\n#if ID(__has_include(\"o.h\"))\n"}, []probe{{name: "o.h", quoted: true}}, true},
 		{"bare name in a function-like body", []string{"#define W(h) __has_include_next\n"}, nil, false},
 		{"bare name in an #if", []string{"#if 1 + __has_include\n"}, nil, false},
 		{"defined in a body", []string{"#define HAVE_HI defined(__has_include) && defined __has_embed\n"}, nil, true},

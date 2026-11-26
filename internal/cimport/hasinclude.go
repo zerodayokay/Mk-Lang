@@ -281,8 +281,9 @@ func pasteRisk(texts []string, names lookups) bool {
 // leftmost reports whether toks[k] can be the leftmost piece of a pasted
 // token: no literal is pasted before it (a ## chain whose operands before
 // it are all parameters, which may be empty, or none), and a ## follows
-// it, or only parameters come after it before the end, a ',' or a ')'
-// (params is nil on an #if line, which no paste reads but whose call
+// it, or only identifiers, which may expand to nothing (a parameter, an
+// empty macro, a call of one), come after it before the end, a ',' or a
+// ')' (params is nil on an #if line, which no paste reads but whose call
 // arguments a macro's paste may).
 func leftmost(toks []ppTok, k int, params map[string]bool) bool {
 	for j := k - 1; j >= 1 && toks[j].kind == 'p'; j -= 2 {
@@ -294,8 +295,20 @@ func leftmost(toks []ppTok, k int, params map[string]bool) bool {
 	if j < len(toks) && toks[j].kind == 'p' {
 		return true
 	}
-	for j < len(toks) && toks[j].kind == 'i' && params[toks[j].text] {
+	for j < len(toks) && toks[j].kind == 'i' {
 		j++
+		if j < len(toks) && toks[j].text == "(" {
+			for depth := 0; j < len(toks); j++ {
+				if toks[j].text == "(" {
+					depth++
+				} else if toks[j].text == ")" {
+					if depth--; depth == 0 {
+						j++
+						break
+					}
+				}
+			}
+		}
 	}
 	return j == len(toks) && params != nil || j < len(toks) && (toks[j].text == "," || toks[j].text == ")")
 }
@@ -453,6 +466,11 @@ type scanner struct {
 	out   []probe
 
 	lineStart bool
+	// prev is the identifier just read ("" after any other token), and
+	// calls the identifier before each '(' still open on the line: a
+	// lookup inside a macro's arguments is read after expansion.
+	prev  string
+	calls []string
 	// dir is the directive of the current line ("" outside one); operand
 	// is set until the first token after #ifdef, #ifndef, #undef and
 	// their #elif forms.
@@ -476,6 +494,7 @@ func (s *scanner) run() bool {
 			s.i++
 			s.lineStart = true
 			s.dir, s.operand, s.defName, s.defParams, s.funcLike = "", false, "", nil, false
+			s.prev, s.calls = "", s.calls[:0]
 			continue
 		case c == ' ' || c == '\t' || c == '\f' || c == '\v':
 			s.i++
@@ -485,7 +504,7 @@ func (s *scanner) run() bool {
 			continue
 		case c == '"' || c == '\'':
 			s.skipLiteral(c)
-			s.lineStart = false
+			s.lineStart, s.prev = false, ""
 			continue
 		case (c == '#' || c == '%' && s.at(s.i+1, ":")) && s.lineStart:
 			if c == '%' {
@@ -494,11 +513,13 @@ func (s *scanner) run() bool {
 			s.i++
 			s.lineStart = false
 			s.directive()
+			s.prev = ""
 			continue
 		case isIdentStart(c):
 			start := s.i
 			id := s.ident()
 			s.lineStart = false
+			s.prev = id
 			if s.operand {
 				s.operand = false
 				continue // #ifdef X, #undef X: no expansion
@@ -511,10 +532,15 @@ func (s *scanner) run() bool {
 				return false
 			}
 			continue
+		case c == '(':
+			s.calls = append(s.calls, s.prev)
+		case c == ')' && len(s.calls) > 0:
+			s.calls = s.calls[:len(s.calls)-1]
 		}
 		s.i++
 		s.lineStart = false
 		s.operand = false
+		s.prev = ""
 	}
 	return true
 }
@@ -571,16 +597,28 @@ func (s *scanner) use(start int, id string, ms []lookup) bool {
 			return false
 		}
 		// An angled name is a header-name only when the file's own lexer
-		// reads it: in a macro's body, or as a wrapper's argument, its
-		// tokens are macro-expanded first (linux is 1 in gnu11), so the
-		// name looked up is not the one spelled.
-		if !p.quoted && (s.defName != "" || m.param >= 0) {
+		// reads it: in a macro's body, as a wrapper's argument, or inside
+		// another macro's arguments, its tokens are macro-expanded first
+		// (linux is 1 in gnu11), so the name looked up is not the one
+		// spelled.
+		if !p.quoted && (s.defName != "" || m.param >= 0 || s.inCall()) {
 			return false
 		}
 		p.next = m.next
 		s.out = append(s.out, p)
 	}
 	return true
+}
+
+// inCall reports whether the scan is inside the arguments of a call (an
+// identifier's parenthesis other than defined's).
+func (s *scanner) inCall() bool {
+	for _, c := range s.calls {
+		if c != "" && c != "defined" {
+			return true
+		}
+	}
+	return false
 }
 
 // literalName is a lookup's argument "x" or <x> as a probe, false for any
