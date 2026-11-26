@@ -8,8 +8,10 @@
 package std
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -36,9 +38,11 @@ const core11Guards = `// The fuel guards over std.core's byte paths (std/core_gu
 // (an earlier std's forms of these paths, kept as the baseline), this std,
 // and the mutant the guard is for, on x86_64-windows and x86_64-freestanding.
 // The needs written here are exact (the least clean fuel of the same calls in
-// a user program). A mutant's need marked "on the 0.5% grid" is a bisection
-// to 0.5% only. Each guard is evaluated wherever this program is checked, on
-// six targets (TestCore_FuelGuards). On x86_64-freestanding std.core keeps
+// a user program). Those of this std and the reference are checked
+// (core11GuardNeeds); a mutant's was measured on a copy of std with its one
+// change and is not checked. A mutant's need marked "on the 0.5% grid" is a bisection to 0.5% only. Each
+// guard is evaluated wherever this program is checked, on six targets
+// (TestCore_FuelGuards). On x86_64-freestanding std.core keeps
 // its own forms, which need the reference's steps, so the three guards over 4
 // KiB and the two that pin ValidUtf8's hand-off from above, set below what
 // those forms need, and TbySplit20Hosted, whose fuel leaves those forms 0.6%
@@ -148,7 +152,7 @@ TbyFromShape(n: int, shape: int, calls: int): int {
 //     (fsu), and std.simd's word forms on x86_64-windows (std-words).
 //   255 bytes, two-byte scalars: 98,858 and 98,878; the earlier gate, g0 and
 //     mg1 to mg6, on x86_64-freestanding.
-//   256 bytes, two-byte scalars: 99,497 and 36,373; fsu, std-words, g0 on
+//   256 bytes, two-byte scalars: 99,497 and 34,073; fsu, std-words, g0 on
 //     x86_64-freestanding.
 //   100 bytes, 9 two-byte scalars then ASCII: 99,489 and
 //     99,689; the earlier gate needs 213,964 on the 0.5% grid; g0 and mg1 to
@@ -168,13 +172,13 @@ const TbyDenseHeadAtCompileTime: int = TbyFromShape(100, 2, 40) fuel 129_700
 // TbyFromHosted runs str.From calls times over the first n bytes of a
 // 300-byte buffer of two-byte scalars on a hosted target, and returns calls
 // on x86_64-freestanding without the work. Its two guards pin ValidUtf8's
-// hand-off at 256 bytes from above: the fuels are about 1.3 times this std's
-// need, far below the SWAR form's, so any threshold above 256 bytes fails the
-// 256-byte guard. Needs, the reference (the SWAR form) and this std:
-//   256 bytes: 99,477 and 36,353; ValidUtf8's threshold at 257, 512 or
+// hand-off at 256 bytes from above: the fuels are 1.39 and 1.45 times this
+// std's need, far below the SWAR form's, so any threshold above 256 bytes
+// fails the 256-byte guard. Needs, the reference (the SWAR form) and this std:
+//   256 bytes: 99,477 and 34,053; ValidUtf8's threshold at 257, 512 or
 //     1,024 bytes (t257, t512, t1024) 99,497.
-//   300 bytes: 116,615 and 44,507; t512 and t1024 116,635. A threshold of
-//     257 hands 300 bytes to std.simd and needs this std's 44,507, so only
+//   300 bytes: 116,615 and 39,855; t512 and t1024 116,635. A threshold of
+//     257 hands 300 bytes to std.simd and needs this std's 39,855, so only
 //     the 256-byte guard kills it.
 TbyFromHosted(n: int, calls: int): int {
     if Target.os == Os.Freestanding {
@@ -237,9 +241,8 @@ const TbySplit48AtCompileTime: int = TbySplit("k001=vx01yyyyyyyyyyyyyyyyyyyyyyyy
 
 // Long inputs, where std.simd's forms need fewer steps than the word forms (a
 // guard here because thresholds raised out of reach pass every other test).
-// str.From of 4 KiB of ASCII: this std 12,224, the SWAR form (the reference)
-// 34,931; a ValidUtf8 that never calls std.simd needs 35,010 on the 0.5%
-// grid.
+// str.From of 4 KiB of ASCII: this std 12,433, the SWAR form (the reference)
+// 34,931; a ValidUtf8 that never calls std.simd needs the same 34,931.
 TbyFromLong(): int {
     if Target.os == Os.Freestanding {
         return 4096
@@ -254,7 +257,7 @@ TbyFromLong(): int {
 const TbyFromLongAtCompileTime: int = TbyFromLong() fuel 20_000
 
 // Slice[u8].Index of the last of 4 KiB: this std 12,918, the reference
-// 36,200, IndexByteIn never reaching std.simd 102,635 on the 0.5% grid.
+// 36,200, IndexByteIn never reaching std.simd 102,470.
 TbyFindLong(): int {
     if Target.os == Os.Freestanding {
         return 4095
@@ -271,8 +274,8 @@ TbyFindLong(): int {
 const TbyFindLongAtCompileTime: int = TbyFindLong() fuel 20_000
 
 // StartsWith and EndsWith of a 4 KiB text by itself, after its str.From: this
-// std 46,530, the reference 150,833, BytesEqual comparing bytes in place of
-// std.simd's Equal 398,526 on the 0.5% grid.
+// std 46,739, the reference 150,833, BytesEqual comparing bytes in place of
+// std.simd's Equal 373,087.
 TbyEqLong(): int {
     if Target.os == Os.Freestanding {
         return 2
@@ -327,11 +330,132 @@ export Main(sys: &System) {
 }
 `
 
+// core11GuardNeeds is each guard's exact need with this std, the least fuel
+// at which mk check of the guard program holds it: on x86_64-windows (each
+// other hosted target needs the same steps), and the reference's, on
+// x86_64-freestanding with the guards' freestanding returns turned off, so
+// that every guard runs std.core's own forms there. The comments in
+// core11Guards quote these numbers, and checkGuardNeeds holds both to the
+// steps this std takes.
+var core11GuardNeeds = []struct {
+	name                 string
+	hosted, freestanding int
+}{
+	{"TbySplitAtCompileTime", 16_447, 16_229},
+	{"TbySplit20AtCompileTime", 22_123, 29_805},
+	{"TbySplit20HostedAtCompileTime", 22_139, 29_821},
+	{"TbySparseAtCompileTime", 47_849, 47_649},
+	{"TbyEdge255SparseAtCompileTime", 23_795, 23_745},
+	{"TbyEdge256SparseAtCompileTime", 30_675, 24_095},
+	{"TbyEdge255DenseAtCompileTime", 98_878, 98_858},
+	{"TbyEdge256DenseAtCompileTime", 34_073, 99_497},
+	{"TbyDenseHeadAtCompileTime", 99_689, 99_489},
+	{"TbyAbove256AtCompileTime", 34_053, 99_477},
+	{"TbyAbove300AtCompileTime", 39_855, 116_615},
+	{"TbyStartsShortAtCompileTime", 12_169, 10_929},
+	{"TbySplit32AtCompileTime", 41_350, 36_076},
+	{"TbySplit48AtCompileTime", 43_530, 41_076},
+	{"TbyFromLongAtCompileTime", 12_433, 34_931},
+	{"TbyFindLongAtCompileTime", 12_918, 36_200},
+	{"TbyEqLongAtCompileTime", 46_739, 150_833},
+}
+
+// guardConst matches a guard's line in core11Guards: its name, then its fuel.
+var guardConst = regexp.MustCompile(`(?m)^const (Tby\w+): int = .*\) fuel ([0-9_]+)$`)
+
+// withNeeds returns prog with each guard's fuel set to its need in
+// core11GuardNeeds (the freestanding one if freestanding) plus delta, and
+// each guard's line in it.
+func withNeeds(t *testing.T, prog string, freestanding bool, delta int) (string, map[string]int) {
+	t.Helper()
+	need := map[string]int{}
+	for _, g := range core11GuardNeeds {
+		need[g.name] = g.hosted
+		if freestanding {
+			need[g.name] = g.freestanding
+		}
+	}
+	lines := map[string]int{}
+	out := guardConst.ReplaceAllStringFunc(prog, func(m string) string {
+		sm := guardConst.FindStringSubmatch(m)
+		n, ok := need[sm[1]]
+		if !ok {
+			t.Fatalf("guard %s has no need in core11GuardNeeds", sm[1])
+		}
+		lines[sm[1]] = 0
+		return strings.TrimSuffix(m, sm[2]) + fmt.Sprint(n+delta)
+	})
+	if len(lines) != len(core11GuardNeeds) {
+		t.Fatalf("the guard program holds %d guards, core11GuardNeeds %d", len(lines), len(core11GuardNeeds))
+	}
+	for i, l := range strings.Split(out, "\n") {
+		if sm := guardConst.FindStringSubmatch(l); sm != nil {
+			lines[sm[1]] = i + 1
+		}
+	}
+	return out, lines
+}
+
+// commaInt writes n as the comments do, 30675 as 30,675.
+func commaInt(n int) string {
+	s := fmt.Sprint(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
+// checkGuardNeeds holds core11GuardNeeds exact: the guard program checks
+// clean with every fuel at its need and is E0902 at every guard one step
+// below, hosted on x86_64-windows and, with the freestanding returns off, on
+// x86_64-freestanding. The comments must quote every need.
+func checkGuardNeeds(t *testing.T, root, stdDir string) {
+	t.Helper()
+	for _, g := range core11GuardNeeds {
+		for _, n := range []int{g.hosted, g.freestanding} {
+			if !strings.Contains(core11Guards, commaInt(n)) {
+				t.Errorf("%s: the comments do not quote its need %s", g.name, commaInt(n))
+			}
+		}
+	}
+	const ret = "if Target.os == Os.Freestanding {"
+	if strings.Count(core11Guards, ret) != 5 {
+		t.Fatalf("the guard program holds %q %d times, want 5", ret, strings.Count(core11Guards, ret))
+	}
+	for _, c := range []struct {
+		target, prog string
+		freestanding bool
+	}{
+		{"x86_64-windows", core11Guards, false},
+		{"x86_64-freestanding", strings.ReplaceAll(core11Guards, ret, "if false {"), true},
+	} {
+		for _, delta := range []int{0, -1} {
+			prog, lines := withNeeds(t, c.prog, c.freestanding, delta)
+			if err := os.WriteFile(filepath.Join(root, "needs.mk"), []byte(prog), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, st := mkCmd(t, root, stdDir, "check", "--target", c.target, "needs.mk")
+			if delta == 0 {
+				if st != 0 {
+					t.Errorf("mk check --target %s with every fuel at its need: exit %d, so a need is below this std's steps\n%.4000s", c.target, st, out)
+				}
+				continue
+			}
+			for _, g := range core11GuardNeeds {
+				if !strings.Contains(out, fmt.Sprintf("needs.mk:%d:7: E0902", lines[g.name])) {
+					t.Errorf("mk check --target %s with every fuel one below its need: no E0902 at %s, so its need is above this std's steps", c.target, g.name)
+				}
+			}
+		}
+	}
+}
+
 // TestCore_FuelGuards checks the guard program on each of
 // core11GuardTargets (every guard within its fuel), then runs its test block
 // in dev and release on this host (each guard's value against the same calls
 // at run time). A first check with TbySplitAtCompileTime's fuel cut to 2,000
 // must be E0902 at that const, so the harness is shown to evaluate the guards.
+// checkGuardNeeds then holds the needs the comments quote to this std's steps.
 func TestCore_FuelGuards(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -357,6 +481,7 @@ func TestCore_FuelGuards(t *testing.T) {
 			t.Errorf("mk check --target %s of the guard program: exit %d\n%.4000s", target, st, out)
 		}
 	}
+	checkGuardNeeds(t, root, stdDir)
 	for _, flags := range [][]string{nil, {"--release"}} {
 		args := append(append([]string{"test"}, flags...), "main.mk")
 		out, st := mkCmd(t, root, stdDir, args...)
