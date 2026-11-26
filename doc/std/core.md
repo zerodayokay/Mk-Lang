@@ -188,7 +188,7 @@ On Linux a drive letter and `\` are ordinary bytes: `C:`, `C:\` and `C:a` are ea
 | Look for a value | `Has`, `Index` |
 | Sort and search | `Sort`, `SortStable`, `SortStableInPlace`, `Search` |
 | Cut into views | `SplitAt`, `GetPair`, `Chunks`, `ChunksMut` |
-| Grow | `List[T].New(a)`, `HeapList[T].New(a)`, then `Push`, `Insert`, `Pop`, `Remove`, `Clear`; `List.Truncate`, `List.Resize` |
+| Grow | `List[T].New(a)`, `HeapList[T].New(a)`, then `Push`, `Insert`, `Pop`, `Remove`, `Clear`; `List.Truncate`, `List.Resize`, `Extend` |
 | Exchange places | `Swap(a, b)`, `Replace(dst, x)` |
 
 - `Len` is O(1). `Get` and `GetMut` return `none` out of range and never panic; indexing `xs[i]` out of range panics (code 2).
@@ -268,7 +268,7 @@ A `List[T]` is a growable array in an arena; `HeapList[T]` is its linear heap fo
 - `List.Resize(n, x)` makes the length `n`: it keeps the first `n` elements and appends copies of `x`, growing at most once. `T` must be plain (E0701 otherwise). It panics (code 2) for a negative `n`. It is how a body generic in a plain `T` fills a list with one value: there a second `Push(x)` of the same `x` is E0604, since it would store `x` through the copies already in the list, and a plain `T` may hold a `&Cell` that `Push`'s `x into self` lets it write.
 - `Clear` empties the list and keeps its capacity.
 - `List.Done()` ends the list and returns a `mut []T` that lives as long as the arena.
-- `HeapList.Extend(a, xs)` copies a plain `T` (E0701 otherwise), grows at most once, and leaves the list unchanged on `OutOfMemory`.
+- `List.Extend(xs)` and `HeapList.Extend(a, xs)` append copies of a plain `T` (E0701 otherwise): they grow at most once, write each new element once, and leave the list unchanged on `OutOfMemory`.
 - A list prints as `[a, b, c]`.
 
 ```mk
@@ -435,7 +435,7 @@ So a linear value is never dropped behind your back: either the call refuses to 
 | Function | Needs |
 |---|---|
 | `Has`, `Index` | `T: Eq` |
-| `Fill`, `CopyFrom`, `HeapList.Extend`, `List.Resize` | `T: Plain` |
+| `Fill`, `CopyFrom`, `HeapList.Extend`, `List.Extend`, `List.Resize` | `T: Plain` |
 | `Arena.Slice[T]`, `Arena.SliceAligned[T]` | A zero-valid `T`: its all-zero bytes are a value of it. Both fill their elements with zeros |
 | `Free`, `Set`, `Ensure`, `Replace`, `Remove` and others | The rules above |
 
@@ -2787,6 +2787,24 @@ export List[T].Done(self): mut []T
 
 Ends the list and returns its elements as a slice in the list's arena,
 valid as long as the arena. O(1); allocates nothing.
+
+### `List.Extend`
+
+```
+export List[T].Extend(mut self, xs: []T): OutOfMemory!void *xs into self
+```
+
+- Flows: Stores the loans xs holds in self.
+- Errors: OutOfMemory
+
+Appends a copy of each element of xs, in order: one growth to fit them
+all, then one Slice.CopyFrom of xs into the new slots, so each element is
+written once. The elements are copied, not moved, so T must be plain: a
+call with any other T is E0701. The list takes the loans the elements
+hold, not a loan on xs, so xs may be a view of a buffer the caller keeps
+using. OutOfMemory when the buffer cannot grow, and then the list is
+unchanged. O(xs.Len()), plus a copy of Len() elements when the buffer
+grows into a new one; growth allocates from the arena.
 
 ### `List.Insert`
 

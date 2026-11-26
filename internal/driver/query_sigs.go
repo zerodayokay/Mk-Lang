@@ -55,8 +55,11 @@ type SigEntry struct {
 	File string `json:"file"`
 	Line int    `json:"line"`
 	Col  int    `json:"col"`
-	// Sig is the signature as `mk query sig Name` spells its first line.
-	Sig string `json:"sig"`
+	// Sig is the signature as `mk query sig Name` spells its first line:
+	// an alias as the declaration writes it. Resolved spells every alias
+	// as its type; it equals Sig when the signature names no alias.
+	Sig      string `json:"sig"`
+	Resolved string `json:"resolved"`
 	// Contracts are the requires and ensures clauses, one per entry.
 	Contracts []string `json:"contracts"`
 	Exported  bool     `json:"exported"`
@@ -140,7 +143,7 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 				l.Missing = append(l.Missing, name)
 				continue
 			}
-			e := SigEntry{Name: name, Module: m.path, Sig: qx.sigLine(name, sig), Contracts: []string{},
+			e := SigEntry{Name: name, Module: m.path, Sig: qx.sigLine(name, sig), Resolved: qx.sigResolved(name, sig), Contracts: []string{},
 				Exported: it.Exported, Impl: impl}
 			e.File, e.Line, e.Col = qx.spanAt(it.Span)
 			for _, c := range sig.Contracts {
@@ -162,10 +165,9 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 			l.Functions = append(l.Functions, e)
 		}
 	}
-	// Entries are not localized (localizeText) as sig Name's answer is: a
+	// Entries hold no dependency's module path to localize (modPath): a
 	// sig spells types by their names alone and a contract as its source
-	// writes it, so neither holds a dependency's canonical id, and a rewrite
-	// would only rename a parameter spelled as one.
+	// writes it.
 	slices.SortFunc(l.Functions, func(a, b SigEntry) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Col, b.Col),
 			cmp.Compare(a.Name, b.Name))

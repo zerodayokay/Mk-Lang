@@ -1,13 +1,14 @@
 // Why: fuzzing and benchmarking should need no new syntax: a test block
 // calls a function, and the driver decides what happens.
 //
-// What: Fuzz, Bench, RunSeeds, the mutation loop (Loop, Mutate, Guided)
-// and the small decimal helpers it reads and writes with.
+// What: Fuzz, Bench, BenchSys, RunSeeds, the mutation loop (Loop,
+// Mutate, Guided) and the small decimal helpers it reads and writes with.
 //
 // How: the driver (internal/driver/fuzz.go and bench.go) tells the test
 // child what to do through environment variables; with none set, Fuzz
-// calls nothing and Bench calls f(1) once, so a plain test run passes over
-// both. The protocol (environment variables, read once):
+// calls nothing and Bench calls f(1) once (BenchSys f(sys, 1)), so a
+// plain test run passes over all three. The protocol (environment
+// variables, read once):
 //
 //   - MK_TESTING_FUZZ: "run" calls f once per seed of the input file, in
 //     its order, writing "fuzz input <name>" to standard error before each
@@ -100,8 +101,9 @@ export Fuzz(f: fn([]u8)) {
 /// error, from which `mk bench` computes its statistics. Anywhere else,
 /// plain `mk test` included, it calls f(1) once, so a test run checks that
 /// the benchmark works. `mk bench` finds a benchmark by the text
-/// `testing.Bench(` in its test block, so import std.testing under its own
-/// name.
+/// `testing.Bench(` or `testing.BenchSys(` in its test block, so import
+/// std.testing under its own name. A benchmark that allocates takes a
+/// System: see BenchSys.
 ///
 /// Bench itself allocates nothing; O(the repetitions' calls of f).
 export Bench(f: fn(n: int)) {
@@ -109,36 +111,79 @@ export Bench(f: fn(n: int)) {
         f(1)
         return
     }
-    b := spec.AsBytes()
-    first := Decimal(b, 0)
-    var n := first.n
-    reps := Decimal(b, first.end + 1).n
+    var n := SpecN(spec)
     if n <= 0 {
         n = 1
-        for {
-            t := Time(f, n)
-            if t >= BenchTarget || n >= MaxBenchN {
-                break
-            }
+        for Time(f, n) < BenchTarget && n < MaxBenchN {
             n *= 2
         }
     }
-    for _ in 0..reps {
-        t := Time(f, n)
-        var line: [64]u8 = [0; 64]
-        var w := Put(mut line[..], 0, "mkbench ")
-        w = PutInt(mut line[..], w, Trunc[i64](n))
-        w = Put(mut line[..], w, " ")
-        w = PutInt(mut line[..], w, t)
-        w = Put(mut line[..], w, "\n")
-        rt.WriteErr(line[0..w])
+    for _ in 0..SpecReps(spec) {
+        Report(n, Time(f, n))
     }
+}
+
+/// BenchSys is Bench for a benchmark that needs the System, to allocate
+/// from sys.heap or to reach sys.io: the test block passes its own sys,
+/// and BenchSys calls f(sys, n) wherever Bench would call f(n), so
+/// `mk bench` times f(sys, n) and any other run calls f(sys, 1) once. f
+/// builds its fixture in each call, and the time includes it; built once
+/// before f's loop of n, its cost is spread over the n iterations.
+///
+/// BenchSys itself allocates nothing; O(the repetitions' calls of f).
+export BenchSys(sys: &System, f: fn(sys: &System, n: int)) {
+    spec := rt.Env("MK_TESTING_BENCH") else {
+        f(sys, 1)
+        return
+    }
+    var n := SpecN(spec)
+    if n <= 0 {
+        n = 1
+        for TimeSys(sys, f, n) < BenchTarget && n < MaxBenchN {
+            n *= 2
+        }
+    }
+    for _ in 0..SpecReps(spec) {
+        Report(n, TimeSys(sys, f, n))
+    }
+}
+
+// SpecN is the n of a MK_TESTING_BENCH spec "<n> <reps>"; 0 asks for
+// calibration.
+SpecN(spec: str): int {
+    return Decimal(spec.AsBytes(), 0).n
+}
+
+// SpecReps is the repetition count of a MK_TESTING_BENCH spec.
+SpecReps(spec: str): int {
+    b := spec.AsBytes()
+    return Decimal(b, Decimal(b, 0).end + 1).n
+}
+
+// Report writes the line "mkbench <n> <t>" to standard error: one
+// repetition's n and its nanoseconds.
+Report(n: int, t: i64) {
+    var line: [64]u8 = [0; 64]
+    var w := Put(mut line[..], 0, "mkbench ")
+    w = PutInt(mut line[..], w, Trunc[i64](n))
+    w = Put(mut line[..], w, " ")
+    w = PutInt(mut line[..], w, t)
+    w = Put(mut line[..], w, "\n")
+    rt.WriteErr(line[0..w])
 }
 
 // Time is the nanoseconds one call f(n) takes on the monotonic clock.
 Time(f: fn(n: int), n: int): i64 {
     t0 := sys.Now()
     f(n)
+    return sys.Now() - t0
+}
+
+// TimeSys is the nanoseconds one call f(s, n) takes on the monotonic
+// clock.
+TimeSys(s: &System, f: fn(sys: &System, n: int), n: int): i64 {
+    t0 := sys.Now()
+    f(s, n)
     return sys.Now() - t0
 }
 

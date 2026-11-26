@@ -1,6 +1,6 @@
 # std.testing
 
-`std.testing` turns a `test` block into a fuzz target or a benchmark. `testing.Fuzz(f)` calls `f` with inputs: saved files under plain `mk test`, mutated ones under `mk test --fuzz`. `testing.Bench(f)` lets `mk bench` time `f`. Neither needs syntax of its own: a test block calls the function, and the `mk` command decides what happens. For ordinary tests, `Assert` and the `test` block are enough; for checking a function's contract with generated arguments, use `mk test --prop` ([contracts and the property tester](../tools.md#7-contracts-and-the-property-tester)).
+`std.testing` turns a `test` block into a fuzz target or a benchmark. `testing.Fuzz(f)` calls `f` with inputs: saved files under plain `mk test`, mutated ones under `mk test --fuzz`. `testing.Bench(f)` lets `mk bench` time `f`, and `testing.BenchSys(sys, f)` does the same for an `f` that takes the test's `System`. None needs syntax of its own: a test block calls the function, and the `mk` command decides what happens. For ordinary tests, `Assert` and the `test` block are enough; for checking a function's contract with generated arguments, use `mk test --prop` ([contracts and the property tester](../tools.md#7-contracts-and-the-property-tester)).
 
 Read the [`mk test`](../tools.md#mk-test) and [`mk bench`](../tools.md#mk-bench) commands first, and [fuzzing and benchmarks](../tools.md#10-debugging-coverage-fuzzing-and-profiling) for the flags.
 
@@ -16,7 +16,7 @@ import std.testing
 - [The mutation loop](#the-mutation-loop)
 - [Benchmarks](#benchmarks)
 - [Memory and cost](#memory-and-cost)
-- [Examples](#examples): [run a fuzz target over saved inputs](#run-a-fuzz-target-over-saved-inputs), [a saved input that fails](#a-saved-input-that-fails), [find a failing input](#find-a-failing-input), [a benchmark](#a-benchmark)
+- [Examples](#examples): [run a fuzz target over saved inputs](#run-a-fuzz-target-over-saved-inputs), [a saved input that fails](#a-saved-input-that-fails), [find a failing input](#find-a-failing-input), [a benchmark](#a-benchmark), [a benchmark that allocates](#a-benchmark-that-allocates)
 - [API](#api)
 
 ## The main pieces
@@ -27,6 +27,7 @@ import std.testing
 | Run it over saved inputs | `mk test` |
 | Search for failing inputs | `mk test --fuzz <test name> [--fuzztime d]` |
 | Declare a benchmark | `testing.Bench(f)` in a `test` block, `f: fn(n: int)` |
+| Declare a benchmark that allocates from the heap | `testing.BenchSys(sys, f)` in a `test` block that takes `(sys: &System)`, `f: fn(sys: &System, n: int)` |
 | Time the benchmarks | `mk bench [name]` |
 | Line coverage of the package | `mk test --cover` ([coverage](../tools.md#10-debugging-coverage-fuzzing-and-profiling)) |
 
@@ -64,15 +65,17 @@ A benchmark is a function `f: fn(n: int)` that does its work `n` times. One `tes
 
 - `mk bench` first doubles `n` from 1 until one call takes at least 20 ms (or `n` reaches 2^30). It then times `f(n)` once per repetition on the monotonic clock and repeats until the result is stable, 600 repetitions have run, or the time limit passes. [`mk bench`](../tools.md#mk-bench) describes the statistics and `--baseline`.
 - Plain `mk test` calls `f(1)` once, and so does any other run. So `mk test` checks that every benchmark works.
-- `mk bench` finds benchmarks by the text `testing.Bench(` in a test block. Import `std.testing` under its own name, and call `Bench` directly in the block.
+- `mk bench` finds benchmarks by the text `testing.Bench(` or `testing.BenchSys(` in a test block. Import `std.testing` under its own name, and call `Bench` or `BenchSys` directly in the block.
+
+A function value captures nothing, so `f: fn(n: int)` cannot reach a `System`, and without one it has no heap: a hosted program's heap is `sys.heap`, and such an `f` allocates only from a buffer of its own (`std.mem`'s `Fixed`). A benchmark that allocates from the heap is a function `f: fn(sys: &System, n: int)`. Its test block takes `(sys: &System)` and calls `testing.BenchSys(sys, f)`, which calls `f(sys, n)` wherever `Bench` calls `f(n)`. `f` builds its fixture from `sys.heap` in each call, and the time includes it; built once before `f`'s loop of `n`, its cost is spread over the `n` iterations.
 
 ## Memory and cost
 
-`Fuzz` reads its inputs into memory from the process heap and frees them before it returns. In plain `mk test` it costs one call of `f` per saved input. `Bench` allocates nothing itself. In any other run `Fuzz` costs one check and `Bench` one call of `f(1)`.
+`Fuzz` reads its inputs into memory from the process heap and frees them before it returns. In plain `mk test` it costs one call of `f` per saved input. `Bench` and `BenchSys` allocate nothing themselves. In any other run `Fuzz` costs one check, `Bench` one call of `f(1)` and `BenchSys` one call of `f(sys, 1)`.
 
 ## Examples
 
-Each example is a package directory: the file shown (`port.mk`, `digits.mk`, `header.mk`, `sum.mk`, in order) and, for the fuzz targets, the files under `testdata/fuzz/`.
+Each example is a package directory: the file shown (`port.mk`, `digits.mk`, `header.mk`, `sum.mk`, `list.mk`, in order) and, for the fuzz targets, the files under `testdata/fuzz/`.
 
 ### Run a fuzz target over saved inputs
 
@@ -242,6 +245,42 @@ PASS main "sum_digits"
 
 `mk bench` prints the median time per call, its confidence interval and the number of repetitions. These differ on every machine, so they are not shown here.
 
+### A benchmark that allocates
+
+```mk
+// verdict: ok
+import std.testing
+
+// Sum adds 0 through n-1 from a list it builds in an arena.
+Sum(sys: &System, n: int): OutOfMemory!int {
+    var a := try Arena.New(sys.heap)
+    defer a.Free()
+    var xs := List[int].New(&a)
+    for i in 0..n {
+        try xs.Push(i)
+    }
+    var s := 0
+    for x in xs {
+        s += x
+    }
+    return s
+}
+
+Run(sys: &System, n: int) {
+    Assert(Sum(sys, n).Must() == n * (n - 1) / 2)
+}
+
+test "sum_list" (sys: &System) {
+    testing.BenchSys(sys, Run) // mk bench times Run(sys, n); mk test calls Run(sys, 1)
+}
+```
+
+```text
+$ mk test
+PASS main "sum_list"
+1 passed, 0 failed
+```
+
 ## API
 
 <!-- api:begin -->
@@ -260,10 +299,26 @@ repetition on the monotonic clock and reports each time on standard
 error, from which `mk bench` computes its statistics. Anywhere else,
 plain `mk test` included, it calls f(1) once, so a test run checks that
 the benchmark works. `mk bench` finds a benchmark by the text
-`testing.Bench(` in its test block, so import std.testing under its own
-name.
+`testing.Bench(` or `testing.BenchSys(` in its test block, so import
+std.testing under its own name. A benchmark that allocates takes a
+System: see BenchSys.
 
 Bench itself allocates nothing; O(the repetitions' calls of f).
+
+### `BenchSys`
+
+```
+export BenchSys(sys: &System, f: fn(sys: &System, n: int))
+```
+
+BenchSys is Bench for a benchmark that needs the System, to allocate
+from sys.heap or to reach sys.io: the test block passes its own sys,
+and BenchSys calls f(sys, n) wherever Bench would call f(n), so
+`mk bench` times f(sys, n) and any other run calls f(sys, 1) once. f
+builds its fixture in each call, and the time includes it; built once
+before f's loop of n, its cost is spread over the n iterations.
+
+BenchSys itself allocates nothing; O(the repetitions' calls of f).
 
 ### `Fuzz`
 

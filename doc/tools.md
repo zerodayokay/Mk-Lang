@@ -278,7 +278,7 @@ Arena is in the prelude: no import
 
 ### `mk bench`
 
-`mk bench` runs the benchmarks: `test` blocks that call `testing.Bench` ([section 10](#10-debugging-coverage-fuzzing-and-profiling)). A name selects the benchmarks whose names contain it.
+`mk bench` runs the benchmarks: `test` blocks that call `testing.Bench` or `testing.BenchSys` ([section 10](#10-debugging-coverage-fuzzing-and-profiling)). A name selects the benchmarks whose names contain it.
 
 ```sh
 mk bench
@@ -420,7 +420,7 @@ How errors are reported:
 - Every error of the earliest failing phase is reported at once, and nothing from later phases except an error one of them follows from, which is reported as its `root` with its own phase. A failed `gen` line's error is reported this way beside the unknown names its missing output leaves.
 - Errors are grouped by cause. `root` links each consequence to its cause, so fixing the cause clears the group.
 - A borrow conflict names the loan, its holder and the use that keeps it live.
-- E0203 gives the type and its members, and E0201 the module path and import line, so you need no second lookup.
+- E0203 gives the type and the members the module can name there, and E0201 the module path and import line, so you need no second lookup.
 - A habit from another language, such as `v.push(x);`, gives the line rewritten with every rewrite its phase can make. `mk fix` applies the rewrites of later phases in later rounds.
 - An error in generated code cites the generated line, the generator and the `gen` line that ran it.
 
@@ -580,7 +580,8 @@ The `--json` document, version 1, is one object and a newline (shown wrapped, wi
 ```text
 {"version":1,"query":"sig","member":"eng","complete":true,"missing":[],
  "functions":[{"name":"Collect","module":"src","file":"src/heap.mk","line":11,"col":8,
-               "sig":"export Collect(h: mut Heap)","contracts":[],"exported":true,
+               "sig":"export Collect(h: mut Heap)","resolved":"export Collect(h: mut Heap)",
+               "contracts":[],"exported":true,
                "impl":"","generated":false,"gen":""}, ...]}
 ```
 
@@ -591,7 +592,8 @@ The `--json` document, version 1, is one object and a newline (shown wrapped, wi
   - `name` is the name `sig` takes: `Collect`, or `Heap.Grow` for a method. An impl method, which `sig` does not answer, is named after its type too, `Square.Area`, also for an impl for a generic type (`Box.Area` for `impl[T] Shape for Box[T]`), and `impl` names its interface, `Shape`; `impl` is `""` for any other function.
   - `module` is the module path.
   - `file`, `line` and `col` locate the function's name, as diagnostics print it. A generated function's `file` is its module's gen view, `src/gen/<target>/gen.mk`, which a query does not write.
-  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart.
+  - `sig` is the signature as the first line of `sig Name` spells it, `export` included. An impl method's is spelled the same way after its `name`, and so is an error's built-in `Format`, which `sig NotFound.Format` writes without the type: `NotFound.Format(&self, w: mut Writer): WriteError!void`. `contracts` are its `requires` and `ensures` clauses, as the source writes them. A type is spelled by its name alone, as `sig Name` spells it: `mut Heap` for a parameter of a dependency's `heap.Heap` too, so `module` and the imports tell two types of one name apart. An alias is spelled as the declaration writes it, by its name and arguments: `Load(i: u64): Value` for `type Value = u64`, also under `&`, `mut`, `[]`, `?`, an array, `E!T` and a generic type's arguments.
+  - `resolved` is `sig` with every alias spelled as its type, `Load(i: u64): u64`, and equals `sig` when the signature names no alias.
   - `exported` is true for an exported function. An impl method is never `exported`: its type and its interface decide who can call it.
   - `generated` is true for a function a `gen` line wrote, and `gen` is that line, as `file:line:col`. It is `""` for any other function.
 
@@ -651,7 +653,7 @@ Contracts are checked in the callee, so editing a contract does not rebuild the 
 
 **Fuzzing.** `testing.Fuzz(f)` in a `test` block registers a fuzz target. Plain `mk test` runs it over its saved inputs; `mk test --fuzz <test name> [--fuzztime d]` searches for new failing inputs.
 
-**Benchmarks.** `testing.Bench(f)` in a `test` block registers a benchmark, and `mk bench [name]` runs it. `--limit` bounds the time each benchmark takes, and `--baseline` compares with an earlier run.
+**Benchmarks.** `testing.Bench(f)` in a `test` block registers a benchmark (`testing.BenchSys(sys, f)` one that allocates from the heap), and `mk bench [name]` runs it. `--limit` bounds the time each benchmark takes, and `--baseline` compares with an earlier run.
 
 See [std.testing](std/testing.md) for fuzz targets and benchmarks.
 

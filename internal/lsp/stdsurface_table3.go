@@ -4,6 +4,8 @@
 package lsp
 
 var surfaceDocs3 = map[string]surfaceDoc{
+	"sqlite.Db.Prepare":          {Module: "std.db.sqlite", Lines: []string{"Db.Prepare(&self, a: &Arena, io: Io, sql: str): sqlite.Error!Stmt from self, a"}},
+	"sqlite.Error":               {Module: "std.db.sqlite", Lines: []string{"type Error = Sqlite | Busy | Misuse | OutOfMemory | Canceled"}},
 	"sqlite.Misuse":              {Module: "std.db.sqlite", Lines: []string{"error Misuse"}},
 	"sqlite.Open":                {Module: "std.db.sqlite", Lines: []string{"sqlite.Open(a: &Arena, io: Io, path: str): sqlite.Error!Db"}},
 	"sqlite.Sqlite":              {Module: "std.db.sqlite", Lines: []string{"error Sqlite(code: i32)"}},
@@ -105,6 +107,7 @@ var surfaceDocs3 = map[string]surfaceDoc{
 	"term.Unsupported":           {Module: "std.term", Lines: []string{"error Unsupported"}},
 	"term.UseColor":              {Module: "std.term", Lines: []string{"term.UseColor(io: Io, s: Std): bool"}},
 	"testing.Bench":              {Module: "std.testing", Lines: []string{"testing.Bench(f: fn(n: int))"}},
+	"testing.BenchSys":           {Module: "std.testing", Lines: []string{"testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))"}},
 	"testing.Fuzz":               {Module: "std.testing", Lines: []string{"testing.Fuzz(f: fn([]u8))"}},
 	"text.BidiLevels":            {Module: "std.text", Lines: []string{"text.BidiLevels(a: &Arena, s: str, dir: Direction): OutOfMemory!Levels from a, s"}},
 	"text.Bounds.Next":           {Module: "std.text", Lines: []string{"Bounds.Next(mut self): ?int"}},
