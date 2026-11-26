@@ -244,12 +244,14 @@ func (s *Session) fuzzLoop(out *TestCase, tc testCase, argv, env []string, i int
 		if opt.cover != nil { // cover.go: live counters for the loop's Guided
 			set = append(set, opt.cover.coverEnv("-"))
 		}
+		budget := max(time.Until(deadline), time.Millisecond)
 		cenv := childEnv(env, via, append(set, TestingFuzzEnv+"=loop", TestingInputEnv+"="+hostPath(argv, in),
 			TestingStateEnv+"="+hostPath(argv, state), TestingSeedEnv+"="+strconv.FormatUint(seed, 10),
-			TestingItersEnv+"="+strconv.Itoa(opt.FuzzIters), TestingNanosEnv+"="+strconv.FormatInt(int64(max(time.Until(deadline), time.Millisecond)), 10))...)
-		// The child stops itself at the deadline (MK_TESTING_NANOS); past
-		// it the watcher waits only on a call in progress (watchFuzzChild).
-		r := watchFuzzChild(argv, cenv, i, state, deadline, hang)
+			TestingItersEnv+"="+strconv.Itoa(opt.FuzzIters), TestingNanosEnv+"="+strconv.FormatInt(int64(budget), 10))...)
+		// The child stops itself when its budget (MK_TESTING_NANOS) is
+		// spent on its own clock; past that the watcher waits only on a
+		// call in progress (watchFuzzChild).
+		r := watchFuzzChild(argv, cenv, i, state, deadline, budget, hang)
 		calls += r.calls
 		if r.err != nil {
 			out.Result, out.Status, out.Output = "fail", -1, log.String()+r.err.Error()
@@ -330,12 +332,17 @@ type fuzzRun struct {
 
 // watchFuzzChild runs one loop child and polls its state file until it
 // exits or its count stops moving for hang (a hang, whenever it starts).
-// Past deadline the child should have stopped itself; while it has not,
-// the watcher keeps it only as long as its count is unmoved, since that
-// call may be a hang: a count that moves after the deadline ends the run
-// as a normal stop, and the hang limit elapsing saves the input. A child
-// that has not reached the loop by deadline + fuzzGrace is stopped.
-func watchFuzzChild(argv, env []string, i int, state string, deadline time.Time, hang time.Duration) fuzzRun {
+// The child's budget runs on its own clock, from its loop's start, so the
+// watcher judges it from the first poll that finds the state file's
+// header, never earlier than that start: its end is the later of deadline
+// and that poll plus budget, and a slow start uses none of the budget nor
+// of the hang limit. Past its end the child should have stopped itself;
+// while it has not, the watcher keeps it only as long as its count is
+// unmoved, since that call may be a hang: a count that moves after the
+// end ends the run as a normal stop, and the hang limit elapsing saves the
+// input. A child that has not reached the loop by deadline + fuzzGrace is
+// stopped.
+func watchFuzzChild(argv, env []string, i int, state string, deadline time.Time, budget, hang time.Duration) fuzzRun {
 	cmd := exec.Command(argv[0], append(argv[1:], strconv.Itoa(i))...)
 	cmd.Env = env
 	var buf bytes.Buffer // one writer for both: exec copies with one goroutine
@@ -354,7 +361,8 @@ func watchFuzzChild(argv, env []string, i int, state string, deadline time.Time,
 		}
 	}()
 	var r fuzzRun
-	last, moved := uint64(0), time.Now()
+	var last uint64
+	var moved, end time.Time
 	tick := time.NewTicker(fuzzPoll)
 	defer tick.Stop()
 	var werr error
@@ -368,17 +376,24 @@ loop:
 			now := time.Now()
 			movedLate := false
 			if c, ok := readFuzzCount(state); ok {
-				r.started = true
-				if c != last {
+				if !r.started {
+					// The first sight of the loop: the call in progress, if
+					// any, began no earlier than the budget's clock did.
+					r.started, last, moved = true, c, now
+					end = deadline
+					if e := now.Add(budget); e.After(end) {
+						end = e
+					}
+				} else if c != last {
 					last, moved = c, now
-					movedLate = now.After(deadline)
+					movedLate = now.After(end)
 				}
 			}
 			switch {
 			case r.started && now.Sub(moved) > hang:
 				killed = "hang"
 			case r.started && movedLate:
-				killed = "deadline" // the call in progress at the deadline returned
+				killed = "deadline" // the call in progress at its end returned
 			case !r.started && now.After(deadline.Add(fuzzGrace)):
 				killed = "deadline"
 			}
