@@ -30,7 +30,7 @@ export struct Secure {
 /// own), the secure connection and the index in offer of the protocol
 /// chosen, -1 for none. Only std calls this: no program can build a
 /// core.ErasedCall. A c made from another pair of types panics (code 8)
-/// at Connect, before the function runs. O(1); allocates nothing.
+/// at Connect or Negotiate, before the function runs. O(1); allocates nothing.
 export Secure.Of[T: Share](c: core.ErasedCall): Secure from c {
     return Secure(call: c, thunk: SecureCall[T])
 }
@@ -67,8 +67,9 @@ export Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str):
 /// peer chose none (a client that sent no ALPN, a server that answered
 /// none); with offer empty it is Connect, and chosen is -1. Provisional.
 /// Errors: Connect's. On a client, a name in offer that is empty or over
-/// 255 bytes is SecureFailed(why: Handshake) before anything is sent (a
-/// server never matches one). A server that shares none of the client's
+/// 255 bytes is SecureFailed(why: Handshake) before the ClientHello is
+/// sent: the peer gets only a handshake_failure alert (a server never
+/// matches such a name). A server that shares none of the client's
 /// protocols sends the no_application_protocol alert, and both sides fail
 /// with SecureFailed(why: Handshake). O(offer's length) here plus the
 /// handshake's cost, which reads the names; allocates what Connect does.

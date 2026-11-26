@@ -170,7 +170,7 @@ Make(h: &Heap): OutOfMemory!net.Conn {
 
 `net.Secure` is a plain value that makes a connection secure. Only std makes one, through [`tls.Connector`](tls.md) and `tls.Acceptor`, and you pass it on to `std.http` and `std.websocket`, which import no TLS of their own. A secure connect that fails reports `SecureFailed(why)`, with a `SecureFailure` saying at which step.
 
-`Secure.Negotiate` is `Connect` with an application protocol (ALPN, RFC 7301) chosen for this one handshake. You pass the protocols in your order of preference, and they take the place of the connector's own list. A client offers them; a server accepts them and picks the first of its list the client also offered. You get back the connection and `chosen`, the index in your list of the protocol the handshake chose, or -1 when the peer chose none. With an empty list it is `Connect`, and `chosen` is -1. No protocol string crosses the connector: `std.http` learns `h2` or `http/1.1` as an index, without importing `std.tls`. On a client, a name that is empty or longer than 255 bytes fails with `SecureFailed(why: Handshake)` before anything is sent; a server never matches one. A server that shares none of the client's protocols sends the `no_application_protocol` alert, and both sides fail with `SecureFailed(why: Handshake)`.
+`Secure.Negotiate` is `Connect` with an application protocol (ALPN, RFC 7301) chosen for this one handshake. You pass the protocols in your order of preference, and they take the place of the connector's own list. A client offers them; a server accepts them and picks the first of its list the client also offered. You get back the connection and `chosen`, the index in your list of the protocol the handshake chose, or -1 when the peer chose none. With an empty list it is `Connect`, and `chosen` is -1. No protocol string crosses the connector: `std.http` learns `h2` or `http/1.1` as an index, without importing `std.tls`. On a client, a name that is empty or longer than 255 bytes fails with `SecureFailed(why: Handshake)` before the ClientHello is sent, and the peer gets only a `handshake_failure` alert; a server never matches such a name. A server that shares none of the client's protocols sends the `no_application_protocol` alert, and both sides fail with `SecureFailed(why: Handshake)`.
 
 ## Errors
 
@@ -1095,8 +1095,9 @@ the index in offer of the protocol the handshake chose, -1 when the
 peer chose none (a client that sent no ALPN, a server that answered
 none); with offer empty it is Connect, and chosen is -1. Provisional.
 Errors: Connect's. On a client, a name in offer that is empty or over
-255 bytes is SecureFailed(why: Handshake) before anything is sent (a
-server never matches one). A server that shares none of the client's
+255 bytes is SecureFailed(why: Handshake) before the ClientHello is
+sent: the peer gets only a handshake_failure alert (a server never
+matches such a name). A server that shares none of the client's
 protocols sends the no_application_protocol alert, and both sides fail
 with SecureFailed(why: Handshake). O(offer's length) here plus the
 handshake's cost, which reads the names; allocates what Connect does.

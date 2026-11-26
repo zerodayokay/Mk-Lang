@@ -5,7 +5,7 @@
 // What: test blocks for Connector and Acceptor through Negotiate: a
 // client offering h2 and http/1.1 against servers accepting each order,
 // one, and neither; empty offers on either side; and offers the client
-// refuses to send.
+// refuses to send, which reach the peer as one alert.
 // How: run by mk test --std=std.tls. tls.Connector and tls.Acceptor run
 // as two tasks of one test over loopback, with a P-256 leaf and root
 // valid from 2000 to 2200 given as constants; each case reports both
@@ -116,7 +116,11 @@ NgCase(sys: &System, offer: []str, accept: []str, own: []str): x509.Error|encodi
     var echoed := false
     scope s := io.Scope() {
         s.go NgServe(sys.heap, io, &l, &server, accept, mut r.server, mut served)
-        NgClient(sys.heap, io, &client, addr, offer, mut r.client, mut echoed)
+        if !NgClient(sys.heap, io, &client, addr, offer, mut r.client, mut echoed) {
+            // No connection reached the server: end its Accept, so the
+            // case fails instead of waiting.
+            s.Cancel()
+        }
     }
     r.echoed = echoed && served
     return r
@@ -124,21 +128,21 @@ NgCase(sys: &System, offer: []str, accept: []str, own: []str): x509.Error|encodi
 
 // NgClient dials addr, negotiates offer through sec, sends "ping" and
 // reads it back: report is the chosen index or NgCode's, and echoed
-// whether "ping" came back.
-NgClient(h: &Heap, io: Io, sec: &net.Secure, addr: str, offer: []str, report: mut int, echoed: mut bool) {
+// whether "ping" came back. It returns false when the dial failed.
+NgClient(h: &Heap, io: Io, sec: &net.Secure, addr: str, offer: []str, report: mut int, echoed: mut bool): bool {
     stream := net.Dial(io, addr) else {
-        return
+        return false
     }
     conn := stream.Conn()
     (conn: c, chosen) := sec.Negotiate(h, io, conn, "localhost", offer) else e {
         conn.Abandon()
         *report = NgCode(&e)
-        return
+        return true
     }
     *report = chosen
     c.WriteAll(io, "ping".AsBytes()) else {
         c.Abandon()
-        return
+        return true
     }
     var back: [4]u8 = [0; 4]
     var got := 0
@@ -155,6 +159,7 @@ NgClient(h: &Heap, io: Io, sec: &net.Secure, addr: str, offer: []str, report: mu
     c.Close(io) else {
         c.Abandon()
     }
+    return true
 }
 
 test "Negotiate offering h2 then http/1.1: the server's order decides, and both sides report the index into their own offer" (sys: &System) {
@@ -172,13 +177,15 @@ test "Negotiate offering h2 then http/1.1: the server's order decides, and both 
     Assert(r2.client == 1 && r2.server == 0 && r2.echoed)
 }
 
-test "Negotiate with no protocol in common fails on both sides with the no_application_protocol alert" (sys: &System) {
+test "Negotiate with no protocol in common fails on both sides as a failed handshake" (sys: &System) {
     offer: [2]str = ["h2", "http/1.1"]
     other: [1]str = ["x-other"]
     own: [0]str = []
     r := try NgCase(sys, offer[..], other[..], own[..])
-    // The server's Unsupported and the client's Alert(code: 120) are both
-    // SecureFailed(why: Handshake) through net.Secure.
+    // The server sends no_application_protocol and fails with Unsupported,
+    // the client reads Alert(code: 120); through net.Secure both are
+    // SecureFailed(why: Handshake). TestStdTls_GoClientNegotiate checks the
+    // alert as Go's client reports it.
     Assert(r.client == NgRefused && r.server == NgRefused && !r.echoed)
 }
 
@@ -207,8 +214,67 @@ test "Negotiate refuses an offer name that is empty or over 255 bytes, as it doe
     r := try NgCase(sys, empty[..], accept[..], own[..])
     Assert(r.client == NgRefused && r.server <= NgRefused && !r.echoed)
     var long: [256]u8 = [0x61; 256]
+    // 256 bytes of ASCII are valid UTF-8, so From cannot fail.
     name := str.From(long[..]).Must()
     big: [1]str = [name]
     r1 := try NgCase(sys, big[..], accept[..], own[..])
     Assert(r1.client == NgRefused && r1.server <= NgRefused && !r1.echoed)
+}
+
+// NgCount accepts one connection and reads it to its end, counting the
+// bytes in got.
+NgCount(io: Io, l: &net.Listener, got: mut int) {
+    st := l.Accept(io) else {
+        *got = -1
+        return
+    }
+    var buf: [512]u8 = [0; 512]
+    for {
+        k := st.Read(io, mut buf[..]) else {
+            break
+        }
+        if k == 0 {
+            break
+        }
+        *got += k
+    }
+    st.Close()
+}
+
+// NgUnsent dials addr and runs tls.Client with c: whether it failed with
+// Unsupported. The connection is abandoned either way.
+NgUnsent(h: &Heap, io: Io, addr: str, c: &Config): bool {
+    stream := net.Dial(io, addr) else {
+        return false
+    }
+    conn := stream.Conn()
+    t := Client(h, io, conn, c, "localhost") else e {
+        conn.Abandon()
+        return match e {
+            Unsupported { true }
+            _ { false }
+        }
+    }
+    t.Abandon()
+    return false
+}
+
+test "A refused offer name fails the client handshake with Unsupported before its ClientHello: the server reads only the handshake_failure alert" (sys: &System) {
+    io := sys.io
+    l := try net.Listen(io, "127.0.0.1:0")
+    defer l.Close()
+    addr := try sys.arena.Fmt("127.0.0.1:{p}", (p: l.Port()))
+    bad: [2]str = ["h2", ""]
+    var ccfg := DefaultConfig
+    var refused := false
+    var got := 0
+    n := WithOffer(&ccfg, bad[..])
+    scope s := io.Scope() {
+        s.go NgCount(io, &l, mut got)
+        refused = NgUnsent(sys.heap, io, addr, &n)
+    }
+    Assert(refused)
+    // One plaintext alert record, 5 bytes of header and 2 of alert (RFC
+    // 8446 5.1, 6), where a ClientHello would be hundreds of bytes.
+    Assert(got == 7)
 }
