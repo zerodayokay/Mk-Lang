@@ -3,7 +3,8 @@
 // the lookup must cost one probe, not a scan of 61 names.
 //
 // What: StaticEntry, StaticTable (the 61 entries; index i is
-// StaticTable[i - 1]), StaticLen, NameHash, NameSlots and StaticFind.
+// StaticTable[i - 1]), StaticLen, NameHash, NameSlots, FirstIndex,
+// StaticFind and StaticNameIndex.
 //
 // How: the 52 distinct names hash without collision to 128 slots by
 // NameHash, on the length and the first and last bytes (multipliers found
@@ -20,8 +21,8 @@ struct StaticEntry {
     value: str
 }
 
-/// The number of static-table entries: dynamic-table indexes start after
-/// it (RFC 7541 2.3.3).
+// The number of static-table entries: dynamic-table indexes start after
+// it (RFC 7541 2.3.3).
 const StaticLen = 61
 
 // RFC 7541 Appendix A, Table 1: index i is StaticTable[i - 1].
@@ -143,4 +144,31 @@ StaticFind(name: []u8, value: []u8): (index: int, exact: bool) {
         i += 1
     }
     return (index: first, exact: false)
+}
+
+// BuildFirstIndex maps each static index to the first index of its name:
+// :method's 2 and 3 both to 2, :status's 8 to 14 to 8; entry 0 is 0.
+BuildFirstIndex(): [62]u8 {
+    var first: [62]u8 = [0; 62]
+    for i in 1..StaticLen + 1 {
+        same := i > 1 && StaticTable[i - 2].name == StaticTable[i - 1].name
+        first[i] = if same { first[i - 1] } else { Trunc[u8](i) }
+    }
+    return first
+}
+
+// The first index of each static entry's name, computed at compile time.
+const FirstIndex: [62]u8 = BuildFirstIndex()
+
+// StaticNameIndex is the first static index whose name is name, or 0. O(name):
+// one probe, one comparison; allocates nothing.
+StaticNameIndex(name: []u8): int {
+    if name.Len() == 0 {
+        return 0
+    }
+    first := int(NameSlots[NameHash(name)])
+    if first == 0 || !BytesEq(StaticTable[first - 1].name.AsBytes(), name) {
+        return 0
+    }
+    return first
 }

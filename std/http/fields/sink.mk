@@ -1,6 +1,6 @@
-// Why: std.http keeps its fields as a List[Header] in the stream's arena,
-// and HPACK and QPACK must fill it, and read it back, with no header type
-// of their own and no conversion copy.
+// Why: HPACK and QPACK decode in the task that reads the connection, while
+// the fields belong to the task that serves the stream, so the codecs hand
+// fields to a caller's sink with no header type of their own.
 //
 // What: Sink, which the decoders feed; Field, which the encoders read; Mode,
 // the representation an encoder may choose for one field; the constants
@@ -8,8 +8,8 @@
 //
 // How: both interfaces are generic bounds, so each caller's impl is
 // monomorphised into the codec's loop: one direct call per field. Sink.Add
-// declares its stores, so an impl may keep the views it gets, and a decoder
-// can hand it only what its own signature lets flow into the sink.
+// declares no store of its views, so the decoder may hand it views of its
+// own buffers and no impl can keep them.
 
 /// The size of a dynamic-table entry beyond its name and value bytes, and
 /// the per-field overhead in the decoded list size (RFC 7541 4.1).
@@ -20,17 +20,21 @@ export const EntryOverhead = 32
 export const DefaultTableBytes = 4096
 
 /// Where a decoder puts each decoded field, in the block's order. name and
-/// value are views of static data or of the arena given to the decoder, so
-/// an impl may keep them. never_index is true for a field sent as never
-/// indexed (RFC 7541 6.2.3), which an intermediary must forward the same way
-/// (7.1.3). Add fails only with OutOfMemory, which ends the block and leaves
-/// the decoder unusable. To refuse a field (a malformed name, a value that
-/// is not UTF-8), an impl records it in self and returns: the decoder must
-/// read the block to its end, or its table goes out of sync with the peer's.
+/// value are views valid only during this call (of the block, the static
+/// table, the dynamic table or the decoder's scratch): the signature lets no
+/// impl keep them, so a sink copies what it keeps, as FieldBlock does.
+/// never_index is true for a field sent never indexed (RFC 7541 6.2.3),
+/// which an intermediary must forward the same way (7.1.3). name_index is
+/// the static-table index of the name, the first entry of that name (2 for
+/// :method, 8 for :status), however the field was sent, or 0 when the name
+/// is not in the static table. a is the decoder's allocator, for a sink
+/// that grows. Add fails only with OutOfMemory, which ends the block and
+/// leaves the decoder unusable. To refuse a field, an impl records it in
+/// self and returns: the decoder must read the block to its end, or its
+/// table goes out of sync with the peer's.
 export interface Sink {
-    Add(mut self, name: []u8 into self, value: []u8 into self, never_index: bool): OutOfMemory!void
+    Add(mut self, a: &Alloc, name: []u8, value: []u8, never_index: bool, name_index: int): OutOfMemory!void
 }
-
 /// A field an encoder reads: its name and value bytes, and whether it is
 /// sensitive. A sensitive field is sent never indexed (RFC 7541 6.2.3,
 /// 7.1.3) and is never added to the dynamic table. The encoder writes the

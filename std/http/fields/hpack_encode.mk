@@ -3,8 +3,9 @@
 // cost compression and memory on both sides, and it must never write past
 // the caller's buffer or leave its table out of step with what it wrote.
 //
-// What: Encoder, with New, Free, SetMaxTable, Bound, StartBound,
-// FieldBound, Encode, Start, Write, TableSize and TableLen (RFC 7541 4, 6).
+// What: Encoder, with New, Free, SetMaxTableSize, Bound, BlockBound,
+// StartBound, FieldBound, Encode, EncodeBlock, Start, Write, TableSize and
+// TableLen (RFC 7541 4, 6).
 //
 // How: each field is looked up in the static table (one probe) and in two
 // direct-mapped caches of the dynamic table, by (name, value) and by
@@ -17,7 +18,8 @@
 const CacheSlots: u32 = 256
 
 /// An HPACK encoder: the dynamic table the peer's decoder mirrors. Linear:
-/// it owns heap memory; release it with Free.
+/// it owns heap memory; release it with Free. Send and Share: it holds only
+/// owned buffers and numbers.
 export linear view struct Encoder {
     table: Table
     huffman: bool
@@ -37,7 +39,7 @@ export linear view struct Encoder {
 /// huffman Huffman-codes each string whose code is not longer than its raw
 /// bytes (5.2); false always sends raw bytes. Values below 0 are 0. Fails
 /// with OutOfMemory. O(table_bytes); allocates about table_bytes +
-/// table_bytes / 32 × 12 bytes from a, once; the struct holds two 2 KiB
+/// table_bytes / 32 × 16 bytes from a, once; the struct holds two 2 KiB
 /// caches.
 export Encoder.New(a: &Alloc, table_bytes: int, huffman: bool): OutOfMemory!Encoder from a {
     t := try Table.New(a, table_bytes)
@@ -65,7 +67,7 @@ export Encoder.TableLen(&self): int {
 /// the size updates RFC 7541 4.2 asks for: the smallest capacity since the
 /// last block when it is below the final one, then the final one. O(entries
 /// evicted); allocates nothing.
-export Encoder.SetMaxTable(mut self, size: int) {
+export Encoder.SetMaxTableSize(mut self, size: int) {
     c := if size < 0 { 0 } else if size > self.table.max { self.table.max } else { size }
     if c == self.table.cap && !self.pending {
         return
@@ -122,6 +124,33 @@ export Encoder.Encode[F: Field](mut self, out: mut []u8, list: []F): TooSmall!in
     return o
 }
 
+/// An upper bound of the bytes EncodeBlock writes for b, whatever the
+/// tables hold. O(fields); allocates nothing.
+export Encoder.BlockBound(&self, b: &FieldBlock): int {
+    var n := self.StartBound()
+    for f in b.Iter() {
+        n += self.FieldBound(f.name.AsBytes(), f.value.AsBytes())
+    }
+    return n
+}
+
+/// Encode for the fields of a FieldBlock, a never-indexed field again never
+/// indexed (RFC 7541 7.1.3), as a proxy forwards them. Fails with
+/// TooSmall(need) when out is shorter than BlockBound(b), and then writes
+/// nothing and changes nothing. O(Σ name + value); allocates nothing.
+export Encoder.EncodeBlock(mut self, out: mut []u8, b: &FieldBlock): TooSmall!int {
+    need := self.BlockBound(b)
+    if out.Len() < need {
+        fail TooSmall(need: need)
+    }
+    // BlockBound covers every step, as Bound does for Encode.
+    var o := self.Start(out).Must()
+    for f in b.Iter() {
+        mode := if f.sensitive { Mode.Never } else { Mode.Index }
+        o += self.Write(mut out[o..], f.name.AsBytes(), f.value.AsBytes(), mode).Must()
+    }
+    return o
+}
 /// Writes the size updates owed since the last block into out, from
 /// out[0], and returns their length (0 when none is owed). Call it first in
 /// every block built with Write. Fails with TooSmall(need) when out is too
@@ -151,7 +180,8 @@ export Encoder.Start(mut self, out: mut []u8): TooSmall!int {
 /// short, and then changes nothing. O(name + value); allocates nothing.
 export Encoder.Write(mut self, out: mut []u8, name: []u8, value: []u8, mode: Mode): TooSmall!int {
     (index: sidx, exact) := StaticFind(name, value)
-    pslot := PairSlot(name, value)
+    nh := Fnv(FnvBasis, name)
+    pslot := PairSlot(nh, value)
     if mode != Mode.Never {
         if exact {
             return try Indexed(out, sidx)
@@ -160,7 +190,7 @@ export Encoder.Write(mut self, out: mut []u8, name: []u8, value: []u8, mode: Mod
             return try Indexed(out, self.Index(abs))
         }
     }
-    nslot := NameSlot(name)
+    nslot := int(nh & (CacheSlots - 1))
     var nidx := sidx
     if nidx == 0 {
         if abs := self.Cached(self.names[nslot], name, value, false) {
@@ -187,7 +217,7 @@ export Encoder.Write(mut self, out: mut []u8, name: []u8, value: []u8, mode: Mod
     o += PutStr(mut out[o..], value, 7, 0, vc.huff)
     if insert {
         abs := self.table.inserted
-        self.table.Insert(name, value)
+        self.table.Insert(name, value, if sidx == 0 { 0 } else { int(FirstIndex[sidx]) })
         self.pairs[pslot] = abs + 1
         self.names[nslot] = abs + 1
     }
@@ -232,13 +262,13 @@ Fnv(h: u32, b: []u8): u32 {
     return x
 }
 
-// NameSlot and PairSlot are the cache slots of a name and of a (name,
-// value): FNV-1a, the value after a separator byte that no name holds.
-NameSlot(name: []u8): int {
-    return int(Fnv(2166136261, name) & (CacheSlots - 1))
-}
+// The FNV-1a offset basis.
+const FnvBasis: u32 = 2166136261
 
-PairSlot(name: []u8, value: []u8): int {
+// PairSlot is the cache slot of a (name, value) from the name's hash nh:
+// FNV-1a goes on over a separator byte that no name holds, then the value.
+// A name's own slot is nh's low bits.
+PairSlot(nh: u32, value: []u8): int {
     sep: [1]u8 = [0x0A]
-    return int(Fnv(Fnv(Fnv(2166136261, name), sep[..]), value) & (CacheSlots - 1))
+    return int(Fnv(Fnv(nh, sep[..]), value) & (CacheSlots - 1))
 }

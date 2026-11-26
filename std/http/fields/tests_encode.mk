@@ -48,7 +48,7 @@ test "Write and Start into a short buffer are TooSmall and change nothing" (sys:
         }
     }
     Assert(enc.TableLen() == 0)
-    enc.SetMaxTable(100)
+    enc.SetMaxTableSize(100)
     match enc.Start(mut out[0..1]) {
         ok(_) { Assert(false) }
         err(e) {
@@ -73,32 +73,32 @@ test "a lowered then raised table size sends the smallest size, then the final o
     fs := try ToFields(a, lines[..])
     var out: [128]u8 = [0; 128]
     n := try enc.Encode(mut out[..], fs)
-    var got := Got(list: List[Pair].New(a))
-    try dec.Decode(a, mut got, out[0..n])
+    var got := FieldBlock.New(h)
+    defer got.Free(h)
+    try Fits(h, mut dec, mut got, out[0..n])
     Assert(enc.TableLen() == 1 && dec.TableLen() == 1)
-    enc.SetMaxTable(0)
-    enc.SetMaxTable(4096)
+    enc.SetMaxTableSize(0)
+    enc.SetMaxTableSize(4096)
     Assert(enc.TableLen() == 0)
     m := try enc.Encode(mut out[..], fs)
     // 20: size 0; 3f e1 1f: size 4096; then the field, indexed again.
     Assert(out[0] == 0x20 && out[1] == 0x3F && out[2] == 0xE1 && out[3] == 0x1F)
-    try dec.Decode(a, mut got, out[0..m])
+    try Fits(h, mut dec, mut got, out[0..m])
     Assert(dec.TableLen() == 1 && dec.TableSize() == enc.TableSize())
-    Assert(got.list.Len() == 2)
+    Assert(got.Len() == 1)
 }
 
 test "the same table size again sends no update" (sys: &System) {
     h := sys.heap.Alloc()
     var enc := try Encoder.New(h, DefaultTableBytes, false)
     defer enc.Free(h)
-    enc.SetMaxTable(DefaultTableBytes)
-    enc.SetMaxTable(1 << 20)
+    enc.SetMaxTableSize(DefaultTableBytes)
+    enc.SetMaxTableSize(1 << 20)
     var out: [8]u8 = [0; 8]
     Assert(try enc.Start(mut out[..]) == 0)
 }
 
 test "a sensitive field is never indexed, and the decoder says so" (sys: &System) {
-    a := sys.arena
     h := sys.heap.Alloc()
     var enc := try Encoder.New(h, DefaultTableBytes, true)
     defer enc.Free(h)
@@ -111,10 +111,11 @@ test "a sensitive field is never indexed, and the decoder says so" (sys: &System
         // authorization is static name 23: 0x1f 0x08 (never indexed, index 23).
         Assert(out[0] == 0x1F && out[1] == 0x08)
         // :method GET is static 2, sent as a never-indexed literal anyway.
-        var got := Got(list: List[Pair].New(a))
-        try dec.Decode(a, mut got, out[0..n])
-        Assert(got.list.Len() == 2 && got.list[0].never_index && got.list[1].never_index)
-        Assert(Same(got.list[1].value, "GET"))
+        var got := FieldBlock.New(h)
+        defer got.Free(h)
+        try Fits(h, mut dec, mut got, out[0..n])
+        Assert(got.Len() == 2 && got.Get(0).sensitive && got.Get(1).sensitive)
+        Assert(got.Get(1).value == "GET" && got.Get(1).name_index == 2 && got.Get(0).name_index == 23)
     }
     Assert(enc.TableLen() == 0 && dec.TableLen() == 0)
 }

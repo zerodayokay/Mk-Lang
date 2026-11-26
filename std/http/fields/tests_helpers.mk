@@ -1,12 +1,13 @@
 // Why: the RFC 7541 examples are hex dumps and lists of fields, and every
 // test must compare a decoded list and a dynamic table with them.
 //
-// What: Unhex (an RFC hex dump to bytes), Pair and Got (a Sink that keeps
-// what it gets), Same (bytes against text), PairsAre, and DynamicIs (a
-// decoder's or encoder's table against the RFC's listing).
+// What: Unhex (an RFC hex dump to bytes), Same, PairsAre (a FieldBlock
+// against "name: value" lines), TableIs (a table against the RFC's
+// listing), TField and ToFields (fields to encode), and Block (one block of
+// an Appendix C sequence, both ways).
 //
 // How: plain helpers over the module's own types; nothing here is
-// exported.
+// exported. The arenas here hold only the tests' own inputs.
 
 // Unhex is the bytes of an RFC hex dump: hex digits two by two, spaces
 // ignored. It panics on any other byte: the dumps are the tests' own.
@@ -34,24 +35,6 @@ Unhex(a: &Arena, hex: str): OutOfMemory![]u8 from a {
     return out.Done()[..]
 }
 
-// One field a sink got.
-struct Pair {
-    name: []u8
-    value: []u8
-    never_index: bool
-}
-
-// A Sink that keeps every field in order.
-struct Got {
-    list: List[Pair]
-}
-
-impl Sink for Got {
-    Add(mut self, name: []u8 into self, value: []u8 into self, never_index: bool): OutOfMemory!void {
-        try self.list.Push(Pair(name: name, value: value, never_index: never_index))
-    }
-}
-
 // Same is whether b holds the bytes of s.
 Same(b: []u8, s: str): bool {
     return BytesEq(b, s.AsBytes())
@@ -59,16 +42,16 @@ Same(b: []u8, s: str): bool {
 
 // PairsAre is whether got holds exactly the fields of want, a list of
 // "name: value" lines.
-PairsAre(got: &Got, want: []str): bool {
-    if got.list.Len() != want.Len() {
+PairsAre(got: &FieldBlock, want: []str): bool {
+    if got.Len() != want.Len() {
         return false
     }
     for i, w in want {
         (after, before) := w.SplitOnce(": ") else {
             return false
         }
-        p := &got.list[i]
-        if !Same(p.name, before) || !Same(p.value, after) {
+        f := got.Get(i)
+        if f.name != before || f.value != after {
             return false
         }
     }
@@ -131,15 +114,21 @@ ToFields(a: &Arena, lines: []str): OutOfMemory![]TField from a, lines *lines int
     return out.Done()[..]
 }
 
+// Fits decodes block with dec into got (emptied first) and wants it to fit
+// the list budget.
+Fits(h: &Alloc, dec: mut Decoder, got: mut FieldBlock, block: []u8): DecodeError|OutOfMemory!void {
+    got.Reset()
+    Assert(try dec.Decode(h, got, block) == Outcome.Fits)
+}
+
 // Block checks one block of an RFC 7541 Appendix C sequence both ways:
 // hex decodes with dec to list and leaves dec's table as table (newest
 // first) of size size, and list encodes with enc to exactly hex and leaves
 // enc's table the same.
-Block(a: &Arena, dec: mut Decoder, enc: mut Encoder, hex: str, list: []str, table: []str, size: int): DecodeError|OutOfMemory|TooSmall!void *list into a {
+Block(a: &Arena, h: &Alloc, dec: mut Decoder, enc: mut Encoder, got: mut FieldBlock, hex: str, list: []str, table: []str, size: int): DecodeError|OutOfMemory|TooSmall!void *list into a {
     wire := try Unhex(a, hex)
-    var got := Got(list: List[Pair].New(a))
-    try dec.Decode(a, mut got, wire)
-    Assert(PairsAre(&got, list))
+    try Fits(h, dec, got, wire)
+    Assert(PairsAre(&*got, list))
     Assert(TableIs(&dec.table, table, size))
     fs := try ToFields(a, list)
     out := try a.Slice[u8](enc.Bound(fs))

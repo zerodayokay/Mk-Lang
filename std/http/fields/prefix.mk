@@ -13,8 +13,8 @@
 // overflow; a string literal's Huffman flag is the bit just above its
 // length's prefix.
 
-/// The most bytes a prefix integer may take, its first byte included: nine
-/// 7-bit groups after the prefix hold every int.
+// The most bytes a prefix integer may take, its first byte included: nine
+// 7-bit groups after the prefix hold every int.
 const MaxIntBytes = 10
 
 // The largest value GetInt returns: the int range.

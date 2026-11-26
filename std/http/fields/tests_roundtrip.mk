@@ -84,20 +84,48 @@ RandomList(a: &Arena, r: mut Rng, max: int): OutOfMemory![]BField from a {
     return out.Done()[..]
 }
 
-// Matches is whether got holds exactly list, never-indexed flags included.
-Matches(got: &Got, list: []BField): bool {
-    if got.list.Len() != list.Len() {
+// A Sink that copies every field, any bytes, for the round trips.
+struct RawBlock {
+    bytes: HeapList[u8]
+    spans: HeapList[Span]
+}
+
+impl Sink for RawBlock {
+    Add(mut self, a: &Alloc, name: []u8, value: []u8, never_index: bool, name_index: int): OutOfMemory!void {
+        at := self.bytes.Len()
+        try self.bytes.Extend(a, name)
+        try self.bytes.Extend(a, value)
+        try self.spans.Push(a, Span(at: Cast[u32](at), name: Cast[u32](name.Len()), value: Cast[u32](value.Len()), never_index: never_index, index: Trunc[u8](name_index)))
+    }
+}
+
+// RawBlock.Free releases its buffers.
+RawBlock.Free(self, a: &Alloc) {
+    RawBlock(bytes, spans) := self
+    bytes.Free(a)
+    spans.Free(a)
+}
+
+// Matches is whether got holds exactly list, never-indexed flags and
+// static name indexes included.
+Matches(got: &RawBlock, list: []BField): bool {
+    if got.spans.Len() != list.Len() {
         return false
     }
+    b := got.bytes.Items()
     for i, f in &list {
-        p := &got.list[i]
-        if !BytesEq(p.name, f.name) || !BytesEq(p.value, f.value) || p.never_index != f.sensitive {
+        s := got.spans[i]
+        at := int(s.at)
+        mid := at + int(s.name)
+        if !BytesEq(b[at..mid], f.name) || !BytesEq(b[mid..mid + int(s.value)], f.value) || s.never_index != f.sensitive {
+            return false
+        }
+        if int(s.index) != StaticNameIndex(f.name) {
             return false
         }
     }
     return true
 }
-
 // Sequence runs blocks generated blocks from seed through one encoder and
 // one decoder of table size size, Huffman on or off, changing the table
 // size between some blocks, and checks each block and both tables.
@@ -115,8 +143,8 @@ Sequence(sys: &System, seed: u64, size: int, huffman: bool, blocks: int): Decode
         if r.Below(6) == 0 {
             // A new SETTINGS_HEADER_TABLE_SIZE, acknowledged before the block.
             ms := r.Below(size + 1)
-            dec.SetMaxTable(ms)
-            enc.SetMaxTable(ms)
+            dec.SetMaxTableSize(ms)
+            enc.SetMaxTableSize(ms)
         }
         list := try RandomList(a, mut r, 12)
         out := try a.Slice[u8](enc.Bound(list))
@@ -130,9 +158,10 @@ Sequence(sys: &System, seed: u64, size: int, huffman: bool, blocks: int): Decode
             }
             o
         }
-        var got := Got(list: List[Pair].New(a))
-        try dec.Decode(a, mut got, out[0..n])
-        Assert(Matches(&got, list))
+        var got := RawBlock(bytes: HeapList[u8].New(h), spans: HeapList[Span].New(h))
+        defer got.Free(h)
+        o := try dec.Decode(h, mut got, out[0..n])
+        Assert(o == Outcome.Fits && Matches(&got, list))
         Assert(dec.TableSize() == enc.TableSize() && dec.TableLen() == enc.TableLen())
     }
 }

@@ -4,8 +4,9 @@
 // grow per field.
 //
 // What: Table, the dynamic table: New, Free, Insert (Fit then Add),
-// SetCap, Evict, the lookups by absolute index (Has, NameLen, ValueLen, CopyName, CopyValue,
-// NameIs, ValueIs), and EntrySize.
+// SetCap, Evict, the lookups by absolute index (Has, NameLen, ValueLen,
+// NameAt, ValueAt, NameIndex, CopyName, CopyValue, NameIs, ValueIs), Ring and
+// Whole for views of the byte ring, and EntrySize.
 //
 // How: a byte ring of max bytes holds the entries' names and values back
 // to back, oldest first, and a ring of Ent records holds each entry's
@@ -19,11 +20,14 @@
 
 import std.core
 
-// One entry: where its name starts in the byte ring, and its lengths.
+// One entry: where its name starts in the byte ring, its lengths, and the
+// static-table index of its name (0 for none), kept so a field read from
+// the entry needs no name lookup. 16 bytes.
 struct Ent {
     at: u32
     name: u32
     value: u32
+    index: u8
 }
 
 // A chunk of zeros, which New appends to the rings until they reach their
@@ -69,7 +73,7 @@ Table.New(a: &Alloc, max: int): OutOfMemory!Table {
     }
     slots := m / EntryOverhead
     for t.ents.Len() < slots {
-        try t.ents.Push(a, Ent(at: 0, name: 0, value: 0))
+        try t.ents.Push(a, Ent(at: 0, name: 0, value: 0, index: 0))
     }
     return t
 }
@@ -128,9 +132,9 @@ Table.SetCap(mut self, c: int) {
 // the table and is not added (RFC 7541 4.4). Neither slice may be a view of
 // the table, which the caller's loans already rule out. O(name + value +
 // entries evicted); allocates nothing.
-Table.Insert(mut self, name: []u8, value: []u8) {
+Table.Insert(mut self, name: []u8, value: []u8, index: int) {
     if self.Fit(EntrySize(name.Len(), value.Len())) {
-        self.Add(name, value)
+        self.Add(name, value, index)
     }
 }
 
@@ -144,12 +148,12 @@ Table.Fit(mut self, need: int): bool {
     return need <= self.cap
 }
 
-// Table.Add adds (name, value) as the newest entry; Fit has made room for
-// it. O(name + value).
-Table.Add(mut self, name: []u8, value: []u8) {
+// Table.Add adds (name, value) as the newest entry, with index the static
+// index of its name; Fit has made room for it. O(name + value).
+Table.Add(mut self, name: []u8, value: []u8, index: int) {
     need := EntrySize(name.Len(), value.Len())
     slot := (self.first + self.count) % self.ents.Len()
-    self.ents[slot] = Ent(at: Trunc[u32](self.head), name: Trunc[u32](name.Len()), value: Trunc[u32](value.Len()))
+    self.ents[slot] = Ent(at: Trunc[u32](self.head), name: Trunc[u32](name.Len()), value: Trunc[u32](value.Len()), index: Trunc[u8](index))
     self.head = self.Put(self.head, name)
     self.head = self.Put(self.head, value)
     self.count += 1
@@ -236,4 +240,34 @@ Table.NameIs(&self, abs: int, b: []u8): bool {
 Table.ValueIs(&self, abs: int, b: []u8): bool {
     e := self.ents[self.Slot(abs)]
     return self.Same((int(e.at) + int(e.name)) % self.max, int(e.value), b)
+}
+
+// Table.NameAt and Table.ValueAt are where the name and the value of the
+// entry of absolute index abs, which must be in the table, start in the
+// byte ring. O(1).
+Table.NameAt(&self, abs: int): int {
+    return int(self.ents[self.Slot(abs)].at)
+}
+
+Table.ValueAt(&self, abs: int): int {
+    e := self.ents[self.Slot(abs)]
+    return (int(e.at) + int(e.name)) % self.max
+}
+
+// Table.NameIndex is the static-table index of the name of the entry of
+// absolute index abs, which must be in the table, or 0. O(1).
+Table.NameIndex(&self, abs: int): int {
+    return int(self.ents[self.Slot(abs)].index)
+}
+
+// Table.Whole is whether the n bytes at at lie in the byte ring without
+// wrapping past its end, so Ring can view them. O(1).
+Table.Whole(&self, at: int, n: int): bool {
+    return n <= self.max - at
+}
+
+// Table.Ring is a view of the n bytes of the byte ring at at, which Whole
+// has checked. O(1).
+Table.Ring(&self, at: int, n: int): []u8 {
+    return self.bytes.Items()[at..at + n]
 }
