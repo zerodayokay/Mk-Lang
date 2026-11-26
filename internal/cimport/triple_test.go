@@ -35,9 +35,9 @@ func TestCImport_WindowsLayoutTriple(t *testing.T) {
 	wantLines(t, text,
 		"// C: struct L, 16 bytes, align 8: opaque, members through accessors",
 		"// C: struct A, 9 bytes, align 1: opaque, members through accessors",
-		"// C: bitfield w, 20 bits at bit 8 of the u32 at byte 4",
+		"// C: bitfield w, 20 bits at bit 0 of the u32 at byte 5",
 		"// C: struct Q, 5 bytes, align 1: opaque, members through accessors",
-		"// C: bitfield w, 20 bits at bit 8 of the u32 at byte 0",
+		"// C: bitfield w, 20 bits at bit 0 of the u32 at byte 1",
 		"// C: struct R, 5 bytes, align 1: opaque, members through accessors",
-		"// C: bitfield w, 20 bits at bit 8 of the u32 at byte 0")
+		"// C: bitfield w, 20 bits at bit 0 of the u32 at byte 1")
 }

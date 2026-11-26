@@ -21,12 +21,25 @@ struct N { char tag; enum E e : 4; enum F f : 4; };
 #pragma pack(pop)
 `
 
-// TestCImport_SpanBitfieldForms: Z's w and S's s are bytes 3 to 5, copied
-// alone into a u64 and back (no 4-byte unit fits: GNU's record is 6
-// bytes, MSVC's 7 with w in a unit at byte 3); s and N's e and f read
-// sign-extended.
+// TestCImport_SpanBitfieldForms: on the GNU layout Z's w and S's s are
+// bytes 3 to 5 of a 6-byte record, copied alone into a u64 and back (no
+// 4-byte unit fits); MSVC's record is 7 bytes with w in a unit at byte 3,
+// which the accessors load and store at align 1, as C does. s and N's e
+// and f read sign-extended.
 func TestCImport_SpanBitfieldForms(t *testing.T) {
-	for _, target := range []string{"x86_64-linux", "x86_64-windows"} {
+	res := translate(t, "x86_64-windows", map[string]string{"z.h": spanHeader}, Import{Name: "z", Headers: []string{"z.h"}})
+	dumpIf(t, "x86_64-windows-z.mk", res.Modules[0])
+	wantLines(t, res.Modules[0],
+		"// C: bitfield w, 20 bits at bit 0 of the u32 at byte 3",
+		"export Z.W(&self): u32 {",
+		"return (raw.ReadUnaligned(raw.PtrCast[u8, u32](raw.Offset(raw.PtrCast[Z, u8](raw.Of(self)), 3))) >> 0) & 0xfffff",
+		"export Z.SetW(mut self, v: u32) {",
+		"raw.WriteUnaligned(p, (raw.ReadUnaligned(p) & 0xfff00000) | ((v & 0xfffff) << 0))",
+		"export S.S(&self): i32 {",
+		"return Trunc[i32](raw.ReadUnaligned(raw.PtrCast[u8, u32](raw.Offset(raw.PtrCast[S, u8](raw.Of(self)), 3))) << 12) >> 12",
+		"E(&self): i16 {",
+		"F(&self): i16 {")
+	for _, target := range []string{"x86_64-linux"} {
 		res := translate(t, target, map[string]string{"z.h": spanHeader}, Import{Name: "z", Headers: []string{"z.h"}})
 		text := res.Modules[0]
 		dumpIf(t, target+"-z.mk", text)

@@ -19,8 +19,8 @@ import (
 	"mk/internal/types"
 )
 
-// unalignedHeader: under pack(1), P's value is at byte 1 and the u32 unit
-// of wide (byte 4) overlaps value's top byte; B's signed top ends at the
+// unalignedHeader: under pack(1), P's value is at byte 1 and wide's unit
+// starts after value's top byte (byte 4); B's signed top ends at the
 // top bit of its u32 unit; Q holds a float, a double, a pointer, a fn
 // pointer and, at even offsets of an align 1 record, a struct and an array
 // of align 2. Q's bitfield w only makes Q opaque (no aligned unit holds

@@ -613,20 +613,39 @@ func (e *emitter) unalignedKind(f *field) string {
 }
 
 // opaqueBits writes the accessor pair of bitfield i of an opaque record:
-// the smallest integer unit at an aligned offset that holds its bits,
-// read through std.raw (unaligned when the unit is wider than the
-// record's alignment), and set by a load, a mask and a store of the unit
-// (both align 1 in that case). When no such unit fits in the record (a
-// 20-bit field at byte 3 of a 6-byte packed record), opaqueSpanBits.
+// the smallest integer unit at an aligned offset that holds its bits, else
+// the smallest that starts at its first byte, read through std.raw
+// (unaligned when the unit is not aligned in the record), and set by a
+// load, a mask and a store of the unit (both align 1 in that case). The
+// unit lies inside the record and holds no byte of another member but the
+// bitfields of the field's own run (otherBytes), the bytes C's own store
+// may write: a setter that rewrote a neighbour's byte would lose a store
+// to that member made at the same time. When no such unit fits (a 20-bit
+// field at byte 3 of a 6-byte packed record, or one after an int at byte
+// 1 of a 5-byte one), opaqueSpanBits.
 func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *nameScope) {
 	f := &d.fields[i]
 	fl := l.fields[i]
 	lo, hi := fl.bit, fl.bit+int64(fl.width)
+	taken := e.otherBytes(d, l, i)
+	free := func(o, s int64) bool {
+		for b := o; b < o+s; b++ {
+			if taken[b] {
+				return false
+			}
+		}
+		return true
+	}
 	var size, off int64
-	for _, s := range []int64{1, 2, 4, 8} {
-		o := lo / (8 * s) * s
-		if (o+s)*8 >= hi && o+s <= l.size {
-			size, off = s, o
+	for _, start := range []func(s int64) int64{func(s int64) int64 { return lo / (8 * s) * s }, func(int64) int64 { return lo / 8 }} {
+		for _, s := range []int64{1, 2, 4, 8} {
+			o := start(s)
+			if (o+s)*8 >= hi && o+s <= l.size && free(o, s) {
+				size, off = s, o
+				break
+			}
+		}
+		if size != 0 {
 			break
 		}
 	}
@@ -655,17 +674,70 @@ func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *name
 	}
 	fmt.Fprintf(w, "export %s.%s(&self): %s {\n    unsafe \"the C bitfield %s is in the %s at byte %d of %s\" {\n        return %s\n    }\n}\n",
 		name, g, vt, f.name, ut, off, name, read)
-	// The unit is at a multiple of its size, so aligned when that size is
-	// at most the record's alignment; else it is loaded and stored at
-	// align 1.
+	// A unit at a multiple of its size is aligned when that size is at
+	// most the record's alignment; else it is loaded and stored at align 1.
 	load, store := "raw.Read", "raw.Write"
-	if size > l.align {
+	if size > l.align || off%size != 0 {
 		load, store = "raw.ReadUnaligned", "raw.WriteUnaligned"
 	}
 	s := sc.fresh("Set"+pascal(f.name), "Bits")
 	mptr := strings.Replace(ptr, "raw.Of(self)", "raw.OfMut(self)", 1)
 	fmt.Fprintf(w, "export %s.%s(mut self, v: %s) {\n    unsafe \"the C bitfield %s is in the %s at byte %d of %s\" {\n        p := %s\n        %s(p, (%s(p) & %#x) | ((%s & %#x) << %d))\n    }\n}\n",
 		name, s, vt, f.name, ut, off, name, mptr, store, load, clear, val, mask, shift)
+}
+
+// otherBytes are the bytes of record d that bitfield i's unit may not
+// hold: those of every other member but the bitfields of i's run (C11
+// 6.7.2.1: adjacent bitfields of nonzero width are one memory location; a
+// zero-width bitfield or another member ends the run). A member of unknown
+// size takes every byte up to the next member's offset or the record's
+// end. In a union every member holds the same bytes, so none is taken.
+func (e *emitter) otherBytes(d *decl, l *recLayout, i int) map[int64]bool {
+	taken := map[int64]bool{}
+	if d.union {
+		return taken
+	}
+	runLo, runHi := i, i
+	for runLo > 0 && d.fields[runLo-1].bits > 0 {
+		runLo--
+	}
+	for runHi+1 < len(d.fields) && d.fields[runHi+1].bits > 0 {
+		runHi++
+	}
+	for j := range d.fields {
+		if j >= runLo && j <= runHi {
+			continue
+		}
+		f, fl := &d.fields[j], l.fields[j]
+		from, to := fl.bit/8, int64(-1)
+		switch {
+		case f.bits == 0:
+			continue
+		case f.bits > 0:
+			to = (fl.bit + int64(fl.width) + 7) / 8
+		default:
+			sz, _, ok := e.sizeAlign(f.t)
+			if f.anon != nil && (f.t == nil || f.t.kind != tArray && f.t.kind != tPointer) {
+				if la := e.lay[f.anon.dumpKey]; la != nil {
+					sz, ok = la.size, true
+				}
+			}
+			if ok {
+				to = from + sz
+			} else {
+				to = l.size
+				for _, g := range l.fields {
+					if g.bit/8 > from && g.bit/8 < to {
+						to = g.bit / 8
+					}
+				}
+			}
+		}
+		for b := from; b < to; b++ {
+			taken[b] = true
+		}
+	}
+	return taken
 }
 
 // opaqueSpanBits writes the accessor pair of bitfield i of an opaque
