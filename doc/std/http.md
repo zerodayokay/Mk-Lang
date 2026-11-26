@@ -200,6 +200,18 @@ A handler fills in the `Response` it is given; the server sends it when the hand
 - A handler that fails with `Status(code)` sends that status, the fields it set and an empty body. Any other error, or a code outside 200 to 999, sends 500 and ends the connection.
 - The server writes the framing itself: a `Content-Length` that matches the body, or chunks when the handler set `Transfer-Encoding: chunked`. A handler's `Connection: close` ends the connection after the reply.
 
+### HTTP/2 servers
+
+Set `ServerOptions.h2 = true` with a TLS acceptor in `secure` to negotiate
+HTTP/2 through ALPN. For cleartext prior knowledge, set `h2c = true` on a
+plain TCP listener. That listener also accepts HTTP/1.x requests.
+
+`h2_streams` limits concurrent streams on a connection. Each request body
+is buffered up to `body_bytes` before its handler runs. Use `Response.Flush`
+to stream a response in parts. When the server sends an error `GOAWAY`, it
+closes the write side and drains a bounded amount of pending input so the
+peer can receive the error before the connection closes.
+
 ### HTTP/3 servers
 
 Set `ServerOptions.h3 = some(quic.Acceptor(&q))` with `q.tls` holding a
