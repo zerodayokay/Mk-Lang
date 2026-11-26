@@ -58,11 +58,19 @@ export Client.Drive(&self, io: Io): Canceled!void {
     }
     self.drive_ready.NotifyAll()
     self.drive_ready.NotifyOne()
-    defer self.drive_active.Store(0)
+    defer {
+        self.drive_active.Store(0)
+        if state := self.H3State() {
+            state.WakeClaims(io)
+        }
+    }
     scope d := io.Scope() {
         defer d.Cancel()
         for {
             if self.drive_stop.Load() != 0 {
+                if state := self.H3State() {
+                    state.WakeClaims(io)
+                }
                 d.Cancel()
                 return
             }
@@ -124,6 +132,4 @@ export Client.Stop(&self) {
     self.drive_ready.NotifyAll()
     self.drive_ready.NotifyOne()
     self.drive_wake.NotifyOne()
-    self.h3_wake.NotifyAll()
-    self.h3_wake.NotifyOne()
 }
