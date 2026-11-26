@@ -21,6 +21,8 @@ export linear struct Listener {
     // the bound port, which listen reports in IoResult.os on success;
     // 0 for a Unix-domain listener
     bound: int
+    // Cached bind address for a simulated or replayed listener.
+    local: Addr
     // StreamTcp or StreamUnix: the kind of the streams Accept makes
     kind: u8
     // ListenOptions.no_delay: Accept sets TCP_NODELAY on each stream
@@ -138,7 +140,18 @@ export Listen(io: Io, addr: str): Error!Listener {
     }
     r := core.IoListen(io, addr)
     h := try Check(r)
-    return Listener(h: Trunc[uint](h), bound: Trunc[int](r.os), kind: StreamTcp, no_delay: false)
+    return NewListener(Trunc[uint](h), Trunc[int](r.os), addr, false)
+}
+
+// NewListener records the bind IP and the port reported by IoListen, including
+// the allocated port when the caller requested 0.
+NewListener(h: uint, port: int, addr: str, no_delay: bool): Listener {
+    var a := core.IoAddr(ip: [0; 16], port: 0, v6: false, zone: 0)
+    var local := ZeroAddr
+    if port >= 0 && port <= 65535 && ParseBindAddr(addr.AsBytes(), mut a) {
+        local = Unmapped(Addr(ip: a.ip, port: Trunc[u16](port), v6: a.v6))
+    }
+    return Listener(h: h, bound: port, local: local, kind: StreamTcp, no_delay: no_delay)
 }
 
 // Inherit is Listen's and ListenWith's step after their cancellation
@@ -179,7 +192,7 @@ InheritSettle(io: Io, want: int, i: core.IoResult): ?Listener {
     if i.err == core.SysErr.None {
         if want == 0 || Trunc[int](i.os) == want {
             InheritDone()
-            return some(Listener(h: Trunc[uint](i.value), bound: Trunc[int](i.os), kind: StreamTcp, no_delay: false))
+            return some(Listener(h: Trunc[uint](i.value), bound: Trunc[int](i.os), local: ZeroAddr, kind: StreamTcp, no_delay: false))
         }
         Stash(Cast[u64](i.value), Cast[u64](i.os))
         InheritDone()
@@ -196,7 +209,7 @@ InheritSettle(io: Io, want: int, i: core.IoResult): ?Listener {
         // did its Add before that Cas, so it is counted until it stashed.
         busy := Inherited.asking.Load() != 0
         if TakeStash(want, mut h, mut bound) {
-            return some(Listener(h: h, bound: bound, kind: StreamTcp, no_delay: false))
+            return some(Listener(h: h, bound: bound, local: ZeroAddr, kind: StreamTcp, no_delay: false))
         }
         if !busy {
             return none
@@ -345,18 +358,20 @@ export Listener.Port(&self): int {
     return self.bound
 }
 
-/// The bound address of the listener: the IP and port (zero Addr for a
-/// Unix-domain listener or another Io's listener). O(1); one runtime call;
-/// allocates nothing.
+/// The TCP listener's bound IP and port. Unix-domain listeners report the
+/// zero Addr. O(1); at most one runtime call; allocates nothing.
 export Listener.Addr(&self): Addr {
-    if self.kind != StreamTcp || !rt.IsNativeSocket(self.h) {
+    if self.kind != StreamTcp {
         return ZeroAddr
+    }
+    if !rt.IsNativeSocket(self.h) {
+        return self.local
     }
     var ip: [16]u8 = [0; 16]
     var w := core.IoWords(a: 0, b: 0, c: 0, d: 0)
     r := rt.SockAddress(rt.NativeIo(), self.h, false, mut ip[..], mut w)
     if r.err != core.SysErr.None || w.a < 0 || w.a > 65535 {
-        return ZeroAddr
+        return self.local
     }
     return Unmapped(Addr(ip: ip, port: Trunc[u16](w.a), v6: w.b == 1))
 }
@@ -368,7 +383,7 @@ export Listener.Addr(&self): Addr {
 /// fs.Remove before listening at that path again.
 export Listener.Close(self) {
     rt.Abandon(self.h)
-    Listener(h: _, bound: _, kind: _, no_delay: _) := self
+    Listener(h: _, bound: _, local: _, kind: _, no_delay: _) := self
 }
 
 /// Reads once: at most buf.Len() bytes, the count read, 0 at the end of

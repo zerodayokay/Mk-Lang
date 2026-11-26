@@ -288,6 +288,9 @@ test "SIM a stream echoes through short reads, and a dial with no listener is Re
     l := try net.Listen(io, "127.0.0.1:0")
     defer l.Close()
     Assert(l.Port() >= 49152)
+    bound := l.Addr()
+    Assert(!bound.v6 && bound.ip[0] == 127 && bound.ip[3] == 1)
+    Assert(int(bound.port) == l.Port())
     addr := try sys.arena.Fmt("127.0.0.1:{p}", (p: l.Port()))
     c := try net.Dial(io, addr)
     defer c.Close()
@@ -718,4 +721,17 @@ test "SIM a Listen recorded through a Recorder replays the same calls whatever L
     }
     m.Close()
     Assert(rp.Done() && !rp.Diverged())
+}
+
+test "SIM a TCP listener saves its bound IPv6 address and port for UDP on the same address" (sys: &System) {
+    var s := try Sim.New(sys.arena, 10)
+    defer s.Free()
+    io := s.Io()
+    l := try net.ListenWith(io, "[::1]:0", net.DefaultListenOptions)
+    defer l.Close()
+    a := l.Addr()
+    Assert(a.v6 && a.ip[15] == 1 && int(a.port) == l.Port())
+    udp := try net.Bind(io, try sys.arena.Fmt("{a}", (a)))
+    defer udp.Close()
+    Assert(udp.Port() == l.Port())
 }

@@ -362,7 +362,7 @@ test "a TCP stream whose peer the OS cannot name reports the zero Addr, and its 
     // it does for an accepted socket whose client already reset: the
     // failure path of NewStream, made deterministic.
     l := TnListen(sys.io)
-    Listener(h, bound: _, kind: _, no_delay: _) := l
+    Listener(h, ..) := l
     st := NewStream(sys.io, h)
     Assert(st.kind == StreamTcp && SameAddr(st.PeerAddr(), ZeroAddr))
     conn := st.Conn()
