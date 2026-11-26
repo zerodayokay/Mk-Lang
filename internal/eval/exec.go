@@ -440,6 +440,9 @@ func (m *Machine) term(f *frame, t *mir.Terminator) {
 		x := m.scalar(f, &t.On)
 		mk := mask(m.operandTI(f, &t.On).width)
 		b := f.code.body
+		if m.tg != nil {
+			m.tgNarrow(f, t.On, x&mk)
+		}
 		for _, cs := range b.Cases[t.Cases.Start:t.Cases.End()] {
 			if cs.Value&mk == x&mk {
 				f.block, f.stmt = cs.Target, 0

@@ -419,6 +419,52 @@ func TestSB_Linear(t *testing.T) {
 	wantClean(t, w.tcall(w.evaluator(0), mk("Consume", true), nil))
 }
 
+// TestSB_LinearEnumNarrow checks both sides of a discriminant switch: only
+// the variant with a plain payload can leave the temporary unowned.
+func TestSB_LinearEnumNarrow(t *testing.T) {
+	w := newWorld(t)
+	ticket, tt := w.shaped("Ticket", types.Linear)
+	enum, et := w.enumType("lib", "Choice", []types.TypeID{tt}, []types.TypeID{types.I64})
+	w.layoutLocked(et).Shape.Kind = types.Linear
+	for _, tc := range []struct {
+		name        string
+		plain, test bool
+	}{
+		{"Plain", true, true},
+		{"Untested", true, false},
+		{"Linear", false, true},
+	} {
+		f := w.fn("lib", tc.name, types.Void)
+		x := w.body(f, types.Void)
+		a := x.local(et)
+		var variant uint32
+		op := imm(types.I64, 1)
+		if tc.plain {
+			variant = 1
+		} else {
+			payload := x.local(tt)
+			x.assign(0, lp(payload), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggStruct, Item: ticket, Ops: x.b.AddOperands(op)})
+			op = mir.Move(lp(payload))
+		}
+		x.assign(0, lp(a), mir.Rvalue{Kind: mir.RvAggregate, Agg: mir.AggEnum, Item: enum, Variant: variant, Ops: x.b.AddOperands(op)})
+		var end mir.BlockID
+		if tc.test {
+			d := x.local(types.U64)
+			end = x.block()
+			x.assign(0, lp(d), mir.Rvalue{Kind: mir.RvDiscriminant, Place: lp(a), Type: types.U64})
+			x.branch(0, cp(d), end, end)
+		}
+		x.ret(end)
+		x.done()
+		got := w.tcall(w.evaluator(0), f, nil)
+		if tc.plain && tc.test {
+			wantClean(t, got)
+		} else {
+			wantViolation(t, got, VLinear)
+		}
+	}
+}
+
 // TestSB_ProtectorMut and TestSB_ProtectorShared: during a call holding a
 // reference parameter, an access by another path that pops the parameter's
 // item is VProtected naming the call; the same access after the call

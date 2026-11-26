@@ -100,7 +100,7 @@ Call(n: int): int {
 }
 
 Drive(n: int): int {
-    a := Optional(some(Ticket(id: n))) + Optional(none) + Variant(K.A(t: Ticket(id: n)))
+    a := Optional(some(Ticket(id: n))) + Optional(none) + Variant(K.A(t: Ticket(id: n))) + Variant(K.B)
     b := Three(some(Ticket(id: n))) + NoFields(some(Empty())) + Field(S(a: some(Ticket(id: n)), n: 0)) + Range(none)
     return a + b + Both(Two(a: some(Ticket(id: n)), b: none)) + Call(n) + WildOnNone(some(Ticket(id: n))) + WildOnNone(none)
 }

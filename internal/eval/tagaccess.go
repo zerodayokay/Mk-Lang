@@ -358,6 +358,45 @@ func linearOwner(ti *tinfo) bool {
 	return true
 }
 
+// tgNarrow follows a switch on a freshly read discriminant. A whole enum
+// temporary in a plain variant has no linear payload left to own. A test
+// of a user binding or a field alone does not consume its local.
+func (m *Machine) tgNarrow(f *frame, on mir.Operand, discr uint64) {
+	if on.Kind != mir.OpCopy || on.Place.Proj.Len != 0 {
+		return
+	}
+	b := f.code.body
+	stmts := b.Blocks[f.block].Stmts
+	if len(stmts) == 0 {
+		return
+	}
+	s := &stmts[len(stmts)-1]
+	if s.Kind != mir.StAssign || s.Place.Proj.Len != 0 || s.Place.Local != on.Place.Local || s.Rvalue.Kind != mir.RvDiscriminant {
+		return
+	}
+	p := s.Rvalue.Place
+	if p.Proj.Len != 0 || b.Locals[p.Local].Kind != mir.LocalTemp {
+		return
+	}
+	l := &m.tg.rec(f.base).locals[p.Local]
+	ti := f.code.localTI[p.Local]
+	if !l.owned || ti.ty.Kind != types.KNamed || m.items().Get(ti.ty.Item).Kind != types.KindEnum {
+		return
+	}
+	for _, v := range ti.layout.Variants {
+		if v.Discr != discr {
+			continue
+		}
+		for _, field := range v.Fields {
+			if m.ti(field.Type).layout.Shape.Kind != types.Plain {
+				return
+			}
+		}
+		l.owned = false
+		return
+	}
+}
+
 // tgEnter is the entry retag of frame f: each parameter of type &T,
 // mut T, []T, mut []T or str is retagged from its argument's tag over its
 // referent, protected by the call until the frame pops; the parameter's
