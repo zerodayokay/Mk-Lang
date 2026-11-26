@@ -1,4 +1,4 @@
-// Why: P5 better bindings (constant globals, static consts, pointer macros,
+// Why: better bindings (constant globals, static consts, pointer macros,
 // wide-string macros, COM methods, DECLARE_HANDLE naming, --why/--skipped)
 // must produce deterministic, well-typed Mk output.
 //
@@ -143,5 +143,33 @@ static int hidden_fn(void) { return 1; }
 		if !ok || !strings.Contains(got, tc.wantSub) {
 			t.Errorf("ExplainWhy(%q) = (%q, %v), want substring %q", tc.cname, got, ok, tc.wantSub)
 		}
+	}
+}
+
+func TestCImport_ExternAndConstEdgeCases(t *testing.T) {
+	hdr := `extern const int EXT_CONST;
+const int EXT_CONST = 5;
+
+typedef enum UEnum : unsigned int { UE_ZERO = 0 } UEnum;
+#define NEG_UENUM ((UEnum)-1)
+
+enum U64Enum : unsigned long long {
+    U64_MAX = 0xFFFFFFFFFFFFFFFFULL,
+};
+
+const long long BAD_FLOAT_CAST = (long long)1e30;
+`
+	res := translate(t, "x86_64-windows", map[string]string{"e.h": hdr}, Import{Name: "e", Headers: []string{"e.h"}})
+	text := res.Modules[0]
+	wantLines(t, text,
+		"export const ExtConst: i32 = 5",
+		"export const U64Max: U64Enum = 18446744073709551615",
+		"export const NegUenum: UEnum = 4294967295",
+	)
+	if strings.Contains(text, "extern var EXT_CONST") {
+		t.Errorf("EXT_CONST emitted both extern var and const:\n%s", text)
+	}
+	if strings.Contains(text, "BAD_FLOAT_CAST") || strings.Contains(text, "BadFloatCast") {
+		t.Errorf("out-of-range float cast constant should be skipped, got:\n%s", text)
 	}
 }

@@ -358,7 +358,7 @@ func Translate(ctx context.Context, cl Clang, resourceDir string, r Request) (*R
 		m.typ = u.probes[m.k].vt
 		m.mk = e.macroType(m.typ, m.imp)
 		if m.mk != "" {
-			m.value = mkValue(vals[m.k], m.mk)
+			m.value = mkValue(vals[m.k], m.mk, e.scalarPrimMk(e.resolve(m.typ)))
 		}
 	}
 	e.macros = objs

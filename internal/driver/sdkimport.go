@@ -142,15 +142,13 @@ func (ci *cImports) shareViews(w *world, builds []*build) *diag.Diagnostic {
 	if err != nil {
 		return diag.Toolchain("fs", "read", err.Error(), "a system view this mk carries is corrupt: "+err.Error())
 	}
-	for i, text := range ci.full {
-		shared, _, err := cimport.ShareWithViews(text, vi)
-		if err != nil {
-			d := diag.Toolchain("clang", "", err.Error(), "C import "+ci.names[i]+": "+err.Error())
-			d.At = ci.at
-			return d
-		}
-		ci.full[i] = shared
+	shared, err := cimport.SharePackageWithViews(ci.names, ci.full, vi)
+	if err != nil {
+		d := diag.Toolchain("clang", "", err.Error(), "C imports: "+err.Error())
+		d.At = ci.at
+		return d
 	}
+	ci.full = shared
 	return nil
 }
 

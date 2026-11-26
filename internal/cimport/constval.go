@@ -264,8 +264,17 @@ func (e *emitter) evalScalar(n *jnode, depth int) (constScalar, bool) {
 		}
 		if v.isFloat {
 			if hasType && !isFloatJType(n.Type, e) {
+				if math.IsNaN(v.f) || math.IsInf(v.f, 0) {
+					return constScalar{}, false
+				}
 				if signed {
+					if v.f < -9223372036854775808.0 || v.f >= 9223372036854775808.0 {
+						return constScalar{}, false
+					}
 					return fitScalar(uint64(int64(v.f)), bits, signed, true), true
+				}
+				if v.f < 0 || v.f >= 18446744073709551616.0 {
+					return constScalar{}, false
 				}
 				return fitScalar(uint64(v.f), bits, signed, true), true
 			}
@@ -532,6 +541,9 @@ func isFloatJType(jt *jtype, e *emitter) bool {
 }
 
 func (e *emitter) scalarPrimMk(rt *ctype) string {
+	if rt == nil {
+		return ""
+	}
 	switch rt.kind {
 	case tBuiltin:
 		m, _, ok := e.builtin(rt.name)

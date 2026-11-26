@@ -397,7 +397,7 @@ func (u *unit) top(n *jnode, imp int) {
 			}
 			return
 		}
-		d := &decl{kind: dVar, id: n.ID, name: n.Name, imp: imp, probeIdx: -1, extern: n.StorageClass == "extern", constVar: isTopConst(n.Type)}
+		d := &decl{kind: dVar, id: n.ID, name: n.Name, imp: imp, probeIdx: -1, extern: n.StorageClass == "extern", static: n.StorageClass == "static", constVar: isTopConst(n.Type)}
 		if n.Type != nil {
 			d.vt = parseType(n.Type.QualType)
 		}

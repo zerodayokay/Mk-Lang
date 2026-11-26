@@ -688,10 +688,31 @@ func (e *emitter) enum(d *decl) {
 		fmt.Fprintf(w, "\n// C: enum %s\nexport type %s = %s\n", d.name, n, it)
 		typ = n
 	}
+	signed := true
+	prim := it
+	if d.fixed != nil {
+		if r := e.resolve(d.fixed); r != nil {
+			if p := e.scalarPrimMk(r); p != "" {
+				prim = p
+			}
+		}
+	}
+	bits, s, ok := typeWidthSignMk(prim)
+	if ok {
+		signed = s
+	}
 	for _, c := range d.consts {
 		st.Decls++
 		n := e.scopes[d.imp].fresh(pascal(c.name), "Const")
-		fmt.Fprintf(w, "// C: %s\nexport const %s: %s = %d\n", c.name, n, typ, c.value)
+		val := strconv.FormatInt(c.value, 10)
+		if !signed {
+			u := uint64(c.value)
+			if bits > 0 && bits < 64 {
+				u &= 1<<uint(bits) - 1
+			}
+			val = strconv.FormatUint(u, 10)
+		}
+		fmt.Fprintf(w, "// C: %s\nexport const %s: %s = %s\n", c.name, n, typ, val)
 		st.Direct++
 	}
 }
@@ -733,11 +754,16 @@ func (e *emitter) typedef(d *decl) {
 // declares many IID_ names twice): it binds once, by the declaration
 // varBinders picks, and counts as one declaration.
 func (e *emitter) externVar(d *decl) {
-	if d.extern {
+	if d.extern || (!d.static && d.constVar && d.initExpr != nil) {
 		if b := e.vars[d.name]; b != nil && b != d {
 			return // another declaration binds the variable
 		}
 		if d.constVar && d.initExpr != nil && e.emitConstVar(d) {
+			return
+		}
+		if !d.extern {
+			e.stats[d.imp].Decls++
+			e.skippedDecl(d.imp, "var", d.name, "variable that is not extern")
 			return
 		}
 	} else {
@@ -775,7 +801,7 @@ func (e *emitter) varBinders() map[string]*decl {
 	out := map[string]*decl{}
 	first := map[string]*decl{}
 	for _, d := range e.u.decls {
-		if d.kind != dVar || !d.extern || d.vt == nil {
+		if d.kind != dVar || d.vt == nil || (!d.extern && !(!d.static && d.constVar && d.initExpr != nil)) {
 			continue
 		}
 		f := first[d.name]

@@ -241,15 +241,20 @@ func irValues(ir string) map[int]string {
 	return out
 }
 
-// mkValue turns an IR initializer of a macro of Mk type mk into a Mk
+// mkValue turns an IR initializer of a macro of Mk type mk (with underlying
+// scalar primitive type primMk, or "" for non-scalar/pointer types) into a Mk
 // literal, or "" when it is none (a pointer, an aggregate, a non-finite
 // float, a string that is not UTF-8).
-func mkValue(ir, mk string) string {
+func mkValue(ir, mk, primMk string) string {
 	sp := strings.IndexByte(ir, ' ')
 	if sp < 0 {
 		return ""
 	}
 	ty, v := ir[:sp], strings.TrimSpace(ir[sp+1:])
+	prim := primMk
+	if prim == "" {
+		prim = mk
+	}
 	switch {
 	case strings.HasPrefix(ty, "i") && mk != "" && mk != "str" && mk != "f32" && mk != "f64" && !strings.HasPrefix(mk, "[]"):
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -257,13 +262,13 @@ func mkValue(ir, mk string) string {
 			return ""
 		}
 		bits, _ := strconv.Atoi(ty[1:])
-		if mk == "bool" {
+		if prim == "bool" {
 			if n == 0 {
 				return "false"
 			}
 			return "true"
 		}
-		if mk[0] == 'u' {
+		if prim[0] == 'u' {
 			u := uint64(n)
 			if bits < 64 {
 				u &= 1<<uint(bits) - 1
