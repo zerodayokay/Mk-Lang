@@ -2,8 +2,9 @@
 // archive ships inside mk; a source build without the generated data must
 // still compile and say how to make it.
 //
-// What: Embedded (a view's archive bytes for a target), EmbeddedManifest
-// (the generated views.txt of a target) and ArchiveName.
+// What: Embedded (a view's archive bytes for a target), HasEmbedded
+// (whether mk carries it), EmbeddedManifest (the generated views.txt of a
+// target) and ArchiveName.
 //
 // How: data/ is embedded whole; it always holds README.txt, so the embed
 // pattern matches even when no archive was generated, and archives are

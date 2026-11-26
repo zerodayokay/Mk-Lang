@@ -287,6 +287,15 @@ func TestSysView_StdModule(t *testing.T) {
 		if len(s.w.sysviews.mods) != 1 {
 			t.Errorf("lazy %v: views %v", lazy, s.w.sysviews.mods)
 		}
+		pkg, result, err := s.Doc(DocOptions{Std: "std"})
+		if err != nil || pkg == nil {
+			t.Fatalf("lazy %v: documentation: %v\n%s", lazy, err, result.Report.Text(result.Sources))
+		}
+		for _, mod := range pkg.Modules {
+			if strings.HasPrefix(mod.Path, "c.sys.") {
+				t.Errorf("lazy %v: std docs include system view %s", lazy, mod.Path)
+			}
+		}
 	}
 }
 
