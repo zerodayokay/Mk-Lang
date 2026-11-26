@@ -201,7 +201,7 @@ func TestCObj_SearchDirsFlags(t *testing.T) {
 		return filepath.Join("/", p)
 	}
 	cj := toolchain.CJob{Output: abs("w/c0/x.o"), ResourceDir: abs("rd"), Include: []string{abs("root")}, System: []string{abs("libc")},
-		Flags: []string{"-march=x86-64-v2", "-iquote", abs("q"), "-I" + abs("a"), "-I", abs("b"), "-isystem" + abs("s"), "-idirafter", abs("z"), "-Irel", "-DX=1",
+		Flags: []string{"-march=x86-64-v2", "-fms-compatibility-version=19.33", "-iquote", abs("q"), "-I" + abs("a"), "-I", abs("b"), "-isystem" + abs("s"), "-idirafter", abs("z"), "-Irel", "-DX=1",
 			"-D", "Y", "-UZ", "-O2", "-g", "-std=c11", "-Wall", "-Wno-error=unused", "-w", "-fno-builtin", "-fno-pic", "-mno-red-zone"}}
 	got, ok := cobjSearchDirs(cj)
 	want := []string{abs("q"), abs("root"), abs("a"), abs("b"), abs("w/c0/rel"), abs("rd/include"), abs("libc"), abs("s"), abs("z")}
@@ -211,7 +211,7 @@ func TestCObj_SearchDirsFlags(t *testing.T) {
 	unmodelled := [][]string{{"-include", "x.h"}, {"-isystem-after", abs("s")}, {"-I"}, {"-I", ""}, {"-I-"}, {"-I=" + abs("s")}, {"-imultilib", "m"},
 		{"-index-header-map"}, {"--include-directory=" + abs("a")}, {"-working-directory", abs("w")}, {"-Xclang", "-I" + abs("a")}, {"@flags.rsp"}, {"-D", "@d.rsp"}, {"-I", "@i.rsp"},
 		{"--config=x.cfg"}, {"-MMD"}, {"--write-user-dependencies"}, {"-D"}, {"-mllvm", "-x"}, {"-mllvm=-x"}, {"-fmodules"}, {"-fprofile-use"},
-		{"-fprofile-use=p.profdata"}, {"-fvisibility=hidden"}, {"-Wp,-Ia"}, {"-Wa,-Ia"}, {"extra.c"}}
+		{"-fprofile-use=p.profdata"}, {"-fvisibility=hidden"}, {"-fms-compatibility-version="}, {"-fms-compatibility-version=19.33,extra"}, {"-Wp,-Ia"}, {"-Wa,-Ia"}, {"extra.c"}}
 	if runtime.GOOS == "windows" {
 		unmodelled = append(unmodelled, []string{`-I\inc`}, []string{"-I/inc"}, []string{"-IC:inc"})
 	}
@@ -220,5 +220,26 @@ func TestCObj_SearchDirsFlags(t *testing.T) {
 		if _, ok := cobjSearchDirs(cj); ok {
 			t.Errorf("flags %q are modelled", f)
 		}
+	}
+}
+
+// TestCObj_CachesObject verifies that a plain C-source package stores its
+// compiled object and .sum sidecar in KindCObj on the host target (including
+// Windows with its injected MSVC compatibility version flag).
+func TestCObj_CachesObject(t *testing.T) {
+	needTools(t)
+	files := cBin("cobjcache", "int k_fn(void);\n", "int k_fn(void) { return 99; }\n",
+		cMain("", "        b := k.k_fn()\n", "{b}", "b: b"))
+	dir := writeTree(t, files)
+	cacheDir := t.TempDir()
+	if out := buildRun(t, dir, cacheDir); out != "99\n" {
+		t.Fatalf("first build printed %q, want 99", out)
+	}
+	sums, err := filepath.Glob(filepath.Join(cache.DirPath(cacheDir, string(cache.KindCObj)), "*", "*.sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sums) == 0 {
+		t.Fatalf("no cached C object sidecar found under %s", cache.DirPath(cacheDir, string(cache.KindCObj)))
 	}
 }

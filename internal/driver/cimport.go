@@ -957,6 +957,9 @@ func plainFlag(f string) bool {
 	case strings.HasPrefix(f, "-m"):
 		return !strings.HasPrefix(f, "-mllvm") && !strings.HasPrefix(f, "-module")
 	case strings.HasPrefix(f, "-f"):
+		if ver, ok := strings.CutPrefix(f, "-fms-compatibility-version="); ok {
+			return isDottedDigits(ver)
+		}
 		return !strings.Contains(f, "=") && !strings.Contains(f, "module") && !strings.Contains(f, "profile") &&
 			!strings.Contains(f, "apinotes")
 	}
@@ -966,6 +969,18 @@ func plainFlag(f string) bool {
 		}
 	}
 	return false
+}
+
+func isDottedDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if (s[i] < '0' || s[i] > '9') && s[i] != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 // missingShim is the E0001 of a build whose vendored binding (read because
