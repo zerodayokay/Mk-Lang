@@ -47,6 +47,8 @@ const sysViewPrefix = "c.sys."
 // sysViews are one session's system views.
 type sysViews struct {
 	dir string // the cache directory
+	// A corpus session extracts once before its units are read.
+	stdOnly bool
 	// mods are the modules extracted, by view name.
 	mods map[string]*modNode
 	// missing are the views the program names that this mk carries no
@@ -335,8 +337,7 @@ func (b *build) sysViewFor(m *modNode, p string) (*modNode, string) {
 		return nil, ""
 	}
 	sv := b.w.sysviews
-	if sv == nil {
-		// A corpus unit's session forms no views: E0202 as before.
+	if sv == nil || sv.stdOnly && !m.std && !m.sysview {
 		return nil, ""
 	}
 	if dep := sv.mods[name]; dep != nil {

@@ -62,6 +62,7 @@ func NewCorpusSession(cfg Config) (*CorpusSession, error) {
 	}
 	w := newWorld(cfg)
 	c := &CorpusSession{w: w, names: map[string]bool{}}
+	w.sysviews = &sysViews{dir: c.cacheDir(), stdOnly: true}
 	p := &pipeline{w: w}
 	stdT := w.stdTree()
 	var stdMan *Manifest

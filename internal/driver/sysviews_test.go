@@ -333,3 +333,20 @@ func TestSysView_Cache(t *testing.T) {
 		t.Fatal("a new use hit")
 	}
 }
+
+// TestSysView_CorpusStd checks a library with a system-view dependency in
+// the shared corpus world, before any example units are read.
+func TestSysView_CorpusStd(t *testing.T) {
+	if _, ok := sysview.Embedded("x86_64-windows", "vulkan"); !ok {
+		t.Skip("this mk carries no Vulkan system view")
+	}
+	cfg := Config{Target: types.X86_64Linux, CacheDir: t.TempDir()}
+	c, err := NewCorpusSession(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean(t, c.Std())
+	if c.w.sysviews.mods["windows"] == nil {
+		t.Fatal("no windows system view in the corpus std")
+	}
+}
