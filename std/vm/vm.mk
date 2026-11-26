@@ -358,8 +358,12 @@ export linear struct CodeRegion {
 // Release it: Send. Only its raw view pointers (sys.VmCode's w and x) stop the
 // derivation. Its only methods on &self, Size and Entry, read fields that never
 // change after New or Reserve, and every change takes mut self or self: Share.
-// The one per-thread state, arm64 macOS's JIT write mode, lives in a CodeWriter,
-// which holds a raw pointer and so is neither Send nor Share.
+// CodeProtect and CodeSealAll take a & but change protections only for Edit,
+// under its mut self, and for Done, under the writer's exclusive loan. The one
+// per-thread state, arm64 macOS's JIT write mode, is the thread's, not the
+// region's: a thread is in execute mode outside a window (New puts its own
+// back there), and only a CodeWriter switches it. A CodeWriter holds a raw
+// pointer, so it is neither Send nor Share.
 unsafe impl Send for CodeRegion {}
 unsafe impl Share for CodeRegion {}
 
@@ -374,9 +378,10 @@ unsafe impl Share for CodeRegion {}
 /// JIT write protection belongs to the calling OS thread, so resuming on
 /// another carrier would leave the original carrier write-enabled. For the
 /// same reason it is neither Send nor Share (its raw pointer to the region
-/// asserts nothing), so it never passes to another task. Its Bytes may, but
-/// on arm64 macOS with MAP_JIT only the thread that opened the window can
-/// write them; a write from another thread faults.
+/// asserts nothing), so it never passes to another task. The checker lets
+/// its Bytes go to a task, but the scope's join, a wait, then comes before
+/// Done, and on arm64 macOS with MAP_JIT a write from a thread other than
+/// the one that opened the window faults: write them on this task.
 export linear view struct CodeWriter {
     r: *CodeRegion
     off: int

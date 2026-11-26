@@ -14,6 +14,7 @@ import std.vm
 - [The main pieces](#the-main-pieces)
 - [Regions](#regions)
 - [Code regions](#code-regions)
+- [Tasks](#tasks)
 - [Errors](#errors)
 - [Memory and cost](#memory-and-cost)
 - [Examples](#examples): [reserve and commit](#reserve-and-commit), [generate and run code](#generate-and-run-code), [grow a code space](#grow-a-code-space)
@@ -69,11 +70,11 @@ A reservation or a code mapping belongs to the process, not to a thread, on ever
 |---|---|---|---|
 | `Region` | yes | yes | Derived: it keeps its addresses as `uint`, and its commit bitmap is atomic. Tasks that change overlapping ranges at once exclude each other themselves |
 | `CodeRegion` | yes | yes | Asserted, since it holds the views as raw pointers. Every change takes `mut self` or `self`, and `Size` and `Entry`, its `&self` methods, only read. So a code space can sit behind a `Mutex` or `atomic.Spin` that compile tasks share, and many tasks can run its code through a `&` |
-| `CodeWriter` | no | no | It holds a raw pointer to its region and asserts nothing, so it stays on the task that opened it (E1001, E1002), since arm64 macOS's JIT write mode belongs to the thread |
+| `CodeWriter` | no | no | arm64 macOS's JIT write mode belongs to the thread that opened the window, so a writer stays on its task: it holds a raw pointer to its region and asserts nothing (E1001, E1002) |
 | `Prot`, `Error` | yes | yes | Plain values |
 
-- `w.Bytes()` is a `mut []u8`, which may go to a task. On arm64 macOS with `MAP_JIT` only the thread that opened the window can write it, and a write from another thread faults, so write the bytes on the task that holds the `CodeWriter`.
-- While one task edits a region, others may still run code at entries they took before. On Windows, Linux and arm64 macOS with `MAP_JIT` the code stays executable throughout. On x86_64 macOS and the arm64 `mprotect` fallback, the edited pages are read-write and not executable until `Done`, so a call into them faults: exclude the callers there for the length of the window.
+- The checker lets `w.Bytes()`, a `mut []u8`, go to a task, but do not pass it: the slice borrows `w`, so the scope's join, a wait, comes before `Done`, which holds the window across a task suspension. On arm64 macOS with `MAP_JIT` a write from a thread other than the one that opened the window also faults. Write the bytes on the task that holds the `CodeWriter`.
+- While one task edits a region, others may still call entries they took before, into code the window leaves alone. On Windows, Linux and arm64 macOS with `MAP_JIT` that code stays executable throughout. On x86_64 macOS and the arm64 `mprotect` fallback, the edited pages are read-write and not executable until `Done`, so a call into them faults: exclude the callers there for the length of the window.
 
 ## Errors
 
@@ -435,9 +436,10 @@ hold a CodeWriter across an Io wait or task suspension: on arm64 macOS
 JIT write protection belongs to the calling OS thread, so resuming on
 another carrier would leave the original carrier write-enabled. For the
 same reason it is neither Send nor Share (its raw pointer to the region
-asserts nothing), so it never passes to another task. Its Bytes may, but
-on arm64 macOS with MAP_JIT only the thread that opened the window can
-write them; a write from another thread faults.
+asserts nothing), so it never passes to another task. The checker lets
+its Bytes go to a task, but the scope's join, a wait, then comes before
+Done, and on arm64 macOS with MAP_JIT a write from a thread other than
+the one that opened the window faults: write them on this task.
 
 ### `CodeWriter.Bytes`
 
