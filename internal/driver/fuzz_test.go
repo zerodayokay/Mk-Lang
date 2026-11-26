@@ -537,9 +537,8 @@ test "no target" (sys: &System) {
 // allocates from sys.heap and prints through sys.io; --fuzz runs the loop
 // on it, saves the input that fails, and plain mk test then fails on it;
 // a block that takes a System but never calls FuzzSys is not a fuzz
-// target. The failure it guards against: testing.Fuzz takes fn([]u8), so
-// a target cannot reach the System (MKH-564), and a FuzzSys whose plain
-// run or loop does not call f, or calls it on other bytes, still passes.
+// target. The failure it guards against: a FuzzSys whose plain run or
+// loop does not call f, or calls it on other bytes, still passing.
 func TestMkTestFuzzSys(t *testing.T) {
 	root := testPkg(t, map[string]string{"main.mk": fuzzSysSource})
 	writeFiles(t, root, map[string]string{

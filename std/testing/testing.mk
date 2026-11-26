@@ -83,18 +83,22 @@ export Fuzz(f: fn([]u8)) {
 
 /// FuzzSys is Fuzz for a target that needs the System, to reach sys.io (to
 /// run an external oracle through std.proc, or to write a finding's
-/// artifact) or to allocate from sys.heap: the test block passes its own
-/// sys, and FuzzSys calls f(sys, data) wherever Fuzz would call f(data).
-/// The fuzzer's own work, reading the corpus and writing the state file
-/// the driver saves a failing input from, runs on the native Io and the
-/// process heap, never on sys, so it is the same under `mk test --sim`.
-/// f's sys is the test block's own, under `--sim` too: an oracle it runs
-/// is a real process, deterministic only as far as that process is, and
-/// an f that wants a simulated world builds one with std.sim. The hang
-/// limit counts f's whole call, an oracle's time included.
+/// artifact) or to allocate: the test block passes its own sys, and
+/// FuzzSys calls f(sys, data) wherever Fuzz would call f(data). f's sys is
+/// the test block's with an arena of the call's own on sys.heap, freed when
+/// f returns, so what f takes from sys.arena (proc.Run's output, say) does
+/// not pile up over the mutation loop's many calls. The fuzzer's own work,
+/// reading the corpus and writing the state file the driver saves a
+/// failing input from, runs on the native Io, never on sys.io, so it is
+/// the same under `mk test --sim`. f's io is the test block's, under
+/// `--sim` too: an oracle it runs is a real process, deterministic only as
+/// far as that process is, and an f that wants a simulated world builds
+/// one with std.sim. The hang limit counts f's whole call, an oracle's
+/// time included.
 ///
 /// It allocates its inputs from the process heap and frees them before it
-/// returns; O(the corpus) in plain mode.
+/// returns, O(the corpus) in plain mode, and each call's arena, one 4 KiB
+/// chunk until f takes more.
 export FuzzSys(sys: &System, f: fn(sys: &System, data: []u8)) {
     Drive(some(sys), none, some(f))
 }
@@ -121,12 +125,18 @@ Drive(s: ?&System, f: ?fn([]u8), g: ?fn(sys: &System, data: []u8)) {
     a.Free()
 }
 
-// Call calls the fuzz target on data: g(s, data) when Drive got g and s,
-// f(data) otherwise.
+// Call calls the fuzz target on data: g(s with an arena of this call's
+// own, data) when Drive got g and s, f(data) otherwise. g returns nothing
+// and takes s and data shared, so nothing it takes from the arena
+// outlives the call, and the arena is freed when g returns.
 Call(s: ?&System, f: ?fn([]u8), g: ?fn(sys: &System, data: []u8), data: []u8) {
     if t := s {
         if h := g {
-            h(t, data)
+            var ar := Arena.New(t.heap).Must()
+            defer ar.Free()
+            var c := *t
+            c.arena = &ar
+            h(&c, data)
             return
         }
     }

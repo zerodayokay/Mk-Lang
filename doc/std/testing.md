@@ -48,8 +48,9 @@ A fuzz target is a function `f: fn([]u8)` that fails by panicking: a failed `Ass
 
 A function value captures nothing, so `f: fn([]u8)` cannot reach a `System`: it cannot run an external oracle (a reference implementation or a disassembler, through `std.proc`), write a finding's artifact, or allocate from `sys.heap`. A target that needs one is a function `f: fn(sys: &System, data: []u8)`. Its test block takes `(sys: &System)` and calls `testing.FuzzSys(sys, f)`, which calls `f(sys, data)` wherever `Fuzz` calls `f(data)`, in plain `mk test` and in the mutation loop alike.
 
-- The fuzzer's own work, reading the saved inputs and writing the state the driver saves a failing input from, never goes through `sys`: it uses the native `Io` and the process heap, under `mk test --sim` too.
-- `f`'s `sys` is the test block's own, under `mk test --sim SEED` too: an oracle it runs is a real process, deterministic only as far as that process is. An `f` that wants a seeded, simulated world builds one with [`std.sim`](sim.md).
+- `f`'s `sys` is the test block's, except that its `arena` is a new one on `sys.heap` for each call, freed when `f` returns. So what `f` takes from `sys.arena`, such as the output of `proc.Run(sys.arena, sys.io, ...)`, does not pile up over the mutation loop's many calls.
+- The fuzzer's own work, reading the saved inputs and writing the state the driver saves a failing input from, never goes through `sys.io`: it uses the native `Io` and the process heap, under `mk test --sim` too.
+- `f`'s `sys.io` is the test block's, under `mk test --sim SEED` too: an oracle it runs is a real process, deterministic only as far as that process is. An `f` that wants a seeded, simulated world builds one with [`std.sim`](sim.md).
 - The hang limit counts the whole call of `f`, an oracle's time included.
 
 Commit the `testdata/fuzz/` directories: they are the regression tests the mutation loop leaves behind.
@@ -78,7 +79,7 @@ A function value captures nothing, so `f: fn(n: int)` cannot reach a `System`, a
 
 ## Memory and cost
 
-`Fuzz` and `FuzzSys` read their inputs into memory from the process heap and free them before they return. In plain `mk test` each costs one call of `f` per saved input. `Bench` and `BenchSys` allocate nothing themselves. In any other run `Fuzz` and `FuzzSys` cost one check, `Bench` one call of `f(1)` and `BenchSys` one call of `f(sys, 1)`.
+`Fuzz` and `FuzzSys` read their inputs into memory from the process heap and free them before they return. In plain `mk test` each costs one call of `f` per saved input. `FuzzSys` also makes each call's arena, one 4 KiB chunk from `sys.heap` until `f` takes more, and frees it when `f` returns. `Bench` and `BenchSys` allocate nothing themselves. In any other run `Fuzz` and `FuzzSys` cost one check, `Bench` one call of `f(1)` and `BenchSys` one call of `f(sys, 1)`.
 
 ## Examples
 
@@ -231,15 +232,17 @@ Upper(b: []u8, out: mut []u8) {
     }
 }
 
-// Check compares Upper with tr, the oracle, run through sys.io.
+// Check compares Upper with tr, the oracle, run through sys.io. Its
+// sys.arena is freed when it returns.
 Check(sys: &System, b: []u8) {
-    var a := Arena.New(sys.heap).Must()
-    defer a.Free()
-    out := a.Slice[u8](b.Len()).Must()
+    out := sys.arena.Slice[u8](b.Len()).Must()
     Upper(b, out)
     args := ["tr", "a-z", "A-Z"]
-    r := proc.Run(&a, sys.io, args[..], b, 1 << 16) else {
+    r := proc.Run(sys.arena, sys.io, args[..], b, 1 << 16) else {
         return // no tr on this machine: nothing to compare with
+    }
+    if r.code != 0 {
+        return // tr refused the input: nothing to compare with
     }
     Assert(r.stdout.Len() == out.Len())
     for i in 0..out.Len() {
@@ -252,7 +255,7 @@ test "upper" (sys: &System) {
 }
 ```
 
-`Check` allocates its output from `sys.heap` and runs the oracle through `sys.io`, neither of which a `fn([]u8)` can reach. With no saved inputs, plain `mk test` passes; `mk test --fuzz upper` runs `tr` on every input it makes.
+`Check` allocates its output and the oracle's from `sys.arena`, which `FuzzSys` makes anew for each call, and runs the oracle through `sys.io`, neither of which a `fn([]u8)` can reach. With no saved inputs, plain `mk test` passes; `mk test --fuzz upper` runs `tr` on every input it makes.
 
 ### A benchmark
 
@@ -395,17 +398,21 @@ export FuzzSys(sys: &System, f: fn(sys: &System, data: []u8))
 
 FuzzSys is Fuzz for a target that needs the System, to reach sys.io (to
 run an external oracle through std.proc, or to write a finding's
-artifact) or to allocate from sys.heap: the test block passes its own
-sys, and FuzzSys calls f(sys, data) wherever Fuzz would call f(data).
-The fuzzer's own work, reading the corpus and writing the state file
-the driver saves a failing input from, runs on the native Io and the
-process heap, never on sys, so it is the same under `mk test --sim`.
-f's sys is the test block's own, under `--sim` too: an oracle it runs
-is a real process, deterministic only as far as that process is, and
-an f that wants a simulated world builds one with std.sim. The hang
-limit counts f's whole call, an oracle's time included.
+artifact) or to allocate: the test block passes its own sys, and
+FuzzSys calls f(sys, data) wherever Fuzz would call f(data). f's sys is
+the test block's with an arena of the call's own on sys.heap, freed when
+f returns, so what f takes from sys.arena (proc.Run's output, say) does
+not pile up over the mutation loop's many calls. The fuzzer's own work,
+reading the corpus and writing the state file the driver saves a
+failing input from, runs on the native Io, never on sys.io, so it is
+the same under `mk test --sim`. f's io is the test block's, under
+`--sim` too: an oracle it runs is a real process, deterministic only as
+far as that process is, and an f that wants a simulated world builds
+one with std.sim. The hang limit counts f's whole call, an oracle's
+time included.
 
 It allocates its inputs from the process heap and frees them before it
-returns; O(the corpus) in plain mode.
+returns, O(the corpus) in plain mode, and each call's arena, one 4 KiB
+chunk until f takes more.
 
 <!-- api:end -->

@@ -18,6 +18,13 @@ NeverCalledSys(sys: &System, b: []u8) {
     Panic("a FuzzSys target ran with no corpus")
 }
 
+// TakeFromArena takes 64 KiB from its sys.arena, more than an arena's
+// first chunks hold, so the bytes are a heap block the leak counters see.
+TakeFromArena(sys: &System, b: []u8) {
+    Assert(b.Len() == 1 && b[0] == b'x')
+    Assert(sys.arena.Slice[u8](1 << 16).Must().Len() == 1 << 16)
+}
+
 OnlyOne(n: int) {
     Assert(n == 1)
 }
@@ -41,6 +48,13 @@ test "Testing BenchSys calls f(sys, 1)" (sys: &System) {
 
 test "Testing FuzzSys with no corpus calls nothing" (sys: &System) {
     FuzzSys(sys, NeverCalledSys)
+}
+
+test "Testing a FuzzSys target's arena is freed when it returns" (sys: &System) {
+    live := rt.LiveAllocations()
+    Call(some(sys), none, some(TakeFromArena), "x".AsBytes())
+    after := rt.LiveAllocations()
+    Assert(after.count == live.count && after.bytes == live.bytes)
 }
 
 test "Testing Decimal and PutInt" {
