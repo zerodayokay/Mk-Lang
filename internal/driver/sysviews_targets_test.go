@@ -124,8 +124,9 @@ func TestSysView_AllTargets(t *testing.T) {
 		"    var pid: windows.Dword = 0\n    if Target.os == Os.Windows {\n        unsafe \"test\" {\n            pid = windows.GetCurrentProcessId()\n        }\n    }\n" +
 		"    if Target.os == Os.Linux {\n        unsafe \"test\" {\n            n = vulkan.vkEnumerate(0)\n        }\n    }\n    try sys.Print(\"{n} {pid}\\n\", (n, pid))\n}\n"
 	dir := writeTree(t, sysPkg(main, nil))
+	std := sysViewTestStd(t, "")
 	for _, differ := range []bool{false, true} {
-		cfg := Config{Root: dir, Target: types.X86_64Windows, AllTargets: true, CacheDir: t.TempDir()}
+		cfg := Config{Root: dir, Target: types.X86_64Windows, AllTargets: true, CacheDir: t.TempDir(), StdDir: std}
 		cfg.TestHooks.SysViews = fakeVulkan(t, differ)
 		s, err := NewSession(cfg)
 		if err != nil {

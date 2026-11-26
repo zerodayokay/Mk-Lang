@@ -15,6 +15,7 @@
 package driver
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -121,6 +122,32 @@ export Main(sys: &System): WriteError!void {
 }
 `
 
+// sysViewTestStd provides the std declarations used by the synthetic views
+// and their callers. The real std can independently import the same views.
+func sysViewTestStd(t *testing.T, probe string) string {
+	t.Helper()
+	files := fakeStdFiles()
+	core := strings.NewReplacer(
+		"export enum Os { A }", "export enum Os {\n    Windows\n    Linux\n}",
+		"export struct TargetInfo {}", "export struct TargetInfo {\n    export os: Os\n}",
+	).Replace(files["core/core.mk"])
+	files["core/core.mk"] = core + `
+export System.Print[A: Plain](&self, const format: str, args: A): WriteError!void {
+}
+`
+	files["raw/raw.mk"] += `export Null[T](): *T
+export Of[T](p: &T): *T
+export PtrCast[T, U](p: *T): *U
+export Read[T](p: *T): T
+`
+	files["mem/mem.mk"] = "export Zeroed[T](): T\n"
+	if probe != "" {
+		files["gfxprobe/probe.mk"] = probe
+		files["pkg.mk"] = strings.Replace(files["pkg.mk"], `"sys/linux"]`, `"sys/linux", "gfxprobe"]`, 1)
+	}
+	return writeTree(t, files)
+}
+
 // sysSession checks root with the fake views for target.
 func sysSession(t *testing.T, root string, target types.Target, mod func(*Config)) (*Session, Result) {
 	t.Helper()
@@ -128,6 +155,9 @@ func sysSession(t *testing.T, root string, target types.Target, mod func(*Config
 	cfg.TestHooks.SysViews = fakeSysViews(t)
 	if mod != nil {
 		mod(&cfg)
+	}
+	if cfg.StdDir == "" {
+		cfg.StdDir = sysViewTestStd(t, "")
 	}
 	s, err := NewSession(cfg)
 	if err != nil {
@@ -165,6 +195,9 @@ func TestSysView_Resolves(t *testing.T) {
 	}
 	if len(s.w.sysviews.mods) != 1 {
 		t.Errorf("modules %v", s.w.sysviews.mods)
+	}
+	if !slices.Contains(r.Trace.ModulesResolved, m.path) || !slices.Contains(r.Trace.FilesParsed, m.tree.path(m.files[0].rel)) {
+		t.Errorf("the trace omits the imported view: %+v", r.Trace)
 	}
 }
 
@@ -240,8 +273,8 @@ func TestSysView_FnPointer(t *testing.T) {
 		"    wc := mem.Zeroed[windows.Wndclass]()\n    f := wc.lpfn_wnd_proc\n    _ = f\n}\n"
 	_, r := sysSession(t, writeTree(t, sysPkg(user, nil)), types.X86_64Windows, nil)
 	expectLines(t, r, "app/main.mk:6:10:E1101")
-	std := realStdWith(t, map[string]string{"gfxprobe/probe.mk": "import c.windows\nimport std.mem\n\n" +
-		"export Proc(): bool {\n    wc := mem.Zeroed[windows.Wndclass]()\n    f := wc.lpfn_wnd_proc\n    return f.IsNone()\n}\n"}, "gfxprobe")
+	std := sysViewTestStd(t, "import c.windows\nimport std.mem\n\n"+
+		"export Proc(): bool {\n    wc := mem.Zeroed[windows.Wndclass]()\n    f := wc.lpfn_wnd_proc\n    return f.IsNone()\n}\n")
 	main := "import std.gfxprobe\n\nexport Main(sys: &System): WriteError!void {\n    try sys.Print(\"{x}\\n\", (x: gfxprobe.Proc()))\n}\n"
 	_, r = sysSession(t, writeTree(t, sysPkg(main, nil)), types.X86_64Windows, func(c *Config) { c.StdDir = std })
 	expectLines(t, r, "std/gfxprobe/probe.mk:6:10:E1101")
@@ -252,8 +285,8 @@ func TestSysView_FnPointer(t *testing.T) {
 func TestSysView_ExternVar(t *testing.T) {
 	user := "import c.windows\n\nexport Main(sys: &System): WriteError!void {\n    var n: i32 = 0\n" +
 		"    unsafe \"test\" {\n        n = *(&windows.mkGlobalCount)\n    }\n    try sys.Print(\"{n}\\n\", (n))\n}\n"
-	std := realStdWith(t, map[string]string{"gfxprobe/probe.mk": "import c.windows\n\nexport Count(): i32 {\n" +
-		"    unsafe \"test\" {\n        return *(&windows.mkGlobalCount)\n    }\n}\n"}, "gfxprobe")
+	std := sysViewTestStd(t, "import c.windows\n\nexport Count(): i32 {\n"+
+		"    unsafe \"test\" {\n        return *(&windows.mkGlobalCount)\n    }\n}\n")
 	for _, c := range []struct {
 		name, main, std string
 	}{{"package", user, ""}, {"std", "import std.gfxprobe\n\nexport Main(sys: &System): WriteError!void {\n    try sys.Print(\"{x}\\n\", (x: gfxprobe.Count()))\n}\n", std}} {
@@ -273,8 +306,8 @@ func TestSysView_ExternVar(t *testing.T) {
 // module, checks under a lazy and a full std, and its windows.Hwnd is the
 // package's.
 func TestSysView_StdModule(t *testing.T) {
-	std := realStdWith(t, map[string]string{"gfxprobe/probe.mk": "import c.windows\n\n" +
-		"export Close(h: windows.Hwnd): i32 {\n    unsafe \"DestroyWindow takes any handle\" {\n        return windows.DestroyWindow(h)\n    }\n}\n"}, "gfxprobe")
+	std := sysViewTestStd(t, "import c.windows\n\n"+
+		"export Close(h: windows.Hwnd): i32 {\n    unsafe \"DestroyWindow takes any handle\" {\n        return windows.DestroyWindow(h)\n    }\n}\n")
 	main := "import c.windows\nimport std.gfxprobe\nimport std.raw\n\nNull(): windows.Hwnd {\n    unsafe \"test\" {\n" +
 		"        return raw.Null[windows.HwndStruct]()\n    }\n}\n\nexport Main(sys: &System): WriteError!void {\n" +
 		"    try sys.Print(\"{x}\\n\", (x: gfxprobe.Close(Null())))\n}\n"
@@ -316,8 +349,9 @@ func TestSysView_TextStable(t *testing.T) {
 func TestSysView_Cache(t *testing.T) {
 	dir := writeTree(t, sysPkg(sysPidMain, map[string]string{}))
 	cache := t.TempDir()
+	std := sysViewTestStd(t, "")
 	run := func() *sysViews {
-		cfg := Config{Root: dir, Target: types.X86_64Windows, CacheDir: cache}
+		cfg := Config{Root: dir, Target: types.X86_64Windows, CacheDir: cache, StdDir: std}
 		cfg.TestHooks.SysViews = fakeSysViews(t)
 		s, err := NewSession(cfg)
 		if err != nil {
