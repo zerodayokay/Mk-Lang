@@ -82,7 +82,7 @@ func Identity(m Meta, items []Item) ([32]byte, error) {
 		}
 		str(it.Text)
 		num(itemFlags(it))
-		str(it.Link.Lib)
+		str(it.Link.archiveLib())
 	}
 	var id [32]byte
 	h.Sum(id[:0])
@@ -111,6 +111,9 @@ func Write(m Meta, items []Item, o Options) ([]byte, error) {
 	for i, it := range items {
 		if it.Name == "" || len(it.Defs) == 0 {
 			return nil, fmt.Errorf("sysview: view %s: item %d defines no name", m.Name, i)
+		}
+		if strings.Contains(it.Link.Lib, "@") || strings.Contains(it.Link.Version, "@") || it.Link.Version != "" && it.Link.Lib == "" {
+			return nil, fmt.Errorf("sysview: view %s: item %s has an invalid library or symbol version", m.Name, it.Name)
 		}
 		for _, d := range it.Deps {
 			if d.View < 0 || d.View > len(m.Requires) || d.Item < 0 || d.View == 0 && d.Item >= len(items) {
@@ -184,7 +187,7 @@ func Write(m Meta, items []Item, o Options) ([]byte, error) {
 		blob = binary.AppendUvarint(blob, uint64(itemFlags(it)))
 		lib := uint64(0)
 		if it.Link.Lib != "" {
-			lib = uint64(intern(it.Link.Lib)) + 1
+			lib = uint64(intern(it.Link.archiveLib())) + 1
 		}
 		blob = binary.AppendUvarint(blob, lib)
 	}

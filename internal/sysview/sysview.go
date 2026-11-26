@@ -43,11 +43,27 @@ type Meta struct {
 // Requires[k-1]; Item is the item's index there.
 type Ref struct{ View, Item int }
 
-// Link is a function item's link entry: the library that exports it and
-// whether it binds lazily. The zero Link is none.
+// Link is a function item's link entry: the library that exports it,
+// its ELF symbol version when present and whether it binds lazily.
+// The zero Link is none.
 type Link struct {
-	Lib  string
-	Lazy bool
+	Lib     string
+	Version string
+	Lazy    bool
+}
+
+// archiveLib keeps the optional version in the existing library string
+// slot. Library names in a view never contain @.
+func (l Link) archiveLib() string {
+	if l.Version == "" {
+		return l.Lib
+	}
+	return l.Lib + "@" + l.Version
+}
+
+func archiveLink(lib string, lazy bool) Link {
+	name, version, _ := strings.Cut(lib, "@")
+	return Link{Lib: name, Version: version, Lazy: lazy}
 }
 
 // Item is one block of a view.
