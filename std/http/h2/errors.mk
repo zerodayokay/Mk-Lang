@@ -5,8 +5,10 @@
 // What: the RFC 9113 section 7 error code constants (0x0 to 0xd), Violation,
 // and NormError.
 //
-// How: plain u32 constants matching RFC 9113 section 7 and one error type
-// carrying the code and stream identifier (0 for connection errors).
+// How: plain u32 constants matching RFC 9113 section 7, Violation,
+// TooLarge, BadField, and their Error union with net.Error.
+
+import std.net
 
 /// RFC 9113 7: graceful shutdown or no error.
 export const NoError: u32 = 0x0
@@ -53,6 +55,17 @@ export const Http11Required: u32 = 0xd
 /// A protocol violation detected on the HTTP/2 connection: stream is 0 for a
 /// connection error, or a non-zero stream identifier for a stream error.
 export error Violation(code: u32, stream: u32)
+
+/// A header block or retained head set exceeded its byte limit.
+export error TooLarge
+
+/// An outgoing header field failed RFC 9113 byte or length validation before
+/// any frame was written.
+export error BadField
+
+/// Every error an HTTP/2 connection operation may return: transport or
+/// stream errors from std.net, a protocol Violation, TooLarge, or BadField.
+export open type Error = net.Error | Violation | TooLarge | BadField
 
 // NormError maps unknown or unsupported RFC 9113 7 error codes to
 // InternalError so they never trigger special behaviour. O(1).
