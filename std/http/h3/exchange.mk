@@ -419,11 +419,13 @@ export Exchange.Open[F: hf.Field](s: &Session, io: Io, pseudo: &hf.Pseudo, heade
     }) else {
         fail Closed
     }
-    onerr s.m.Release(stream)
+    onerr {
+        s.m.Reset(&stream, H3RequestCancelled)
+        s.m.Stop(&stream, H3RequestCancelled)
+        s.m.Release(stream)
+    }
     if goaway := s.Goaway() {
         if Unprocessed(stream.Id(), goaway) {
-            s.m.Reset(&stream, H3RequestCancelled)
-            s.m.Stop(&stream, H3RequestCancelled)
             fail net.StreamReset(code: H3RequestRejected)
         }
     }

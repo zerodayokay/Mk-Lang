@@ -94,10 +94,10 @@ impl Free for StreamEntry {
     }
 }
 
-// Reports whether both active halves of this stream are terminal.
+// Reports whether both active halves have finished on the wire.
 StreamEntry.BothTerminal(&self): bool {
     send_done := !self.has_send || self.send.IsTerminal()
-    recv_done := !self.has_recv || self.recv.IsTerminal()
+    recv_done := !self.has_recv || self.recv.IsFinished()
     return send_done && recv_done
 }
 
@@ -397,6 +397,7 @@ Streams.OnStream(mut self, a: &Alloc into self, id: i64, offset: u64, data: []u8
     }
     entry := self.map.GetMut(&id).Must()
     try entry.recv.OnStream(a, mut self.conn_flow, offset, data, fin)
+    self.MaybeReap(a, id)
 }
 
 // Processes a received RESET_STREAM frame (RFC 9000 3.2, 4.5, 19.4).
@@ -423,6 +424,7 @@ Streams.OnReset(mut self, a: &Alloc into self, id: i64, code: u64, final_size: u
     }
     entry := self.map.GetMut(&id).Must()
     try entry.recv.OnReset(mut self.conn_flow, code, final_size)
+    self.MaybeReap(a, id)
 }
 
 // Processes a received STOP_SENDING frame (RFC 9000 3.2, 3.5, 19.5).
