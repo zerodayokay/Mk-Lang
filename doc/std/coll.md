@@ -617,7 +617,8 @@ export Deque[T].PushFront(mut self, x: T into self): OutOfMemory!void
 
 - Errors: OutOfMemory
 
-Prepends x at the front, as Push; T may not be linear. Amortized O(1).
+Prepends x at the front, as Push; T may not be linear (E0701 at the
+call, which names HeapDeque). Amortized O(1).
 
 ### `HeapBTree`
 
