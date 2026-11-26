@@ -2,7 +2,8 @@
 // follow the sysroot's flavour, and nothing may change for a package that
 // does not name a Microsoft SDK: its cache key and its Clang command line
 // must stay what they were.
-// What: TestCImport_KeyUnchanged, _SysrootFlavour and _FlavourTriple.
+// What: TestCImport_KeyUnchanged, _SysrootFlavour, _MicrosoftHeaders and
+// _FlavourTriple.
 // How: a fixed request over fixed paths, its key and its shared Clang
 // flags compared with the values the importer gave before the flavour
 // existed; fake SDK and mingw-w64 trees written by the test (no SDK is
@@ -37,7 +38,10 @@ func TestCImport_KeyUnchanged(t *testing.T) {
 		{nil, "323536cb16577819f8f34ad6eaf3aabd5ab958f23851973c0387087bdb4c11be"},
 		{[]string{`C:\sys\include`}, "13ee79969e4de6d3071cde9194c2bfe0c7b9e040ad3a8d640f32e5250d82ebb3"},
 	} {
-		sys := SystemFor("x86_64-windows", tc.sysroot)
+		sys, err := SystemFor("x86_64-windows", tc.sysroot, "")
+		if err != nil {
+			t.Fatal(err)
+		}
 		r := Request{Target: "x86_64-windows", Triple: sys.Triple,
 			Imports: []Import{{Name: "k", Headers: []string{"k.h"}, Defines: []string{"K=1"}, Macros: []string{"int M(int a)"}}},
 			Include: []string{`C:\pkg`}, Sysroot: sys.Dirs}
@@ -81,13 +85,20 @@ func fakeTree(t *testing.T, files map[string]string) string {
 }
 
 // fakeSDK is a tree shaped like the Windows SDK's Include\<version>: um
-// with windows.h beside winnt.h, shared and ucrt. Its windows.h says which
-// compiler family the triple makes Clang claim.
+// with windows.h beside winnt.h, shared and ucrt, and no MSVC toolset
+// header. Under the MSVC triple its windows.h includes the toolset headers
+// the SDK lacks (mk's own must be found) and says which compiler family
+// the triple makes Clang claim; vc is a decoy toolset directory.
 var fakeSDK = map[string]string{
-	"um/windows.h":   "#include <winnt.h>\n#include <sal.h>\n#ifdef _MSC_VER\n#define FAKE_MSVC 1\n#endif\n#ifdef __MINGW32__\n#define FAKE_MINGW 1\n#endif\nint fake_window(void);\n",
-	"um/winnt.h":     "typedef unsigned long FAKE_DWORD;\n",
-	"shared/sal.h":   "#define _In_\n",
-	"ucrt/corecrt.h": "#define FAKE_UCRT 1\n",
+	"um/windows.h": "#ifdef _MSC_VER\n#include <excpt.h>\n#include <string.h>\n#define FAKE_MSVC 1\n#endif\n" +
+		"#ifdef __MINGW32__\n#define FAKE_MINGW 1\n#endif\n#include <winnt.h>\nint fake_window(SIZE_T n);\n",
+	"um/winnt.h":            "typedef unsigned long long ULONG_PTR;\ntypedef ULONG_PTR SIZE_T;\ntypedef unsigned long FAKE_DWORD;\n",
+	"shared/sal.h":          "#define _In_\n",
+	"ucrt/string.h":         "#include <vcruntime_string.h>\nsize_t strlen(const char *s);\n",
+	"vc/vcruntime.h":        "#error the toolset's vcruntime.h was read\n",
+	"vc/vadefs.h":           "#error the toolset's vadefs.h was read\n",
+	"vc/excpt.h":            "#error the toolset's excpt.h was read\n",
+	"vc/vcruntime_string.h": "#error the toolset's vcruntime_string.h was read\n",
 }
 
 // sdkDirs are fakeSDK's include directories under root, in the SDK's order.
@@ -141,52 +152,116 @@ func TestCImport_SysrootFlavour(t *testing.T) {
 	}
 }
 
-// TestCImport_FlavourTriple: a Microsoft SDK as the sysroot gives the MSVC
-// triple and the sysroot's directories, in order, as the system
-// directories of every Clang run; with Clang present, the fake headers
-// translate under it (Clang claims _MSC_VER, not __MINGW32__), and the
-// same headers marked as mingw-w64 translate as before.
-func TestCImport_FlavourTriple(t *testing.T) {
-	sdk := fakeTree(t, fakeSDK)
-	sys := SystemFor("x86_64-windows", sdkDirs(sdk))
-	if sys.Flavour != FlavourMicrosoft || sys.Triple != "x86_64-pc-windows-msvc" || !slices.Equal(sys.Dirs, sdkDirs(sdk)) {
-		t.Fatalf("system %+v", sys)
-	}
-	r := Request{Target: "x86_64-windows", Triple: sys.Triple, Imports: []Import{{Name: "w", Headers: []string{"windows.h"}}},
-		Include: []string{t.TempDir()}, Sysroot: sys.Dirs}
-	args := baseArgs(r, `C:\clang`)
-	if args[0] != "--target=x86_64-pc-windows-msvc" {
-		t.Errorf("args %q", args)
-	}
-	var isys []string
+// isystemArgs are the -isystem directories of a Clang command line.
+func isystemArgs(args []string) []string {
+	var out []string
 	for i, a := range args {
-		if a == "-isystem" {
-			isys = append(isys, args[i+1])
+		if a == "-isystem" && i+1 < len(args) {
+			out = append(out, args[i+1])
 		}
 	}
-	if want := append([]string{filepath.Join(`C:\clang`, "include")}, sdkDirs(sdk)...); !slices.Equal(isys, want) {
-		t.Errorf("-isystem %q, want %q", isys, want)
-	}
-	tl, rd := clangFor(t)
-	r.WorkDir = filepath.Join(t.TempDir(), "w")
-	res, err := Translate(context.Background(), tl, rd, r)
+	return out
+}
+
+// TestCImport_MicrosoftHeaders: for a Microsoft SDK, mk's four headers are
+// written into a directory named by their content, which comes first among
+// the system directories (after Clang's own on the command line), before
+// the SDK's and before a toolset directory the list names; writing them
+// again gives the same directory, other headers another one and so another
+// cache key. No other flavour writes anything.
+func TestCImport_MicrosoftHeaders(t *testing.T) {
+	sdk := fakeTree(t, fakeSDK)
+	dirs := append(sdkDirs(sdk), filepath.Join(sdk, "vc"))
+	base := t.TempDir()
+	sys, err := SystemFor("x86_64-windows", dirs, base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantLines(t, res.Modules[0], "export type FakeDword = u32", "export extern fake_window(): i32", "export const FakeMsvc: i32 = 1")
+	if sys.Flavour != FlavourMicrosoft || sys.Triple != "x86_64-pc-windows-msvc" || len(sys.Dirs) != len(dirs)+1 ||
+		!slices.Equal(sys.Dirs[1:], dirs) || filepath.Dir(sys.Dirs[0]) != base {
+		t.Fatalf("system %+v", sys)
+	}
+	want := MicrosoftHeaders()
+	for _, n := range MicrosoftHeaderNames {
+		data, err := os.ReadFile(filepath.Join(sys.Dirs[0], n))
+		if err != nil || string(data) != want[n] {
+			t.Errorf("%s: %v\n%s", n, err, data)
+		}
+	}
+	if len(want) != 4 || !strings.Contains(want["vcruntime.h"], "typedef unsigned long long size_t;") ||
+		!strings.Contains(want["vcruntime.h"], "#define _VCRTIMP\n") || !strings.Contains(want["excpt.h"], "EXCEPTION_DISPOSITION;") {
+		t.Errorf("headers %q", want)
+	}
+	again, err := SystemFor("x86_64-windows", dirs, base)
+	if err != nil || again.Dirs[0] != sys.Dirs[0] {
+		t.Errorf("a second write gave %q (%v), want %q", again.Dirs, err, sys.Dirs[0])
+	}
+	other := map[string]string{}
+	for n, s := range want {
+		other[n] = s
+	}
+	other["excpt.h"] += "/* changed */\n"
+	od, err := WriteHeaderDir(base, "mk.cimport.msvch.v1", MicrosoftHeaderNames, other)
+	if err != nil || od == sys.Dirs[0] {
+		t.Errorf("changed headers in %q (%v), the same directory as before", od, err)
+	}
+	r := Request{Target: "x86_64-windows", Triple: sys.Triple, Imports: []Import{{Name: "w", Headers: []string{"windows.h"}}}, Sysroot: sys.Dirs}
+	args := baseArgs(r, `C:\clang`)
+	if args[0] != "--target=x86_64-pc-windows-msvc" || !slices.Equal(isystemArgs(args), append([]string{filepath.Join(`C:\clang`, "include")}, sys.Dirs...)) {
+		t.Errorf("args %q", args)
+	}
+	id := source.HashBytes("test.identity", []byte("clang"))
+	changed := r
+	changed.Sysroot = append([]string{od}, dirs...)
+	if Key(id, "rd", r) == Key(id, "rd", changed) {
+		t.Error("the cache key does not follow mk's headers")
+	}
+	for _, d := range [][]string{nil, {filepath.Join(sdk, "ucrt")}} {
+		empty := t.TempDir()
+		if s, err := SystemFor("x86_64-windows", d, empty); err != nil || !slices.Equal(s.Dirs, d) {
+			t.Errorf("sysroot %q gave %+v, %v", d, s, err)
+		}
+		if ents, _ := os.ReadDir(empty); len(ents) != 0 {
+			t.Errorf("sysroot %q wrote %d entries", d, len(ents))
+		}
+	}
+}
+
+// TestCImport_FlavourTriple: with Clang present, the fake SDK translates
+// under the MSVC triple with mk's headers, never the decoy toolset's (it
+// would be an error): Clang claims _MSC_VER, not __MINGW32__, size_t is the
+// view's SizeT as on every other target and the SDK's SIZE_T SizeTType,
+// and the headers' C11 string functions and exception disposition bind.
+// The same tree with a _mingw.h is read as mingw-w64 always was.
+func TestCImport_FlavourTriple(t *testing.T) {
+	tl, rd := clangFor(t)
+	sdk := fakeTree(t, fakeSDK)
+	sys, err := SystemFor("x86_64-windows", append(sdkDirs(sdk), filepath.Join(sdk, "vc")), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Request{Target: "x86_64-windows", Triple: sys.Triple, Imports: []Import{{Name: "w", Headers: []string{"windows.h"}}},
+		Include: []string{t.TempDir()}, Sysroot: sys.Dirs, WorkDir: filepath.Join(t.TempDir(), "w")}
+	res, err := Translate(context.Background(), tl, rd, r)
+	if err != nil {
+		if ce, ok := err.(*Error); ok {
+			t.Fatalf("%v\n%s", ce, ce.Stderr)
+		}
+		t.Fatal(err)
+	}
+	wantLines(t, res.Modules[0], "export type SizeT = uint", "export type ExceptionDisposition = i32", "export extern memcpy(d: *void, s: *void, n: uint): *void",
+		"export type SizeTType = UlongPtr", "export type FakeDword = u32",
+		"export extern fake_window(n: SizeTType): i32", "export const FakeMsvc: i32 = 1")
 	if strings.Contains(res.Modules[0], "FakeMingw") {
 		t.Errorf("the MSVC triple claims mingw:\n%s", res.Modules[0])
 	}
-	// The same tree with a _mingw.h is read as mingw-w64 always was.
 	mingw := fakeTree(t, map[string]string{"um/_mingw.h": ""})
-	dirs := append([]string{filepath.Join(mingw, "um")}, sdkDirs(sdk)...)
-	ms := SystemFor("x86_64-windows", dirs)
-	if ms.Flavour != FlavourMinGW || ms.Triple != ParseTriple("x86_64-windows") {
-		t.Fatalf("mingw system %+v", ms)
+	ms, err := SystemFor("x86_64-windows", append([]string{filepath.Join(mingw, "um")}, sdkDirs(sdk)...), t.TempDir())
+	if err != nil || ms.Flavour != FlavourMinGW || ms.Triple != ParseTriple("x86_64-windows") || len(ms.Dirs) != 4 {
+		t.Fatalf("mingw system %+v, %v", ms, err)
 	}
 	r.Triple, r.Sysroot, r.WorkDir = ms.Triple, ms.Dirs, filepath.Join(t.TempDir(), "w")
-	res, err = Translate(context.Background(), tl, rd, r)
-	if err != nil {
+	if res, err = Translate(context.Background(), tl, rd, r); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(res.Modules[0], "export const FakeMingw: i32 = 1") || strings.Contains(res.Modules[0], "FakeMsvc") {

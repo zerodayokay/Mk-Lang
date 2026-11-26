@@ -11,7 +11,9 @@
 // file names: a _mingw.h anywhere is mingw-w64; else the first directory
 // holding windows.h is the Microsoft SDK when winnt.h is beside it. Only the
 // x86_64-windows target looks; any other target, no sysroot, or no
-// windows.h keeps ParseTriple's triple.
+// windows.h keeps ParseTriple's triple. A Microsoft SDK also gets mk's
+// headers for the four MSVC toolset headers it includes (msvch.go), first
+// among the system directories.
 
 package cimport
 
@@ -86,8 +88,24 @@ type System struct {
 }
 
 // SystemFor is the system header setup of target whose sysroot
-// directories are sysroot (as MK_SYSROOT_<target> lists them).
-func SystemFor(target string, sysroot []string) System {
+// directories are sysroot (as MK_SYSROOT_<target> lists them). For a
+// Microsoft SDK, mk's own headers for the MSVC toolset's names
+// (MicrosoftHeaders) are written under base, in a directory named by their
+// content (WriteHeaderDir), and that directory comes first: before the
+// SDK's, and before any toolset directory the list names, so the bindings'
+// names never depend on what else is installed. Its path, and so the
+// headers' content, is part of every cache key that holds the sysroot.
+// Any other sysroot is returned as it is, and nothing is written.
+func SystemFor(target string, sysroot []string, base string) (System, error) {
 	f := SysrootFlavour(target, sysroot)
-	return System{Dirs: sysroot, Triple: HeaderTriple(target, f), Flavour: f}
+	sys := System{Dirs: sysroot, Triple: HeaderTriple(target, f), Flavour: f}
+	if f != FlavourMicrosoft {
+		return sys, nil
+	}
+	dir, err := WriteHeaderDir(base, "mk.cimport.msvch.v1", MicrosoftHeaderNames, MicrosoftHeaders())
+	if err != nil {
+		return System{}, err
+	}
+	sys.Dirs = append([]string{dir}, sysroot...)
+	return sys, nil
 }

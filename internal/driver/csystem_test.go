@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"mk/internal/cimport"
@@ -29,19 +30,22 @@ func clearSysroots(t *testing.T) {
 	}
 }
 
-// requestSession is a session over a package with one C import of its own
-// header, and the import.
+// requestSession is a checked session over a package (the check makes
+// its world; it needs no Clang), and a manifest with one C import of the
+// package's own header, with the import.
 func requestSession(t *testing.T) (*Session, *Manifest, string, []cimport.Import) {
 	t.Helper()
 	dir := writeTree(t, map[string]string{
-		"pkg.mk": manifest(map[string]string{"name": `"rq"`,
-			"c_imports": `[pkg.CImport(name: "k", headers: ["k.h"], defines: ["K=1"], macros: [], vendor: false)]`}),
+		"pkg.mk":   manifest(map[string]string{"name": `"rq"`}),
 		"k.h":      "int k_one(void);\n",
 		"src/a.mk": "export F(): int {\n    return 1\n}\n",
 	})
 	s, err := NewSession(Config{Root: dir, CacheDir: t.TempDir(), StdDir: writeTree(t, fakeStdFiles())})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if r := s.Check(); len(r.Report.Diags) > 0 {
+		t.Fatalf("check:\n%s", r.Report.Text(r.Sources))
 	}
 	man := &Manifest{CImports: []CImport{{Name: "k", Headers: []string{"k.h"}, Defines: []string{"K=1"}}}}
 	return s, man, dir, []cimport.Import{{Name: "k", Headers: []string{"k.h"}, Defines: []string{"K=1"}}}
@@ -65,7 +69,10 @@ func TestCImport_RequestUnchanged(t *testing.T) {
 				t.Setenv(tc.variable, tc.value)
 			}
 			s, man, dir, imports := requestSession(t)
-			got := s.cRequest(imports, man, dir, "x86_64-windows")
+			got, d := s.cRequest(imports, man, dir, "x86_64-windows")
+			if d != nil {
+				t.Fatal(d)
+			}
 			before := cimport.Request{Target: "x86_64-windows", Triple: cimport.ParseTriple("x86_64-windows"), Imports: imports,
 				Include: cIncludeDirs(man, dir), Sysroot: sysrootFor("x86_64-windows", os.Getenv)}
 			if !reflect.DeepEqual(got, before) {
@@ -80,28 +87,40 @@ func TestCImport_RequestUnchanged(t *testing.T) {
 			if tc.variable != "" && len(got.Sysroot) == 0 {
 				t.Errorf("%s=%s gave no sysroot", tc.variable, tc.value)
 			}
+			if m, _ := filepath.Glob(filepath.Join(s.cacheDir(), "*", "msvch")); len(m) > 0 {
+				t.Error("mk's Windows SDK headers were written for a sysroot that is no SDK")
+			}
 		})
 	}
 }
 
 // TestCImport_RequestMicrosoft: a fake SDK tree named by the underscored
 // variable gives the MSVC triple, and its directories in the variable's
-// order.
+// order after mk's own headers, which are written under the cache.
 func TestCImport_RequestMicrosoft(t *testing.T) {
 	clearSysroots(t)
 	sdk := writeTree(t, map[string]string{"um/windows.h": "", "um/winnt.h": "", "shared/sal.h": "", "ucrt/stdlib.h": ""})
 	dirs := []string{filepath.Join(sdk, "um"), filepath.Join(sdk, "shared"), filepath.Join(sdk, "ucrt")}
 	t.Setenv("MK_SYSROOT_x86_64_windows", dirs[0]+string(os.PathListSeparator)+dirs[1]+string(os.PathListSeparator)+dirs[2])
 	s, man, dir, imports := requestSession(t)
-	got := s.cRequest(imports, man, dir, "x86_64-windows")
+	got, d := s.cRequest(imports, man, dir, "x86_64-windows")
+	if d != nil {
+		t.Fatal(d)
+	}
 	if got.Triple != "x86_64-pc-windows-msvc" {
 		t.Errorf("triple %s", got.Triple)
 	}
-	if !slices.Equal(got.Sysroot[len(got.Sysroot)-3:], dirs) {
-		t.Errorf("sysroot %q, want it to end with %q", got.Sysroot, dirs)
+	if len(got.Sysroot) != 4 || !slices.Equal(got.Sysroot[1:], dirs) || filepath.Base(filepath.Dir(got.Sysroot[0])) != "msvch" ||
+		!strings.HasPrefix(got.Sysroot[0], s.cacheDir()) {
+		t.Errorf("sysroot %q, want mk's headers under the cache, then %q", got.Sysroot, dirs)
+	}
+	for _, n := range cimport.MicrosoftHeaderNames {
+		if _, err := os.Stat(filepath.Join(got.Sysroot[0], n)); err != nil {
+			t.Error(err)
+		}
 	}
 	// The Linux target ignores a Windows SDK.
-	if lin := s.cRequest(imports, man, dir, "x86_64-linux"); lin.Triple != cimport.ParseTriple("x86_64-linux") {
+	if lin, _ := s.cRequest(imports, man, dir, "x86_64-linux"); lin.Triple != cimport.ParseTriple("x86_64-linux") {
 		t.Errorf("linux triple %s", lin.Triple)
 	}
 }
