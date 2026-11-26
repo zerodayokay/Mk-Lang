@@ -115,7 +115,7 @@ func compileArgs(j CompileJob) ([]string, error) {
 	if j.CPU == "native" {
 		return nil, errors.New("toolchain: CPU \"native\" is never used (it would differ by host)")
 	}
-	args := []string{"--target=" + j.Triple, "-x", "ir", "-c", j.Input, "-o", j.Output, j.Opt.flag()}
+	args := []string{ClangTargetArg(j.Triple), "-x", "ir", "-c", j.Input, "-o", j.Output, j.Opt.flag()}
 	if j.fullLTO() {
 		args = append(args, "-flto=full")
 	} else if j.LTO {

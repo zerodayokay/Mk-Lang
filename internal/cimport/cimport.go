@@ -42,6 +42,7 @@ import (
 
 	"mk/internal/source"
 	"mk/internal/toolchain"
+	"mk/internal/types"
 )
 
 // Import is one pkg.CImport.
@@ -73,6 +74,9 @@ type Result struct {
 	// Clang's order; SearchDirs the ordered header search path.
 	Deps       []string
 	SearchDirs []string
+	// Unit is the text of the unit mk wrote (tu.c: the defines and the
+	// #includes), which Deps leave out; the cache reads its lookups.
+	Unit string
 	// Steps are the wall times of the translation's steps (measurement
 	// only; never part of a cache entry or a binding).
 	Steps []Step
@@ -98,25 +102,12 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Msg }
 
-// ParseTriple is the Clang triple the headers of a Mk target are read
-// for: mingw-w64's on Windows (the Windows header set, whose ABI is
-// the MSVC one for C records), musl's on Linux.
+// ParseTriple uses the native jobs' triple so the headers are translated
+// with the same target macros and ABI as the C sources and the shim.
+// A target already spelled as a Clang triple passes through unchanged.
 func ParseTriple(target string) string {
-	switch target {
-	case "x86_64-windows":
-		return "x86_64-w64-windows-gnu"
-	case "x86_64-linux":
-		return "x86_64-linux-musl"
-	case "aarch64-linux":
-		return "aarch64-linux-musl"
-	case "aarch64-macos":
-		return "arm64-apple-macos"
-	case "x86_64-freestanding":
-		return "x86_64-unknown-none-elf"
-	case "x86_64-nutshell":
-		return "x86_64-unknown-nutshell-elf"
-	case "aarch64-nutshell":
-		return "aarch64-unknown-nutshell-elf"
+	if t, ok := types.TargetByName(target); ok {
+		return t.LLVMTriple
 	}
 	return target
 }
@@ -133,7 +124,7 @@ func SearchDirs(r Request, resourceDir string) []string {
 
 // baseArgs are the flags every run shares.
 func baseArgs(r Request, resourceDir string) []string {
-	args := []string{"--target=" + r.Triple, "-nostdinc", "-x", "c", "-std=gnu11", "-fno-caret-diagnostics",
+	args := []string{toolchain.ClangTargetArg(r.Triple), "-nostdinc", "-x", "c", "-std=gnu11", "-fno-caret-diagnostics",
 		"-fmacro-backtrace-limit=0", "-ferror-limit=0", "-Wno-everything", "-fno-color-diagnostics"}
 	if len(r.Sysroot) > 0 {
 		args = append(args, "--sysroot="+r.Sysroot[0])
@@ -357,7 +348,7 @@ func Translate(ctx context.Context, cl Clang, resourceDir string, r Request) (*R
 	mark("emit", start)
 	steps = append(steps, Step{"total", time.Since(t0)})
 	return &Result{Modules: mods, Shim: shimText(r.Imports, e.shims), Stats: e.stats, Deps: deps,
-		SearchDirs: SearchDirs(r, resourceDir), Steps: steps}, nil
+		SearchDirs: SearchDirs(r, resourceDir), Unit: tu, Steps: steps}, nil
 }
 
 // macroType is the Mk type of a macro whose probe variable has type t: an
@@ -435,11 +426,13 @@ func firstError(stderr string, err error) string {
 	return err.Error()
 }
 
-// parseDepFile reads the unit's dependency file, without the unit itself.
+// parseDepFile reads the unit's dependency file, without the unit itself,
+// which Clang names as its command line does: a header that is also named
+// tu.c is a dependency.
 func parseDepFile(s string) []string {
 	var deps []string
 	for _, d := range ParseDepFile(s) {
-		if filepath.Base(d) != "tu.c" {
+		if d != "tu.c" {
 			deps = append(deps, d)
 		}
 	}

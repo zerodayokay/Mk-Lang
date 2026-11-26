@@ -83,7 +83,7 @@ func cArgs(j CJob, asm bool) ([]string, error) {
 			return nil, fmt.Errorf("toolchain: C job paths must be absolute: %q", p)
 		}
 	}
-	args := []string{"--target=" + j.Triple}
+	args := []string{ClangTargetArg(j.Triple)}
 	if asm {
 		lang := "assembler"
 		if strings.HasSuffix(j.Input, ".S") {

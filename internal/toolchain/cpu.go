@@ -93,7 +93,7 @@ func nativeArgs(triple, empty, out string) []string {
 	if ArchOf(triple) == "arm64" {
 		flag = "-mcpu=" + CPUNative
 	}
-	return []string{"--target=" + triple, flag, "-###", "-x", "ir", "-c", empty, "-o", out}
+	return []string{ClangTargetArg(triple), flag, "-###", "-x", "ir", "-c", empty, "-o", out}
 }
 
 // targetCPU reads the value after "-target-cpu" in clang's -### output,

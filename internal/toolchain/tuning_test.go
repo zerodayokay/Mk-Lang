@@ -25,13 +25,13 @@ func TestZeroTuningArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantC := []string{"--target=x86_64-pc-windows-msvc", "-x", "ir", "-c", hostAbs("w", "p.ll"), "-o", hostAbs("w", "p.o"), "-O3", "-flto=thin", "-march=x86-64-v2",
+	wantC := []string{"--target=x86_64-pc-windows-msvc19.33.0", "-x", "ir", "-c", hostAbs("w", "p.ll"), "-o", hostAbs("w", "p.o"), "-O3", "-flto=thin", "-march=x86-64-v2",
 		"-ffunction-sections", "-fdata-sections", "-fno-addrsig", "-fdebug-compilation-dir=.", "-mno-incremental-linker-compatible", "-Xclang", "-gno-codeview-command-line"}
 	if !slices.Equal(c, wantC) {
 		t.Errorf("compile:\n got %q\nwant %q", c, wantC)
 	}
 	b := thinBackendArgs("m0000.o", "m0000.o.thinlto.bc", "m0000.native.o", Tuning{})
-	wantB := []string{"--target=x86_64-pc-windows-msvc", "-O3", "-x", "ir", "m0000.o", "-fthinlto-index=m0000.o.thinlto.bc",
+	wantB := []string{"--target=x86_64-pc-windows-msvc19.33.0", "-O3", "-x", "ir", "m0000.o", "-fthinlto-index=m0000.o.thinlto.bc",
 		"-c", "-o", "m0000.native.o", "-Wno-override-module", "-ffunction-sections", "-fdata-sections", "-fno-addrsig",
 		"-fdebug-compilation-dir=.", "-mno-incremental-linker-compatible", "-Xclang", "-gno-codeview-command-line",
 		"-falign-loops=32", "-mllvm", "-unroll-threshold=400"}
