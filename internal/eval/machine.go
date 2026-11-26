@@ -57,6 +57,10 @@ type segment struct {
 	fuel       uint64
 	steps      uint64
 	frameBytes uint64
+	// room is the frame bytes a const's or global's initializer may hold
+	// with its own value (1 MiB plus eight times its size; startConst), 0
+	// elsewhere.
+	room uint64
 	// base is the index of the segment's outermost frame.
 	base  int
 	reads types.ReadSet
@@ -401,6 +405,9 @@ func (m *Machine) traceTail(st *stop, last source.Span) ([]types.ItemID, []sourc
 func (m *Machine) traceError(st *stop, j int, fi []types.ItemID, fs []source.Span, ti []types.ItemID, ts []source.Span, at source.Span) *types.EvalError {
 	src := st.err
 	e := &types.EvalError{Kind: src.Kind, Panic: src.Panic, Message: src.Message, Refusal: src.Refusal, File: src.File, Path: src.Path, Steps: m.segs[j].steps, At: at}
+	if src.Kind == types.EvalFuel {
+		e.Fuel = m.segs[j].fuel
+	}
 	e.Items, e.Trace = capJoin(fi, fs, ti, ts)
 	return e
 }

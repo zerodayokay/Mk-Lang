@@ -166,9 +166,23 @@ func (m *Module) ZeroInit(t Type) Value {
 }
 
 // Bytes is the [n x i8] constant c"..." holding exactly b, with \XX escapes
-// and no implicit NUL.
+// and no implicit NUL; zeroinitializer when every byte is zero, so a zeroed
+// table of megabytes is not three times its size in text.
 func (m *Module) Bytes(b []byte) Value {
-	return Value{Ty: m.Array(uint64(len(b)), m.I(8)), ref: `c"` + escape(string(b)) + `"`}
+	t := m.Array(uint64(len(b)), m.I(8))
+	if len(b) > 0 && allZero(b) {
+		return Value{Ty: t, ref: "zeroinitializer"}
+	}
+	return Value{Ty: t, ref: `c"` + escape(string(b)) + `"`}
+}
+
+func allZero(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // ConstStruct is a literal struct constant { v, ... } or <{ v, ... }> whose

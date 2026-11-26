@@ -117,9 +117,12 @@ func EncodeEvalRecord(env *Env, h *Hasher, r *EvalRecord) []byte {
 			w.span(x.Trace[i])
 			w.item(x.Items[i])
 		}
-		if x.Kind == types.EvalDataFile {
-			// The failed read's reason and path, after the trace, so
-			// records of every other kind keep their bytes.
+		// The fuel that ran out, or the failed read's reason and path,
+		// after the trace, so records of every other kind keep their bytes.
+		switch x.Kind {
+		case types.EvalFuel:
+			e.Uvarint(x.Fuel)
+		case types.EvalDataFile:
 			e.Uvarint(uint64(x.File))
 			e.String(x.Path)
 		}
@@ -148,7 +151,10 @@ func DecodeEvalRecord(env *Env, b []byte) (*EvalRecord, error) {
 				x.Trace = append(x.Trace, r.span(d))
 				x.Items = append(x.Items, r.item(d))
 			}
-			if x.Kind == types.EvalDataFile {
+			switch x.Kind {
+			case types.EvalFuel:
+				x.Fuel = d.Uvarint()
+			case types.EvalDataFile:
 				x.File = types.DataFileError(d.Uvarint())
 				x.Path = d.String()
 				if d.Err == nil && (x.File == types.DataFileOK || x.File > types.DataFileTooLarge) {

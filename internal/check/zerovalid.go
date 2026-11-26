@@ -373,8 +373,9 @@ func (c *Checker) integerArg(env *Env, t types.TypeID, atomic bool) bool {
 // zero-valid `T` (code 0 is success). Not: references and `fn` values
 // (never null), `str` and slices (an empty one holds a non-null pointer),
 // error-set values (codes start at 1), `never`, interfaces, open type
-// parameters, a struct with an invariant, anything linear (`Box`), and a
-// unique type zeroIdentity does not admit (`Mutex`, view structs).
+// parameters, a struct with an invariant, anything linear (`Box`), `Io`
+// (plain, but its table pointer is never null), and a unique type
+// zeroIdentity does not admit (`Mutex`, view structs).
 // An atomic word or a `Cell` of a zero-valid T is zero-valid, and so is
 // anything unique only through such parts, since zero bytes make a fresh
 // value, never a copy. A type parameter narrowed by `if T is X` is X.
@@ -408,6 +409,11 @@ func (c *Checker) zeroValid(env *Env, t types.TypeID, rec recorder, seen map[typ
 		case *types.StructDecl, *types.EnumDecl:
 			rec.fields(it.Key, true)
 			rec.signature(it.Key)
+		}
+		// Io is plain whatever its fields (kinds.go), but its table pointer
+		// is never null: IoTab's unsafe block reads through it.
+		if c.known.Io != types.NoItem && ty.Item == c.known.Io {
+			return false
 		}
 	}
 	if k := c.FactsIn(env, t).Kind; k != types.Plain && (k == types.Linear || !c.zeroIdentity(ty)) {
