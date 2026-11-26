@@ -4,7 +4,8 @@
 //
 // What: matchStmt, matchUnion and matchCall (match F(x) with ok and err
 // arms), unionArms for their two sides; test, rangeTest and subTests for
-// pattern tests; bindPat for bindings; arms for the sequential fallback.
+// pattern tests; bindPat for bindings, with takeWhole for a linear struct
+// of plain fields; arms for the sequential fallback.
 //
 // How: arms are compiled by the decision tree of decision.go or, past its
 // size guard, by sequential testing: the first matching arm in source order,
@@ -490,7 +491,34 @@ func (bl *builder) bindPat(q ast.Pattern, p mir.Place, mode BindMode) {
 			}
 			bl.bindPat(f.Pat, fp, mode)
 		}
+		if mode == ByValue {
+			bl.takeWhole(p, q.Span())
+		}
 	}
+}
+
+// takeWhole ends a by-value struct pattern on p whose fields are all plain
+// while p is not (a linear struct of plain fields, as `Ticket(id)`): its
+// bindings copy, so nothing is taken out of p, and borrow sees a part
+// consumed only as a take. One field moves into a statement temporary, as
+// a destructure that takes nothing does.
+func (bl *builder) takeWhole(p mir.Place, at source.Span) {
+	t := bl.b.PlaceType(p)
+	st := bl.tab.Get(t)
+	d, ok := bl.cfg.Items.Get(st.Item).Decl.(*types.StructDecl)
+	if st.Kind != types.KNamed || !ok || len(d.Fields) == 0 || bl.plain(t, at) {
+		return
+	}
+	var ft types.TypeID
+	for i, f := range d.Fields {
+		if ty := bl.substArgs(f.Type, st.Args); !bl.plain(ty, at) {
+			return
+		} else if i == 0 {
+			ft = ty
+		}
+	}
+	h := bl.newTemp(ft, at)
+	bl.assign(bl.b.Place(h), use(mir.Move(bl.field(p, 0, ft))), at)
 }
 
 // structField is struct pattern field f's place in the struct place p: the

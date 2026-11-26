@@ -1,6 +1,6 @@
 // verdict: ok
 // rule: R2
-// note: a by-value match consumes a linear temporary when an arm binds every linear part or tests it to a variant that holds none, also when an arm compiled by sequential testing follows one whose test failed after a narrowing
+// note: a by-value match consumes a linear temporary when an arm binds every linear part, destructures it, or tests it to a variant that holds none, also when an arm compiled by sequential testing follows one whose test failed after a narrowing
 error F
 error G
 
@@ -12,6 +12,11 @@ linear struct S {
 enum K {
     A(r: Res)
     B(n: int)
+}
+
+linear struct H {
+    r: Res
+    o: ?int
 }
 
 struct P[A, B] {
@@ -60,5 +65,19 @@ Nested(p: P[F!Res, G!int]): int {
             x.Close()
             n
         }
+    }
+}
+
+Destructured(h: H): i32 {
+    return match h {
+        H(r: Res(id), o: none) { id }
+        H(r: Res(id), o: some(_)) { id }
+    }
+}
+
+Payload(o: ?Res): i32 {
+    return match o {
+        some(Res(id)) { id }
+        none { 0 }
     }
 }

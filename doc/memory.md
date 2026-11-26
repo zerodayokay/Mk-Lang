@@ -251,7 +251,7 @@ Over() {
 ```
 
 - `_ = e` does not consume a linear value (E0402).
-- An arm of a by-value `match` consumes a linear value only when its pattern binds each linear part, or tests it to a variant that holds nothing linear. `_` consumes nothing, also inside a constructor such as `some(_)`, so an arm that leaves a linear part in the value is E0402. A field matched by `_` or left out is E0408:
+- An arm of a by-value `match` consumes a linear value only when its pattern binds each linear part, takes it apart with a struct pattern (`some(Res(id))`), or tests it to a variant that holds nothing linear. `_` consumes nothing, also inside a constructor such as `some(_)`, so an arm that leaves a linear part in the value is E0402. A field matched by `_` or left out is E0408:
 
 ```mk
 // verdict: reject E0402
