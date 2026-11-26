@@ -991,16 +991,30 @@ ReleaseCmdAllocSys(arg: *u8) {
 export Device.Close(self) {
     if Target.os != Os.Windows {
         Device(
-            heap: _, factory: _, dev: _, queue: _, info_queue: _, cmd_list: _, cmd_allocs: _,
+            heap, factory: _, dev: _, queue: _, info_queue: _, cmd_list: _, cmd_allocs,
             fence: _, fence_event: _, debug_mode: _, frames_in_flight: _, tearing_ok: _,
             lost: _, loss_reason: _, last_submitted: _, completed_serial: _, present_pending: _,
-            cbv_srv_uav_heap: _, sampler_heap: _, rtv_heap: _, dsv_heap: _,
-            sampler_cache: _, buf_heaps: _, zero_buf: _, zero_buf_size: _,
-            upload_chunks: _, cur_upload_idx: _, staging_bufs: _,
-            pending_zeros: _, pending_uploads: _, msgs: _, msg_bytes: _,
+            cbv_srv_uav_heap, sampler_heap, rtv_heap, dsv_heap,
+            sampler_cache, buf_heaps, zero_buf: _, zero_buf_size: _,
+            upload_chunks, cur_upload_idx: _, staging_bufs,
+            pending_zeros, pending_uploads, msgs, msg_bytes,
             name_ptr: _, name_len: _,
             err_count: _, warn_count: _, total_err_count: _, total_warn_count: _,
         ) := self
+        a := heap.Alloc()
+        cbv_srv_uav_heap.Close(a)
+        sampler_heap.Close(a)
+        rtv_heap.Close(a)
+        dsv_heap.Close(a)
+        cmd_allocs.Free(a)
+        sampler_cache.Free(a)
+        buf_heaps.Free(a)
+        upload_chunks.Free(a)
+        staging_bufs.Free(a)
+        pending_zeros.Free(a)
+        pending_uploads.Free(a)
+        msgs.Free(a)
+        msg_bytes.Free(a)
         return
     }
     Device(
