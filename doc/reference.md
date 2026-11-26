@@ -11919,7 +11919,10 @@ struct Info {
 error Os(code: i64)
 error Unsupported
 error SecureFailed(why: SecureFailure)
-type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | OutOfMemory
+// Provisional: StreamReset and MuxClosed, which multiplexed connections report
+error StreamReset(code: u64)
+error MuxClosed(code: u64, app: bool, peer: bool)
+type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory
 net.Listen(io: Io, addr: str): net.Error!Listener
 net.Dial(io: Io, addr: str): net.Error!Stream
 Listener.Accept(&self, io: Io): net.Error!Stream
@@ -11976,9 +11979,10 @@ interface Transport {
     Abandon(self)
 }
 
-// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall, so only std calls it, and std.http and std.websocket call Connect
+// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall, so only std calls it, and std.http and std.websocket call Connect and Negotiate (provisional)
 Secure.Of[T: Share](c: core.ErasedCall): Secure from c
 Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn
+Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn
 
 struct ListenOptions {
     export backlog: int

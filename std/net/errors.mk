@@ -2,8 +2,9 @@
 // callers match on them across TCP, UDP, Unix sockets and secure connects.
 // What: the members of net.Error, SecureFailed's reason SecureFailure and
 // its Format, and the Error set itself.
-// How: every member is payload-free except Os and SecureFailed; Canceled and
-// Closed are the prelude's, TimedOut std.time's.
+// How: every member is payload-free except Os, SecureFailed, StreamReset
+// and MuxClosed; Canceled and Closed are the prelude's, TimedOut
+// std.time's.
 
 import std.time
 
@@ -30,6 +31,17 @@ export error Unsupported
 /// A secure connector (net.Secure) could not make the connection secure;
 /// why says at which step.
 export error SecureFailed(why: SecureFailure)
+/// The peer reset a stream of a multiplexed connection or asked it to
+/// stop sending (HTTP/2's RST_STREAM, QUIC's RESET_STREAM and
+/// STOP_SENDING); code is the peer's error code. The connection and its
+/// other streams go on. Provisional.
+export error StreamReset(code: u64)
+/// A multiplexed connection ended, failing every stream still open on it.
+/// code is the error code of the close: in the application's space (an
+/// HTTP/2 GOAWAY's or HTTP/3's code) when app, the transport's (QUIC's)
+/// otherwise; peer is true when the peer closed it, false when this side
+/// did. Provisional.
+export error MuxClosed(code: u64, app: bool, peer: bool)
 
 /// Why a secure connect failed, as the connector reports it through
 /// net.Secure, where no connection exists yet to ask.
@@ -69,4 +81,4 @@ impl Format for SecureFailure {
 /// the caller's scope: that is Canceled. std.tls and std.websocket include
 /// this whole set in theirs. It is open: a match on it outside std keeps a
 /// `_` arm.
-export open type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | OutOfMemory
+export open type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory

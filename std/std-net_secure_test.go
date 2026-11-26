@@ -1,6 +1,7 @@
 // Why: net.Secure is how std.tls plugs into net.Conn, and its erased call must
 // hand over or keep the connection correctly.
-// What: TestStdNet_Secure and TestStdNet_SecureMismatchPanics.
+// What: TestStdNet_Secure (Connect and Negotiate) and
+// TestStdNet_SecureMismatchPanics.
 // How: a fixture module std.netsecure in a std copy builds a connector the way
 // std.tls does, and Connect runs over a loopback stream's Conn.
 
@@ -24,22 +25,23 @@ struct Upper {
 }
 
 // Handshake is the connector's function: it refuses, leaving conn with
-// the caller, or hands conn back as the secure connection. (A connector
-// that wraps conn in a transport of its own reserves its box first with
+// the caller, or hands conn back as the secure connection, choosing the
+// last protocol of offer (-1 for an empty offer). (A connector that wraps
+// conn in a transport of its own reserves its box first with
 // net.ReserveConn and fills it last, so it never fails after the move;
 // net/tests_conn.mk's Layer does that.)
-Handshake(u: &Upper, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
+Handshake(u: &Upper, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
     if u.refuse {
         fail net.SecureFailed(why: u.why)
     }
     if host.Len() == 0 {
         fail net.SecureFailed(why: net.SecureFailure.NameMismatch)
     }
-    return conn
+    return (conn: conn, chosen: offer.Len() - 1)
 }
 
 MakeSecure(u: &Upper): net.Secure from u {
-    return net.Secure.Of[Upper](core.ErasedCall.Of[Upper, fn(&Upper, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn](u, Handshake))
+    return net.Secure.Of[Upper](core.ErasedCall.Of[Upper, fn(&Upper, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn](u, Handshake))
 }
 
 // Pair is a connected loopback pair, the dialled end as a Conn.
@@ -91,6 +93,32 @@ test "Secure.Connect through a copied connector runs its function, and the calle
     try sc.Close(sys.io)
 }
 
+test "Secure.Negotiate hands its offer to the connector's function and returns the index it chose; Connect hands an empty one" (sys: &System) {
+    u := Upper(refuse: false, why: net.SecureFailure.Handshake)
+    sec := MakeSecure(&u)
+    l := try net.Listen(sys.io, "127.0.0.1:0")
+    defer l.Close()
+    offer: [3]str = ["h2", "http/1.1", "x"]
+    for k in 0..4 {
+        (c, s) := try Pair(sys.io, &l)
+        defer s.Close()
+        (conn: sc, chosen) := sec.Negotiate(sys.heap, sys.io, c, "localhost", offer[0..k]) else e {
+            c.Abandon()
+            fail e
+        }
+        onerr sc.Abandon()
+        Assert(chosen == k - 1)
+        try s.WriteAll(sys.io, "ok".AsBytes())
+        var buf: [2]u8 = [0; 2]
+        var n := 0
+        for n < 2 {
+            n += try sc.Read(sys.io, mut buf[n..])
+        }
+        Assert(Same(buf[..], "ok"))
+        try sc.Close(sys.io)
+    }
+}
+
 test "Secure.Connect that fails reports SecureFailed(why), prints it, and leaves the connection with the caller" (sys: &System) {
     u := Upper(refuse: true, why: net.SecureFailure.Expired)
     sec := MakeSecure(&u)
@@ -126,7 +154,7 @@ struct Other {
 
 test "MISMATCH a Secure made from another state type panics at Connect" (sys: &System) {
     u := Upper(refuse: false, why: net.SecureFailure.Handshake)
-    sec := net.Secure.Of[Other](core.ErasedCall.Of[Upper, fn(&Upper, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn](&u, Handshake))
+    sec := net.Secure.Of[Other](core.ErasedCall.Of[Upper, fn(&Upper, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn](&u, Handshake))
     l := try net.Listen(sys.io, "127.0.0.1:0")
     defer l.Close()
     (c, s) := try Pair(sys.io, &l)
@@ -156,7 +184,7 @@ func TestStdNet_Secure(t *testing.T) {
 	for _, c := range []int{1, 16} {
 		t.Run(fmt.Sprintf("carriers=%d", c), func(t *testing.T) {
 			out, status := net3SecureRun(t, net3SecureBlocks, c)
-			if status != 0 || strings.Count(out, "PASS std.netsecure") != 2 {
+			if status != 0 || strings.Count(out, "PASS std.netsecure") != 3 {
 				t.Fatalf("status %d\n%s", status, out)
 			}
 		})

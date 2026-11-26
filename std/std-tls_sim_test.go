@@ -686,7 +686,7 @@ func TestStdTls_SimCancel(t *testing.T) {
 			if strings.Contains(out, "no usable LLVM") {
 				t.Skipf("needs the LLVM toolchain: %s", out)
 			}
-			if status != 0 || strings.Count(out, "PASS std.tls") != 4 {
+			if status != 0 || strings.Count(out, "PASS std.tls") != 4+tlsDiskBlocks(t) {
 				t.Fatalf("status %d\n%s", status, out)
 			}
 		})
@@ -715,7 +715,7 @@ func TestStdTls_SimCancelLinux(t *testing.T) {
 			if strings.Contains(out, "no usable LLVM") {
 				t.Skipf("needs the LLVM toolchain: %s", out)
 			}
-			if status != 0 || strings.Count(out, "PASS std.tls") != 4 {
+			if status != 0 || strings.Count(out, "PASS std.tls") != 4+tlsDiskBlocks(t) {
 				t.Fatalf("status %d\n%s", status, out)
 			}
 			t.Logf("%s", out[max(0, len(out)-300):])

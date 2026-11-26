@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -757,6 +758,25 @@ func tlsStdDir(t *testing.T, root string, extra map[string]string) string {
 		}
 	}
 	return stdDir
+}
+
+// tlsDiskBlocks is the number of test blocks in std/tls's own tests_*.mk
+// files, which every mk test --std=std.tls run without --run passes beside
+// a fixture's blocks.
+func tlsDiskBlocks(t *testing.T) int {
+	t.Helper()
+	n := 0
+	for _, m := range mkFilesIn(t, "tls") {
+		if !strings.HasPrefix(filepath.Base(m), "tests_") {
+			continue
+		}
+		b, err := os.ReadFile(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n += len(regexp.MustCompile(`(?m)^test "`).FindAll(b, -1))
+	}
+	return n
 }
 
 // tlsExe builds the driver for mode ("dev" or "release") once per test

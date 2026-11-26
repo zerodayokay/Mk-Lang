@@ -93,7 +93,7 @@ Secure(h: &Heap, io: Io, conn: net.Conn, host: str): tls.Error!tls.Conn from h, 
 - `Connector(&cfg)` makes `https` and `wss` connections through `Client` with `cfg`, for the URL's host. Put it in `http.ClientLimits.secure` or `websocket.Options.secure`.
 - `Acceptor(&cfg)` makes each accepted connection go through `Server` with `cfg`. Put it in `http.ServerOptions.secure`.
 
-Both borrow `cfg`, so whatever holds them cannot outlive the `Config`. A failed handshake through them is `net.SecureFailed(why)`: `Handshake` for an alert or a protocol fault, and, from a client, `BadCertificate`, `UnknownAuthority`, `Expired` or `NameMismatch` for the chain. One past the handshake limit is `time.TimedOut`. Past the handshake, an alert or protocol fault on the connection is `net.SecureFailed(why: Protocol)`. See [Make an HTTPS request](../cookbook.md#make-an-https-request).
+Both borrow `cfg`, so whatever holds them cannot outlive the `Config`. Through `net.Secure.Negotiate` (provisional) a caller offers, or accepts, its own protocols in place of `cfg.alpn` for one handshake, with the same checks, and learns the one chosen as an index into its list. A failed handshake through them is `net.SecureFailed(why)`: `Handshake` for an alert or a protocol fault, and, from a client, `BadCertificate`, `UnknownAuthority`, `Expired` or `NameMismatch` for the chain. One past the handshake limit is `time.TimedOut`. Past the handshake, an alert or protocol fault on the connection is `net.SecureFailed(why: Protocol)`. See [Make an HTTPS request](../cookbook.md#make-an-https-request).
 
 ## Errors
 
@@ -336,8 +336,9 @@ export Acceptor(c: &Config): net.Secure from c
 A server connector over c, to put in http.ServerOptions.secure: each
 connection the server accepts goes through tls.Server with c. A failed
 handshake is net.SecureFailed(why: Handshake), and one past c.handshake
-is time.TimedOut. It is a plain value that borrows c; copy it freely.
-O(1); allocates nothing until it accepts.
+is time.TimedOut. Its Negotiate accepts the caller's protocols, in
+their order, in place of c.alpn. It is a plain value that borrows c;
+copy it freely. O(1); allocates nothing until it accepts.
 
 ### `Alert`
 
@@ -356,7 +357,7 @@ export Client(h: &Heap, io: Io, conn: net.Conn, c: &Config, host: str): Error!Co
 ```
 
 - Flows: The result borrows from h and conn.
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Runs the client side of a TLS handshake over conn with the server
 named host, and returns the TLS connection. On success the Conn holds
@@ -462,7 +463,7 @@ when none was offered or the peer chose none. O(1); allocates nothing.
 export Conn.Close(self, io: Io): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Sends close_notify to the peer, then releases the connection and its
 state, every key wiped. Frees the state; allocates nothing.
@@ -479,7 +480,7 @@ to Abandon: write `onerr c.Abandon()` with `try c.Close(io)`.
 export Conn.Read(&self, io: Io, buf: mut []u8): Error!int
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Reads at most buf.Len() bytes of application data and returns their
 count, 0 once the peer sent close_notify. Reads of this Conn run one at
@@ -511,7 +512,7 @@ dropped. O(1); allocates nothing.
 export Conn.WriteAll(&self, io: Io, data: []u8): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Sends every byte of data, as records of at most 16 KiB, before any
 other WriteAll of this Conn sends one. It first sends the KeyUpdate the
@@ -550,8 +551,9 @@ connects.
 
 A failed handshake is net.SecureFailed(why): Handshake for an alert or
 a protocol fault, and BadCertificate, UnknownAuthority, Expired or
-NameMismatch for the chain. One past c.handshake is time.TimedOut. It
-is a plain value that borrows c; copy it freely.
+NameMismatch for the chain. One past c.handshake is time.TimedOut.
+Its Negotiate offers the caller's protocols in place of c.alpn, with the
+same checks. It is a plain value that borrows c; copy it freely.
 
 ### `DefaultConfig`
 
@@ -605,7 +607,7 @@ export Server(h: &Heap, io: Io, conn: net.Conn, c: &Config): Error!Conn from h, 
 ```
 
 - Flows: The result borrows from h and conn.
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Runs the server side of a TLS 1.3 handshake (RFC 8446) over conn, and
 returns the TLS connection. On success the Conn holds conn; on failure

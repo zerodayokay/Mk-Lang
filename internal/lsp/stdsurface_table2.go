@@ -4,6 +4,9 @@
 package lsp
 
 var surfaceDocs2 = map[string]surfaceDoc{
+	"Xx64State.Bytes":                   {Module: "std.hash", Lines: []string{"Xx64State.Bytes(mut self, data: []u8)"}},
+	"Xx64State.New":                     {Module: "std.hash", Lines: []string{"Xx64State.New(seed: u64): Xx64State"}},
+	"Xx64State.Sum":                     {Module: "std.hash", Lines: []string{"Xx64State.Sum(self): u64"}},
 	"Zone.Fixed":                        {Module: "std.time", Lines: []string{"Zone.Fixed(offset_seconds: i32): Zone"}},
 	"Zone.FromTzif":                     {Module: "std.time", Lines: []string{"Zone.FromTzif(a: &Arena, name: str, data: []u8): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Load":                         {Module: "std.time", Lines: []string{"Zone.Load(a: &Arena, io: Io, name: str, embedded: ?Database): time.Error|OutOfMemory!Zone from a"}},
@@ -673,7 +676,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"net.Datagram.Send":                 {Module: "std.net", Lines: []string{"Datagram.Send(&self, io: Io, data: []u8, to: Addr): net.Error!void"}},
 	"net.Dial":                          {Module: "std.net", Lines: []string{"net.Dial(io: Io, addr: str): net.Error!Stream"}},
 	"net.DialUnix":                      {Module: "std.net", Lines: []string{"net.DialUnix(io: Io, path: str): net.Error!Stream"}},
-	"net.Error":                         {Module: "std.net", Lines: []string{"type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | OutOfMemory"}},
+	"net.Error":                         {Module: "std.net", Lines: []string{"type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory"}},
 	"net.Listen":                        {Module: "std.net", Lines: []string{"net.Listen(io: Io, addr: str): net.Error!Listener"}},
 	"net.ListenOptions":                 {Module: "std.net", Lines: []string{"struct ListenOptions"}},
 	"net.ListenUnix":                    {Module: "std.net", Lines: []string{"net.ListenUnix(io: Io, path: str): net.Error!Listener"}},
@@ -681,6 +684,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"net.Listener.Accept":               {Module: "std.net", Lines: []string{"Listener.Accept(&self, io: Io): net.Error!Stream"}},
 	"net.Listener.Close":                {Module: "std.net", Lines: []string{"Listener.Close(self)"}},
 	"net.Listener.Port":                 {Module: "std.net", Lines: []string{"Listener.Port(&self): int"}},
+	"net.MuxClosed":                     {Module: "std.net", Lines: []string{"error MuxClosed(code: u64, app: bool, peer: bool)"}},
 	"net.NewConn":                       {Module: "std.net", Lines: []string{"net.NewConn[T: Transport + Send + Share](h: &Heap, t: T): OutOfMemory!Conn from h, t"}},
 	"net.Os":                            {Module: "std.net", Lines: []string{"error Os(code: i64)"}},
 	"net.ParseAddr":                     {Module: "std.net", Lines: []string{"net.ParseAddr(s: str): net.Error!Addr"}},
@@ -691,6 +695,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"net.ReserveConn":                   {Module: "std.net", Lines: []string{"net.ReserveConn[T: Transport + Send + Share](h: &Heap): OutOfMemory!ConnSlot[T] from h"}},
 	"net.Resolve":                       {Module: "std.net", Lines: []string{"net.Resolve(a: &Arena, io: Io, host: str): net.Error|OutOfMemory!List[Addr] from a"}},
 	"net.Secure.Connect":                {Module: "std.net", Lines: []string{"Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn"}},
+	"net.Secure.Negotiate":              {Module: "std.net", Lines: []string{"Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn"}},
 	"net.Secure.Of":                     {Module: "std.net", Lines: []string{"Secure.Of[T: Share](c: core.ErasedCall): Secure from c"}},
 	"net.SecureFailed":                  {Module: "std.net", Lines: []string{"error SecureFailed(why: SecureFailure)"}},
 	"net.SecureFailure":                 {Module: "std.net", Lines: []string{"enum SecureFailure"}},
@@ -709,6 +714,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"net.Stream.Write":                  {Module: "std.net", Lines: []string{"Stream.Write(&self, io: Io, data: []u8): net.Error!int"}},
 	"net.Stream.WriteAll":               {Module: "std.net", Lines: []string{"Stream.WriteAll(&self, io: Io, data: []u8): net.Error!void"}},
 	"net.Stream.Writer":                 {Module: "std.net", Lines: []string{"Stream.Writer(&self, io: Io, buf: mut []u8): Writer from self, buf"}},
+	"net.StreamReset":                   {Module: "std.net", Lines: []string{"error StreamReset(code: u64)"}},
 	"net.Transport":                     {Module: "std.net", Lines: []string{"interface Transport"}},
 	"net.Unsupported":                   {Module: "std.net", Lines: []string{"error Unsupported"}},
 	"proc.Child.Detach":                 {Module: "std.proc", Lines: []string{"Child.Detach(self)"}},
@@ -898,10 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"simd.Vec.ToArray":                  {Module: "std.simd", Lines: []string{"Vec[T, N].ToArray(self): [N]T requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Vec.Trunc":                    {Module: "std.simd", Lines: []string{"Vec[T, N].Trunc[U: Lane](self): Vec[U, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Vec.WidenHi":                  {Module: "std.simd", Lines: []string{"Vec[T, N].WidenHi[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
-	"simd.Vec.WidenLo":                  {Module: "std.simd", Lines: []string{"Vec[T, N].WidenLo[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
-	"simd.Vec.With":                     {Module: "std.simd", Lines: []string{"Vec[T, N].With(self, const i: int, x: T): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires i >= 0 && i < N"}},
-	"simd.Vec.Zero":                     {Module: "std.simd", Lines: []string{"Vec[T, N].Zero(): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
-	"sqlite.Busy":                       {Module: "std.db.sqlite", Lines: []string{"error Busy"}},
-	"sqlite.Db.Close":                   {Module: "std.db.sqlite", Lines: []string{"Db.Close(self)"}},
-	"sqlite.Db.Exec":                    {Module: "std.db.sqlite", Lines: []string{"Db.Exec(&self, io: Io, sql: str): sqlite.Error!void"}},
 }

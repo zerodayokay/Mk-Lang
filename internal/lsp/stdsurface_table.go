@@ -5,7 +5,7 @@ package lsp
 
 const surfaceSection = "reference: Library surface"
 
-// surfaceDocs is the table, 2085 items in 3 files.
+// surfaceDocs is the table, 2091 items in 3 files.
 var surfaceDocs = joinSurfaceDocs(surfaceDocs1, surfaceDocs2, surfaceDocs3)
 
 func joinSurfaceDocs(parts ...map[string]surfaceDoc) map[string]surfaceDoc {

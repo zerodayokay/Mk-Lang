@@ -399,7 +399,8 @@ ShParkWrite(io: Io, c: &net.Conn, data: []u8, origin: time.Instant, closed: mut 
 // shut whether Shutdown succeeded; after a Shutdown(Read), wrote whether
 // "hello" was written; closed whether Close succeeded.
 ShClient(h: &Heap, io: Io, conn: net.Conn, cfg: &Config, data: []u8, read: bool): (k: int, lag: i64, shut: bool, wrote: bool, closed: bool) {
-    sc := Connect(cfg, h, io, conn, "localhost") else {
+    own: [0]str = []
+    (conn: sc, chosen: _) := Connect(cfg, h, io, conn, "localhost", own[..]) else {
         conn.Abandon()
         return (k: -3, lag: -1, shut: false, wrote: false, closed: false)
     }
@@ -544,7 +545,7 @@ func TestStdTls_SimShutdownWakes(t *testing.T) {
 			if strings.Contains(out, "no usable LLVM") {
 				t.Skipf("needs the LLVM toolchain: %s", out)
 			}
-			if status != 0 || strings.Count(out, "PASS std.tls") != 2 {
+			if status != 0 || strings.Count(out, "PASS std.tls") != 2+tlsDiskBlocks(t) {
 				t.Fatalf("status %d\n%s", status, out)
 			}
 		})

@@ -146,7 +146,7 @@ fs.MakeDir(io: Io, p: str): fs.Error!void
 // std.net. Listener, Stream and Error below are net.Listener, net.Stream and net.Error
 error Os(code: i64)
 error Unsupported
-type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | OutOfMemory
+type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory
 Stream.SetNoDelay(&self, on: bool): net.Error!void
 Stream.SetKeepAlive(&self, idle: ?time.Duration): net.Error!void
 net.ListenWith(io: Io, addr: str, o: ListenOptions): net.Error!Listener
