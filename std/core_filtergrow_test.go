@@ -1,6 +1,6 @@
 // Why: a filter fill declared "*d into d" may store d's own loans into whatever
 // d can write, which could keep a loan of a local or a freed box past its referent.
-// What: two probes (core8GrowZzf, core8GrowZzf2) and TestCore_FilterPortGrowRejects.
+// What: escaping-fill probes and live Reader controls for TestCore_FilterPortGrowRejects.
 // How: core.FilterPortGrow's Reader declares the store as "*f into f", so the
 // caller sees it; core.FilterPort's fill type has no clause, so the fill does
 // not convert to it (E0608).
@@ -196,8 +196,6 @@ func TestCore_FilterPortGrowRejects(t *testing.T) {
 		{"zzf2 over FilterPortGrow: a box's loan through the fill", "zzf2", grow(core8GrowZzf2), []string{
 			"std/zzf2/p.mk:38:14: E0505", // bx stored into memory that outlives it
 			"std/zzf2/p.mk:38:14: E0604", // the Reader's *f into f reaches out
-			"std/zzf2/p.mk:41:13: E0503", // the box freed while out holds its loan
-			"std/zzf2/p.mk:44:9: E0503",
 		}},
 		{"zzf2 over FilterPort: the fill does not convert", "zzf2", core8GrowZzf2, []string{
 			"std/zzf2/p.mk:17:40: E0608",
@@ -224,6 +222,43 @@ func TestCore_FilterPortGrowRejects(t *testing.T) {
 			}
 			if t.Failed() {
 				t.Logf("output:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestCore_FilterPortGrowBoxLoans targets both takes with a legal Reader
+// construction: the fill may update a local pointer for as long as bx lives.
+func TestCore_FilterPortGrowBoxLoans(t *testing.T) {
+	probe := strings.Replace(core8GrowZzf2, "core.FilterPort[Ds]", "core.FilterPortGrow[Ds]", 1)
+	probe = strings.Replace(probe, "    var f := core.Filtered[Ds].New(Ds(a: bx.Ref(), b: out))",
+		"    var local := *out\n    var f := core.Filtered[Ds].New(Ds(a: bx.Ref(), b: mut local))", 1)
+	const take = "_ = bx.Take(h.Alloc())"
+	const read = "    _ = r.Read(mut d[..]) else {\n        }"
+	for _, c := range []struct {
+		name, from, to, want string
+	}{
+		{name: "last use precedes both takes"},
+		{"error path", "        " + take + "\n        return", "        " + take + "\n    " + read + "\n        return", "std/zzf2/p.mk:42:13: E0503"},
+		{"success path", "    " + take + "\n}", "    " + take + "\n" + read + "\n}", "std/zzf2/p.mk:45:9: E0503"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := probe
+			if c.from != "" {
+				if strings.Count(src, c.from) != 1 {
+					t.Fatal("the keep-live control did not select one take")
+				}
+				src = strings.Replace(src, c.from, c.to, 1)
+			}
+			out, status := core8GrowCheck(t, "zzf2", src)
+			if c.want == "" {
+				if status != 0 {
+					t.Fatalf("legal Reader setup was rejected:\n%s", out)
+				}
+				return
+			}
+			if status == 0 || strings.Count(out, ": E") != 1 || !strings.Contains(strings.ReplaceAll(out, "\\", "/"), c.want) {
+				t.Fatalf("want only %s, exit %d:\n%s", c.want, status, out)
 			}
 		})
 	}
