@@ -517,6 +517,129 @@ func TestInstallPs1Extraction(t *testing.T) {
 	}
 }
 
+// zipOf is a ZIP of the named entries, in order, with no checks of its
+// own: a name ending in "/" with data is a directory entry holding data.
+func zipOf(t *testing.T, entries [][2]string) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	zw := zip.NewWriter(&b)
+	var renames [][2]string
+	for _, e := range entries {
+		name := e[0]
+		// archive/zip writes no data under a directory name: write it under
+		// a name of the same length, then rename it in the bytes.
+		if strings.HasSuffix(name, "/") && e[1] != "" {
+			name = name[:len(name)-1] + "\x01"
+			renames = append(renames, [2]string{name, e[0]})
+		}
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(e[1])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out := b.Bytes()
+	for _, r := range renames {
+		out = bytes.ReplaceAll(out, []byte(r[0]), []byte(r[1]))
+	}
+	return out
+}
+
+// TestInstallPs1EntryNames: install.ps1 writes each verified entry through
+// an extended path, which Windows does not normalize, so it refuses every
+// name that would leave the staging tree or land under another name: a .
+// or .. component, an empty one, a rooted or drive name, a backslash, a
+// stream, a device name and a trailing space. A second entry for one file
+// (by case) and a directory entry with data fail too. Every archive first
+// holds a deep entry, so each failed install removes a staging tree longer
+// than MAX_PATH, and leaves current and the toolchains as they were.
+// PowerShell 7, where it is installed, runs the deep install and the first
+// refusal.
+func TestInstallPs1EntryNames(t *testing.T) {
+	ps := powershell(t)
+	s := &scriptServer{files: map[string][]byte{}}
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	deep := "llvm/include/" + strings.Repeat("components/", 12) + "header.h"
+	top := release.TopDir("0.5.0", release.HostWindows)
+	s.publishArchive(t, "0.5.0", release.HostWindows, false, zipOf(t, [][2]string{{top + "/bin/mk.exe", "mk"}, {top + "/" + deep, "header"}}))
+	// {top} is the archive's top directory.
+	cases := []struct{ name, entry, want string }{
+		{"dot-dot in the tree", "{top}/../../escaped", "unsafe archive entry"},
+		{"dot-dot first", "../escaped", "unsafe archive entry"},
+		{"dot", "{top}/./escaped", "unsafe archive entry"},
+		{"empty component", "{top}//escaped", "unsafe archive entry"},
+		{"rooted", "/escaped", "unsafe archive entry"},
+		{"drive", "C:/escaped", "unsafe archive entry"},
+		{"backslash", `{top}/bin\..\..\escaped`, "unsafe archive entry"},
+		{"stream", "{top}/bin/mk.exe:escaped", "unsafe archive entry"},
+		{"device", "{top}/lib/con.txt", "unsafe archive entry"},
+		{"trailing space", "{top}/lib /escaped", "unsafe archive entry"},
+		{"one file by case", "{top}/BIN/MK.EXE", "already exists"},
+		{"directory with data", "{top}/lib/", "contains data"},
+	}
+	for i, c := range cases {
+		v := fmt.Sprintf("0.6.%d", i)
+		top := release.TopDir(v, release.HostWindows)
+		s.publishArchive(t, v, release.HostWindows, false, zipOf(t, [][2]string{
+			{top + "/bin/mk.exe", "mk"}, {top + "/" + deep, "header"}, {strings.ReplaceAll(c.entry, "{top}", top), "x"}}))
+	}
+	shells := []string{ps}
+	if p, err := exec.LookPath("pwsh.exe"); err == nil {
+		shells = append(shells, p)
+	}
+	for _, shell := range shells {
+		t.Run(filepath.Base(shell), func(t *testing.T) {
+			dir := t.TempDir()
+			in := release.Install{Root: filepath.Join(dir, "mkroot")}
+			run := func(version string) (string, error) {
+				cmd := exec.Command(shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath(t, "install.ps1"),
+					"-Releases", srv.URL, "-Root", in.Root, "-NoModifyPath", "-Version", version)
+				cmd.Env = scratchEnv(dir)
+				out, err := cmd.CombinedOutput()
+				return string(out), err
+			}
+			if out, err := run("0.5.0"); err != nil || !strings.Contains(out, "current is mk 0.5.0") {
+				t.Fatalf("deep entry: %v\n%s", err, out)
+			}
+			if b, err := os.ReadFile(filepath.Join(in.CurrentLink(), filepath.FromSlash(deep))); err != nil || string(b) != "header" {
+				t.Fatalf("installed header: %q %v", b, err)
+			}
+			for i, c := range cases {
+				if shell != ps && i > 0 {
+					break
+				}
+				t.Run(c.name, func(t *testing.T) {
+					out, err := run(fmt.Sprintf("0.6.%d", i))
+					if _, ok := err.(*exec.ExitError); !ok || !strings.Contains(out, "SHA256SUMS is signed") || !strings.Contains(out, c.want) {
+						t.Errorf("want a failing install with %q, got %v\n%s", c.want, err, out)
+					}
+					if cur, _ := in.Current(); cur != "0.5.0" {
+						t.Errorf("a refused install moved current to %q", cur)
+					}
+					if vs, err := in.Versions(); err != nil || !slices.Equal(vs, []string{"0.5.0"}) {
+						t.Errorf("a refused install left the toolchains %v (%v)", vs, err)
+					}
+					if des, _ := os.ReadDir(in.Toolchains()); len(des) != 1 {
+						t.Errorf("a refused install left %d entries in the toolchains", len(des))
+					}
+					filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+						if err == nil && strings.HasPrefix(d.Name(), "escaped") {
+							t.Errorf("a refused install wrote %s", p)
+						}
+						return nil
+					})
+				})
+			}
+		})
+	}
+}
+
 // TestInstallPs1Hardening: a version that
 // is not a version token is refused before any request; a redirect to
 // plain http elsewhere is refused; a redirect on the loopback server is
