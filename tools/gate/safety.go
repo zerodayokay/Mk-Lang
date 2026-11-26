@@ -55,6 +55,7 @@ var untrusted = []untrustedEntry{
 	{"big.Parse", "std.big", []string{"FuzzBig_Parse"}},
 	{"x509.Parse and x509.ParsePem", "std.x509", []string{"FuzzX509_Parse", "FuzzX509_ParsePem", "FuzzX509_Verify"}},
 	{"the TLS record and handshake parsers", "std.tls", []string{"FuzzStdTls_Messages", "FuzzStdTls_Records", "FuzzStdTls_Logic", "FuzzStdTls_Messages12", "FuzzStdTls_Records12"}},
+	{"the QUIC packet, frame and parameter parsers", "std.quic", []string{"FuzzStdQuic_Packets", "FuzzStdQuic_Frames", "FuzzStdQuic_Params"}},
 	{"key parsing", "std.crypto", []string{"FuzzSTDCRYPTO_Keys"}},
 	{"the HPACK decoder and Huffman decoding", "std.http.fields", []string{"FuzzStdHttpFields_Hpack", "FuzzStdHttpFields_Huffman"}},
 	{"the QPACK decoder and encoder-stream instructions", "std.http.fields", []string{"FuzzStdHttpFields_Qpack"}},

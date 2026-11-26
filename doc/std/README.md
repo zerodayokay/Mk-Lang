@@ -233,7 +233,7 @@ A panic is not an error: it prints a report and ends the process ([reference sec
 
 ### Untrusted input
 
-Every entry point that reads bytes from a peer or a file never panics on its input, and holds memory and stack bounded by its limits: `url.Parse`, the HTTP parsers, WebSocket frames, `Unzlib`, the zstd decoder, `Encoding.Decode`, base64 and hex decoding, the DER and PEM readers, the TZif reader, `ParseRfc3339`, `ParseHttpDate`, `ParseDuration`, `Term.Read`'s decoder, `csv.Records`, `big.Parse`, `x509.Parse`, `x509.ParsePem`, the TLS parsers and key parsing.
+Every entry point that reads bytes from a peer or a file never panics on its input, and holds memory and stack bounded by its limits: `url.Parse`, the HTTP parsers, WebSocket frames, `Unzlib`, the zstd decoder, `Encoding.Decode`, base64 and hex decoding, the DER and PEM readers, the TZif reader, `ParseRfc3339`, `ParseHttpDate`, `ParseDuration`, `Term.Read`'s decoder, `csv.Records`, `big.Parse`, `x509.Parse`, `x509.ParsePem`, the TLS parsers, the QUIC wire parsers (`std.quic`) and key parsing.
 
 ## 6. Cancellation
 
