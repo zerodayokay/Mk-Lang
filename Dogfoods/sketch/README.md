@@ -20,7 +20,10 @@ sketch check-script SCRIPT          run SCRIPT against the document alone (any t
 sketch script SCRIPT [options]      run SCRIPT through a real window (Windows)
 sketch draw [FILE] [options]        paint with the mouse; FILE is loaded, and saved on close
 sketch export FILE OUT.png          paint a saved FILE and write it as a PNG
+sketch check-shaders                check the embedded shaders against their recorded hashes
 ```
+
+The blit shader is HLSL in `shaders/blit.hlsl`; `tools/shaders.ps1 -dxc <path to dxc.exe> -mk <path to mk>` compiles it to the SPIR-V and DXIL in `shaders/bin` and writes `src/shaders/manifest.mk` with their hashes, as in [scene](../scene/README.md#shaders).
 
 Window options: `--backend auto|d3d12|vulkan`, `--warp` (the software adapter), `--validate` (the debug layer, where installed), `--mode fifo|mailbox|immediate`, and `--visible` to show the window while a script runs; a script's window is hidden otherwise, so the real mouse cannot reach it.
 
