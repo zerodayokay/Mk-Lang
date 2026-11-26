@@ -43,5 +43,11 @@ Kind(e: net.Error): int {
         OutOfMemory {
             return 11
         }
+        net.StreamReset(code: _) {
+            return 12
+        }
+        net.MuxClosed(code: _, app: _, peer: _) {
+            return 13
+        }
     }
 }

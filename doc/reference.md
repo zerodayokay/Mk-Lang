@@ -11536,7 +11536,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | Import | Names |
 |---|---|
 | `std.fs` | `File Dir Entry Info ReadText ReadBytes WriteAll Create Open Rename Remove MakeDir Stat Error OpenWith OpenPath Options DefaultOptions ReadOnly ReadWrite CreateNew Append Whence LockMode Kind Permissions Map Mapping Walk Walker WalkEntry MakeDirAll RemoveAll Copy CreateTemp TempDir Symlink ReadLink StatLink StatPath SetModified SetPermissions Cwd Absolute` |
-| `std.net` | `Listen Dial Listener Stream Bind Datagram Addr ParseAddr Resolve Error ListenWith ListenOptions DefaultListenOptions ListenUnix DialUnix Shutdown Conn NewConn Transport ReserveConn ConnSlot Secure SecureFailure Pass Passed` |
+| `std.net` | `Listen Dial Listener Stream Bind Datagram SharedDatagram Addr ParseAddr Resolve Error ListenWith ListenOptions DefaultListenOptions ListenUnix DialUnix Shutdown Conn NewConn Transport ReserveConn ConnSlot Secure SecureFailure Pass Passed Mux MuxStream MuxReady MuxLimits MuxListener MuxDialer MuxServer MuxEngine MuxListening` |
 | `std.time` | `Instant Duration Now Seconds Millis Minutes Hours Micros Nanos ParseDuration Time Wall FromUnix Date FromDate Zone Database LocalName ParseRfc3339 ParseHttpDate FormatHttpDate TimedOut Error` |
 | `std.time.tzdata` | `Database`, the embedded zones, linked only into a binary that names it |
 | `std.proc` | `Run Output Supervise WaitSignal Signal Exit Error Pipe PipeReader PipeWriter Spawn Command DefaultCommand Env Stdio Child Status Pty Pass Inherited` |
@@ -11552,16 +11552,16 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.libc` | No Mk names: C-callable functions that a package's C sources link against, written in Mk and exported with `export extern`: the memory and string functions, `malloc`, `calloc`, `realloc` and `free` over the `Heap`, and what sqlite needs as `SQLITE_OS_OTHER`; on `x86_64-windows` also `__C_specific_handler`, the language handler a C source's `__try`, `__except` and `__finally` need, forwarded to ntdll's |
 | `std.hash` | `Xx Xx64 Crc32 Sip13 Sha256 Sha512 Blake3 Crc32State Xx64State Sip13State Sha256State Sha512State Blake3State Sha1 Sha1State Sha384 Sha384State` |
 | `std.json` | `Parse Value Member Json Codec Error` |
-| `std.http` | `Serve Fetch ReadRequest Dispatch Request Response Reply Header Route Error Client ClientRequest ClientLimits DefaultClientLimits Exchange ServeWith ServeOn ServeChan ServerOptions DefaultServerOptions Link Taken` |
+| `std.http` | `Serve Fetch ReadRequest Dispatch Request Response Reply Header Route Error Client ClientRequest ClientLimits DefaultClientLimits Exchange ServeWith ServeOn ServeChan ServerOptions DefaultServerOptions HttpVersion Link Taken` |
 | `std.regex` | `Compile Regex Match Matcher Error` |
-| `std.crypto` | `Hmac256 ChaCha20Poly1305 X25519 Ed25519 Random Equal Error Hmac384 Hmac512 HkdfExtract HkdfExpand Prk HashKind AesGcm EcSecret Curve EcdhShared EcdsaSign EcdsaVerify SigFormat RsaPublic RsaVerifyPkcs1 RsaVerifyPss PublicKey PrivateKey ParsePublicKey ParsePrivateKey Wipe Argon2id Argon2idVerify Argon2Cost` |
+| `std.crypto` | `Hmac256 ChaCha20Poly1305 X25519 Ed25519 Random Equal Error Hmac384 Hmac512 HkdfExtract HkdfExpand HkdfExpandLabel Prk HashKind AesGcm Aes ChaCha20Block EcSecret Curve EcdhShared EcdsaSign EcdsaVerify SigFormat RsaPublic RsaVerifyPkcs1 RsaVerifyPss PublicKey PrivateKey ParsePublicKey ParsePrivateKey Wipe Argon2id Argon2idVerify Argon2Cost` |
 | `std.compress` | `Inflate Gunzip Deflate Gzip Inflater Error Zlib Unzlib Adler32 Adler32State Encoder Framing ZstdDecoder Content GzipContent DeflateContent ZstdContent` |
 | `std.cli` | `Args Error` |
 | `std.log` | `Logger Level Sink Stderr Stdout ToFile` |
 | `std.dyn`, `std.derive` | Generators: `dyn.Of`, `derive.Eq`, `derive.Hash`, `derive.Format` |
 | `std.dyn` | `Ref` |
 | `std.dyn.erased` | `Key` |
-| `std.sim` | `Sim Op Fault Recorder Replayer` |
+| `std.sim` | `Sim Op Fault NetFaults Recorder Replayer` |
 | `std.db.sqlite` | `Open Db Stmt Error` |
 | `std.big` | `Int FromI64 FromBytes FromWords Parse Error` |
 | `std.encoding` | `Base64Encode Base64Decode Base64EncodeTo Base64DecodeTo Base64Len Alphabet Base64 Base64Url Base64Raw Base64UrlRaw Base64Forgiving HexEncode HexDecode PercentEncode PercentDecode PercentSet Lookup Encoding Decoder Utf8 Utf16Le Utf16Be Replacement XUserDefined Ibm866 Iso88592 Iso88593 Iso88594 Iso88595 Iso88596 Iso88597 Iso88598 Iso88598I Iso885910 Iso885913 Iso885914 Iso885915 Iso885916 Koi8R Koi8U Macintosh Windows874 Windows1250 Windows1251 Windows1252 Windows1253 Windows1254 Windows1255 Windows1256 Windows1257 Windows1258 XMacCyrillic Codec ParsePem FormatPem PemBlock DerRead DerValue DerIter DerWriter Error` |
@@ -11571,6 +11571,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.term` | `Open IsTerminal UseColor Term Std Event Key Mods Style Color Sanitize MoveTo Clear AltScreen ShowCursor BracketedPaste MouseCapture KittyKeys Error` |
 | `std.x509` | `Parse ParsePem Certificate Pool SystemRoots SystemPool Verify Error`, Experimental |
 | `std.tls` | `Client Server Connector Acceptor Conn Config DefaultConfig Identity Version Error`, Experimental |
+| `std.quic` | `Version1 Config DefaultConfig Connector Acceptor`, Experimental |
 | `std.csv` | `Records Record Options DefaultOptions WriteRecord Codec Error` |
 | `std.dl` | `Open Present Library Search Error`, Provisional |
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
@@ -11584,7 +11585,7 @@ This table lists the importable modules and the names each one exports. The [lib
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
 
-The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel`, `std.gpu.dx` and `std.gpu.vk` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
+The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel`, `std.gpu.dx`, `std.gpu.vk`, `std.http.fields`, `std.http.h2`, `std.http.h3`, `std.sync.lead` and `std.net.pipe` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
 
 Every public item of std has a stability level, which says how it may change from one release to the next. The [library guide](std/README.md#9-stability) lists the modules and items that are not Stable and what each level allows before and after 1.0.
 
@@ -12072,11 +12073,15 @@ struct Info {
 error Os(code: i64)
 error Unsupported
 error SecureFailed(why: SecureFailure)
-type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | OutOfMemory
+// Provisional: StreamReset and MuxClosed, which multiplexed connections report
+error StreamReset(code: u64)
+error MuxClosed(code: u64, app: bool, peer: bool)
+type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory
 net.Listen(io: Io, addr: str): net.Error!Listener
 net.Dial(io: Io, addr: str): net.Error!Stream
 Listener.Accept(&self, io: Io): net.Error!Stream
 Listener.Port(&self): int
+Listener.Addr(&self): Addr
 Listener.Close(self)
 Stream.Read(&self, io: Io, buf: mut []u8): net.Error!int
 Stream.Write(&self, io: Io, data: []u8): net.Error!int
@@ -12090,10 +12095,24 @@ Addr.Format(&self, w: mut Writer): WriteError!void
 net.Bind(io: Io, addr: str): net.Error!Datagram
 Datagram.Send(&self, io: Io, data: []u8, to: Addr): net.Error!void
 Datagram.Recv(&self, io: Io, buf: mut []u8): net.Error!(n: int, peer: Addr)
+Datagram.Connect(&self, io: Io, to: Addr): net.Error!void
+Datagram.LocalAddr(&self): Addr
+Datagram.SetBuffers(&self, recv: int, send: int): net.Error!void
+Datagram.SetDontFragment(&self): net.Error!void
+Datagram.DontFragment(&self): net.Error!bool
+Datagram.Share(self): SharedDatagram
 Datagram.Port(&self): int
 Datagram.Close(self)
+SharedDatagram.Send(&self, io: Io, data: []u8, to: ?Addr): net.Error!void
+SharedDatagram.SendBatch(&self, io: Io, buf: []u8, seg: int, to: ?Addr): net.Error!void
+SharedDatagram.Recv(&self, io: Io, buf: mut []u8): net.Error!(n: int, peer: Addr)
+SharedDatagram.TryRecv(&self, io: Io, buf: mut []u8): net.Error!?(n: int, peer: Addr)
+SharedDatagram.Port(&self): int
+SharedDatagram.LocalAddr(&self): Addr
+SharedDatagram.Close(self)
 Stream.SetNoDelay(&self, on: bool): net.Error!void
 Stream.SetKeepAlive(&self, idle: ?time.Duration): net.Error!void
+Stream.SetBuffers(&self, recv: int, send: int): net.Error!void
 Stream.Shutdown(&self, io: Io, how: Shutdown): net.Error!void
 Stream.LocalAddr(&self): Addr
 Stream.PeerAddr(&self): Addr
@@ -12129,9 +12148,68 @@ interface Transport {
     Abandon(self)
 }
 
-// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall, so only std calls it, and std.http and std.websocket call Connect
+// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall and OfAlpn (provisional) two core.TypedCalls, so only std calls them, and std.http and std.websocket call Connect and Negotiate (provisional)
 Secure.Of[T: Share](c: core.ErasedCall): Secure from c
+Secure.OfAlpn[T: Share](c: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn], n: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn]): Secure from c, n
 Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn
+Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn
+
+// Provisional multiplexed transport interface shared by std.http and std.quic.
+MuxStream.Id(&self): i64
+Mux.Open(&self, io: Io, uni: bool, wait: bool): net.Error!?MuxStream
+Mux.Accept(&self, io: Io, uni: bool, wait: bool): net.Error!?MuxStream
+Mux.Read(&self, io: Io, s: &MuxStream, buf: mut []u8, wait: bool): net.Error!?int
+Mux.Write(&self, io: Io, s: &MuxStream, data: []u8, fin: bool): net.Error!void
+Mux.Credit(&self, s: &MuxStream, total: i64)
+Mux.Wait(&self, io: Io, ids: []i64, incoming: bool): net.Error!MuxReady
+Mux.Reset(&self, s: &MuxStream, code: u64)
+Mux.Stop(&self, s: &MuxStream, code: u64)
+Mux.Release(&self, s: MuxStream)
+Mux.Limits(&self): MuxLimits
+Mux.Usable(&self, io: Io): bool
+Mux.PeerAddr(&self): ?Addr
+Mux.Close(self, io: Io, code: u64): net.Error!void
+Mux.Abandon(self)
+MuxListener.Run(&self, io: Io): net.Error!void
+MuxListener.Accept(&self, io: Io): net.Error!Mux
+MuxListener.Port(&self): int
+MuxListener.Close(self)
+MuxDialer.Dial(&self, h: &Heap, io: Io, to: Addr, host: str, alpn: str): net.Error!Mux from h
+MuxServer.Listen(&self, h: &Heap, io: Io, addr: str, alpn: str): net.Error!MuxListener from h, self
+// Only std constructs the implementations and sealed callable values that Of takes.
+Mux.Of[T: MuxEngine + Send + Share](h: &Heap, b: core.SealedBox): Mux from h, b
+MuxListener.Of[T: MuxListening + Send + Share](h: &Heap, b: core.SealedBox): MuxListener from h, b
+MuxDialer.Of[T: Share](c: core.ErasedCall): MuxDialer from c
+MuxServer.Of[T: Share](c: core.ErasedCall): MuxServer from c
+
+enum MuxReady {
+    Readable(index: int)
+    Incoming(uni: bool)
+}
+
+struct MuxLimits {
+    export bidi: i64
+    export uni: i64
+    export idle: time.Duration
+}
+
+linear struct MuxStream {
+}
+
+linear view struct Mux {
+}
+
+linear view struct MuxListener {
+}
+
+plain view struct MuxDialer {
+}
+
+plain view struct MuxServer {
+}
+
+linear struct SharedDatagram {
+}
 
 struct ListenOptions {
     export backlog: int
@@ -12898,15 +12976,18 @@ error BodyNotReplayable
 error TooManyRedirects
 error BadUrl
 error ProxyRefused(code: int)
-type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused
+error Protocol(code: u64)
+type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused | Protocol
 http.ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): http.Error!Request from a
-http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void)): http.Error!void
+http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void): http.Error!void
 http.Fetch(a: &Arena, io: Io, method: str, url: str, headers: []Header, body: []u8, limit: int): http.Error!Reply from a
 Request.Header(&self, name: str): ?str from self
 Request.Param(&self, name: str): ?str from self
 Request.ParamInt(&self, name: str): ?i64
 Response.New(a: &Arena): Response
 Response.Status(mut self, code: int)
+Response.Version(&self): HttpVersion
+Response.Secure(&self): bool
 Response.Header(mut self, name: str, value: str): OutOfMemory!void
 Response.Body(mut self, data: []u8): OutOfMemory!void
 Response.Writer(mut self): Writer from self
@@ -12916,14 +12997,19 @@ Client.New(h: &Heap, l: ClientLimits): Client from h, l
 Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
 Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
 Client.DoStreaming(&self, a: &Arena, io: Io, req: &ClientRequest, body: mut Reader, len: ?i64): http.Error!Exchange from a, self
+Client.Drive(&self, io: Io): Canceled!void
+Client.WaitDriving(&self, io: Io): Canceled!bool
+Client.Stop(&self)
 Client.Close(self)
 Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
 Exchange.Close(self, io: Io): http.Error!void
 Exchange.Abandon(self)
-http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
-http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
-http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+Exchange.Version(&self): HttpVersion
+http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
+http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
+http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
 Response.Flush(mut self, io: Io, link: &Link): http.Error!void
+Link.Version(&self): HttpVersion
 Link.Takeover(&self): ?Taken
 Taken.Abandon(self)
 
@@ -12952,6 +13038,14 @@ struct ClientLimits {
     export allow: ?fn(&net.Addr): bool
     export secure: ?net.Secure
     export proxy: ?&url.Url
+    export h2: bool
+    export h2c: bool
+    export h2_streams: int
+    export h2_window: int
+    export h3: ?net.MuxDialer
+    export h3_direct: bool
+    export h3_connect: time.Duration
+    export alt_svc: bool
 }
 
 struct ServerOptions {
@@ -12961,6 +13055,19 @@ struct ServerOptions {
     export request_header: time.Duration
     export keep_alive: time.Duration
     export secure: ?net.Secure
+    export h2: bool
+    export h2c: bool
+    export h2_streams: int
+    export h3: ?net.MuxServer
+    export alt_svc: bool
+}
+
+// HttpVersion may gain members.
+enum HttpVersion {
+    Http10
+    Http11
+    Http2
+    Http3
 }
 
 struct Header {
@@ -12991,7 +13098,7 @@ linear struct Taken {
 struct Route[C] {
     export method: str
     export pattern: str
-    export handler: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void)
+    export handler: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void
 }
 
 // std.regex. Regex and Error below are regex.Regex and regex.Error
@@ -13025,6 +13132,7 @@ crypto.Random(io: Io, buf: mut []u8): Canceled!void
 crypto.Equal(a: []u8, b: []u8): bool
 ChaCha20Poly1305.Seal(key: &[32]u8, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!void
 ChaCha20Poly1305.Open(key: &[32]u8, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!void
+crypto.ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8
 Ed25519.Keypair(io: Io): Canceled![64]u8
 Ed25519.FromSeed(seed: &[32]u8): [64]u8
 Ed25519.Sign(secret: &[64]u8, msg: []u8): [64]u8
@@ -13033,12 +13141,16 @@ crypto.Hmac384(key: []u8, data: []u8): [48]u8
 crypto.Hmac512(key: []u8, data: []u8): [64]u8
 crypto.HkdfExtract(salt: []u8, ikm: []u8, h: HashKind): Prk
 crypto.HkdfExpand(prk: &Prk, info: []u8, out: mut []u8): crypto.Error!void
+crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.BadKey|crypto.BadLength!void
 Prk.FromBytes(h: HashKind, key: []u8): crypto.Error!Prk
 Prk.Wipe(mut self)
 AesGcm.New(key: []u8): crypto.Error!AesGcm
 AesGcm.Seal(&self, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Open(&self, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Wipe(mut self)
+Aes.New(key: []u8): crypto.BadLength!Aes
+Aes.Encrypt(&self, block: &[16]u8): crypto.BadKey![16]u8
+Aes.Wipe(mut self)
 EcSecret.Generate(io: Io, curve: Curve): Canceled|crypto.Error!EcSecret
 EcSecret.FromBytes(curve: Curve, b: []u8): crypto.Error!EcSecret
 EcSecret.Public(&self, out: mut []u8): crypto.Error!int
@@ -13173,6 +13285,7 @@ Ref.Is[T](&self): bool
 Key[T](): u64
 
 // std.sim
+const DefaultNetFaults: NetFaults = NetFaults(drop: 0, duplicate: 0, latency_lo: core.DurationOf(LatLo), latency_hi: core.DurationOf(LatHi), rate: 0, stream_buffer: 0, sealed: 0)
 Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim from a
 Sim.Io(&self): Io
 Sim.Arena(&self): &Arena from self
@@ -13181,6 +13294,9 @@ Sim.Run(mut self)
 Sim.CrashAfterRandomOps(mut self)
 Sim.Restart(mut self): Io
 Sim.FailNext(mut self, op: Op, f: Fault)
+Sim.SetNetFaults(mut self, f: NetFaults)
+Sim.Blackhole(mut self, port: int, on: bool)
+Sim.Rebind(mut self, port: int)
 Sim.TermInput(mut self, data: []u8, after: time.Duration): OutOfMemory!void
 Sim.Free(self)
 Recorder.New(inner: Io): OutOfMemory!Recorder
@@ -13207,6 +13323,15 @@ enum Fault {
     Denied
     Reset
     Refused
+}
+
+struct NetFaults {
+    export drop: u32
+    export duplicate: u32
+    export latency_lo: time.Duration
+    export latency_hi: time.Duration
+    export rate: i64
+    export stream_buffer: int
 }
 
 // std.db.sqlite. Db, Stmt and Error below are sqlite.Db, sqlite.Stmt and sqlite.Error
@@ -13553,6 +13678,19 @@ struct Identity {
 enum Version {
     Tls12
     Tls13
+}
+
+// std.quic, Experimental. Config below is quic.Config.
+const Version1: u32 = 0x00000001
+quic.Connector(c: &Config): net.MuxDialer from c
+quic.Acceptor(c: &Config): net.MuxServer from c
+
+struct Config {
+    export tls: ?&tls.Config
+    export idle: time.Duration
+    export streams: int
+    export half_open: int
+    export retry_above: int
 }
 
 // std.csv. Records, Record, Options and Error below are csv.Records, csv.Record, csv.Options and csv.Error

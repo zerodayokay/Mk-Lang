@@ -1,12 +1,15 @@
 // Why: std.http's client and std.websocket's Dial open https and wss
 // connections through a net.Secure; this is TLS's.
 //
-// What: tls.Connector and Connect, and Secured, a private net.Transport
-// over a tls.Conn that maps tls.Error to net.Error.
+// What: tls.Connector and its functions Connect and ConnectAlpn, and
+// Secured, a private net.Transport over a tls.Conn that maps tls.Error to
+// net.Error.
 //
 // How: the connection is boxed by net.ReserveConn and ConnSlot.Fill: the
 // box is reserved first and filled last, so a failed handshake leaves the
-// connection with the caller.
+// connection with the caller. A caller's ALPN offer (net.Secure.Negotiate)
+// runs the handshake on a stack copy of the Config with offer as its
+// alpn, so it is checked and used as Config.alpn is.
 
 import std.core
 import std.net
@@ -80,6 +83,8 @@ NetError(e: &Error): net.Error {
         time.TimedOut { time.TimedOut }
         net.Unsupported { net.Unsupported }
         net.SecureFailed(why) { net.SecureFailed(why: why) }
+        net.StreamReset(code) { net.StreamReset(code: code) }
+        net.MuxClosed(code, app, peer) { net.MuxClosed(code: code, app: app, peer: peer) }
     }
 }
 
@@ -98,16 +103,57 @@ HandshakeError(e: &Error): net.Error {
     }
 }
 
-// Connect is the client connector's function: tls.Client over conn for
-// host, in a box reserved before the handshake and filled after it. Like
-// Accept, it needs no `h into conn` of its own.
-Connect(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
+// ConnectFn is the type of the connectors' functions, the call
+// net.Secure.Connect makes; NegotiateFn of the ones net.Secure.Negotiate
+// makes.
+type ConnectFn = fn(&Config, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn
+type NegotiateFn = fn(&Config, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn
+
+// WithOffer is c with offer as its ALPN list, or c's own list when offer
+// is empty: a copy of the record on the stack, so the handshake checks
+// and uses offer exactly as it does Config.alpn. O(1).
+WithOffer(c: &Config, offer: []str): Config from c, offer {
+    var n := *c
+    if offer.Len() > 0 {
+        n.alpn = offer
+    }
+    return n
+}
+
+// OfferIndex is the index in offer of the protocol t's handshake chose,
+// -1 for none. O(offer's length); allocates nothing.
+OfferIndex(t: &Conn, offer: []str): int {
+    p := t.Alpn() else {
+        return -1
+    }
+    for i in 0..offer.Len() {
+        if offer[i] == p {
+            return i
+        }
+    }
+    return -1
+}
+
+// ConnectAlpn is the client connector's function: tls.Client over conn
+// for host, offering offer's protocols when it is not empty, in a box
+// reserved before the handshake and filled after it. Like AcceptAlpn, it
+// needs no `h into conn` of its own.
+ConnectAlpn(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
     slot := try net.ReserveConn[Secured](h)
-    t := Client(h, io, conn, c, host) else e {
+    n := WithOffer(c, offer)
+    t := Client(h, io, conn, &n, host) else e {
         slot.Free(h.Alloc())
         fail HandshakeError(&e)
     }
-    return slot.Fill(Secured(c: t))
+    chosen := OfferIndex(&t, offer)
+    return (conn: slot.Fill(Secured(c: t)), chosen: chosen)
+}
+
+// Connect is ConnectAlpn with c's own protocols.
+Connect(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
+    own: [0]str = []
+    (conn: t, chosen: _) := try ConnectAlpn(c, h, io, conn, host, own[..])
+    return t
 }
 
 /// A client connector over c, to put in http.ClientLimits.secure or
@@ -117,8 +163,9 @@ Connect(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.
 ///
 /// A failed handshake is net.SecureFailed(why): Handshake for an alert or
 /// a protocol fault, and BadCertificate, UnknownAuthority, Expired or
-/// NameMismatch for the chain. One past c.handshake is time.TimedOut. It
-/// is a plain value that borrows c; copy it freely.
+/// NameMismatch for the chain. One past c.handshake is time.TimedOut.
+/// Its Negotiate offers the caller's protocols in place of c.alpn, with the
+/// same checks. It is a plain value that borrows c; copy it freely.
 export Connector(c: &Config): net.Secure from c {
-    return net.Secure.Of[Config](core.ErasedCall.Of[Config, fn(&Config, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn](c, Connect))
+    return net.Secure.OfAlpn[Config](core.TypedCall[ConnectFn].Of[Config](c, Connect), core.TypedCall[NegotiateFn].Of[Config](c, ConnectAlpn))
 }

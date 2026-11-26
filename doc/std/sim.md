@@ -465,6 +465,15 @@ same result: true, done: true, diverged: false
 <!-- api:begin -->
 Stability: Provisional.
 
+### `DefaultNetFaults`
+
+```
+export const DefaultNetFaults: NetFaults
+```
+
+Today's model: no loss, no duplication, 20 to 500 us, unlimited,
+unbounded.
+
 ### `Fault`
 
 ```
@@ -483,6 +492,28 @@ Variants:
 - `Denied`: Permission denied.
 - `Reset`: The peer reset the connection.
 - `Refused`: The peer refused the connection.
+
+### `NetFaults`
+
+```
+export struct NetFaults
+```
+
+What the simulated network does: datagrams are dropped and duplicated
+at parts per million, each drawn from the seed; latency is uniform in
+lo..hi; rate is bytes per second through each receiving port (0 for
+unlimited); stream_buffer bounds each stream end's unread bytes (0 for
+unbounded), so a send waits while the peer does not read. Start from
+DefaultNetFaults.
+
+Fields:
+
+- `drop: u32`: Datagram drop probability in parts per million (0..1_000_000).
+- `duplicate: u32`: Datagram duplication probability in parts per million (0..1_000_000).
+- `latency_lo: time.Duration`: Minimum simulated delivery latency.
+- `latency_hi: time.Duration`: Maximum simulated delivery latency.
+- `rate: i64`: Bandwidth cap in bytes per second per receiving UDP port (0 unlimited).
+- `stream_buffer: int`: Maximum unread bytes per stream end (0 unbounded).
 
 ### `Op`
 
@@ -680,6 +711,15 @@ export Sim.Arena(&self): &Arena from self
 The world's own arena, for the program under test; it lives until
 Free. O(1); allocates nothing.
 
+### `Sim.Blackhole`
+
+```
+export Sim.Blackhole(mut self, port: int, on: bool)
+```
+
+Drops every datagram sent to `port` while `on` is true. O(blackholed
+ports); grows the blackhole list on the process heap if needed.
+
 ### `Sim.CrashAfterRandomOps`
 
 ```
@@ -747,6 +787,16 @@ process heap, outside any budget on a's allocator; the world's arena is
 a sub-arena of a. So the Sim borrows a: a is not reset or freed, and
 its allocator not released, while the Sim lives.
 
+### `Sim.Rebind`
+
+```
+export Sim.Rebind(mut self, port: int)
+```
+
+Moves the port a UDP socket sends from, as a NAT rebinding does: the peer
+sees datagrams from a new address and replies reach it there. No-op when
+`port` is not bound. O(ports); allocates nothing.
+
 ### `Sim.Restart`
 
 ```
@@ -771,6 +821,15 @@ Delivers every message in flight and moves the clock to the last
 arrival. When the run has no task, the scope deadlines the clock passes
 fire at once; otherwise they fire at the next scheduling choice. O(n)
 in the connections, datagrams and armed deadlines; allocates nothing.
+
+### `Sim.SetNetFaults`
+
+```
+export Sim.SetNetFaults(mut self, f: NetFaults)
+```
+
+Applies `f` to every datagram and stream send from now on. O(1); allocates
+nothing.
 
 ### `Sim.TermInput`
 

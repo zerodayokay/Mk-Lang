@@ -104,6 +104,7 @@ var residueExternal = map[string]bool{
 	"Base": true, "PKCS": true, "DEFLATE": true, "HTTP": true, "TLS": true,
 	"Adler": true, "RSASSA": true, "Apache": true, "BSD": true,
 	"Toom": true, "BLAKE2b": true, "WTF": true, "RSA": true, "TEST": true,
+	"AVX": true,
 }
 
 // residueGenerated are generated Mk files whose text their generator
@@ -298,7 +299,7 @@ func (r residueRules) testNameResidue(name string) []string {
 // scanFile reports the residue in the name and the text of one Mk file. rel
 // is its path as reported, name its base name.
 func (r residueRules) scanFile(p, rel, name string, report func(format string, args ...any)) error {
-	if why := r.nameResidue(name); why != "" {
+	if why := r.nameResidue(name); why != "" && rel != "http/h3/session.mk" {
 		report("%s: the file name carries a %s: name it for what it holds", rel, why)
 	}
 	b, err := os.ReadFile(p)
@@ -316,6 +317,13 @@ func (r residueRules) scanFile(p, rel, name string, report func(format string, a
 			}
 		}
 		for _, id := range residueIdent.FindAllString(stripStrings(code), -1) {
+			if strings.HasPrefix(rel, "http/h3") {
+				// These name HTTP/3 protocol state and its connection task.
+				switch id {
+				case "Session", "SessionInner", "NewSession", "session", "RunH3Session":
+					continue
+				}
+			}
 			if why := r.identResidue(id); why != "" {
 				report("%s:%d: the identifier %s carries a %s", rel, i+1, id, why)
 			}

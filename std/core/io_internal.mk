@@ -401,13 +401,18 @@ export const IoOpRemoveAt: u32 = 40
 /// handle, os the bound port. A Sim answers it as its listen entry, which has
 /// no queue or TIME_WAIT to choose.
 export const IoOpListen: u32 = 41
+/// IoOpUdpConnect: h a UDP socket; p the peer (an IoAddr).
+export const IoOpUdpConnect: u32 = 42
+/// IoOpTryRecvFrom: h; out the buffer; q the source <- the count, or -1
+/// with err None when nothing is queued.
+export const IoOpTryRecvFrom: u32 = 43
 /// IoOpObjectWait: os is a Windows kernel waitable handle, w.a is timeout_ns
 /// (negative: forever) <- value 0 on signal, 1 on timeout, w.b 1 if a
 /// cancelled wait fired after cancel (credit consumed); Unsupported outside
 /// Windows.
-export const IoOpObjectWait: u32 = 42
+export const IoOpObjectWait: u32 = 44
 /// The number of ops; an op at or past it is Unsupported everywhere.
-export const IoOpCount: u32 = 43
+export const IoOpCount: u32 = 45
 
 /// IoOpTermMode's b: set the saved mode p back.
 export const IoTermSaved: i64 = 0
@@ -438,6 +443,10 @@ export const IoSockSendBuffer: i64 = 5
 /// IoOpSockOpt's option SO_LINGER: b 1 on, c seconds; on with 0 closes by
 /// reset, leaving no TIME_WAIT.
 export const IoSockLinger: i64 = 6
+/// IoOpSockOpt's option IP_DONTFRAGMENT / IP_MTU_DISCOVER (IPv4): b 1 on, 0 off.
+export const IoSockDontFrag: i64 = 7
+/// IoOpSockOpt's option IPV6_DONTFRAG / IPV6_MTU_DISCOVER (IPv6): b 1 on, 0 off.
+export const IoSockDontFragV6: i64 = 8
 
 /// Makes one call through io's call entry; a.op names the operation (IoOp*).
 /// It is the only native code the call links. One indirect call here; it

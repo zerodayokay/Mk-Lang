@@ -172,17 +172,9 @@ AesGcm.Ctr(&self, counter: mut [16]u8, src: []u8, dst: mut []u8) {
     }
 }
 
-// AesGcm.Block is AES(K, b), one block.
+// AesGcm.Block is AES(K, b), one block (block.mk's AesBlock).
 AesGcm.Block(&self, b: &[16]u8): [16]u8 {
-    var e: [64]u8 = [0; 64]
-    if !kernel.AesEncryptBlocks(self.rk[0..16 * (self.nr + 1)], b[..], mut e[0..16]) {
-        var s: [64]u8 = [0; 64]
-        (mut s[0..16]).CopyFrom(b[..])
-        AesEncrypt4(self.sk[..], self.nr, s[..], mut e[..])
-    }
-    var r: [16]u8 = [0; 16]
-    (mut r[..]).CopyFrom(e[0..16])
-    return r
+    return AesBlock(self.rk[..], self.sk[..], self.nr, b)
 }
 
 // AesGcm.Ghash absorbs data into y, its last partial block zero-padded

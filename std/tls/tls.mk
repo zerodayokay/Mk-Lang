@@ -75,7 +75,9 @@ export struct Config {
     /// the client's signature schemes allow.
     export identities: []Identity
     /// The application protocols offered (a client) or accepted (a
-    /// server), in preference order (RFC 7301); empty offers none.
+    /// server), in preference order (RFC 7301); empty offers none. Each
+    /// is 1 to 255 bytes, at most 65,535 bytes in all: a client refuses
+    /// another list before any I/O, and a server never matches such a name.
     export alpn: []str
     /// The lowest version a client accepts. Tls12 turns on the TLS 1.2
     /// client; the default, Tls13, offers TLS 1.3 only.

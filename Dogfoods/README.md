@@ -9,7 +9,8 @@ Twenty complete programs written in Mk: command-line tools, servers, a scripting
 | [`bigcalc`](bigcalc) | Arbitrary-precision RPN calculator, plus certificate, key, signature and encryption tools | `std.big`, `std.crypto`, `std.x509`; an arena per input line that is kept only when the whole line succeeds |
 | [`chat`](chat) | Multi-room chat server with a line protocol and a WebSocket front end | Tasks and channels, `std.http` and `std.websocket`, reference-counted broadcast frames, slow-client back-pressure, cancellation |
 | [`cron`](cron) | Scheduler daemon with time zones | `std.time` zones and DST, process groups and timeouts in `std.proc`, an advisory lock, a simulated clock |
-| [`fetch`](fetch) | HTTP and WebSocket client in the manner of curl | `std.http`, `std.tls`, `std.websocket`, `std.compress`, a cookie jar, parallel transfers |
+| [`fetch`](fetch) | HTTP/1.1, HTTP/2, HTTP/3 and WebSocket client | `std.http`, `std.quic`, `std.tls`, `std.websocket`, parallel transfers, Alt-Svc and fallback |
+| [`relay`](relay) | Loopback reverse proxy and load generator | HTTP/1.1, HTTP/2, HTTP/3, bounded forwarding, cancellation and simulated UDP loss |
 | [`fm`](fm) | Two-pane terminal file manager and pager | `std.term` raw mode, mouse and bracketed paste, a shell on a pseudo-terminal, grapheme-aware wrapping |
 | [`imgproc`](imgproc) | Image pipeline over PNM files | SIMD kernels at 128, 256 and 512 bits chosen at run time, parallel tiles, byte-identical output on every path |
 | [`kernel`](kernel) | Freestanding x86-64 kernel booted in QEMU | `x86_64-freestanding`, PVH boot without an assembly file, naked interrupt stubs, `std.mmio`, a frame allocator |

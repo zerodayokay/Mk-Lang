@@ -36,6 +36,7 @@ var moduleClasses = []struct{ path, class, why string }{
 	{"std.gpu", ClassExperimental, "its API may change before stabilisation"},
 	{"std.image", ClassProvisional, ""},
 	{"std.mmio", ClassProvisional, ""},
+	{"std.quic", ClassExperimental, "not yet reviewed by an outside cryptographer"},
 	{"std.sim", ClassProvisional, ""},
 	{"std.simd", ClassProvisional, ""},
 	{"std.tls", ClassExperimental, "not yet reviewed by an outside cryptographer"},

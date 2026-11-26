@@ -1,14 +1,17 @@
 // Why: protocols derive many keys from one shared secret; HKDF is the
 // standard extract-then-expand way to do it.
 //
-// What: Prk with FromBytes and Wipe, HkdfExtract and HkdfExpand.
+// What: Prk with FromBytes and Wipe, HkdfExtract, HkdfExpand and TLS 1.3's
+// HkdfExpandLabel.
 //
 // How: RFC 5869 over HMAC-SHA256, -SHA384 and -SHA512 (hmac.mk): Extract is
 // one HMAC with the salt as the key (an empty salt is HashLen zero bytes,
 // which keys HMAC exactly as the empty key does), and Expand is the
 // counter chain T(i) = HMAC(PRK, T(i - 1) || info || i) over one keyed
-// state, so each block costs its own compressions only. Constant time in
-// the key material: HMAC's; the lengths of salt, info and out are public.
+// state, so each block costs its own compressions only. ExpandLabel builds
+// RFC 8446 7.1's HkdfLabel on the stack and expands over it. Constant time
+// in the key material: HMAC's; the lengths of salt, info and out are
+// public.
 
 /// Prk is HKDF's pseudorandom key: as many bytes as the hash's output (32,
 /// 48 or 64), with the hash that made them. HkdfExtract and Prk.FromBytes
@@ -83,6 +86,51 @@ export HkdfExpand(prk: &Prk, info: []u8, out: mut []u8): Error!void {
         .Sha256 { Expand256(&Hmac256Key.New(prk.key[0..32]), info, out) }
         .Sha384 { Expand384(&Hmac384Key.New(prk.key[0..48]), info, out) }
         .Sha512 { Expand512(&Hmac512Key.New(prk.key[..]), info, out) }
+    }
+}
+
+// LabelMax is the longest label HkdfExpandLabel takes: HkdfLabel.label is
+// opaque<7..255> and holds "tls13 " (6 bytes) then the label (RFC 8446
+// 7.1), so the label is 1 to 249 bytes.
+const LabelMax: int = 249
+
+/// Fills out with HKDF-Expand-Label(prk, label, context, out.Len()) of TLS
+/// 1.3 (RFC 8446 7.1): HkdfExpand of prk over the HkdfLabel structure, the
+/// output length as two bytes, then "tls13 " and label, then context, each
+/// after a one-byte length. QUIC derives its packet keys with it (RFC 9001
+/// 5.1). Fails with BadKey when prk was wiped, and with BadLength when
+/// label is empty or over 249 bytes, context is over 255 bytes, or out is
+/// longer than 255 times the hash's output (8,160 bytes for SHA-256),
+/// writing nothing on any failure. Constant time in prk; the lengths and
+/// the label are public. Temporary stack copies of key material are not
+/// wiped. O(out): one HMAC over at most HashLen + 515 bytes per HashLen
+/// bytes of out; allocates nothing (the 514-byte HkdfLabel is on the
+/// stack).
+export HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): BadKey|BadLength!void {
+    if !prk.live {
+        fail BadKey
+    }
+    ln := label.Len()
+    cn := context.Len()
+    n := out.Len()
+    if ln == 0 || ln > LabelMax || cn > 255 || n > 255 * HashLen(prk.kind) {
+        fail BadLength
+    }
+    var info: [514]u8 = [0; 514]
+    info[0] = Trunc[u8](n >> 8)
+    info[1] = Trunc[u8](n)
+    info[2] = Trunc[u8](6 + ln)
+    (mut info[3..9]).CopyFrom("tls13 ".AsBytes())
+    (mut info[9..9 + ln]).CopyFrom(label.AsBytes())
+    at := 9 + ln
+    info[at] = Trunc[u8](cn)
+    (mut info[at + 1..at + 1 + cn]).CopyFrom(context)
+    // HkdfExpand checks again what is checked above, so it cannot fail.
+    HkdfExpand(prk, info[0..at + 1 + cn], out) else e {
+        match e {
+            BadKey { fail BadKey }
+            _ { fail BadLength }
+        }
     }
 }
 

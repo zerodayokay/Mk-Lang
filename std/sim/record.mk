@@ -97,6 +97,8 @@ const OWall: u8 = 32
 // deadline that fired.
 const ODeadline: u8 = 33
 const OFire: u8 = 34
+const OUdpConnect: u8 = 35
+const OTryRecvFrom: u8 = 36
 // OCall + op is the call op op (an IoOp below 192) that the tape replays.
 const OCall: u8 = 64
 

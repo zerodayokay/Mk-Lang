@@ -126,6 +126,14 @@ func tlsServerExe(t *testing.T, mode string) string {
 // last line.
 func tlsServeOnce(t *testing.T, mode string, leaf tls.Certificate, protos string) (string, func() string) {
 	t.Helper()
+	return tlsServeExe(t, tlsServerExe(t, mode), leaf, protos)
+}
+
+// tlsServeExe is tlsServeOnce for any driver exe that takes the chain's
+// PEM file, the key's PEM file and the protocols, prints "port <n>" first
+// and its result last.
+func tlsServeExe(t *testing.T, exe string, leaf tls.Certificate, protos string) (string, func() string) {
+	t.Helper()
 	dir := t.TempDir()
 	chain := filepath.Join(dir, "chain.pem")
 	keyf := filepath.Join(dir, "key.pem")
@@ -136,7 +144,7 @@ func tlsServeOnce(t *testing.T, mode string, leaf tls.Certificate, protos string
 	}
 	os.WriteFile(keyf, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o644)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	cmd := exec.CommandContext(ctx, tlsServerExe(t, mode), chain, keyf, protos)
+	cmd := exec.CommandContext(ctx, exe, chain, keyf, protos)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
