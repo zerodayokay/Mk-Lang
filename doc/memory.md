@@ -1680,7 +1680,7 @@ Fix: store a value, not a reference to a local: `Mutex[?i32]` and `g.Store(some(
 
 | Rule | Detail |
 |---|---|
-| `const` | A compile-time value. Its type must be plain. `&Limit` is valid |
+| `const` | A compile-time value. Its type must be plain. `&Limit` is valid. Assigning or borrowing a constant or its parts `mut` is E0301 |
 | `var` | One instance. Its type must be `Share` (E1002). It is never assigned, moved or borrowed `mut`. It is reached only through `&` |
 | Static pseudo-loan | A reference to a global holds it. It never conflicts. Storing a value into anything reachable from it needs the value to hold no loan but the static one (E0605) |
 | Error payload | An error travels up the stack and across tasks, so a `str` in its payload is held to the same rule: the value given when the error is built or assigned to the field holds no loan but the static one, and a `mut` borrow of the field is E0605. A literal, a `const` and a result that comes from no parameter hold none, and so a read of the field holds none, even through a reference |

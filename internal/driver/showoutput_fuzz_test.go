@@ -5,8 +5,9 @@
 // What: TestShowOutputFuzzSys.
 // How: mk test over a package whose FuzzSys target prints each input's
 // length, with two saved inputs; the text report with TestReport.ShowOutput
-// of the plain run holds both inputs' lines, and that of a short --fuzz run
-// holds the loop's one summary line and nothing the target printed.
+// of the plain run holds each input's line followed by what the target
+// printed for it, and that of a short --fuzz run holds the loop's one
+// summary line and nothing the target printed.
 
 package driver
 
@@ -36,10 +37,8 @@ func TestShowOutputFuzzSys(t *testing.T) {
 		t.Fatalf("mk test: %s", got)
 	}
 	got := text(rep)
-	for _, want := range []string{"PASS main \"echo\"\n", "    fuzz input a\n", "    fuzz input b\n", "    echo 3\n", "    echo 5\n"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("--show-output of the plain run lacks %q:\n%s", want, got)
-		}
+	if want := "PASS main \"echo\"\n    fuzz input a\n    echo 3\n    fuzz input b\n    echo 5\n"; !strings.HasPrefix(got, want) {
+		t.Errorf("--show-output of the plain run, want each input's line followed by its output:\n%s", got)
 	}
 	rep = mkTest(t, Config{Root: root}, TestOptions{Fuzz: "echo", FuzzTime: time.Second})
 	if got := results(rep); got != "main echo pass" {

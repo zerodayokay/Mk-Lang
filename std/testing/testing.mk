@@ -13,9 +13,10 @@
 // once):
 //
 //   - MK_TESTING_FUZZ: "run" calls f once per seed of the input file, in
-//     its order, writing "fuzz input <name>" to standard error before each
-//     call, so a failing input is named in the test's output; "loop" runs
-//     the mutation loop below.
+//     its order, writing "mkfuzzinput <token> <name>" to standard error
+//     before each call, after the bytes sys's streams hold; the driver
+//     displays it on its own line as "fuzz input <name>". "loop" runs the
+//     mutation loop below.
 //   - MK_TESTING_INPUT: the input file, records of a kind byte ('s' a seed,
 //     'd' a dictionary token), a u32 little-endian name length, the name,
 //     a u32 little-endian data length and the data. The driver writes it
@@ -39,13 +40,15 @@
 //     children only; ExpectPanic writes "mkexpectpanic <token> <length>
 //     <want>" to standard error, and the driver (testing.go's
 //     judgeExpectedPanic) passes the child on a panic whose report matches.
-//     The token keeps text a test prints from passing for the line.
+//     RunSeeds uses the same token for its input markers; the token keeps
+//     text a test prints from passing for a protocol marker.
 //
 // The loop mutates by bit flips, byte sets, inserts, deletes, splices of
 // another input and dictionary tokens, and is guided by the package's live
 // block counters (Guided): an input that reaches a new block joins the
 // loop's pool, and later inputs are mutated from it.
 
+import std.core
 import std.fs
 import std.rt
 import std.sys
@@ -71,7 +74,8 @@ const BenchTarget: i64 = 20_000_000
 /// Fuzz makes f the fuzz target of the test block that calls it, and runs
 /// it. Plain `mk test` calls f once per file of testdata/fuzz/<test name>/
 /// except the .report files, in name order, with the file's bytes, and
-/// names each file in the test's output before the call.
+/// names each file in the test's output before the call, after what the
+/// test printed before it, so what f prints for a file follows its name.
 /// `mk test --fuzz <test name>` instead calls f on inputs it mutates,
 /// guided by the blocks they reach, until the fuzz time ends or 20 runs
 /// have failed. It saves an input that panics, leaks, hangs or exits
@@ -336,20 +340,42 @@ DataAt(b: []u8, i: int): int {
 }
 
 // RunSeeds calls the target (Call) once per seed record of the input file
-// b, in its order.
+// b, in its order. Each "fuzz input" line goes out after what is buffered on
+// standard output and standard error (sys.Print, sys.PrintErr), so the
+// output holds each input's line, then what the target printed for it; the
+// buffers are written out once more after the last call. An empty buffer
+// costs a lock and no write. The driver sees the joined output and can
+// put each tagged marker on its own line even after an explicit flush.
 RunSeeds(b: []u8, s: ?&System, f: ?fn([]u8), g: ?fn(sys: &System, data: []u8)) {
+    p := rt.Proc()
+    io := rt.NativeIo()
+    var mark: [64]u8 = [0; 64]
+    var n := 0
+    if token := rt.Env("MK_TESTING_EXPECT") {
+        if token.Len() > 0 && token.Len() <= mark.Len() - "mkfuzzinput  ".Len() {
+            n = Put(mut mark[..], 0, "mkfuzzinput ")
+            n = Put(mut mark[..], n, token)
+            n = Put(mut mark[..], n, " ")
+        }
+    }
+    if n == 0 {
+        n = Put(mut mark[..], 0, "fuzz input ")
+    }
     var i := 0
     for i < b.Len() {
         d := DataAt(b, i)
         end := RecordEnd(b, i)
         if b[i] == b's' {
-            rt.WriteErr("fuzz input ".AsBytes())
-            rt.WriteErr(b[i + 5..d - 4])
-            rt.WriteErr("\n".AsBytes())
+            _ = core.StdWrite(p, 0, io, "".AsBytes())
+            _ = core.StdWrite(p, 1, io, mark[..n])
+            _ = core.StdWrite(p, 1, io, b[i + 5..d - 4])
+            _ = core.StdWrite(p, 1, io, "\n".AsBytes())
             Call(s, f, g, b[d..end])
         }
         i = end
     }
+    _ = core.StdWrite(p, 0, io, "".AsBytes())
+    _ = core.StdWrite(p, 1, io, "".AsBytes())
 }
 
 // Step is the xorshift64 generator's next state (Marsaglia, 2003).

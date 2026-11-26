@@ -2480,7 +2480,7 @@ export Main(sys: &System): WriteError!void {
 
 - The value is computed once, by the compiler, and stored in the program. It may call ordinary functions. What a compile-time evaluation may do is in [section 11](#11-compile-time).
 - The type must be plain (E0408). `&Limit` is a valid reference that lives as long as the program ([globals](memory.md#r16-globals)).
-- A constant cannot be assigned (E0301).
+- A constant and its fields and elements cannot be assigned or borrowed `mut` (E0301). To change the value, copy it into a `var` local.
 - A literal that does not fit the type is E0303. An evaluation that panics, and constants in a cycle, are compile errors ([evaluating constants](#evaluating-constants), [the stage rule](#the-stage-rule)).
 - A constant of an integer, `bool`, `char` or `str` type is a pattern, matched by its value ([literal patterns](#literal-patterns)).
 
@@ -7703,7 +7703,7 @@ main.mk:10:7: E0902 fuel-exhausted: compile-time evaluation ran out of fuel afte
 - Each basic operation costs one step. Moving data costs one more step per 16 bytes, rounded up: what an assignment writes, what a call or a return passes, and what an allocation, a frame, a copy, a fill or a compare touches.
 - Each call of the generator API costs one step. A generic function costs what its instance for the given types costs.
 - The count is fixed for a compiler version, so a build that fits on one machine fits on every machine.
-- Running out is E0902, reported before the operation that does not fit, with the calls that led there.
+- Running out is E0902, reported before the operation that does not fit, with the calls that led there. A `var` global cannot state `fuel` (E0101), so its E0902's `try` line names the route that compiles: the work in a `const` with the raised `fuel`, and the global initialized from that const.
 - `fuel` also follows a `gen` line: `gen derive.Eq(Big) fuel 10_000_000`.
 - The fuel is a number literal or a named constant, `fuel Limit`; any other expression is E0705. A gen line runs before its module's consts are evaluated, so its named constant comes from another module (E0908, [the stage rule](#the-stage-rule)).
 - An evaluation's frames, measured at the target's layout, may hold 1 MiB, or a quarter of the stated fuel in bytes when that is more, up to 256 MiB. Deeper recursion is the `stack limit` panic, reported as E0901.

@@ -92,8 +92,12 @@ func Render(err *types.EvalError, req *types.EvalRequest, items *types.Items, in
 		// The raised fuel is attached as a checked fix only
 		// after a re-run on the error path, which the reporter does; here it
 		// is an alternative.
-		switch req.What {
-		case types.EvalConst, types.EvalGen:
+		_, global := items.Get(req.Item).Decl.(*types.GlobalDecl)
+		switch {
+		case req.What == types.EvalConst && global:
+			// A var cannot state fuel (E0101): its work moves to a const.
+			d.Alt("a global cannot state fuel: do the work in a const with fuel " + strconv.FormatUint(2*fuel, 10) + ", and initialize " + name(req.Item) + " from that const")
+		case req.What == types.EvalConst, req.What == types.EvalGen:
 			d.Alt("raise the limit: fuel " + strconv.FormatUint(2*fuel, 10))
 		default:
 			d.Alt("move the evaluation into a named const with fuel")

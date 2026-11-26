@@ -119,6 +119,7 @@ func (u *unit) unary(e *ast.UnaryExpr, want types.TypeID) types.TypeID {
 			if t == types.Poison {
 				return t
 			}
+			u.constMutation(s, "borrowed mut")
 			if k := tab.Kind(t); k == types.KSlice {
 				return tab.MutSlice(tab.Get(t).Elem)
 			}
@@ -150,6 +151,7 @@ func (u *unit) unary(e *ast.UnaryExpr, want types.TypeID) types.TypeID {
 			return t
 		}
 		u.externVarWrite(e.X, "borrow")
+		u.constMutation(e.X, "borrowed mut")
 		u.packedBorrow(e, "mut")
 		return tab.Mut(t)
 	case ast.TokStar:

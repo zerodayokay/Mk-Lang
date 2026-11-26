@@ -74,7 +74,7 @@ func (c *checker) borrow(st *state, ctx *stmtCtx, s *mir.Statement, p pathID, ex
 		}
 	}
 	if excl && shared {
-		c.e0507Mut(ctx, p)
+		c.e0507Mut(st, ctx, p)
 		return emptySet
 	}
 	if last == dmShared {
@@ -97,16 +97,21 @@ func (c *checker) borrow(st *state, ctx *stmtCtx, s *mir.Statement, p pathID, ex
 }
 
 // e0507Mut reports E0507 for a mut borrow of path p, which is reached
-// through a shared step, at the statement or call. Only the
-// report pass emits.
-func (c *checker) e0507Mut(ctx *stmtCtx, p pathID) {
+// through a shared step, at the statement or call; st names a global the
+// path reaches (sharedPlace). Only the report pass emits.
+func (c *checker) e0507Mut(st *state, ctx *stmtCtx, p pathID) {
 	if c.captureBackstop(ctx, p, "mut-borrow") {
 		return // captureBackstop reported it
 	}
 	if c.report {
-		d := c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be borrowed mut", c.placeString(p)).
-			Text("place", c.placeString(p))
-		c.subSliceAlt(d, p)
+		place, global := c.sharedPlace(st, p)
+		if global != "" {
+			c.globalE0507(ctx, global, place, "borrowed mut")
+			return
+		}
+		d := c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be borrowed mut", place).
+			Text("place", place)
+		c.subSliceAlt(st, ctx, d, p)
 	}
 }
 
@@ -114,20 +119,85 @@ func (c *checker) e0507Mut(ctx *stmtCtx, p pathID) {
 // holding a sub-slice, `b[..2].CopyFrom(x)`: `xs[a..b]` is the
 // shared view and `(mut xs[a..b])` the exclusive one, which a mut method
 // takes; `mut` binds below the call, so the parentheses are needed.
-func (c *checker) subSliceAlt(d *diag.Diagnostic, p pathID) {
+func (c *checker) subSliceAlt(st *state, ctx *stmtCtx, d *diag.Diagnostic, p pathID) {
 	pi := c.paths.get(p)
-	if d == nil || c.roots[pi.root].kind != rkTemp || c.env.File == nil {
+	if d == nil || c.roots[pi.root].kind != rkTemp || len(pi.steps) != 1 {
 		return
 	}
-	sp := c.body.Span(c.body.Locals[c.roots[pi.root].local].Span)
-	f := c.env.File(sp.File)
-	if f == nil || sp.End > f.Len() || sp.End <= sp.Start {
+	root := pi.root
+	text := c.tempText(root)
+	if !strings.HasSuffix(text, "]") || !strings.Contains(text, "[") || !strings.Contains(text, "..") || strings.HasPrefix(text, "mut ") {
 		return
 	}
-	text := f.Slice(sp)
-	if strings.HasSuffix(text, "]") && strings.Contains(text, "[") && strings.Contains(text, "..") && !strings.HasPrefix(text, "mut ") {
-		d.Alt("borrow the sub-slice exclusively: `(mut " + text + ")`, since `" + text + "` is the shared view")
+	base := c.subSliceBase(ctx, c.roots[root].local)
+	if base == noPath {
+		return
 	}
+	// The shared view being replaced cannot itself conflict. A live loan
+	// held somewhere else might preclude the exclusive view.
+	conflict := false
+	c.eachLiveCandidate(st, base, colMut, func(l loanID) bool {
+		conflict = c.liveHolder(st, ctx, l, false, root) != noRoot
+		return !conflict
+	})
+	if conflict {
+		return
+	}
+	// A later argument borrow can form a conflicting loan or read the base
+	// while computing its own place. This includes capture environments.
+	call := c.body.Span(ctx.span)
+	recv := c.body.Span(c.body.Locals[c.roots[root].local].Span)
+	for site := range c.siteLoans {
+		if c.rpoNum[site.b] < c.rpoNum[ctx.b] || site.b == ctx.b && site.stmt <= uint32(ctx.i) {
+			continue
+		}
+		at := c.body.Span(c.body.Blocks[site.b].Stmts[site.stmt].Span)
+		if recv.End <= at.Start && call.Contains(at.StartPos()) && call.Contains(at.EndPos()) {
+			return
+		}
+	}
+	for _, l := range c.candidates(base, colMut) {
+		if loan := c.loans[l]; loan.slot && c.body.Span(loan.site) == call {
+			return
+		}
+	}
+	d.Alt("borrow the sub-slice exclusively: `(mut " + text + ")`, since `" + text + "` is the shared view")
+}
+
+// subSliceBase looks up the temporary in the block where the receiver is
+// formed. Lower assigns the shared slice after its bounds checks and uses
+// it immediately. Without a known slice source, omit the alternative.
+func (c *checker) subSliceBase(ctx *stmtCtx, local mir.LocalID) pathID {
+	stmts := c.body.Blocks[ctx.b].Stmts
+	for i := ctx.i - 1; i >= 0; i-- {
+		s := &stmts[i]
+		if s.Kind != mir.StAssign || s.Place.Local != local || s.Place.Proj.Len != 0 {
+			continue
+		}
+		rv := &s.Rvalue
+		if rv.Kind != mir.RvSlice || rv.Borrow != mir.Shared {
+			return noPath
+		}
+		p := c.paths.ofPlace(c.body, c.tab, rv.Place)
+		pi := c.paths.get(p)
+		for _, sp := range pi.steps {
+			if sp.kind == stDeref && sp.mode != dmExcl {
+				return noPath
+			}
+		}
+		switch c.tab.Kind(pi.typ()) {
+		case types.KArray:
+			ri := &c.roots[pi.root]
+			if pi.derefs == 0 && (ri.kind == rkUser || ri.kind == rkParam && ri.byValueParam) && !ri.isVar {
+				return noPath
+			}
+			return p
+		case types.KMutSlice:
+			return c.paths.extend(p, step{kind: stDeref, mode: dmExcl}, pi.typ())
+		}
+		return noPath
+	}
+	return noPath
 }
 
 // pathHeld is H(root) ∪ B(H(root)) ∪ … with one more B per deref after the
@@ -259,8 +329,12 @@ func (c *checker) destinationFV(st *state, ctx *stmtCtx, dst mir.Place, S setID,
 				return // captureBackstop reported it
 			}
 			if c.report {
-				c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be written", c.placeString(p)).
-					Text("place", c.placeString(p))
+				if place, global := c.sharedPlace(st, p); global != "" {
+					c.globalE0507(ctx, global, place, "assigned")
+				} else {
+					c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be written", place).
+						Text("place", place)
+				}
 			}
 			return
 		}

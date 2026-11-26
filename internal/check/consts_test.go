@@ -467,3 +467,26 @@ func TestPoisonReadsOfFailedConst(t *testing.T) {
 		}
 	}
 }
+
+// TestE0902_GlobalFuelHint: a const out of fuel is told to raise its own
+// fuel; a var global cannot state fuel (E0101), so it is told the route
+// that compiles: the work in a const with that fuel, the global built from
+// the const.
+func TestE0902_GlobalFuelHint(t *testing.T) {
+	w := newWorld(t, true)
+	fe := w.withEval()
+	b := checkBody(t, w, "", "Spin(): int {\n\treturn 1\n}\nconst C: int = Spin()\nvar V: int = Spin()\n")
+	at := source.Span{File: b.srcs[0].ID, Start: 10, End: 11}
+	for _, n := range []string{"C", "V"} {
+		fe.answers["m."+n] = types.EvalResult{Err: &types.EvalError{Kind: types.EvalFuel, Steps: 4000001, Items: []types.ItemID{b.item(n)}, Trace: []source.Span{at}}}
+	}
+	for _, tc := range []struct{ name, alt string }{
+		{"C", "raise the limit: fuel 8000000"},
+		{"V", "a global cannot state fuel: do the work in a const with fuel 8000000, and initialize V from that const"},
+	} {
+		_, ds := w.c.EvalConst(b.m, b.item(tc.name))
+		if len(ds) != 1 || ds[0].Code != diag.E0902 || len(ds[0].Alternatives) != 1 || ds[0].Alternatives[0] != tc.alt {
+			t.Fatalf("%s: %s, want E0902 with the alternative %q", tc.name, dump(w, ds), tc.alt)
+		}
+	}
+}

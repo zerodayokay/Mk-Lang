@@ -65,8 +65,8 @@ func TestLargeInitializerValue(t *testing.T) {
 			"var T: [1048576]u32 = Fill()\n\nexport Read(i: int): u32 {\n    return T[i]\n}\n"
 		res, _, _ := gen10Check(t, map[string]string{"a/a.mk": src}, types.Dev)
 		text := res.Report.Text(res.Sources)
-		if got := codes(res); !slices.Equal(got, []string{"E0902"}) || !strings.Contains(text, "fuel: 8388608") || !strings.Contains(text, "fuel 16777216") {
-			t.Errorf("codes %q, want E0902 with the 4 MiB value's fuel of 8388608 and its double:\n%s", got, text)
+		if got := codes(res); !slices.Equal(got, []string{"E0902"}) || !strings.Contains(text, "fuel: 8388608") || !strings.Contains(text, "a global cannot state fuel: do the work in a const with fuel 16777216, and initialize T from that const") {
+			t.Errorf("codes %q, want E0902 with the 4 MiB value's fuel of 8388608 and the const route at its double:\n%s", got, text)
 		}
 	})
 	t.Run("recursion still stops", func(t *testing.T) {

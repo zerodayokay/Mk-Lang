@@ -552,8 +552,8 @@ func TestMkTestFuzzSys(t *testing.T) {
 	out := rep.Tests[0].Output
 	ia, ib := strings.Index(out, "fuzz input a\n"), strings.Index(out, "fuzz input b\n")
 	e3, e5 := strings.Index(out, "echo 3\n"), strings.Index(out, "echo 5\n")
-	if ia < 0 || ib < ia || e3 < 0 || e5 < e3 || strings.Count(out, "echo ") != 2 {
-		t.Errorf("echo's output (want the inputs a, b in order, then echo 3 and echo 5):\n%s", out)
+	if ia < 0 || e3 < ia || ib < e3 || e5 < ib || strings.Count(out, "echo ") != 2 {
+		t.Errorf("echo's output (want input a, echo 3, input b, echo 5, in that order):\n%s", out)
 	}
 	rep = mkTest(t, Config{Root: root}, TestOptions{Fuzz: "two sys", FuzzTime: 30 * time.Second})
 	if len(rep.Tests) != 1 || rep.Tests[0].Result != "fail" || !strings.Contains(rep.Tests[0].Detail, "saved to testdata/fuzz/two sys/") {
