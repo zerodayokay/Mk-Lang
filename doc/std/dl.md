@@ -91,7 +91,7 @@ $ mk run present.mk
 can name threads: true
 ```
 
-A package that binds Direct3D 12 lazily, so the program also runs where d3d12.dll is absent, writes `d3d12.def` with the names it uses (`D3D12CreateDevice`, one per line) and links it:
+A package that imports `c.d3d12` gets lazy binding for `d3d12.dll` automatically from the system view. A package declaring its own `extern`s or overriding a view's link writes `d3d12.def` with the names it uses (`D3D12CreateDevice`, one per line) and links it:
 
 ```mk
 // verdict: parse

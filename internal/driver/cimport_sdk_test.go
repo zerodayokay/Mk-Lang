@@ -26,7 +26,7 @@ const sdkWindowMain = `import c.dx
 import std.mem
 import std.raw
 
-WndProc(hwnd: *dx.Hwnd, msg: u32, wp: u64, lp: i64): i64 {
+WndProc(hwnd: dx.Hwnd, msg: u32, wp: u64, lp: i64): i64 {
     unsafe "DefWindowProcW is the default handler for any message" {
         return dx.DefWindowProcW(hwnd, msg, wp, lp)
     }
@@ -45,7 +45,7 @@ export Main(sys: &System): WriteError!void {
         wc.h_instance = inst
         wc.lpsz_class_name = raw.Data(cls[..])
         atom = dx.RegisterClassExW(raw.OfMut(mut wc))
-        h := dx.CreateWindowExW(0, raw.Data(cls[..]), raw.Data(cls[..]), 0, 0, 0, 64, 64, raw.Null[dx.Hwnd](), raw.Null[dx.Hmenu](), inst, raw.Null[void]())
+        h := dx.CreateWindowExW(0, raw.Data(cls[..]), raw.Data(cls[..]), 0, 0, 0, 64, 64, raw.Null[dx.HwndStruct](), raw.Null[dx.HmenuStruct](), inst, raw.Null[void]())
         made = !raw.IsNull(h)
         destroyed = dx.DestroyWindow(h)
     }

@@ -2,9 +2,10 @@
 
 view windows
   headers   windows.h windowsx.h
-  inputs    clang=21.1.8 importer=mk.cimport.v3 toolset-headers=1c6e66bf190885ce windows-sdk=10.0.28000.0
-  counts    bound=44864 declarations=47381 dropped=102 items=43147
-  identity  f2ba5358d36f232fb178e14d951c7463fcdf56bfe41d5b1b6a453c7c9aae72d4
+  defines   INITGUID
+  inputs    clang=21.1.8 importer=mk.cimport.v4 toolset-headers=1c6e66bf190885ce windows-sdk=10.0.28000.0
+  counts    ambiguous=0 bound=45811 declarations=47298 dropped=102 items=46731 linked=4984
+  identity  c99a5dbf0699e4a114a606c13839e6d4d2097ebac0e70de75e99dfba15f04e51
   dropped   memcpy_s (errno_t memcpy_s(void *, rsize_t, void *, rsize_t)): a static inline function, defined only by a shim compiled from the headers
   dropped   memmove_s (errno_t memmove_s(void *, rsize_t, void *, rsize_t)): a static inline function, defined only by a shim compiled from the headers
   dropped   wcsnlen_s (size_t wcsnlen_s(wchar_t *, size_t)): a static inline function, defined only by a shim compiled from the headers
@@ -110,21 +111,32 @@ view windows
 
 view dxgi
   headers   dxgi1_6.h dxgidebug.h
+  defines   INITGUID
   requires  windows
-  inputs    clang=21.1.8 importer=mk.cimport.v3 toolset-headers=1c6e66bf190885ce windows-sdk=10.0.28000.0
-  counts    bound=996 declarations=997 dropped=0 items=669
-  identity  a8fae1fa4bc4f66addd93bbd450ba16f7c9bda07206a9fa17a3404f49336b1c5
+  inputs    clang=21.1.8 importer=mk.cimport.v4 toolset-headers=1c6e66bf190885ce windows-sdk=10.0.28000.0
+  counts    ambiguous=0 bound=996 declarations=997 dropped=0 items=1925 linked=18
+  identity  0c9ac97926e6d7a483313fbff38160b5e321aae72c968461e3a92782a55ffdf1
 
 view d3d12
   headers   d3d12.h d3d12sdklayers.h
+  defines   INITGUID
   requires  windows dxgi
-  inputs    clang=21.1.8 importer=mk.cimport.v3 toolset-headers=1c6e66bf190885ce windows-sdk=10.0.28000.0
-  counts    bound=4236 declarations=4240 dropped=0 items=1566
-  identity  242f84695b401ba9894a0b9fe412eab54dde33ad5600a5b30acf1479b97cfd74
+  inputs    clang=21.1.8 importer=mk.cimport.v4 toolset-headers=1c6e66bf190885ce windows-sdk=10.0.28000.0
+  counts    ambiguous=0 bound=4239 declarations=4240 dropped=0 items=4104 linked=8
+  identity  ce6f8ae81287f6c7e75214c7d244007fa1683bc1140242264322bf50ab76feff
 
 view d3dcompiler
   headers   d3dcompiler.h
+  defines   INITGUID
   requires  windows d3d12
-  inputs    clang=21.1.8 importer=mk.cimport.v3 toolset-headers=1c6e66bf190885ce windows-sdk=10.0.28000.0
-  counts    bound=261 declarations=263 dropped=0 items=214
-  identity  878a96e0f4f2c29758809d6b912384cb463bba32198e23379f9f14d6ee92ccdc
+  inputs    clang=21.1.8 importer=mk.cimport.v4 toolset-headers=1c6e66bf190885ce windows-sdk=10.0.28000.0
+  counts    ambiguous=0 bound=264 declarations=264 dropped=0 items=360 linked=25
+  identity  9d507a97792e6218aaa9fef66cff6f57f8d75cd39bb10c54e8d2e9e08cd839b7
+
+view vulkan
+  headers   vulkan/vulkan.h
+  defines   VK_USE_PLATFORM_WIN32_KHR
+  requires  windows
+  inputs    clang=21.1.8 importer=mk.cimport.v4 toolset-headers=1c6e66bf190885ce vulkan-headers=unversioned
+  counts    ambiguous=0 bound=10969 declarations=10971 dropped=0 items=6541 linked=0
+  identity  72786d1970c3bbe6d5ea8fb0ae8413e0edc75f710a9e4ab8be410f973c0cd95d

@@ -63,3 +63,56 @@ func TestSysview_EmbeddedData(t *testing.T) {
 		t.Skip("this mk carries no system view archive (internal/sysview/data holds none): go run ./tools/sysview makes them")
 	}
 }
+
+func TestSysview_VulkanAndDXItems(t *testing.T) {
+	openView := func(name string) *Archive {
+		b, ok := Embedded("x86_64-windows", name)
+		if !ok {
+			t.Skipf("no embedded x86_64-windows/%s view", name)
+		}
+		a, err := Open(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	vk := openView("vulkan")
+	for _, sym := range []string{"PfnVkCreateInstance", "PfnVkGetInstanceProcAddr", "VkHeaderVersion", "VkPipelineStage2None", "VkPipelineStage2CopyBit", "VkWin32SurfaceCreateInfoKhr"} {
+		hits := vk.Lookup(sym)
+		if len(hits) == 0 {
+			t.Errorf("c.vulkan missing %q", sym)
+			continue
+		}
+		it, err := vk.Item(hits[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("c.vulkan %s -> kind=%s defs=%v", sym, it.Kind, it.Defs)
+	}
+	dxgi := openView("dxgi")
+	for _, sym := range []string{"IidIdxgiFactory6", "IidIdxgiAdapter1", "IdxgiFactory6"} {
+		hits := dxgi.Lookup(sym)
+		if len(hits) == 0 {
+			t.Errorf("c.dxgi missing %q", sym)
+			continue
+		}
+		it, err := dxgi.Item(hits[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("c.dxgi %s -> kind=%s defs=%v text=%.200s", sym, it.Kind, it.Defs, it.Text)
+	}
+	d3d := openView("d3d12")
+	for _, sym := range []string{"IidId3d12Device", "ID3D12Device"} {
+		hits := d3d.Lookup(sym)
+		if len(hits) == 0 {
+			t.Errorf("c.d3d12 missing %q", sym)
+			continue
+		}
+		it, err := d3d.Item(hits[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("c.d3d12 %s -> kind=%s defs=%v text=%.200s", sym, it.Kind, it.Defs, it.Text)
+	}
+}

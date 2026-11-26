@@ -33,7 +33,7 @@ func TestMkSdkCommand(t *testing.T) {
 	if st, _, errOut := mk("sdk", "bogus"); st != 2 || !strings.Contains(errOut, "usage: mk sdk") {
 		t.Errorf("mk sdk bogus: status %d, stderr %q", st, errOut)
 	}
-	if st, v, _ := mk("version"); st != 0 || !strings.Contains(v, "\nsystem views: 4 carried, from windows-sdk 10.0.28000.0 (mk sdk") {
+	if st, v, _ := mk("version"); st != 0 || !strings.Contains(v, "\nsystem views: 5 carried, from vulkan-headers unversioned, windows-sdk 10.0.28000.0 (mk sdk") {
 		t.Errorf("mk version: status %d\n%s", st, v)
 	}
 }

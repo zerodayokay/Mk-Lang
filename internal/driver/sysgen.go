@@ -127,6 +127,17 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 					why = "no Vulkan-Headers include directory given (-vulkan)"
 					break
 				}
+				if d := o.Glibc[target]; d != "" && !slices.Contains(inputs, string(sysview.InputGlibc)) {
+					sysroot = append(sysroot, d)
+					inputs = append(inputs, string(sysview.InputGlibc))
+					version[string(sysview.InputGlibc)] = "unversioned"
+				}
+				defs := r.DefinesFor(target)
+				if (slices.Contains(defs, "VK_USE_PLATFORM_XLIB_KHR") && !hasSysrootHeader(sysroot, "X11/Xlib.h")) ||
+					(slices.Contains(defs, "VK_USE_PLATFORM_WAYLAND_KHR") && !hasSysrootHeader(sysroot, "wayland-client.h")) {
+					why = "no X11/Wayland headers for " + target
+					break
+				}
 				if !slices.Contains(inputs, string(r.Input)) {
 					sysroot = append(sysroot, o.Vulkan)
 					inputs = append(inputs, string(r.Input))
@@ -379,4 +390,15 @@ func checkWholeViews(tools *toolchain.Tools, target string, views []sysview.View
 		return nil, fmt.Errorf("sysview: the check of the views for %s failed outside any item:\n%s", target, strings.Join(loose, "\n"))
 	}
 	return bad, nil
+}
+
+// hasSysrootHeader reports whether rel exists under any directory in dirs.
+func hasSysrootHeader(dirs []string, rel string) bool {
+	p := filepath.FromSlash(rel)
+	for _, d := range dirs {
+		if isRegular(filepath.Join(d, p)) {
+			return true
+		}
+	}
+	return false
 }
