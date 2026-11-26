@@ -96,10 +96,11 @@ test "NUL" {
 // found by many inputs is saved once (not up to 20 files), and a
 // second run that finds it again saves nothing new but still fails.
 // The fuzz time is far longer than the runs need: each ends at its 20th
-// failing run, however slowly the machine starts a child.
+// failing run, however slowly the machine starts a child (and a target
+// that stopped failing fails the test in minutes, not at go test's limit).
 func TestMkTestFuzzOneSavePerFailureAndDeviceName(t *testing.T) {
 	root := testPkg(t, map[string]string{"main.mk": fuzzNamesSource})
-	rep := mkTest(t, Config{Root: root}, TestOptions{Fuzz: "NUL", FuzzTime: 10 * time.Minute})
+	rep := mkTest(t, Config{Root: root}, TestOptions{Fuzz: "NUL", FuzzTime: 2 * time.Minute})
 	if len(rep.Tests) != 1 || rep.Tests[0].Result != "fail" || !strings.Contains(rep.Tests[0].Output, "not saved again") ||
 		!strings.Contains(rep.Tests[0].Output, ", 20 failing runs, 1 input saved\n") {
 		t.Fatalf("--fuzz NUL: %+v", rep.Tests)
@@ -112,7 +113,7 @@ func TestMkTestFuzzOneSavePerFailureAndDeviceName(t *testing.T) {
 	if files := corpusFiles(dir); len(files) != 1 {
 		t.Errorf("saved %d inputs for one failure: %q", len(files), files)
 	}
-	rep = mkTest(t, Config{Root: root}, TestOptions{Fuzz: "NUL", FuzzTime: 10 * time.Minute})
+	rep = mkTest(t, Config{Root: root}, TestOptions{Fuzz: "NUL", FuzzTime: 2 * time.Minute})
 	if len(rep.Tests) != 1 || rep.Tests[0].Result != "fail" || !strings.Contains(rep.Tests[0].Output, ", 20 failing runs, 0 inputs saved\n") || len(corpusFiles(dir)) != 1 {
 		t.Errorf("a second run: %+v, %d files", rep.Tests, len(corpusFiles(dir)))
 	}
