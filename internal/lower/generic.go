@@ -67,6 +67,7 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 			// arm's value is retyped to it by armAssign instead.
 			continue
 		}
+		orig := l
 		l = bl.remapped(l)
 		lt := bl.b.Locals[l].Type
 		nt := bl.substParam(lt, uint32(param), x)
@@ -85,6 +86,7 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 			// with a loan of its referent the source holds.
 			if bl.tab.Kind(lt) == types.KMut && named[loc.Name] {
 				bl.narrowReborrow(l, lt, nt, c.Span())
+				bl.remap[orig] = bl.remap[l]
 			}
 			continue
 		}
@@ -98,6 +100,7 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 		sc.locals = append(sc.locals, n)
 		sc.narrowed = append(sc.narrowed, narrowRec{orig: l, narrowed: n, writeBack: plainBefore && loc.Var && writes[loc.Name]})
 		bl.remap[l] = n
+		bl.remap[orig] = n // a name reads orig: a chain of narrowings ends at n
 	}
 	bl.armStmts(s.Then)
 	bl.closeScope(closeBrace(s.Then))

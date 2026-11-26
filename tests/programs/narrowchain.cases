@@ -1,0 +1,3 @@
+# A narrowing to another type parameter follows that parameter's own narrowing, in every instance.
+case ok
+stdout narrowchain.out

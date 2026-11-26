@@ -1,11 +1,12 @@
 // Why: inside `if T is X` the reference says T is X, so a type written T in
 // the branch must read as X wherever a value of type T does, or a call such
 // as Id[T](x) expects a T where the branch gives an X.
-// What: TestNarrowedTypeExpr and TestNarrowedTypeExprRaw.
+// What: TestNarrowedTypeExpr, TestNarrowedChain and TestNarrowedTypeExprRaw.
 // How: body cases over the forms a type is written in (a type argument, a
 // local's declared type, a conversion, a nested generic, a method of a
 // generic owner), an `else if T is` chain and the else branch, which keeps
-// T opaque; then std.raw's integer-bound intrinsics over a stub of std.raw.
+// T opaque; a narrowing to a parameter that is narrowed in turn; then
+// std.raw's integer-bound intrinsics over a stub of std.raw.
 
 package check
 
@@ -33,6 +34,21 @@ func TestNarrowedTypeExpr(t *testing.T) {
 		{"conversion outside a branch", "F[T: Plain](n: u8): T {\n\treturn T(n)\n}\n", "E0301@2:9"},
 		// The narrowed argument is a closed type, judged as one written so.
 		{"narrowed argument against a closed parameter", id + "F[T: Plain](x: T, y: i64): i64 {\n\tif T is u32 {\n\t\treturn Id[T](y)\n\t}\n\treturn y\n}\n", "E0301@7:10 E0301@7:16"},
+	})
+}
+
+// TestNarrowedChain: inside `if T is U { if U is u32 { .. } }` T is u32,
+// for its values and the types written T alike; between the two tests T is
+// U, still opaque.
+func TestNarrowedChain(t *testing.T) {
+	const id = "Id[T](x: T): T {\n\treturn x\n}\n\n" // lines 1-4
+	runBodyCases(t, []bodyCase{
+		{"type argument and value", id + "F[T: Plain, U: Plain](x: T): int {\n\tif T is U {\n\t\tif U is u32 {\n\t\t\ta := Id[T](x) + 1\n\t\t\tvar b: T = x + 2\n\t\t\treturn int(a + b + Cast[T](3))\n\t\t}\n\t}\n\treturn 0\n}\n", ""},
+		{"three steps", id + "F[T: Plain, U: Plain, V: Plain](x: T): T {\n\tif T is U {\n\t\tif U is V {\n\t\t\tif V is u16 {\n\t\t\t\tvar b: [2]T = [x, x + 1]\n\t\t\t\treturn Id[T](b[1])\n\t\t\t}\n\t\t}\n\t}\n\treturn x\n}\n", ""},
+		{"through a constructed type", id + "F[T: Plain, U: Plain](x: T): int {\n\tif T is ?U {\n\t\tif U is u8 {\n\t\t\tvar y: T = some(Id[U](3) + 1)\n\t\t\treturn int(y else { 0 }) + int(x else { 9 })\n\t\t}\n\t}\n\treturn -1\n}\n", ""},
+		{"the result", "F[T: Plain, U: Plain](x: T): T {\n\tif T is U {\n\t\tif U is u32 {\n\t\t\treturn x * 3\n\t\t}\n\t}\n\treturn x\n}\n", ""},
+		// Outside the inner test T is U, which has no bound for a literal.
+		{"between the tests", "F[T: Plain, U: Plain](x: T): T {\n\tif T is U {\n\t\tif U is u32 {\n\t\t\treturn x\n\t\t}\n\t\treturn x + 1\n\t}\n\treturn x\n}\n", "E0703@6:14"},
 	})
 }
 
