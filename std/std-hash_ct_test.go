@@ -58,11 +58,12 @@ export Main(sys: &System): WriteError!void {
 }
 `
 
-// h2CtAllow is the reading (2026-11-12, mk and std of the tree, LLVM
-// 21.1.8, the four builds of TestSTDHASH_ConstantTimeDisassembly): for
-// each function, the most "other" jumps any build has, every one read in
-// llvm-objdump's listing as a test of a length, a loop bound or a CPU
-// feature, never of the message, the key or the state.
+// h2CtAllow is the reading (mk and std of the tree, LLVM 21.1.8, the four
+// builds of TestSTDHASH_ConstantTimeDisassembly, PGO from h2CtTrain's
+// profile): for each function, the most "other" jumps any build has, every
+// one read in llvm-objdump's listing as a test of a length, a loop bound, a
+// CPU feature, an error tag or a printed value, never of the message, the
+// key or the state.
 var h2CtAllow = map[string]int{
 	// Main: the small inlined SHA state methods add no branches.
 	// Without PGO, Print's writer path is inlined, with write error tags,
@@ -111,7 +112,7 @@ var h2CtAllow = map[string]int{
 	// once here: simd.Cpu()'s cache not yet filled (testq %rax; je to the
 	// detect call), the avx2 and bmi2 bits (notl; testl $0x163f; jne to the
 	// portable loop), then the loop's entry: fewer than 128 bytes (cmpq
-	// $0x80). Read 2026-11-15 on the four builds. Under kernel-pgo the guard
+	// $0x80). Under kernel-pgo the guard
 	// is the kernel's Sha512Blocks, out of line, and this tests its answer
 	// only.
 	"mk.std.hash.Sha512Blocks":      3,
@@ -131,10 +132,10 @@ var h2CtAllow = map[string]int{
 }
 
 // h2CtByBuild is this test's per-build counts (ctByBuild): each function
-// whose four builds read different counts, at the count each build had
-// (2026-11-18, the test's -v log; SHA-1's and SHA-512's Bytes under PGO
-// gain their whole-block count test, len & -64 or -128 <= 0, read), every
-// one at or below the reading above.
+// whose four builds read different counts, at the count each build has
+// (the test's -v log; SHA-1's and SHA-512's Bytes under PGO gain their
+// whole-block count test, len & -64 or -128 <= 0, read), every one at or
+// below the reading above.
 var h2CtByBuild = ctByBuild{
 	"mk.main.Main":                  {"kernel-pgo": 36, "masked-pgo": 31},
 	"mk.std.hash.Sha1State:Bytes":   {"kernel-pgo": 4, "masked-pgo": 4},
