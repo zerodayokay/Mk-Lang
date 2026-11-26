@@ -276,16 +276,27 @@ func TestExternVarPlain(t *testing.T) {
 // TestExternVarOtherModule: `&k.Ticks` of another module's
 // extern var is a raw pointer, as `&Ticks` is in its own module, so Mk code
 // can write a C-bound extern var through it. It gave a reference before
-// (E0301 against *u64, and the write through it refused).
+// (E0301 against *u64, and the write through it refused). A direct write,
+// `k.Ticks = 0` or `k.Ticks += 1`, is E0404 alone, which names that way,
+// as `Ticks = 0` is in its own module; it was also E0301 (not a place),
+// the one a report showed.
 func TestExternVarOtherModule(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"address", "import k\n\nEnd(): *u64 {\n\tunsafe \"r\" {\n\t\treturn &k.Ticks\n\t}\n}\n", ""},
 		{"write through the address", "import k\n\nReset() {\n\tunsafe \"r\" {\n\t\t*(&k.Ticks) = 0\n\t}\n}\n", ""},
+		{"direct write", "import k\n\nReset() {\n\tunsafe \"r\" {\n\t\tk.Ticks = 0\n\t}\n}\n", "E0404@5:3"},
+		{"compound write", "import k\n\nReset() {\n\tunsafe \"r\" {\n\t\tk.Ticks += 1\n\t}\n}\n", "E0404@5:3"},
+		{"mut", "import k\n\nReset(): mut u64 {\n\tunsafe \"r\" {\n\t\treturn mut k.Ticks\n\t}\n}\n", "E0404@5:14"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t, true)
 			w.add("k", opt{unsafe: true}, "export extern var Ticks: u64\n").wantClean(t)
-			checkBodyIn(t, w, opt{unsafe: true}, tc.want, tc.src)
+			b := checkBodyIn(t, w, opt{unsafe: true}, tc.want, tc.src)
+			for _, d := range b.bodyDiags(t) {
+				if d.Code == diag.E0404 && !strings.Contains(d.Message, "`*(&k.Ticks)`") {
+					t.Errorf("E0404 names no pointer of k.Ticks: %s", d.Message)
+				}
+			}
 		})
 	}
 }
