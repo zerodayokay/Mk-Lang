@@ -339,7 +339,8 @@ export RunFromC(entry: fn(*u8), frame: *u8) {
     if raw.IsNull(h) || !rt.GrowTop(h, need) {
         waiters := SlotWaiters(rt.ClassDefault)
         unsafe "the TaskState page Start mapped, which lives until exit; slot_waiters is atomic" {
-            // Raise slot_waiters so busy carriers flush their per-carrier slot caches.
+            // Edge: publish Default slot demand before retrying TakeSlot so
+            // busy carriers can flush their per-carrier caches.
             _ = (*waiters).Add(1)
         }
         for raw.IsNull(h) || !rt.GrowTop(h, need) {
@@ -350,6 +351,7 @@ export RunFromC(entry: fn(*u8), frame: *u8) {
             h = rt.TakeSlot(rt.ClassDefault)
         }
         unsafe "matching decrement for slot_waiters" {
+            // Edge: withdraw this caller's demand once its slot can be used.
             _ = (*waiters).Add(0xFFFF_FFFF)
         }
     }

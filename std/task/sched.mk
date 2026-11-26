@@ -738,6 +738,8 @@ FindRunnable(c: *Carrier): *Task {
         }
         if due {
             unsafe "c is the calling thread's carrier; flush cached slots if any spawner waits" {
+                // Edge: observed Default slot demand or an armed trim gate
+                // sends this carrier's cached slots back to the shared region.
                 if (*c).slot_count > 0 && ((*TS()).slot_waiters.Load() != 0 || rt.TrimGateGet() != 0) {
                     FlushSlots(c, int((*c).slot_count))
                 }
