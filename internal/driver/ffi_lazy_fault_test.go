@@ -372,12 +372,14 @@ func TestFFI_LazyPresentForms(t *testing.T) {
 // from System32 only: with std's list mkstdlazy.lazy.def (a std copy) and
 // mkstdlazy.dll beside the executable, in the current directory and on
 // PATH, dl.Present is false, and the import table names no mkstdlazy.dll.
-// (crypt32.dll itself cannot show this: the loader maps it from
-// \KnownDlls, where a KnownDLL's dependencies are, whatever the flags.)
+// (crypt32.dll itself cannot show this on this host: the loader maps it
+// from \KnownDlls, which holds it as a KnownDLL's dependency, whatever
+// the flags.)
 func TestFFI_LazyStdSearch(t *testing.T) {
 	needWindows(t)
 	tools := needTools(t)
-	std := copyStd(t, map[string]string{"sys/windows/mkstdlazy.lazy.def": "MkStdLazy\n"}, nil)
+	std := ffiStdCopy(t) // MK_FFI_STD's std when set, else the embedded one
+	lazyWrite(t, filepath.Join(std, "sys", "windows", "mkstdlazy.lazy.def"), "MkStdLazy\n")
 	elsewhere := t.TempDir()
 	dll := lazyDLL(t, tools, elsewhere, "mkstdlazy.dll", "__declspec(dllexport) int MkStdLazy(void) { return 7; }\n", false)
 	root := t.TempDir()

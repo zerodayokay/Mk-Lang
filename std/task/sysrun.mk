@@ -9,10 +9,10 @@
 //
 // How: SystemStack, then mk_call_system (the support pack's switch) and
 // SystemStackDone, as a switched extern call does (internal/codegen
-// sysstack.go). Modules above std.task call it as a function; std.sys
-// reaches it by its symbol with no import (std.task imports std.sys), and
-// the build collects it for std.sys only when it binds a function lazily
-// (internal/mono, LazyRuntime).
+// sysstack.go). A module above std.task may call it as a function (none
+// does yet, and no test does); std.sys reaches it by its symbol with no
+// import (std.task imports std.sys), and the build collects it for std.sys
+// only when it binds a function lazily (internal/mono, LazyRuntime).
 
 import std.raw
 

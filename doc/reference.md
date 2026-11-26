@@ -9957,7 +9957,7 @@ const Package = pkg.Package(
 
 | Field | Values |
 |---|---|
-| `name` | A dynamic library's exact file name, as the loader looks it up, with no separator. A static library's name labels it in diagnostics |
+| `name` | A dynamic or lazy library's exact file name, as the loader looks it up, with no separator. A static library's name labels it in diagnostics |
 | `kind` | `"dynamic"`: the OS loader opens it when the program starts. `"lazy"`: a DLL loaded on the first call of one of its functions, never in the import table (`x86_64-windows` only). `"static"`: an archive linked into the executable |
 | `path` | Package-relative. A Windows DLL, dynamic or lazy: `""` for the host's System32 copy (on a Windows host only), a `.def` file listing one exported name per line (on any host), or the `.dll` itself, which mk copies beside the executable. A Linux library: `""`, or a `.def` whose names may carry `@VERSION`. An archive: the `.lib` or `.a` file |
 | `target` | `"x86_64-windows"`, `"x86_64-linux"` or `"aarch64-linux"` |
