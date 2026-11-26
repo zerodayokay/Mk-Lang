@@ -1,7 +1,8 @@
 // Why: std.fs and std.net must handle every answer an IoTable may give,
 // including the ones the native runtime never shows.
 // What: TestStdIo_FaultInjection over a scripted fixture Io.
-// How: each SysErr maps to one fs.Error or net.Error member; partial reads,
+// How: each SysErr maps to one fs.Error or net.Error member, with Dial
+// translating a missing host to InvalidAddress first; partial reads,
 // writes, recvs and sends are looped over; a bad count or a write with no
 // progress is Os(0), WriteError or ReadError, never a moved position, an
 // out-of-bounds slice or an endless loop; listen's port arrives in
@@ -38,10 +39,10 @@ var Fault: FaultWords = FaultWords(mode: raw.Atomic[u32].New(0), err: raw.Atomic
     os: raw.Atomic[i64].New(0), left: raw.Atomic[i64].New(0), calls: raw.Atomic[i64].New(0),
     at: raw.Atomic[i64].New(0), base: raw.Atomic[u64].New(0))
 
-const FaultErrs: [16]SysErr = [SysErr.None, SysErr.NotFound, SysErr.Exists, SysErr.Denied,
+const FaultErrs: [17]SysErr = [SysErr.None, SysErr.NotFound, SysErr.Exists, SysErr.Denied,
     SysErr.IsDirectory, SysErr.NotDirectory, SysErr.NoSpace, SysErr.InvalidPath, SysErr.Canceled,
     SysErr.Closed, SysErr.Refused, SysErr.Reset, SysErr.AddrInUse, SysErr.Unreachable,
-    SysErr.InvalidAddress, SysErr.Other]
+    SysErr.InvalidAddress, SysErr.Other, SysErr.Unsupported]
 
 const FaultTable = IoTable(open: FOpen, read: FRead, write: FWrite, size: FSize,
     sync: FSync, close: FClose, rename: InertRename, remove: InertPath, listen: FListen,
@@ -546,13 +547,13 @@ type faultCase struct {
 
 // sysErrNames is core_iodecl.mk's SysErr in declaration order.
 var sysErrNames = []string{"None", "NotFound", "Exists", "Denied", "IsDirectory", "NotDirectory", "NoSpace",
-	"InvalidPath", "Canceled", "Closed", "Refused", "Reset", "AddrInUse", "Unreachable", "InvalidAddress", "Other"}
+	"InvalidPath", "Canceled", "Closed", "Refused", "Reset", "AddrInUse", "Unreachable", "InvalidAddress", "Other", "Unsupported"}
 
 // fsMember and netMember are 4.12's mapping, the reference model: the
 // member of the same name when the set has one, else Os with the code.
 func fsMember(k int) string {
 	switch n := sysErrNames[k]; n {
-	case "NotFound", "Exists", "Denied", "IsDirectory", "NotDirectory", "NoSpace", "InvalidPath", "Canceled":
+	case "NotFound", "Exists", "Denied", "IsDirectory", "NotDirectory", "NoSpace", "InvalidPath", "Canceled", "Unsupported":
 		return n
 	}
 	return "Os 77"
@@ -560,7 +561,7 @@ func fsMember(k int) string {
 
 func netMember(k int) string {
 	switch n := sysErrNames[k]; n {
-	case "Refused", "Reset", "AddrInUse", "Unreachable", "InvalidAddress", "Canceled", "Closed":
+	case "Refused", "Reset", "AddrInUse", "Unreachable", "InvalidAddress", "Canceled", "Closed", "Unsupported":
 		return n
 	}
 	return "Os 77"
@@ -571,11 +572,16 @@ func faultCases() []faultCase {
 	// Every SysErr but None through fs.Open, ReadBytes, net.Dial, recv and
 	// Listener.Accept after a listen that succeeded (the mapping).
 	for k := 1; k < len(sysErrNames); k++ {
+		// Dial maps a failed name lookup to InvalidAddress before the common mapping.
+		dial := netMember(k)
+		if sysErrNames[k] == "NotFound" {
+			dial = "InvalidAddress"
+		}
 		cs = append(cs,
 			faultCase{"open", 1, k, 77, 0, fsMember(k) + " calls 0"},
 			faultCase{"readbytes", 3, k, 77, 10, fsMember(k) + " calls 1"},
 			faultCase{"net.recv", 3, k, 77, 10, netMember(k) + " calls 1"},
-			faultCase{"net.dial", 1, k, 77, 0, netMember(k) + " calls 0"},
+			faultCase{"net.dial", 1, k, 77, 0, dial + " calls 0"},
 			faultCase{"net.accept", 9, k, 77, 0, netMember(k) + " calls 0"})
 	}
 	cs = append(cs,
