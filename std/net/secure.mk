@@ -1,10 +1,13 @@
 // Why: https and wss need TLS, but std.http and std.websocket must not
 // import std.tls; net.Secure is the connector they call instead.
-// What: Secure, Secure.Of and Secure.Connect.
+// What: Secure, Secure.Of, Secure.OfAlpn, Secure.Connect and
+// Secure.Negotiate.
 // How: a function and its state, erased by std.core so callers never name
-// the state's type. Only std makes one: Secure.Of takes a core.ErasedCall,
-// which only a std module can build (std.core is std-internal), and
-// tls.Connector and tls.Acceptor are the two that ship.
+// the state's type. Only std makes one: Secure.Of takes a core.ErasedCall
+// and Secure.OfAlpn two core.TypedCalls, which only a std module can build
+// (std.core is std-internal), and tls.Connector and tls.Acceptor are the
+// two that ship. A connector made by Of has no negotiation call: its
+// Negotiate is Connect.
 
 import std.core
 
@@ -18,6 +21,10 @@ export struct Secure {
     /// for it.
     export call: core.ErasedCall
     thunk: fn(&Secure, h: &Heap into conn, io: Io, conn: Conn, host: str): Error!Conn from h, conn
+    // The call std negotiates an application protocol through, none for a
+    // connector made by Of.
+    nego: ?core.ErasedCall
+    negotiate: fn(&Secure, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): Error!(conn: Conn, chosen: int) from h, conn
 }
 
 /// The connector over c, which std made with core.ErasedCall.Of[T, F] from
@@ -29,7 +36,19 @@ export struct Secure {
 /// core.ErasedCall. A c made from another pair of types panics (code 8)
 /// at Connect, before the function runs. O(1); allocates nothing.
 export Secure.Of[T: Share](c: core.ErasedCall): Secure from c {
-    return Secure(call: c, thunk: SecureCall[T])
+    return Secure(call: c, thunk: SecureCall[T], nego: none, negotiate: Unnegotiated)
+}
+
+/// The connector over c, as Of's, that also negotiates an application
+/// protocol through n: given what c's function is given and the protocols
+/// to negotiate in preference order (empty for the connector's own), the
+/// secure connection and the index in offer of the protocol chosen, -1 for
+/// none. Both are calls on a state of type T, and std made each with
+/// core.TypedCall.Of, so a function of another type is refused at compile
+/// time. Only std calls this: no program can build a core.TypedCall.
+/// Provisional. O(1); allocates nothing.
+export Secure.OfAlpn[T: Share](c: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): Error!Conn from h, conn], n: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): Error!(conn: Conn, chosen: int) from h, conn]): Secure from c, n {
+    return Secure(call: c.call, thunk: SecureCall[T], nego: some(n.call), negotiate: NegotiateCall[T])
 }
 
 // SecureCall recovers the state and the function as the types Of was
@@ -38,6 +57,26 @@ SecureCall[T: Share](s: &Secure, h: &Heap into conn, io: Io, conn: Conn, host: s
     f := s.call.Fn[T, fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): Error!Conn from h, conn]()
     st := s.call.State[T, fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): Error!Conn from h, conn]()
     return try f(st, h, io, conn, host)
+}
+
+// NegotiateCall recovers the negotiation call's state and function as the
+// types OfAlpn was given, and calls it with offer.
+NegotiateCall[T: Share](s: &Secure, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): Error!(conn: Conn, chosen: int) from h, conn {
+    n := s.nego else {
+        // OfAlpn sets nego with this thunk, so this is not reached.
+        return try Unnegotiated(s, h, io, conn, host, offer)
+    }
+    f := n.Fn[T, fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): Error!(conn: Conn, chosen: int) from h, conn]()
+    st := n.State[T, fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): Error!(conn: Conn, chosen: int) from h, conn]()
+    return try f(st, h, io, conn, host, offer)
+}
+
+// Unnegotiated is the Negotiate of a connector made by Of: its Connect,
+// offer unused, and chosen -1.
+Unnegotiated(s: &Secure, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): Error!(conn: Conn, chosen: int) from h, conn {
+    thunk := s.thunk
+    c := try thunk(s, h, io, conn, host)
+    return (conn: c, chosen: -1)
 }
 
 /// Makes conn secure for host (empty on a server) by running the
@@ -52,4 +91,25 @@ SecureCall[T: Share](s: &Secure, h: &Heap into conn, io: Io, conn: Conn, host: s
 export Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): Error!Conn from h, conn {
     thunk := self.thunk
     return try thunk(self, h, io, conn, host)
+}
+
+/// Like Connect, but negotiates the application protocol (ALPN, RFC
+/// 7301) from offer, in preference order, in place of the connector's own
+/// list, for this one handshake: a client offers them, a server accepts
+/// them and picks the first of offer the client also offered. chosen is
+/// the index in offer of the protocol the handshake chose, -1 when the
+/// peer chose none (a client that sent no ALPN, a server that answered
+/// none); with offer empty the handshake is Connect's, and chosen is -1.
+/// A connector made by Of negotiates nothing: this is its Connect, offer
+/// unused, and chosen is -1. Provisional. Errors: Connect's. On a client,
+/// an offer std.tls cannot send (a name that is empty or over 255 bytes,
+/// or names of more than 65,535 bytes in all) is SecureFailed(why:
+/// Handshake) before any I/O; a server never matches such a name. A
+/// server that shares none of the client's protocols sends the
+/// no_application_protocol alert, and both sides fail with
+/// SecureFailed(why: Handshake). O(1) here plus the handshake's cost,
+/// which reads the names; allocates what Connect does.
+export Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): Error!(conn: Conn, chosen: int) from h, conn {
+    negotiate := self.negotiate
+    return try negotiate(self, h, io, conn, host, offer)
 }

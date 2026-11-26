@@ -4,6 +4,14 @@
 package lsp
 
 var surfaceDocs3 = map[string]surfaceDoc{
+	"simd.Vec.ShlEach":           {Module: "std.simd", Lines: []string{"Vec[T, N].ShlEach(self, k: Vec[T, N]): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
+	"simd.Vec.ShrEach":           {Module: "std.simd", Lines: []string{"Vec[T, N].ShrEach(self, k: Vec[T, N]): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
+	"simd.Vec.Shuffle":           {Module: "std.simd", Lines: []string{"Vec[T, N].Shuffle(self, b: Vec[T, N], const idx: [N]int): Vec[T, N] from self, b requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
+	"simd.Vec.Slide":             {Module: "std.simd", Lines: []string{"Vec[T, N].Slide(self, prev: Vec[T, N], const k: int): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires k >= 0 && k <= N"}},
+	"simd.Vec.Splat":             {Module: "std.simd", Lines: []string{"Vec[T, N].Splat(x: T): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
+	"simd.Vec.Sqrt":              {Module: "std.simd", Lines: []string{"Vec[T, N].Sqrt(self): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
+	"simd.Vec.SubSat":            {Module: "std.simd", Lines: []string{"Vec[T, N].SubSat(self, b: Vec[T, N]): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
+	"simd.Vec.ToArray":           {Module: "std.simd", Lines: []string{"Vec[T, N].ToArray(self): [N]T requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Vec.Trunc":             {Module: "std.simd", Lines: []string{"Vec[T, N].Trunc[U: Lane](self): Vec[U, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Vec.WidenHi":           {Module: "std.simd", Lines: []string{"Vec[T, N].WidenHi[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
 	"simd.Vec.WidenLo":           {Module: "std.simd", Lines: []string{"Vec[T, N].WidenLo[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},

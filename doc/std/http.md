@@ -515,7 +515,7 @@ export Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): Error!Exchange 
 ```
 
 - Flows: The result borrows from a and self.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends req and reads the reply's head, following redirects, and returns
 an Exchange that holds the connection and reads the body. End the
@@ -564,7 +564,7 @@ export Client.DoStreaming(&self, a: &Arena, io: Io, req: &ClientRequest, body: m
 ```
 
 - Flows: The result borrows from a and self.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends req as Do does, with the request's body read from body instead of
 req.body, which is not sent: for an upload that need not fit in memory.
@@ -589,7 +589,7 @@ export Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): Error!Reply 
 ```
 
 - Flows: The result borrows from a.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends req as Do does, reads the whole body into a, and closes the
 exchange: for a reply that fits in memory. O(bytes sent and read);
@@ -705,7 +705,7 @@ export Dispatch[C](a: &Arena, io: Io, routes: []Route[C], c: &C, req: &Request, 
 ```
 
 - Flows: Stores the loans routes holds in a.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Calls the handler of the most specific route whose method and pattern
 match req, and passes its errors through. One scan of the table,
@@ -794,7 +794,7 @@ pool.
 export Exchange.Close(self, io: Io): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Ends the exchange. When the body was read to its end and the reply let
 the connection stay open, the connection goes back to the client's pool
@@ -815,7 +815,7 @@ export Fetch(a: &Arena, io: Io, method: str, url: str, headers: []Header, body: 
 ```
 
 - Flows: The result borrows from a.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends one request over a new plain connection and reads the whole
 reply into a. url is an http URL; Fetch has no https, no pool, no
@@ -908,7 +908,7 @@ export ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): Error!Request 
 ```
 
 - Flows: The result borrows from a.
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Reads one request from r into a: the head, then a Content-Length or
 chunked body. Use it to read requests from a stream of your own; Serve
@@ -1034,7 +1034,7 @@ allocates data's length in the arena.
 export Response.Flush(mut self, io: Io, link: &Link): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Sends what the response holds so far, before the handler returns: for
 a reply produced over time, such as a long listing or server events.
@@ -1091,7 +1091,7 @@ nothing until a field or body bytes are added.
 export Response.Send(&self, io: Io, w: mut Writer): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Writes the response to w, then flushes w. The server calls it; call it
 yourself to answer a request read with ReadRequest. Fails with w's
@@ -1158,7 +1158,7 @@ Fields:
 export Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): Error!void): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Listens on addr and serves every connection in a task of its own, with
 keep-alive and pipelining, until the caller's scope is cancelled; then
@@ -1192,7 +1192,7 @@ its connection.
 export ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Serves every connection l accepts as ServeOn does, with o's settings,
 until the caller's scope is cancelled, and hands each call of handle
@@ -1224,7 +1224,7 @@ InvalidAddress; other Accept errors wait and try again as Serve's do.
 export ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Serves every connection l accepts, as ServeWith does with o's settings,
 until the caller's scope is cancelled. The caller makes the listener, so
@@ -1250,7 +1250,7 @@ InvalidAddress; other Accept errors wait and try again as Serve's do.
 export ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut)
+- Errors: Error (Canceled, Closed, OutOfMemory, ReadError, WriteError, BadRequest(offset: int), BadUrl, BodyNotReplayable, NoSecureTransport, ProxyRefused(code: int), Status(code: int), TooLarge, TooManyRedirects, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut)
 
 Listens on addr and serves every connection in a task of its own until
 the caller's scope is cancelled, as Serve does, with o's settings and a

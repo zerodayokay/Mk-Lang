@@ -657,7 +657,9 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
     var w := Out.New(mut out[..])
     WriteHello(mut w, &m, &shares)
     if w.full {
-        // An ALPN protocol of 0 or over 255 bytes: the configuration's.
+        // The extensions past their 2-byte length: an ALPN list that fits
+        // its own (ClientWith checked it) but not beside the other
+        // extensions, or a host of tens of KiB.
         fail Unsupported
     }
     hs.transcript.Add(w.b[0..w.at])
@@ -913,7 +915,9 @@ ClientFlights(h: &Heap, a: &Arena, io: Io, conn: &net.Conn, c: &Config, host: st
 ///
 /// Errors: the peer's Alert; Protocol and Unsupported, after the matching
 /// alert was sent; Unsupported also, before any I/O, for an empty host,
-/// which names nothing to check; x509.Error's members for the chain; the
+/// which names nothing to check, and for a c.alpn that cannot be sent (a
+/// name that is empty or over 255 bytes, or names of more than 65,535
+/// bytes in all, RFC 7301 3.1); x509.Error's members for the chain; the
 /// connection's net.Error, and time.TimedOut past c.handshake;
 /// OutOfMemory. A cancel leaves conn with the caller mid-handshake, with
 /// an unknown part of the handshake sent: close it.
@@ -926,6 +930,11 @@ ClientWith(h: &Heap, io: Io, conn: net.Conn, c: &Config, host: str, suites: []u1
     if HostOf(host).Len() == 0 {
         // x509.Verify checks no name for an empty host: without one any
         // certificate under the roots would do.
+        fail Unsupported
+    }
+    if !AlpnFits(c.alpn) {
+        // The configuration's protocols cannot be sent: refused before
+        // any I/O, so the peer sees nothing (Go's makeClientHello too).
         fail Unsupported
     }
     var b := try Box[Halves].New(h.Alloc(), Halves.New(c.close))
