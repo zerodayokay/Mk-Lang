@@ -10,8 +10,8 @@
 //
 // How: `Arena.Slice[T]` and `Arena.SliceAligned[T]` zero-fill their
 // elements, and `std.mem.Zeroed[T]` is a T of zero bytes, so `T` must be
-// zero-valid; Zeroed's T is its result, so it is also not an error union
-// (whose call would read as fallible); `raw.Atomic[T]` and `atomic.Atomic[T]`
+// zero-valid; Zeroed's T is also not an error union (whose zero is always
+// ok of its value type's zero); `raw.Atomic[T]` and `atomic.Atomic[T]`
 // need an integer `T` of 1, 2, 4 or 8 bytes or a raw pointer, and their
 // arithmetic (Add, AddOrd to XorOrd, FetchAdd to FetchXor) an integer;
 // `raw.ReadUnaligned[T]` and `raw.WriteUnaligned[T]` an integer `T`;
@@ -245,8 +245,9 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 			return
 		}
 		if n := narrowed(c.cfg.Types, u.env, t); c.memZeroed(item) && c.cfg.Types.Kind(n) == types.KErrorUnion {
-			// The call's result is its T: an error union there would make a
-			// call whose signature has no errors read as fallible.
+			// The call's result is its T, which it returns as a value (its
+			// signature names no errors), and the zero of an E!T is always
+			// ok of the value type's zero: that type is what to zero.
 			ts := u.str(t)
 			u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is an error union, and `mem.Zeroed` never fails: zero its value type, `"+u.str(c.cfg.Types.Get(n).Elem)+"`").
 				Text("param", "T").Text("bound", boundNotErrUnion).Text("type", ts))

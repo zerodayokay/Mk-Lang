@@ -1943,7 +1943,7 @@ The iterators `Split`, `Lines`, `Words`, `Scalars`, `MapIter`, `TextMapIter`, `C
 
 A type is zero-valid when all-zero bytes are a value of it. `Arena.Slice[T](n)` returns zeroed elements, and [`mem.Zeroed[T]()`](std/mem.md#layout) returns one zeroed value, so both need one.
 
-A zero-valid type is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, an `E!T` whose `T` is zero-valid, or an atomic word or `Cell` of a zero-valid `T` (`raw.Atomic[T]`, `atomic.Atomic[T]`, `atomic.AtomicInt`, `atomic.AtomicBool`, `Cell[T]`). A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not, and neither is a linear type, a `view` or `mut view` struct, a type with an `unsafe impl` of `Send` or `Share`, or a `Mutex`, `Chan` or `Arena`, whatever their fields.
+A zero-valid type is one of: an integer, a float, `bool`, `char`, `void`, a raw pointer, a `?T` of a plain `T`, an array, record or struct whose parts are all zero-valid, an enum whose variant with tag 0 exists and has only zero-valid fields, an `E!T` whose `T` is zero-valid, or an atomic word or `Cell` of a zero-valid `T` (`raw.Atomic[T]`, `atomic.Atomic[T]`, `atomic.AtomicInt`, `atomic.AtomicBool`, `Cell[T]`). A reference, `fn` value, `str`, slice, error-set value, type parameter, or struct with an `invariant` is not, and neither is a linear type, a `view` or `mut view` struct, a type with an `unsafe impl` of `Send` or `Share`, or a `Mutex`, `Chan` or `Arena`, whatever their fields. The zero of an `E!T` is `ok` of `T`'s zero, whatever its errors carry, since error codes start at 1.
 
 An atomic or a `Cell` is unique, so `[e; n]`, which copies `e`, cannot build an array of them (E0408), but zero bytes are a fresh value, not a copy: a global table of atomic words is `var Table: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()`, every word 0, with no `unsafe`.
 
@@ -1955,7 +1955,7 @@ Names(a: &Arena): OutOfMemory!int {
 }
 ```
 
-`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is its result, so it is not an error union either: `mem.Zeroed[E!T]()` is E0701, and `mem.Zeroed[T]()` makes the value. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
+`mem.Zeroed` is the way to fill a plain record of many fields, such as a C import's struct, without naming each one: every integer and float is 0, every `bool` false, every raw pointer null and every optional `none`. It is safe, because its `T` must be zero-valid. Its `T` is not an error union either: `mem.Zeroed[E!T]()` is E0701, since the zero of an `E!T` is always `ok` of `T`'s zero, the value `mem.Zeroed[T]()` makes. Mk still has no implicit zero value: a local is assigned before it is read, and `mem.Zeroed` is a call that says so.
 
 ```mk
 // verdict: ok
@@ -5538,7 +5538,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
-- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later, and a field or element of a [zeroed](#zero-valid-types) array, record or struct holds one, `ok` of its zero. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
 ```mk
