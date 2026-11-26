@@ -222,15 +222,15 @@ export QuicServer[T: QuicTransport](h: &Heap, io: Io, t: mut T, c: &Config, alpn
     return QuicDone(alpn: chosen.alpn, n: chosen.n)
 }
 
-// QuicPostMessage checks one 1-RTT post-handshake CRYPTO message in buf
-// (RFC 9001 4.4, 4.6.1, 6): returns 0 when buf does not yet hold a whole
-// message, or the bytes consumed for a dropped NewSessionTicket on a
-// client. Fails with Protocol (connection PROTOCOL_VIOLATION) on a
-// CertificateRequest (4.4) or a NewSessionTicket whose early_data
-// extension is not 0xffffffff (4.6.1), with Alert(AlertDecodeError) on a
-// malformed NewSessionTicket, and with Alert(AlertUnexpectedMessage)
-// (CRYPTO_ERROR 0x010a) on KeyUpdate (6) or any other message.
-QuicPostMessage(server: bool, buf: []u8): Alert|Protocol!int {
+/// Checks one 1-RTT post-handshake CRYPTO message in `buf` (RFC 9001 4.4,
+/// 4.6.1, 6): returns 0 when `buf` does not yet hold a whole message, or the
+/// bytes consumed for a dropped NewSessionTicket on a client. Fails with
+/// Protocol (connection PROTOCOL_VIOLATION) on a CertificateRequest (4.4) or a
+/// NewSessionTicket whose early_data extension is not 0xffffffff (4.6.1), with
+/// Alert(decode_error) on a malformed NewSessionTicket, and with
+/// Alert(unexpected_message) (CRYPTO_ERROR 0x010a) on KeyUpdate (6) or any
+/// other message. O(buf.Len()); allocates nothing.
+export QuicPostMessage(server: bool, buf: []u8): Alert|Protocol!int {
     if buf.Len() < 4 {
         return 0
     }

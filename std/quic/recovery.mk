@@ -191,6 +191,11 @@ Recovery.NextPn(mut self, space: Space): i64 {
     return self.spaces[SpaceIndex(space)].AllocPn()
 }
 
+// Returns the next packet number that will be allocated in space without advancing it. O(1).
+Recovery.PeekPn(&self, space: Space): i64 {
+    return self.spaces[SpaceIndex(space)].next_pn
+}
+
 // Records an intentionally skipped packet number in space (RFC 9000 21.4). O(1).
 Recovery.SkipPn(mut self, space: Space, pn: i64) {
     self.spaces[SpaceIndex(space)].RecordSkip(pn)
@@ -691,6 +696,27 @@ Recovery.ResetForRetry(mut self, now: time.Instant) {
     self.timer_ns = none
     self.acked_times_head = 0
     self.acked_times_len = 0
+    self.SetLossDetectionTimer(now_ns)
+}
+
+// Resets congestion control and RTT estimator when a peer migration changes IP
+// address, leaving them intact for a port-only NAT rebind (RFC 9000 9.4, QT-306). O(1).
+Recovery.OnPathValidated(mut self, ip_changed: bool, now: time.Instant) {
+    if !ip_changed {
+        return
+    }
+    now_ns := self.Ns(now)
+    self.last_now_ns = now_ns
+    bif := self.cc.bytes_in_flight
+    self.cc.Reset()
+    self.cc.bytes_in_flight = bif
+    self.latest_rtt = 0
+    self.smoothed_rtt = InitialRttNs
+    self.rttvar = InitialRttNs / 2
+    self.min_rtt = 0
+    self.has_rtt_sample = false
+    self.first_rtt_sample_ns = 0
+    self.pto_count = 0
     self.SetLossDetectionTimer(now_ns)
 }
 
