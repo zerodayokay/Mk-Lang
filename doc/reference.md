@@ -11407,7 +11407,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.json` | `Parse Value Member Json Codec Error` |
 | `std.http` | `Serve Fetch ReadRequest Dispatch Request Response Reply Header Route Error Client ClientRequest ClientLimits DefaultClientLimits Exchange ServeWith ServeOn ServeChan ServerOptions DefaultServerOptions Link Taken` |
 | `std.regex` | `Compile Regex Match Matcher Error` |
-| `std.crypto` | `Hmac256 ChaCha20Poly1305 X25519 Ed25519 Random Equal Error Hmac384 Hmac512 HkdfExtract HkdfExpand Prk HashKind AesGcm EcSecret Curve EcdhShared EcdsaSign EcdsaVerify SigFormat RsaPublic RsaVerifyPkcs1 RsaVerifyPss PublicKey PrivateKey ParsePublicKey ParsePrivateKey Wipe Argon2id Argon2idVerify Argon2Cost` |
+| `std.crypto` | `Hmac256 ChaCha20Poly1305 X25519 Ed25519 Random Equal Error Hmac384 Hmac512 HkdfExtract HkdfExpand HkdfExpandLabel Prk HashKind AesGcm Aes ChaCha20Block EcSecret Curve EcdhShared EcdsaSign EcdsaVerify SigFormat RsaPublic RsaVerifyPkcs1 RsaVerifyPss PublicKey PrivateKey ParsePublicKey ParsePrivateKey Wipe Argon2id Argon2idVerify Argon2Cost` |
 | `std.compress` | `Inflate Gunzip Deflate Gzip Inflater Error Zlib Unzlib Adler32 Adler32State Encoder Framing ZstdDecoder Content GzipContent DeflateContent ZstdContent` |
 | `std.cli` | `Args Error` |
 | `std.log` | `Logger Level Sink Stderr Stdout ToFile` |
@@ -12870,6 +12870,7 @@ crypto.Random(io: Io, buf: mut []u8): Canceled!void
 crypto.Equal(a: []u8, b: []u8): bool
 ChaCha20Poly1305.Seal(key: &[32]u8, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!void
 ChaCha20Poly1305.Open(key: &[32]u8, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!void
+crypto.ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8
 Ed25519.Keypair(io: Io): Canceled![64]u8
 Ed25519.FromSeed(seed: &[32]u8): [64]u8
 Ed25519.Sign(secret: &[64]u8, msg: []u8): [64]u8
@@ -12878,12 +12879,16 @@ crypto.Hmac384(key: []u8, data: []u8): [48]u8
 crypto.Hmac512(key: []u8, data: []u8): [64]u8
 crypto.HkdfExtract(salt: []u8, ikm: []u8, h: HashKind): Prk
 crypto.HkdfExpand(prk: &Prk, info: []u8, out: mut []u8): crypto.Error!void
+crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.Error!void
 Prk.FromBytes(h: HashKind, key: []u8): crypto.Error!Prk
 Prk.Wipe(mut self)
 AesGcm.New(key: []u8): crypto.Error!AesGcm
 AesGcm.Seal(&self, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Open(&self, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Wipe(mut self)
+Aes.New(key: []u8): crypto.Error!Aes
+Aes.Encrypt(&self, block: &[16]u8): crypto.Error![16]u8
+Aes.Wipe(mut self)
 EcSecret.Generate(io: Io, curve: Curve): Canceled|crypto.Error!EcSecret
 EcSecret.FromBytes(curve: Curve, b: []u8): crypto.Error!EcSecret
 EcSecret.Public(&self, out: mut []u8): crypto.Error!int

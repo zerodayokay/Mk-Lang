@@ -4,6 +4,9 @@
 package lsp
 
 var surfaceDocs2 = map[string]surfaceDoc{
+	"Xx64State.Bytes":                   {Module: "std.hash", Lines: []string{"Xx64State.Bytes(mut self, data: []u8)"}},
+	"Xx64State.New":                     {Module: "std.hash", Lines: []string{"Xx64State.New(seed: u64): Xx64State"}},
+	"Xx64State.Sum":                     {Module: "std.hash", Lines: []string{"Xx64State.Sum(self): u64"}},
 	"Zone.Fixed":                        {Module: "std.time", Lines: []string{"Zone.Fixed(offset_seconds: i32): Zone"}},
 	"Zone.FromTzif":                     {Module: "std.time", Lines: []string{"Zone.FromTzif(a: &Arena, name: str, data: []u8): time.Error|OutOfMemory!Zone from a"}},
 	"Zone.Load":                         {Module: "std.time", Lines: []string{"Zone.Load(a: &Arena, io: Io, name: str, embedded: ?Database): time.Error|OutOfMemory!Zone from a"}},
@@ -180,6 +183,9 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"core.Method.Flows":                 {Module: "std.core", Lines: []string{"Method.Flows(&self): []Flow"}},
 	"core.Method.HasFlows":              {Module: "std.core", Lines: []string{"Method.HasFlows(&self): bool"}},
 	"core.Type.Methods":                 {Module: "std.core", Lines: []string{"Type.Methods(&self): []Method"}},
+	"crypto.Aes.Encrypt":                {Module: "std.crypto", Lines: []string{"Aes.Encrypt(&self, block: &[16]u8): crypto.Error![16]u8"}},
+	"crypto.Aes.New":                    {Module: "std.crypto", Lines: []string{"Aes.New(key: []u8): crypto.Error!Aes"}},
+	"crypto.Aes.Wipe":                   {Module: "std.crypto", Lines: []string{"Aes.Wipe(mut self)"}},
 	"crypto.AesGcm.New":                 {Module: "std.crypto", Lines: []string{"AesGcm.New(key: []u8): crypto.Error!AesGcm"}},
 	"crypto.AesGcm.Open":                {Module: "std.crypto", Lines: []string{"AesGcm.Open(&self, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!int"}},
 	"crypto.AesGcm.Seal":                {Module: "std.crypto", Lines: []string{"AesGcm.Seal(&self, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!int"}},
@@ -192,6 +198,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"crypto.BadKey":                     {Module: "std.crypto", Lines: []string{"error BadKey"}},
 	"crypto.BadLength":                  {Module: "std.crypto", Lines: []string{"error BadLength"}},
 	"crypto.BadTag":                     {Module: "std.crypto", Lines: []string{"error BadTag"}},
+	"crypto.ChaCha20Block":              {Module: "std.crypto", Lines: []string{"crypto.ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8"}},
 	"crypto.ChaCha20Poly1305.Open":      {Module: "std.crypto", Lines: []string{"ChaCha20Poly1305.Open(key: &[32]u8, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!void"}},
 	"crypto.ChaCha20Poly1305.Seal":      {Module: "std.crypto", Lines: []string{"ChaCha20Poly1305.Seal(key: &[32]u8, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!void"}},
 	"crypto.Curve":                      {Module: "std.crypto", Lines: []string{"enum Curve"}},
@@ -211,6 +218,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"crypto.Error":                      {Module: "std.crypto", Lines: []string{"type Error = BadTag | BadLength | BadKey | Encrypted | BadEncoding | BadCost"}},
 	"crypto.HashKind":                   {Module: "std.crypto", Lines: []string{"enum HashKind"}},
 	"crypto.HkdfExpand":                 {Module: "std.crypto", Lines: []string{"crypto.HkdfExpand(prk: &Prk, info: []u8, out: mut []u8): crypto.Error!void"}},
+	"crypto.HkdfExpandLabel":            {Module: "std.crypto", Lines: []string{"crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.Error!void"}},
 	"crypto.HkdfExtract":                {Module: "std.crypto", Lines: []string{"crypto.HkdfExtract(salt: []u8, ikm: []u8, h: HashKind): Prk"}},
 	"crypto.Hmac256":                    {Module: "std.crypto", Lines: []string{"crypto.Hmac256(key: []u8, data: []u8): [32]u8"}},
 	"crypto.Hmac384":                    {Module: "std.crypto", Lines: []string{"crypto.Hmac384(key: []u8, data: []u8): [48]u8"}},
@@ -896,12 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"simd.Vec.Sqrt":                     {Module: "std.simd", Lines: []string{"Vec[T, N].Sqrt(self): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Vec.SubSat":                   {Module: "std.simd", Lines: []string{"Vec[T, N].SubSat(self, b: Vec[T, N]): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Vec.ToArray":                  {Module: "std.simd", Lines: []string{"Vec[T, N].ToArray(self): [N]T requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
-	"simd.Vec.Trunc":                    {Module: "std.simd", Lines: []string{"Vec[T, N].Trunc[U: Lane](self): Vec[U, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
-	"simd.Vec.WidenHi":                  {Module: "std.simd", Lines: []string{"Vec[T, N].WidenHi[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
-	"simd.Vec.WidenLo":                  {Module: "std.simd", Lines: []string{"Vec[T, N].WidenLo[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
-	"simd.Vec.With":                     {Module: "std.simd", Lines: []string{"Vec[T, N].With(self, const i: int, x: T): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires i >= 0 && i < N"}},
-	"simd.Vec.Zero":                     {Module: "std.simd", Lines: []string{"Vec[T, N].Zero(): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
-	"sqlite.Busy":                       {Module: "std.db.sqlite", Lines: []string{"error Busy"}},
-	"sqlite.Db.Close":                   {Module: "std.db.sqlite", Lines: []string{"Db.Close(self)"}},
-	"sqlite.Db.Exec":                    {Module: "std.db.sqlite", Lines: []string{"Db.Exec(&self, io: Io, sql: str): sqlite.Error!void"}},
 }
