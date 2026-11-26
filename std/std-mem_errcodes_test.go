@@ -77,6 +77,24 @@ var stdErrorCodes = []struct {
 	{"std.http.Status", 23996673},
 	{"std.http.TooLarge", 474579670},
 	{"std.http.TooManyRedirects", 352195647},
+	{"std.http.fields.BadBase", 808398844},
+	{"std.http.fields.BadHuffman", 188230450},
+	{"std.http.fields.BadIndex", 561684964},
+	{"std.http.fields.BadInstruction", 1611840938},
+	{"std.http.fields.BadInteger", 380287713},
+	{"std.http.fields.BadRequiredInsertCount", 224751550},
+	{"std.http.fields.BadSizeUpdate", 861656982},
+	{"std.http.fields.BlockedLimit", 1269906445},
+	{"std.http.fields.CapacityExceeded", 1532491433},
+	{"std.http.fields.MalformedField", 147075999},
+	{"std.http.fields.MissingSizeUpdate", 28316873},
+	{"std.http.fields.TooSmall", 667087857},
+	{"std.http.fields.Truncated", 497700772},
+	{"std.http.fields.Unusable", 828422955},
+	{"std.http.h2.Violation", 250376542},
+	{"std.http.h3.SendTooLarge", 845373960},
+	{"std.http.h3.TooLarge", 373640710},
+	{"std.http.h3.Violation", 196786666},
 	{"std.json.Depth", 1715825482},
 	{"std.json.Mismatch", 490261723},
 	{"std.json.Syntax", 567111721},
@@ -246,13 +264,14 @@ func TestStdErrorCodesStable(t *testing.T) {
 	var b strings.Builder
 	// std.db.sqlite is left out of the native half: a program importing it
 	// builds the sqlite amalgamation, which is kept outside the
-	// repository. Its codes are still pinned and checked against the
+	// repository. Internal modules are also outside a program's imports.
+	// Their codes are still pinned and checked against the
 	// formula above, as is an error whose payload no literal fills ("-").
 	var native []string
 	imports := map[string]bool{"std.sync": true}
 	for _, k := range keys {
 		mod := k[:strings.LastIndex(k, ".")]
-		if mod == "std.db.sqlite" || payload[k] == "-" {
+		if mod == "std.db.sqlite" || payload[k] == "-" || mod != PreludeModule && slices.Contains(Internal[:], mod) {
 			continue
 		}
 		native = append(native, k)

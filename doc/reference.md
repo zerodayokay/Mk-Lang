@@ -12963,15 +12963,15 @@ crypto.Hmac384(key: []u8, data: []u8): [48]u8
 crypto.Hmac512(key: []u8, data: []u8): [64]u8
 crypto.HkdfExtract(salt: []u8, ikm: []u8, h: HashKind): Prk
 crypto.HkdfExpand(prk: &Prk, info: []u8, out: mut []u8): crypto.Error!void
-crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.Error!void
+crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.BadKey | crypto.BadLength!void
 Prk.FromBytes(h: HashKind, key: []u8): crypto.Error!Prk
 Prk.Wipe(mut self)
 AesGcm.New(key: []u8): crypto.Error!AesGcm
 AesGcm.Seal(&self, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Open(&self, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Wipe(mut self)
-Aes.New(key: []u8): crypto.Error!Aes
-Aes.Encrypt(&self, block: &[16]u8): crypto.Error![16]u8
+Aes.New(key: []u8): crypto.BadLength!Aes
+Aes.Encrypt(&self, block: &[16]u8): crypto.BadKey![16]u8
 Aes.Wipe(mut self)
 EcSecret.Generate(io: Io, curve: Curve): Canceled|crypto.Error!EcSecret
 EcSecret.FromBytes(curve: Curve, b: []u8): crypto.Error!EcSecret
