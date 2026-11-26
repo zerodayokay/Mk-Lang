@@ -7,8 +7,8 @@
 // operations TableFind, TableLookup, TablePlace, TableReserve, TableClaim,
 // TableErase, TableResize, TableRehashInPlace and TableNext.
 //
-// How: a Swiss table. ctrl has cap + 8 bytes: 0xFF empty, 0x80 deleted,
-// 0x00..0x7F full holding h2, the hash's top 7 bits; the first 8 are repeated
+// How: a Swiss table. ctrl has cap + 16 bytes: 0xFF empty, 0x80 deleted,
+// 0x00..0x7F full holding h2, the hash's top 7 bits; the first 16 are repeated
 // at the end, so a group read at any pos never wraps. growth counts the empty
 // slots that may still be filled before a rehash. Operations take the full
 // 64-bit hash, so the container computes it once per call and a test can
