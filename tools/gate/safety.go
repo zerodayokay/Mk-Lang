@@ -57,6 +57,7 @@ var untrusted = []untrustedEntry{
 	{"the TLS record and handshake parsers", "std.tls", []string{"FuzzStdTls_Messages", "FuzzStdTls_Records", "FuzzStdTls_Logic", "FuzzStdTls_Messages12", "FuzzStdTls_Records12"}},
 	{"key parsing", "std.crypto", []string{"FuzzSTDCRYPTO_Keys"}},
 	{"the HPACK decoder and Huffman decoding", "std.http.fields", []string{"FuzzStdHttpFields_Hpack", "FuzzStdHttpFields_Huffman"}},
+	{"QUIC ACK range and recovery state", "std.quic", []string{"FuzzStdQuic_Ack"}},
 	// Further entry points held to the same bar (their fuzz files say so).
 	{"net.ParseAddr", "std.net", []string{"FuzzStdNet_ParseAddr"}},
 	{"AesGcm.Open, HKDF and HMAC on peer bytes", "std.crypto", []string{"FuzzSTDCRYPTO_TlsPrimitives"}},
