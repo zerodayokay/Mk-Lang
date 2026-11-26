@@ -6978,7 +6978,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - The compiler checks both branches when it checks the generic, not per instance.
-- A type written `T` inside the branch is `X` as well, wherever it is written: a type argument (`Id[T](x)` is `Id[u32](x)`), a local's declared type, a conversion `T(n)` or `Cast[T](n)`, the arguments of a nested generic or a generic owner (`Box[T]`), and the signature and body of a `fn` literal written in the branch (`fn(y: T): T { .. }` there is a `fn(u32): u32`, and a value of type `T` it captures is a `u32`). The `else` branch keeps `T` opaque.
+- A type written `T` inside the branch is `X` as well, in every type position: a type argument (`Id[T](x)` is `Id[u32](x)`), a local's declared type, a conversion `T(n)` or `Cast[T](n)`, the arguments of a nested generic or a generic owner (`Box[T]`), and the signature and body of a `fn` literal written in the branch (`fn(y: T): T { .. }` there is a `fn(u32): u32`, and a value of type `T` it captures is a `u32`). `T` written as a value is not `X`: `T.Make()` is E0301, and so is `T(x: 1)` for a struct `X`; write `X`. The `else` branch keeps `T` opaque.
 - A branch that narrows `T` to another parameter follows that parameter's own narrowing: inside `if T is U { if U is u32 { ... } }` `T` is `u32`, its values and the types written `T` alike. Between the two tests `T` is `U`.
 - A value whose type is plain inside the branch needs no consuming there: it ends at the branch's end.
 - `if T is` names one type and takes `else` and `else if T is` like any `if`; `||` and `&&` are E0101.

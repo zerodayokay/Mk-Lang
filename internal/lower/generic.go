@@ -75,6 +75,16 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 			continue
 		}
 		loc := bl.b.Locals[l]
+		if bl.tab.Kind(lt) == types.KFn {
+			// A fn value is copied at X only when the branch names it:
+			// one it never calls needs no copy.
+			if named == nil {
+				named = namesIn(s.Then)
+			}
+			if !named[loc.Name] {
+				continue
+			}
+		}
 		plainBefore := bl.plain(lt, c.Span())
 		plainAfter := bl.plain(nt, c.Span())
 		if !plainBefore && !plainAfter {
