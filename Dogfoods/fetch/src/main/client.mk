@@ -12,6 +12,7 @@ import std.fs
 import std.http
 import std.mem
 import std.net
+import std.quic
 import std.sim
 import std.time
 import std.tls
@@ -37,6 +38,15 @@ struct Common {
 // Client runs the transfers the command line asks for and returns the
 // exit status.
 Client(sys: &System, o: &Options): int *o into sys {
+    if (o.origin_h2 || o.origin_h3) && o.origin.IsNone() {
+        return Fatal(sys, 2, "--origin-h2 and --origin-h3 need --origin")
+    }
+    if o.origin_h3 && o.tls_chain.IsNone() {
+        return Fatal(sys, 2, "--origin-h3 needs --tls-chain and --tls-key")
+    }
+    if o.h3_only && (o.follow || o.handshake) {
+        return Fatal(sys, 2, "--http3-only cannot be combined with --location or --handshake")
+    }
     if seed := o.seed {
         return Simulated(sys, o, seed)
     }
@@ -89,13 +99,41 @@ Session(sys: &System, io: Io, o: &Options): int *o into sys {
     }
     // without -L the client follows none and hands back the 3xx reply
     redirects := if o.follow { o.max_redirs } else { 0 }
-    limits := transfer.Limits(redirects, o.fetch_limit, decoders, o.deny.Len() > 0, some(tls.Connector(&client_cfg)))
+    var qcfg := quic.DefaultConfig
+    qcfg.tls = some(&client_cfg)
+    secure := if o.h3_only { none } else { some(tls.Connector(&client_cfg)) }
+    var limits := transfer.Limits(redirects, o.fetch_limit, decoders, o.deny.Len() > 0, secure)
+    limits.h2 = o.h2
+    limits.h2c = o.h2c
+    if window_bytes := o.h2_window {
+        limits.h2_window = window_bytes
+    }
+    if o.h3 || o.h3_only || o.drive {
+        limits.h3 = some(quic.Connector(&qcfg))
+        limits.h3_direct = o.h3 || o.h3_only
+    }
     c := http.Client.New(sys.heap, limits)
     defer c.Close()
-    if path := o.origin {
-        return WithOrigin(sys, io, o, &c, &client_cfg, mut jar, path)
+    var result := 0
+    scope background := io.Scope() {
+        if limits.h3.IsSome() {
+            background.go Drive(&c, io)
+        }
+        result = TransferSession(sys, io, o, &c, &client_cfg, mut jar)
+        c.Stop()
     }
-    return Transfers(sys, io, o, &c, &client_cfg, mut jar, &NoAddrs)
+    return result
+}
+
+Drive(c: &http.Client, io: Io) {
+    c.Drive(io) else {}
+}
+
+TransferSession(sys: &System, io: Io, o: &Options, c: &http.Client, cfg: &tls.Config, jar: mut cookie.Jar): int *sys into jar {
+    if path := o.origin {
+        return WithOrigin(sys, io, o, c, cfg, jar, path)
+    }
+    return Transfers(sys, io, o, c, cfg, jar, &NoAddrs)
 }
 
 // WithOrigin starts the scripted loopback origins of --origin in tasks,
@@ -134,13 +172,36 @@ WithOrigin(sys: &System, io: Io, o: &Options, c: &http.Client, cfg: &tls.Config,
     }
     defer l4.Close()
     addrs := origin.Addrs(origin: Loopback(a, l1.Port()), origin2: Loopback(a, l2.Port()), tls: Loopback(a, l3.Port()), tls2: Loopback(a, l4.Port()))
+    context := origin.Context(script: &script, addrs: &addrs)
+    var plain := http.DefaultServerOptions
+    plain.h2c = o.origin_h2
+    var tls_options := http.DefaultServerOptions
+    tls_options.h2 = o.origin_h2
+    var qcfg := quic.DefaultConfig
+    qcfg.tls = some(&server_cfg)
+    if secure {
+        tls_options.secure = some(tls.Acceptor(&server_cfg))
+    }
+    if o.origin_h3 {
+        tls_options.h3 = some(quic.Acceptor(&qcfg))
+    }
     var code := 0
     scope srv := io.Scope() {
-        srv.go origin.Serve(&l1, sys.heap, io, &script, &addrs)
-        srv.go origin.Serve(&l2, sys.heap, io, &script, &addrs)
+        if o.origin_h2 {
+            srv.go origin.ServeHttp(&l1, sys.heap, io, &context, &plain)
+            srv.go origin.ServeHttp(&l2, sys.heap, io, &context, &plain)
+        } else {
+            srv.go origin.Serve(&l1, sys.heap, io, &script, &addrs)
+            srv.go origin.Serve(&l2, sys.heap, io, &script, &addrs)
+        }
         if secure {
-            srv.go origin.ServeTls(&l3, sys.heap, io, &script, &addrs, &server_cfg)
-            srv.go origin.ServeAccepted(&l4, sys.heap, io, &script, &addrs, tls.Acceptor(&server_cfg))
+            if o.origin_h2 || o.origin_h3 {
+                srv.go origin.ServeHttp(&l3, sys.heap, io, &context, &tls_options)
+                srv.go origin.ServeHttp(&l4, sys.heap, io, &context, &tls_options)
+            } else {
+                srv.go origin.ServeTls(&l3, sys.heap, io, &script, &addrs, &server_cfg)
+                srv.go origin.ServeAccepted(&l4, sys.heap, io, &script, &addrs, tls.Acceptor(&server_cfg))
+            }
         }
         code = Transfers(sys, io, o, c, cfg, jar, &addrs)
         srv.Cancel()
@@ -289,6 +350,9 @@ MakeJob(a: &Arena into a, io: Io, o: &Options, common: &Common, link: str, jar: 
         resume: o.resume,
         include: o.include,
         head: o.head,
+        versioned: o.h2 || o.h2c || o.h3 || o.h3_only || o.drive,
+        h3_only: o.h3_only,
+        fetch_limit: int(o.fetch_limit),
         fail_status: o.fail_status,
         verbose: o.verbose,
         silent: o.silent,

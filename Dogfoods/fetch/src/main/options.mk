@@ -27,6 +27,14 @@ struct Options {
     parallel: bool
     handshake: bool
     tls12: bool
+    h2: bool
+    h2c: bool
+    h2_window: ?int
+    h3: bool
+    h3_only: bool
+    drive: bool
+    origin_h2: bool
+    origin_h3: bool
     alpn: List[str]
     follow: bool
     max_redirs: int
@@ -66,7 +74,7 @@ error NoUrl
 type OptionError = Usage | MissingValue | BadValue | NoUrl | OutOfMemory
 
 // the options that take a value, long and short spellings
-const ValueOptions: []str = ["-o", "--output", "-H", "--header", "-X", "--request", "-d", "--data", "--data-file", "-u", "--user", "--query", "--max-redirs", "--max-time", "--retry", "--retry-delay", "--fetch-limit", "--max-memory", "--decode", "--deny", "-b", "--cookies", "-c", "--cookie-jar", "--cacert", "--alpn", "--time-cond", "--origin", "--tls-chain", "--tls-key", "--seed", "--fault", "--ws-send", "--ws-binary", "--ws-ping", "--ws-max", "--ws-protocol"]
+const ValueOptions: []str = ["-o", "--output", "-H", "--header", "-X", "--request", "-d", "--data", "--data-file", "-u", "--user", "--query", "--max-redirs", "--max-time", "--retry", "--retry-delay", "--fetch-limit", "--max-memory", "--decode", "--deny", "-b", "--cookies", "-c", "--cookie-jar", "--cacert", "--alpn", "--http2-window", "--time-cond", "--origin", "--tls-chain", "--tls-key", "--seed", "--fault", "--ws-send", "--ws-binary", "--ws-ping", "--ws-max", "--ws-protocol"]
 
 NewOptions(a: &Arena): Options {
     return Options(
@@ -88,6 +96,14 @@ NewOptions(a: &Arena): Options {
         parallel: false,
         handshake: false,
         tls12: false,
+        h2: false,
+        h2c: false,
+        h2_window: none,
+        h3: false,
+        h3_only: false,
+        drive: false,
+        origin_h2: false,
+        origin_h3: false,
         alpn: List[str].New(a),
         follow: false,
         max_redirs: 10,
@@ -185,6 +201,20 @@ Set(o: mut Options, name: str, value: str into o, at: int): OptionError!void {
         "--parallel" { o.parallel = true }
         "--handshake" { o.handshake = true }
         "--tlsv1.2" { o.tls12 = true }
+        "--http2" { o.h2 = true }
+        "--http2-prior-knowledge" { o.h2c = true }
+        "--http2-window" {
+            n := try Count(value, at)
+            if n == 0 {
+                fail BadValue(arg: at)
+            }
+            o.h2_window = some(n)
+        }
+        "--http3" { o.h3 = true }
+        "--http3-only" { o.h3_only = true }
+        "--drive" { o.drive = true }
+        "--origin-h2" { o.origin_h2 = true }
+        "--origin-h3" { o.origin_h3 = true }
         "--alpn" {
             for p in value.Split(",") {
                 try o.alpn.Push(p)
