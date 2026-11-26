@@ -4,8 +4,9 @@
 // What: TestConnectorClauses, the checker's verdict on each shape.
 // How: ConnSlot.Fill takes t with no `into` clause, so the call stores
 // nothing the caller keeps and the checker's inferred call stores
-// (storeArg in internal/borrow/call.go) never run there. A callee that does
-// take t `into` a holder still passes t's loans to it, as the last case pins.
+// (storeArg in internal/borrow/call.go) never run there. The holder case
+// forwards both loans with declared flows. A separate write-through case
+// requires a clause in the callee that makes the store.
 
 package std
 
@@ -62,7 +63,7 @@ Accept(h: &Heap, count: &Mutex[int], io: Io, conn: net.Conn, refuse: bool): net.
     return slot.Fill(Cut(inner: conn, count: count))
 }
 `, nil},
-		{"a callee that takes the transport into a holder makes count reach inner", p1Cut + `
+		{"a callee stores the complete transport with both loans declared", p1Cut + `
 linear struct Keep[T: net.Transport] {
     t: ?T
 }
@@ -76,7 +77,16 @@ Put[T: net.Transport](k: mut Keep[T], t: T into k) {
 Over(k: mut Keep[Cut], inner: net.Conn into k, count: &Mutex[int] into k) {
     Put(k, Cut(inner: inner, count: count))
 }
-`, []string{"35:5: E0604"}},
+`, nil},
+		{"a callee writes one held loan through another without a clause", `struct Deep {
+    a: &i32
+    b: mut &i32
+}
+
+Deep.Mix(mut self) {
+    *self.b = self.a
+}
+`, []string{"7:5: E0604"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -96,8 +106,8 @@ Over(k: mut Keep[Cut], inner: net.Conn into k, count: &Mutex[int] into k) {
 				}
 				return
 			}
-			if strings.Join(got, ",") != strings.Join(c.want, ",") || !strings.Contains(out, "a loan of count into inner") {
-				t.Fatalf("got %v, want %v with C-SR's `count into inner`:\n%s", got, c.want, out)
+			if status == 0 || strings.Join(got, ",") != strings.Join(c.want, ",") || !strings.Contains(out, "write `*self into self`") {
+				t.Fatalf("got exit %d and %v, want %v with `*self into self`:\n%s", status, got, c.want, out)
 			}
 		})
 	}

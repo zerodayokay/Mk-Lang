@@ -372,6 +372,9 @@ func TestManifestListsUnsafeModules(t *testing.T) {
 	}
 }
 
+// declarationKind matches an optional declaration modifier in its written order.
+const declarationKind = `(?:(?:linear (?:mut view |view )?|mut view |view |open ))?`
+
 // TestPreludeDeclared: every prelude name is exported by a file of std/core
 // (the module map's prelude list); Path is not reserved. A text
 // scan; the driver's own count (StdMissing) is the semantic check.
@@ -392,7 +395,7 @@ func TestPreludeDeclared(t *testing.T) {
 	}
 	text := all.String()
 	for _, n := range PreludeNames {
-		decl := regexp.MustCompile(`(?m)^export (linear |view |linear view |open )?(struct|enum|error|interface|type) ` + n + `\b|^export ` + n + `[\[(]`)
+		decl := regexp.MustCompile(`(?m)^export ` + declarationKind + `(struct|enum|error|interface|type) ` + n + `\b|^export ` + n + `[\[(]`)
 		found := decl.MatchString(text)
 		if !found {
 			t.Errorf("std.core does not export the prelude name %s", n)
@@ -511,11 +514,12 @@ func TestGeneratorAPIDeclared(t *testing.T) {
 	if len(enums) != 3 {
 		t.Fatalf("genSurface declares %d enums, want TypeKind, Receiver and FlowKind", len(enums))
 	}
+	enumSource := regexp.MustCompile(`(?m)^[ \t]*//[^\n]*\n`).ReplaceAllString(have, "")
 	for _, e := range enums {
 		if !slices.Contains(PreludeNames[:], e[1]) {
 			t.Errorf("PreludeNames lacks the generator API enum %s", e[1])
 		}
-		if want := "\nexport enum " + e[1] + " {\n" + e[2] + "}\n"; !strings.Contains(have, want) {
+		if want := "\nexport enum " + e[1] + " {\n" + e[2] + "}\n"; !strings.Contains(enumSource, want) {
 			t.Errorf("core_gen.mk does not declare %q", want)
 		}
 	}
