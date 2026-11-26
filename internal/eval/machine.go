@@ -58,7 +58,8 @@ type segment struct {
 	steps      uint64
 	frameBytes uint64
 	// room is the frame bytes a const's or global's initializer may hold
-	// for its own value (four times its size; startConst), 0 elsewhere.
+	// with its own value (1 MiB plus eight times its size; startConst), 0
+	// elsewhere.
 	room uint64
 	// base is the index of the segment's outermost frame.
 	base  int

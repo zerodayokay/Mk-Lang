@@ -227,13 +227,18 @@ func (m *Machine) startConst(item types.ItemID, at source.Span) {
 		source.ICEf(at, "eval: initializer of %s has parameters", m.items().Get(item).Key)
 	}
 	// The value an initializer builds is the declaration's storage, not
-	// recursion: its frames may hold four copies of it, and its fuel pays
-	// eight steps per 16 bytes of it (what building, copying and returning
-	// it cost), whatever smaller limit and fuel the evaluation has.
-	if v := cd.localTI[mir.ReturnLocal].size; v != 0 {
+	// recursion. Each frame that passes it on holds it twice (its result
+	// and a temporary): a value built in place takes two copies, one a
+	// function returns four or five, one built two calls down eight, and
+	// k copies cost about 2k+1 steps per 16 bytes (the frames, the fill
+	// and the moves). So the frames may hold 1 MiB plus eight copies, and
+	// the fuel is at least two steps per byte, whatever smaller limit and
+	// fuel the evaluation has. v is capped so neither overflows: a value
+	// over MaxStackLimit never fits the frames.
+	if v := min(cd.localTI[mir.ReturnLocal].size, MaxStackLimit); v != 0 {
 		s := m.seg()
-		s.room = satAdd(satAdd(v, v), satAdd(v, v))
-		s.fuel = max(s.fuel, v/2)
+		s.room = DefaultStackLimit + 8*v
+		s.fuel = max(s.fuel, 2*v)
 	}
 	m.pushFrame(cd, ce, item, body.OnerrRuns, at, 0)
 	m.entering = types.NoItem

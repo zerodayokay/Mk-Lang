@@ -1,10 +1,13 @@
 // Why: a const's or global's initializer builds its value in its frame and
 // copies it to the result, so a large table filled the default 1 MiB frame
-// limit at 512 KiB, and a global cannot state the fuel that raises it.
+// limit at 512 KiB (256 KiB when a function returned it), and a global
+// cannot state the fuel that raises it.
 // What: TestLargeInitializerValue.
 // How: zeroed and `[7; n]` tables of 512 KiB and 16 MiB and a nested
-// [256][256]u64, as var and as const, check clean; a recursion with a
-// table-sized result still stops at the stack limit.
+// [256][256]u64, as var and as const, check clean, and so do tables a
+// function returns or builds two calls down (four to eight copies at once;
+// at 16 MiB the fuel floor binds too); a recursion with a table-sized
+// result still stops at the stack limit.
 
 package driver
 
@@ -40,6 +43,20 @@ func TestLargeInitializerValue(t *testing.T) {
 				clean(t, res)
 			})
 		}
+	}
+	helpers := "export Build(): [%[1]d]u64 {\n    var t: [%[1]d]u64 = mem.Zeroed[[%[1]d]u64]()\n    t[3] = 5\n    return t\n}\n\n" +
+		"export Pass(t: [%[1]d]u64): [%[1]d]u64 {\n    var u := t\n    u[4] = 6\n    return u\n}\n\n" +
+		"export Twice(): [%[1]d]u64 {\n    return Pass(Build())\n}\n\n"
+	for _, c := range []struct {
+		kw, init string
+		n        int
+	}{{"var", "Build()", 1 << 21}, {"const", "Build()", 1 << 16}, {"var", "Twice()", 1 << 16}} {
+		src := fmt.Sprintf("import std.mem\n\n"+helpers+"%s T: [%d]u64 = %s\n\nexport Read(i: int): u64 {\n    return T[i]\n}\n", c.n, c.kw, c.n, c.init)
+		t.Run(fmt.Sprintf("%s %d %s", c.kw, c.n, c.init), func(t *testing.T) {
+			t.Parallel()
+			res, _, _ := gen10Check(t, map[string]string{"a/a.mk": src}, types.Dev)
+			clean(t, res)
+		})
 	}
 	t.Run("recursion still stops", func(t *testing.T) {
 		t.Parallel()
