@@ -550,11 +550,22 @@ Device.ReleaseViewRef(mut self, slot: u32): u32 {
     st := self.state.Mut()
     match st.views.Release(a, slot) {
         some(e) {
-            st.native.DestroyView(e.native_handle)
+            st.native.DestroyViewEntry(&e)
             return e.tex_slot
         }
         none { return 0 }
     }
+}
+
+Native.DestroyViewEntry(mut self, e: &ViewEntry) {
+    if e.is_swapchain {
+        match &*self {
+            // Vulkan's swapchain owns its image views. The portable slot only aliases them.
+            .Vk(v: _) { return }
+            _ {}
+        }
+    }
+    self.DestroyView(e.native_handle)
 }
 
 Device.DestroyViewSlot(mut self, slot: u32) {

@@ -839,7 +839,7 @@ DeviceState.FreeAll(self, a: &Alloc): int {
     var views := views0
     for {
         match views.DrainPop(a) {
-            some(e) { nat.DestroyView(e.native_handle) }
+            some(e) { nat.DestroyViewEntry(&e) }
             none { break }
         }
     }

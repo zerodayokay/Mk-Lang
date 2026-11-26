@@ -504,3 +504,43 @@ test "vk two concurrent swapchains presenting 10x frames" (sys: &System) {
         }
     }
 }
+
+test "vk submit waits for every acquired swapchain" (sys: &System) {
+    if r := VkSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
+        return
+    }
+    if Target.os != core.Os.Windows { return }
+    io := sys.io
+    VkOpenResult(dev: d0, adapter) := try Open(sys.heap, io, DefaultVkOpenOpts(DebugOff))
+    var d := d0
+    FreeOpenAdapterName(sys.heap, adapter.name)
+    defer Assert(d.Close() == 0)
+
+    var windows: [17]uint = [0; 17]
+    var chains: [17]u64 = [0; 17]
+    defer {
+        for i in 0..chains.Len() {
+            if chains[i] != 0 { d.DestroySwapchain(chains[i]) }
+            if windows[i] != 0 { DestroyTestWindow(windows[i]) }
+        }
+    }
+    for i in 0..chains.Len() {
+        (hwnd, hinstance) := try CreateTestWindow(64, 64)
+        windows[i] = hwnd
+        chains[i] = try d.CreateSwapchain(SwapchainOptions(
+            hwnd: hwnd, hinstance: hinstance, vk_format: vulkan.VkFormatB8g8r8a8Unorm, format_idx: 17,
+            mode: ModeFifo, buffers: 2, copy_src: false, width: 64, height: 64,
+        ))
+        ar := try d.SwapchainAcquire(io, chains[i], 64, 64)
+        Assert(ar.status == AcqReady)
+    }
+
+    try d.FlushPreSubmit(1)
+    try d.WaitSerial(io, 1)
+    for i in 0..chains.Len() {
+        sc := &d.state.Ref().swapchains[Cast[int](chains[i])]
+        Assert(!sc.pending_submit_wait)
+        Assert(sc.acq[sc.pending_wait_acq_idx].waited_by == 1)
+    }
+}

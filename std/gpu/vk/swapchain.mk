@@ -283,8 +283,7 @@ BuildVkSwapchainImages(
                 tracked_layout: vulkan.VkImageLayoutUndefined,
             )) else e {
                 DestroyBinarySem(st, rsem)
-                st.dev_d.vk_destroy_image_view.Must()(dev, iv, raw.Null[vulkan.VkAllocationCallbacks]())
-                if st.live_native > 0 { st.live_native -= 1 }
+                DestroyViewRec(st, vid)
                 DestroySwapImagesAndViews(st, imgs_out)
                 st.dev_d.vk_destroy_swapchain_khr.Must()(dev, new_sc, raw.Null[vulkan.VkAllocationCallbacks]())
                 if st.live_native > 0 { st.live_native -= 1 }
@@ -450,6 +449,23 @@ export Device.CreateSwapchain(mut self, opts: SwapchainOptions): Error!u64 {
     return sc_id
 }
 
+RetireSwapchainImages(a: &Alloc into st, st: mut VkDeviceState, idx: int) {
+    empty := HeapList[VkSwapImage].New(a)
+    var imgs := core.Replace(mut st.swapchains[idx].images, empty)
+    DestroySwapImagesAndViews(st, mut imgs)
+    imgs.FreeEmpty(a)
+    if st.swapchains[idx].swapchain != 0 {
+        unsafe "st.device and swapchain are live and idle" {
+            dev := HandleFrom[vulkan.VkDeviceT](st.device)
+            st.dev_d.vk_destroy_swapchain_khr.Must()(dev, HandleFrom[vulkan.VkSwapchainKhrT](st.swapchains[idx].swapchain), raw.Null[vulkan.VkAllocationCallbacks]())
+        }
+        st.swapchains[idx].swapchain = 0
+        if st.live_native > 0 { st.live_native -= 1 }
+    }
+    st.swapchains[idx].pending_submit_wait = false
+    st.swapchains[idx].pending_wait_sem = 0
+}
+
 DestroySwapchainRec(a: &Alloc into st, st: mut VkDeviceState, sc_id: u64) {
     idx := Cast[int](sc_id)
     if idx <= 0 || idx >= st.swapchains.Len() || !st.swapchains[idx].alive {
@@ -457,17 +473,8 @@ DestroySwapchainRec(a: &Alloc into st, st: mut VkDeviceState, sc_id: u64) {
     }
     st.swapchains[idx].alive = false
     unsafe "st.device and st.instance are live" {
-        dev := HandleFrom[vulkan.VkDeviceT](st.device)
         _ = st.dev_d.vk_queue_wait_idle.Must()(HandleFrom[vulkan.VkQueueT](st.queue))
-        empty := HeapList[VkSwapImage].New(a)
-        var imgs := core.Replace(mut st.swapchains[idx].images, empty)
-        DestroySwapImagesAndViews(st, mut imgs)
-        imgs.FreeEmpty(a)
-        if st.swapchains[idx].swapchain != 0 {
-            st.dev_d.vk_destroy_swapchain_khr.Must()(dev, HandleFrom[vulkan.VkSwapchainKhrT](st.swapchains[idx].swapchain), raw.Null[vulkan.VkAllocationCallbacks]())
-            st.swapchains[idx].swapchain = 0
-            if st.live_native > 0 { st.live_native -= 1 }
-        }
+        RetireSwapchainImages(a, st, idx)
         for ai in 0..4 {
             sem := st.swapchains[idx].acq[ai].sem
             if sem != 0 {
@@ -863,32 +870,36 @@ export Device.SwapchainResize(mut self, io: Io, sc_id: u64, width: int, height: 
     copy_src := st.swapchains[sc_idx].copy_src
     f := st.swapchains[sc_idx].frames_in_flight
 
+    var new_acq: [4]u64 = [0; 4]
+    onerr {
+        for ai in 0..(f + 1) { DestroyBinarySem(st, new_acq[ai]) }
+    }
+    for ai in 0..(f + 1) {
+        if st.swapchains[sc_idx].acq[ai].signaled_unused {
+            new_acq[ai] = try CreateBinarySem(st)
+        }
+    }
+
     var new_imgs := HeapList[VkSwapImage].New(a)
     res := BuildVkSwapchainImages(a, st, sc_id, surf_h, old_sc, vk_fmt, req_mode, req_bufs, copy_src, width, height, mut new_imgs) else e {
         DestroySwapImagesAndViews(st, mut new_imgs)
         new_imgs.FreeEmpty(a)
+        // Creating a replacement can retire oldSwapchain even on failure.
+        RetireSwapchainImages(a, st, sc_idx)
+        st.swapchains[sc_idx].needs_recreate = true
         fail e
     }
 
-    var old_imgs := core.Replace(mut st.swapchains[sc_idx].images, new_imgs)
-    DestroySwapImagesAndViews(st, mut old_imgs)
-    old_imgs.FreeEmpty(a)
-    if old_sc != 0 {
-        unsafe "st.device and old_sc are live" {
-            st.dev_d.vk_destroy_swapchain_khr.Must()(HandleFrom[vulkan.VkDeviceT](st.device), HandleFrom[vulkan.VkSwapchainKhrT](old_sc), raw.Null[vulkan.VkAllocationCallbacks]())
-            if st.live_native > 0 { st.live_native -= 1 }
-        }
-    }
+    RetireSwapchainImages(a, st, sc_idx)
+    empty := core.Replace(mut st.swapchains[sc_idx].images, new_imgs)
+    empty.FreeEmpty(a)
 
     // Replace any acquire semaphore that was signalled in an abandoned frame and never waited.
     for ai in 0..(f + 1) {
-        if st.swapchains[sc_idx].acq[ai].signaled_unused {
+        if new_acq[ai] != 0 {
             old_sem := st.swapchains[sc_idx].acq[ai].sem
             DestroyBinarySem(st, old_sem)
-            st.swapchains[sc_idx].acq[ai].sem = 0
-            st.swapchains[sc_idx].acq[ai].sem = try CreateBinarySem(st)
-            st.swapchains[sc_idx].acq[ai].waited_by = 0
-            st.swapchains[sc_idx].acq[ai].signaled_unused = false
+            st.swapchains[sc_idx].acq[ai] = VkAcqSem(sem: new_acq[ai], waited_by: 0, signaled_unused: false)
         }
     }
 
@@ -899,8 +910,6 @@ export Device.SwapchainResize(mut self, io: Io, sc_id: u64, width: int, height: 
     sc.mode = res.actual_mode
     sc.handed_out = false
     sc.handed_image = 0
-    sc.pending_submit_wait = false
-    sc.pending_wait_sem = 0
     sc.needs_recreate = false
     sc.present_serials = [0; 3]
     sc.present_cursor = 0

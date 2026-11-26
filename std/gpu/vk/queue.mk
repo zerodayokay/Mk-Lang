@@ -241,6 +241,8 @@ struct VkSubmitCallArg {
     barriers_len: int
     labels_ptr: uint
     labels_len: int
+    waits_ptr: uint
+    waits_len: int
     out_err: ?Error
 }
 
@@ -278,25 +280,6 @@ RunVkSubmitSys(arg: *u8) {
             return
         }
 
-        var waits: [16]vulkan.VkSemaphoreSubmitInfo = [mem.Zeroed[vulkan.VkSemaphoreSubmitInfo](); 16]
-        var wait_sc_idx: [16]int = [0; 16]
-        var wcnt := 0
-        for si in 1..(*st).swapchains.Len() {
-            sc := &(*st).swapchains[si]
-            if sc.alive && sc.pending_submit_wait && wcnt < 16 {
-                waits[wcnt] = vulkan.VkSemaphoreSubmitInfo(
-                    s_type: vulkan.VkStructureTypeSemaphoreSubmitInfo,
-                    p_next: raw.Null[void](),
-                    semaphore: HandleFrom[vulkan.VkSemaphoreT](sc.pending_wait_sem),
-                    value: 0,
-                    stage_mask: if (*st).planted_bug == BugWrongAcqStage { vulkan.VkPipelineStage2TopOfPipeBit } else { vulkan.VkPipelineStage2ColorAttachmentOutputBit | vulkan.VkPipelineStage2CopyBit },
-                    device_index: 0,
-                )
-                wait_sc_idx[wcnt] = si
-                wcnt += 1
-            }
-        }
-
         var cb_info := vulkan.VkCommandBufferSubmitInfo(
             s_type: vulkan.VkStructureTypeCommandBufferSubmitInfo,
             p_next: raw.Null[void](),
@@ -313,8 +296,8 @@ RunVkSubmitSys(arg: *u8) {
         )
         var si := mem.Zeroed[vulkan.VkSubmitInfo2]()
         si.s_type = vulkan.VkStructureTypeSubmitInfo2
-        si.wait_semaphore_info_count = Cast[u32](wcnt)
-        si.p_wait_semaphore_infos = if wcnt > 0 { raw.Data(waits[..]) } else { raw.Null[vulkan.VkSemaphoreSubmitInfo]() }
+        si.wait_semaphore_info_count = Cast[u32]((*a).waits_len)
+        si.p_wait_semaphore_infos = raw.FromAddr[vulkan.VkSemaphoreSubmitInfo]((*a).waits_ptr)
         si.command_buffer_info_count = 1
         si.p_command_buffer_infos = raw.Of(&cb_info)
         si.signal_semaphore_info_count = 1
@@ -326,14 +309,17 @@ RunVkSubmitSys(arg: *u8) {
             (*a).out_err = some(MapVkError(sr, CallQueueSubmit))
             return
         }
-        for wi in 0..wcnt {
-            sci := wait_sc_idx[wi]
-            sc := mut (*st).swapchains[sci]
-            acqi := sc.pending_wait_acq_idx
-            sc.acq[acqi].waited_by = (*a).serial
-            sc.acq[acqi].signaled_unused = false
-            sc.pending_submit_wait = false
-            sc.pending_wait_sem = 0
+        if (*a).waits_len != 0 {
+            for sci in 1..(*st).swapchains.Len() {
+                sc := mut (*st).swapchains[sci]
+                if sc.alive && sc.pending_submit_wait {
+                    acqi := sc.pending_wait_acq_idx
+                    sc.acq[acqi].waited_by = (*a).serial
+                    sc.acq[acqi].signaled_unused = false
+                    sc.pending_submit_wait = false
+                    sc.pending_wait_sem = 0
+                }
+            }
         }
     }
 }
@@ -394,6 +380,32 @@ export Device.SubmitStream(
         ptr_slice = heap_ptrs.Items()
         word_slice = heap_words.Items()
     }
+    var stack_waits: [16]vulkan.VkSemaphoreSubmitInfo = [mem.Zeroed[vulkan.VkSemaphoreSubmitInfo](); 16]
+    var heap_waits := HeapList[vulkan.VkSemaphoreSubmitInfo].New(a)
+    defer heap_waits.Free(a)
+    var wait_count := 0
+    for sci in 1..st.swapchains.Len() {
+        sc := &st.swapchains[sci]
+        if sc.alive && sc.pending_submit_wait {
+            wait := vulkan.VkSemaphoreSubmitInfo(
+                s_type: vulkan.VkStructureTypeSemaphoreSubmitInfo,
+                p_next: raw.Null[void](),
+                semaphore: HandleFrom[vulkan.VkSemaphoreT](sc.pending_wait_sem),
+                value: 0,
+                stage_mask: if st.planted_bug == BugWrongAcqStage { vulkan.VkPipelineStage2TopOfPipeBit } else { vulkan.VkPipelineStage2ColorAttachmentOutputBit | vulkan.VkPipelineStage2CopyBit },
+                device_index: 0,
+            )
+            if wait_count < stack_waits.Len() {
+                stack_waits[wait_count] = wait
+            } else {
+                if wait_count == stack_waits.Len() { try heap_waits.Extend(a, stack_waits[..]) }
+                try heap_waits.Push(a, wait)
+            }
+            wait_count += 1
+        }
+    }
+    waits := if wait_count <= stack_waits.Len() { stack_waits[0..wait_count] } else { heap_waits.Items() }
+
     slot_idx := try AcquireCmdSlot(a, st)
     cmd := st.cmd_slots[slot_idx].buf
     st.cmd_slots[slot_idx].serial = serial
@@ -409,6 +421,8 @@ export Device.SubmitStream(
         barriers_len: barriers.Len(),
         labels_ptr: raw.Addr(raw.Data(labels)),
         labels_len: labels.Len(),
+        waits_ptr: if wait_count > 0 { raw.Addr(raw.Data(waits)) } else { 0 },
+        waits_len: wait_count,
         out_err: none,
     )
     unsafe "arg and st remain pinned on this frame across MkSystemRun" {

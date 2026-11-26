@@ -299,8 +299,6 @@ Device.NewSwapchainFromHwnd(mut self, io: Io, hwnd: uint, hinst: uint, ww: int, 
             vgen = gen_
         }
         .Oom(val: _) {
-            self.state.Mut().native.DestroyView(v_nh)
-            self.state.Mut().native.DestroySwapchain(a, nh)
             fail OutOfMemory
         }
     }
@@ -328,8 +326,6 @@ Device.NewSwapchainFromHwnd(mut self, io: Io, hwnd: uint, hinst: uint, ww: int, 
             SwapchainEntry(info: _, view_slot: _, view_gen: _, native_handle: _, surface, handed_out: _) := val
             CloseOptSurface(surface)
             self.ReleaseSwapViewSlot(vslot)
-            self.state.Mut().native.DestroyView(v_nh)
-            self.state.Mut().native.DestroySwapchain(a, nh)
             fail OutOfMemory
         }
     }
