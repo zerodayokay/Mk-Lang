@@ -5,7 +5,8 @@
 // an object they do not cache must not leave a stale executable.
 // What: TestCImport_EditedHeaderHits, TestCImport_BesideIncluder,
 // TestCObj_IncludeStackShadow (the msvc rule), TestCObj_FlagIncludeDirs,
-// TestCObj_UncachedRelinks and TestCObj_SearchDirsFlags.
+// TestCObj_UncachedRelinks, TestCObj_LinksWhenCacheWriteFails and
+// TestCObj_SearchDirsFlags.
 // How: packages checked or built twice against one cache, a header added
 // or edited between the builds; the flag parser on a job.
 
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"mk/internal/cache"
 	"mk/internal/toolchain"
 )
 
@@ -168,6 +170,23 @@ func TestCObj_UncachedRelinks(t *testing.T) {
 	}
 	if out := buildRun(t, dir, cache); out != "2\n" {
 		t.Errorf("after editing flags.rsp printed %q, want 2", out)
+	}
+}
+
+// TestCObj_LinksWhenCacheWriteFails uses a file in place of the cache's C
+// object directory. The linker must still have the object Clang produced.
+func TestCObj_LinksWhenCacheWriteFails(t *testing.T) {
+	files := cBin("nocache", "int k_fn(void);\n", "int k_fn(void) { return 42; }\n", cMain("", "        b := k.k_fn()\n", "{b}", "b: b"))
+	dir, cacheDir := writeTree(t, files), t.TempDir()
+	cobjDir := cache.DirPath(cacheDir, string(cache.KindCObj))
+	if err := os.MkdirAll(filepath.Dir(cobjDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cobjDir, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := buildRun(t, dir, cacheDir); out != "42\n" {
+		t.Errorf("build printed %q, want 42", out)
 	}
 }
 

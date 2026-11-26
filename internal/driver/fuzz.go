@@ -52,7 +52,6 @@ const (
 	maxFuzzSaved    = 20
 	maxFuzzTokens   = 256
 	fuzzPoll        = 20 * time.Millisecond
-	fuzzGrace       = 5 * time.Second
 )
 
 // corpusFiles are the seed files of dir in name order: its regular files,
@@ -244,12 +243,14 @@ func (s *Session) fuzzLoop(out *TestCase, tc testCase, argv, env []string, i int
 		if opt.cover != nil { // cover.go: live counters for the loop's Guided
 			set = append(set, opt.cover.coverEnv("-"))
 		}
+		budget := max(time.Until(deadline), time.Millisecond)
 		cenv := childEnv(env, via, append(set, TestingFuzzEnv+"=loop", TestingInputEnv+"="+hostPath(argv, in),
 			TestingStateEnv+"="+hostPath(argv, state), TestingSeedEnv+"="+strconv.FormatUint(seed, 10),
-			TestingItersEnv+"="+strconv.Itoa(opt.FuzzIters), TestingNanosEnv+"="+strconv.FormatInt(int64(max(time.Until(deadline), time.Millisecond)), 10))...)
-		// The child stops itself at the deadline (MK_TESTING_NANOS); past
-		// it the watcher waits only on a call in progress (watchFuzzChild).
-		r := watchFuzzChild(argv, cenv, i, state, deadline, hang)
+			TestingItersEnv+"="+strconv.Itoa(opt.FuzzIters), TestingNanosEnv+"="+strconv.FormatInt(int64(budget), 10))...)
+		// The child stops itself when its budget (MK_TESTING_NANOS) is
+		// spent on its own clock; past that the watcher waits only on a
+		// call in progress (watchFuzzChild).
+		r := watchFuzzChild(argv, cenv, i, state, deadline, budget, hang, s.cfg.TestTimeout)
 		calls += r.calls
 		if r.err != nil {
 			out.Result, out.Status, out.Output = "fail", -1, log.String()+r.err.Error()
@@ -260,9 +261,14 @@ func (s *Session) fuzzLoop(out *TestCase, tc testCase, argv, env []string, i int
 			// testing.Fuzz or testing.FuzzSys, or failed before it did.
 			out.Status = r.status
 			out.Result = "fail"
-			out.Detail = "not a fuzz target: the test did not reach testing.Fuzz or testing.FuzzSys"
-			if r.status != 0 {
+			switch {
+			case r.timedOut:
+				out.Result = "timeout"
+				out.Detail = "timeout after " + timeoutText(s.cfg.TestTimeout) + " before testing.Fuzz or testing.FuzzSys"
+			case r.status != 0:
 				out.Detail = "the test failed before testing.Fuzz or testing.FuzzSys: " + r.reason
+			default:
+				out.Detail = "not a fuzz target: the test did not reach testing.Fuzz or testing.FuzzSys"
 			}
 			out.Output = log.String() + r.output
 			out.Duration = time.Since(start)
@@ -319,29 +325,91 @@ func (s *Session) testFileText(tc testCase) string {
 
 // fuzzRun is one child's run under the watcher.
 type fuzzRun struct {
-	started bool   // the state file had its header: the loop ran
-	calls   uint64 // the count the state file last held
-	reason  string // "" when stopped at the fuzz time or after its calls; else the failure
-	status  int
-	output  string
-	input   []byte // the input the state file held at the failure
-	err     error  // the child could not run, or the state could not be read
+	started  bool   // the state file had its header: the loop ran
+	timedOut bool   // stopped at the test timeout before its loop started
+	calls    uint64 // the count the state file last held
+	reason   string // "" when stopped at the fuzz time or after its calls; else the failure
+	status   int
+	output   string
+	input    []byte // the input the state file held at the failure
+	err      error  // the child could not run, or the state could not be read
+}
+
+// fuzzWatch is watchFuzzChild's judgement of one child, made poll by
+// poll (step) on the times it is given, so its rules are tested on a clock
+// of the test's own.
+//
+// The child's budget runs on its own clock, from its loop's start, so the
+// watch judges it from the first poll that finds the state file's header,
+// never earlier than that start: its end is the later of deadline and that
+// poll plus budget, and a slow start uses none of the budget nor of the
+// hang limit. Past its end the child should have stopped itself; while it
+// has not, it is kept only as long as the call it was in at the end runs,
+// since that call may be a hang. A poll sees a call only after it began,
+// so the calls a moved count shows began after the previous sight: they
+// began past the end, and the run ends as a normal stop, only when that
+// sight was past the end. Before its loop the child is a plain test,
+// stopped at startBy, its test timeout (zero: never).
+type fuzzWatch struct {
+	deadline time.Time     // the fuzz time's end on the watcher's clock
+	budget   time.Duration // the child's MK_TESTING_NANOS
+	hang     time.Duration // the hang limit: no call finished in this long
+	startBy  time.Time     // the test timeout before the loop; zero: none
+
+	started bool
+	last    uint64    // the count last seen
+	seen    time.Time // the last poll that read the count
+	moved   time.Time // the poll that first saw last
+	end     time.Time // the budget's end, from the first sight
+}
+
+// step judges a poll at now that read count c (ok: the header was there):
+// "" to go on, "hang", "deadline" (a normal stop past the end) or
+// "timeout" (the loop not reached by startBy).
+func (w *fuzzWatch) step(now time.Time, c uint64, ok bool) string {
+	if ok {
+		switch {
+		case !w.started:
+			// The first sight of the loop: the call in progress, if any,
+			// began no earlier than the budget's clock did.
+			w.started, w.last, w.moved = true, c, now
+			w.end = w.deadline
+			if e := now.Add(w.budget); e.After(w.end) {
+				w.end = e
+			}
+		case c != w.last:
+			late := w.seen.After(w.end)
+			w.last, w.moved = c, now
+			if late {
+				w.seen = now
+				return "deadline" // the call in progress at its end returned
+			}
+		}
+		w.seen = now
+	}
+	switch {
+	case w.started && now.Sub(w.moved) > w.hang:
+		return "hang"
+	case !w.started && !w.startBy.IsZero() && now.After(w.startBy):
+		return "timeout"
+	}
+	return ""
 }
 
 // watchFuzzChild runs one loop child and polls its state file until it
-// exits or its count stops moving for hang (a hang, whenever it starts).
-// Past deadline the child should have stopped itself; while it has not,
-// the watcher keeps it only as long as its count is unmoved, since that
-// call may be a hang: a count that moves after the deadline ends the run
-// as a normal stop, and the hang limit elapsing saves the input. A child
-// that has not reached the loop by deadline + fuzzGrace is stopped.
-func watchFuzzChild(argv, env []string, i int, state string, deadline time.Time, hang time.Duration) fuzzRun {
+// exits, or fuzzWatch stops it: a hang, a normal stop past its end, or
+// timeout (the test timeout; zero: none) passed before its loop started.
+func watchFuzzChild(argv, env []string, i int, state string, deadline time.Time, budget, hang, timeout time.Duration) fuzzRun {
 	cmd := exec.Command(argv[0], append(argv[1:], strconv.Itoa(i))...)
 	cmd.Env = env
 	var buf bytes.Buffer // one writer for both: exec copies with one goroutine
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	cmd.WaitDelay = 5 * time.Second
 	prepareChild(cmd)
+	w := fuzzWatch{deadline: deadline, budget: budget, hang: hang}
+	if timeout > 0 {
+		w.startBy = time.Now().Add(timeout)
+	}
 	if err := cmd.Start(); err != nil {
 		return fuzzRun{err: err}
 	}
@@ -354,7 +422,6 @@ func watchFuzzChild(argv, env []string, i int, state string, deadline time.Time,
 		}
 	}()
 	var r fuzzRun
-	last, moved := uint64(0), time.Now()
 	tick := time.NewTicker(fuzzPoll)
 	defer tick.Stop()
 	var werr error
@@ -365,23 +432,9 @@ loop:
 		case werr = <-done:
 			break loop
 		case <-tick.C:
-			now := time.Now()
-			movedLate := false
-			if c, ok := readFuzzCount(state); ok {
-				r.started = true
-				if c != last {
-					last, moved = c, now
-					movedLate = now.After(deadline)
-				}
-			}
-			switch {
-			case r.started && now.Sub(moved) > hang:
-				killed = "hang"
-			case r.started && movedLate:
-				killed = "deadline" // the call in progress at the deadline returned
-			case !r.started && now.After(deadline.Add(fuzzGrace)):
-				killed = "deadline"
-			}
+			c, ok := readFuzzCount(state)
+			killed = w.step(time.Now(), c, ok)
+			r.started = w.started
 			if killed != "" {
 				// A child that exited since the last tick (a panic just
 				// after the deadline) is judged by its exit, never killed
@@ -419,6 +472,8 @@ loop:
 		r.status, r.reason = -1, fmt.Sprintf("hang (no call finished in %s)", hang)
 	case killed == "deadline":
 		r.status = -1
+	case killed == "timeout":
+		r.status, r.timedOut = -1, true
 	case werr == nil:
 		r.status = 0
 	case errors.As(werr, &ee) && ee.ExitCode() >= 0:

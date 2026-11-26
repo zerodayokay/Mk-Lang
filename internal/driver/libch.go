@@ -255,21 +255,10 @@ func (w *world) writeLibcHeaders(st *cache.Store, work string) (string, error) {
 		return "", err
 	}
 	for _, n := range libcHeaderNames {
-		p := filepath.Join(dir, n)
-		if old, err := os.ReadFile(p); err == nil && string(old) == files[n] {
-			continue
-		}
-		// A temporary and a rename, so a concurrent build never reads a
-		// half-written header.
-		tmp := p + fmt.Sprintf(".%d.tmp", os.Getpid())
-		if err := os.WriteFile(tmp, []byte(files[n]), 0o644); err != nil {
+		// Builds in this process and in others write the same header at
+		// once (writeSameFile).
+		if _, err := writeSameFile(filepath.Join(dir, n), []byte(files[n])); err != nil {
 			return "", err
-		}
-		if err := os.Rename(tmp, p); err != nil {
-			os.Remove(tmp)
-			if old, rerr := os.ReadFile(p); rerr != nil || string(old) != files[n] {
-				return "", err
-			}
 		}
 	}
 	return dir, nil

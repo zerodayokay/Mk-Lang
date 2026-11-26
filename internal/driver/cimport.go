@@ -714,15 +714,7 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 			key = source.HashBytes("mk.driver.cobj.bytes.v1", data)
 		} else if st != nil {
 			cimport.PutCand(st, cobjListKey(base), cand)
-			_ = st.PutFile(cache.KindCObj, key, out)
-			if _, err := os.Stat(out); err != nil {
-				// PutFile moved it into the store: copy it back for the link.
-				if p, ok, _ := st.FilePath(cache.KindCObj, key); ok {
-					if data, err := os.ReadFile(p); err == nil {
-						_ = os.WriteFile(out, data, 0o644)
-					}
-				}
-			}
+			storeFile(st, cache.KindCObj, key, out)
 		}
 		objs, keys = append(objs, out), append(keys, key)
 	}

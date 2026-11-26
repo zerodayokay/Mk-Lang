@@ -66,6 +66,8 @@ Commit the `testdata/fuzz/` directories: they are the regression tests the mutat
 - An input is at most 4,096 bytes.
 - A run fails when `f` panics, leaks, or exits with any status but 0, and hangs when an input does not return for 10 seconds. Each new failure is saved as `testdata/fuzz/<test name>/<16 hex digits>`, named after the input's SHA-256. A `.report` file beside it gives the failure's signature, the exit status, the seed, the call number and the input. The input is quoted when it is UTF-8 text of at most 256 bytes, else its first 256 bytes are in hex. Then come the last 200 lines of the program's output. A failure with the same signature as a saved one is not saved again.
 - After a failure the loop starts over with the next seed. It stops after 20 failing runs.
+- Each run of the program counts what is left of the fuzz time on its own clock, from the start of its loop, so a program that is slow to start loses none of it. A call still running when the fuzz time ends is waited on: it hangs when it does not return within the hang limit, and the input is saved as for any hang.
+- Until it reaches `testing.Fuzz` or `testing.FuzzSys`, the program is held to `--timeout` as any test process is: a test stuck before its loop is a timeout, and a slow start is not a stop.
 
 A saved input stays in the directory, so plain `mk test` calls `f` with it from then on: the failure is a test until it is fixed.
 

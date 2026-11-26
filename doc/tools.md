@@ -111,7 +111,7 @@ PASS src "words"
 | Flag | Does |
 |---|---|
 | `--run text` | Run only the tests whose names contain `text` |
-| `--timeout d` | The time limit per test process. The default is `60s`; `0` turns it off |
+| `--timeout d` | The time limit per test process (under `--fuzz`, until the test reaches its loop). The default is `60s`; `0` turns it off |
 | `--release` | Build the tests in the release profile |
 | `--prop` | Run the property tester over the contracts instead of the tests ([section 7](#7-contracts-and-the-property-tester)) |
 | `--sim seed` | Give every test this seed as `MK_SIM_SEED`, for a test that builds a simulated world from it, and seed the property tester ([section 9](#9-simulation-record-and-replay)) |
