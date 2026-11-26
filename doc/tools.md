@@ -315,7 +315,7 @@ mk cimport --why INVALID_HANDLE_VALUE
 
 ### `mk sdk`
 
-`mk sdk views` lists the [system views](reference.md#system-views) this mk carries (`c.windows`, `c.dxgi`, `c.d3d12`, `c.d3dcompiler`, and `c.vulkan` for `x86_64-windows`): for each view and target, its item count, headers, the views it requires, the inputs it was generated from (the Windows SDK's version, the importer's format, mk's toolset headers, Clang's version) and its identity, or that it is not carried and how to generate it.
+`mk sdk views` lists the [system views](reference.md#system-views) this mk carries (`c.windows`, `c.dxgi`, `c.d3d12`, `c.d3dcompiler`, and `c.vulkan` for `x86_64-windows`): for each view and target, its item count, headers, the views it requires, the inputs it was generated from (the Windows SDK or header repository version, the importer's format, mk's toolset headers when used, Clang's version) and its identity, or that it is not carried and how to generate it.
 
 `mk sdk` prints that, then for each target the system headers a `pkg.CImport` reads: without `sdk: true`, those `MK_SYSROOT_<target>` lists (else `$MK_EVIDENCE/c-import/sysroots/<target>`, else none); with `sdk: true`, the first of `MK_SYSROOT_<target>`, the host's SDK and the evidence directory ([packages](packages.md)). Each line says where the directories come from and the flavour and Clang triple they are read for.
 
