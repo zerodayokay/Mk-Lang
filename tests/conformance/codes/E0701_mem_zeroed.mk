@@ -1,5 +1,5 @@
 // verdict: reject E0701
-// note: mem.Zeroed's T must be zero-valid: a str, a reference, a fn value, a struct holding one, or an open type parameter is never all zero bytes; a plain record of many fields, an array of one and an optional are. T is the result, so it is not an error union either, written, through an alias, under try or as a fn value; a field of one, or an inferred ok type, is fine. An atomic or a Cell of a zero-valid word is zero-valid though unique, and so is anything unique only through them, a global table of atomics included; a Mutex, a linear struct and a view struct are not, whatever their fields
+// note: mem.Zeroed's T must be zero-valid: a str, a reference, a fn value, a struct holding one, or an open type parameter is never all zero bytes; a plain record of many fields, an array of one and an optional are. T is the result, so it is not an error union either, written, through an alias, under try or as a fn value; a field of one, or an inferred ok type, is fine. An atomic or a Cell of a zero-valid word is zero-valid though unique, and so is anything unique only through them, a global table of atomics included; a Mutex, a linear struct and a view struct are not, whatever their fields, nor an Io, whose table is never null, or anything holding one (zeroed or by Arena.Slice); a ?Io is none
 import std.atomic
 import std.mem
 
@@ -75,6 +75,22 @@ Viewed(): int {
     w := mem.Zeroed[Window]() // <- E0701
     _ = w
     return 0
+}
+
+struct Task {
+    n: int
+    io: Io
+}
+
+Handles(a: &Arena): OutOfMemory!int {
+    io := mem.Zeroed[Io]() // <- E0701
+    _ = io
+    t := mem.Zeroed[[2]Task]() // <- E0701
+    _ = t
+    ios := try a.Slice[Io](2) // <- E0701
+    unset := mem.Zeroed[?Io]()
+    _ = unset
+    return ios.Len()
 }
 
 Ok(): int {

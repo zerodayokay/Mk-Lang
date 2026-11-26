@@ -1,6 +1,7 @@
 // Why: mem.Zeroed of an atomic word is a fresh word holding 0, so a table
 // of atomics can be zeroed, while a unique type whose author owns an
-// invariant must stay refused whatever its fields.
+// invariant must stay refused whatever its fields, and so must Io, plain
+// but never with a null table.
 // What: TestZeroValidIdentity.
 // How: a world with std.raw's and std.atomic's Atomic and a std.mem whose
 // Zeroed is bodiless; each case is one module's diagnostics.
@@ -41,6 +42,11 @@ func TestZeroValidIdentity(t *testing.T) {
 		{"error union of an atomic", imp + "struct S {\n\tr: OutOfMemory!atomic.Atomic[u8]\n}\n\nF(): [2]S {\n\treturn mem.Zeroed[[2]S]()\n}\n", ""},
 		{"view struct of atomics", imp + "view struct S {\n\tw: atomic.Atomic[u64]\n}\n\nF(): S {\n\treturn mem.Zeroed[S]()\n}\n", "E0701@10:9"},
 		{"Mutex by identity", imp + "F(): Mutex[int] {\n\treturn mem.Zeroed[Mutex[int]]()\n}\n", "E0701@6:9"},
+		{"Io", imp + "F(): Io {\n\treturn mem.Zeroed[Io]()\n}\n", "E0701@6:9"},
+		{"array of Io", imp + "F(): [2]Io {\n\treturn mem.Zeroed[[2]Io]()\n}\n", "E0701@6:9"},
+		{"record holding an Io", imp + "F(): (io: Io, n: int) {\n\treturn mem.Zeroed[(io: Io, n: int)]()\n}\n", "E0701@6:9"},
+		{"struct holding an Io", imp + "struct S {\n\tn: int\n\tio: Io\n}\n\nF(): S {\n\treturn mem.Zeroed[S]()\n}\n", "E0701@11:9"},
+		{"optional Io", imp + "F(): ?Io {\n\treturn mem.Zeroed[?Io]()\n}\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := w.add("std.z"+string(rune('a'+i)), opt{std: true}, tc.src)
