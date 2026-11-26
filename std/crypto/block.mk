@@ -23,8 +23,9 @@ import std.simd.kernel
 /// block by block with it. Use AesGcm for that. It uses the CPU's AES
 /// instructions where they exist and a constant-time portable path where
 /// they do not; both give the same bytes. It owns no memory: a copy is a
-/// copy of the key, and Wipe clears only the copy it is called on. After
-/// Wipe, Encrypt fails with BadKey.
+/// copy of the key, and Wipe clears only the copy it is called on.
+/// Temporary stack copies of key material made during New and Encrypt are
+/// not wiped. After Wipe, Encrypt fails with BadKey.
 export struct Aes {
     nr: int
     rk: [240]u8
@@ -32,8 +33,9 @@ export struct Aes {
 }
 
 /// Expands key, 16 bytes for AES-128 or 32 for AES-256, into an Aes. Fails
-/// with BadLength for any other key length. O(1); allocates nothing.
-export Aes.New(key: []u8): Error!Aes {
+/// with BadLength for any other key length. Temporary stack copies of key
+/// material are not wiped. O(1); allocates nothing.
+export Aes.New(key: []u8): BadLength!Aes {
     if key.Len() != 16 && key.Len() != 32 {
         fail BadLength
     }
@@ -45,8 +47,9 @@ export Aes.New(key: []u8): Error!Aes {
 
 /// Returns AES(K, block), block encrypted under the key. Fails with BadKey
 /// after Wipe, rather than encrypt under an all-zero key. Constant time in
-/// the key and the block. O(1); allocates nothing.
-export Aes.Encrypt(&self, block: &[16]u8): Error![16]u8 {
+/// the key and the block. Temporary stack copies of key material are not
+/// wiped. O(1); allocates nothing.
+export Aes.Encrypt(&self, block: &[16]u8): BadKey![16]u8 {
     if self.nr == 0 {
         fail BadKey
     }
@@ -89,7 +92,8 @@ AesBlock(rk: []u8, sk: []u8, nr: int, b: &[16]u8): [16]u8 {
 /// counter the little-endian first four bytes of the sample and the nonce
 /// the other twelve). A building block for protocols, not a mode of
 /// encryption: use ChaCha20Poly1305 to encrypt. Cannot fail. Constant time
-/// in key, counter and nonce. O(1); allocates nothing.
+/// in key, counter and nonce. Temporary stack copies of key material are
+/// not wiped. O(1); allocates nothing.
 export ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8 {
     k := ChaKeyOf(key, nonce)
     ks := ChaBlock(&k, counter)

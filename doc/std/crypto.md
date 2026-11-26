@@ -50,7 +50,7 @@ Keys, nonces, tags and signatures are byte arrays and slices. Every output goes 
 - Compare tags, MACs and other secret-derived bytes with `Equal`, never with a loop that stops at the first difference.
 - `Random` fills a buffer from the operating system's secure generator (`getrandom` on Linux, `ProcessPrng` on Windows) through `Io.Random`. No generator of std's own runs in between, so std holds no state to leak or to repeat after a fork. Under a simulated `Io` from `std.sim` the bytes come from the simulation's seed: they repeat from run to run and are not secret.
 - `Wipe` sets bytes to zero with stores the compiler keeps even when the buffer is never read again. Every key object's `Wipe` uses it. Neither runs in compile-time evaluation (E0901).
-- A wiped `AesGcm`, `Aes`, `Prk` or `EcSecret` fails with `BadKey`: it never runs under the zeroed key. These types own no memory, so a copy is a copy of the key, and `Wipe` clears only the copy it is called on.
+- A wiped `AesGcm`, `Aes`, `Prk` or `EcSecret` fails with `BadKey`: it never runs under the zeroed key. These types own no memory, so a copy is a copy of the key, and `Wipe` clears only the copy it is called on. Temporary stack copies of key material made inside operations (`Aes.New`, `Aes.Encrypt`, `ChaCha20Block`, `HkdfExpandLabel` and the AEAD/HMAC primitives) are not wiped.
 
 ## Authenticated encryption
 
@@ -361,31 +361,34 @@ protocols defined on the raw cipher, such as QUIC's header protection
 block by block with it. Use AesGcm for that. It uses the CPU's AES
 instructions where they exist and a constant-time portable path where
 they do not; both give the same bytes. It owns no memory: a copy is a
-copy of the key, and Wipe clears only the copy it is called on. After
-Wipe, Encrypt fails with BadKey.
+copy of the key, and Wipe clears only the copy it is called on.
+Temporary stack copies of key material made during New and Encrypt are
+not wiped. After Wipe, Encrypt fails with BadKey.
 
 ### `Aes.Encrypt`
 
 ```
-export Aes.Encrypt(&self, block: &[16]u8): Error![16]u8
+export Aes.Encrypt(&self, block: &[16]u8): BadKey![16]u8
 ```
 
-- Errors: Error (BadCost, BadEncoding, BadKey, BadLength, BadTag, Encrypted)
+- Errors: BadKey
 
 Returns AES(K, block), block encrypted under the key. Fails with BadKey
 after Wipe, rather than encrypt under an all-zero key. Constant time in
-the key and the block. O(1); allocates nothing.
+the key and the block. Temporary stack copies of key material are not
+wiped. O(1); allocates nothing.
 
 ### `Aes.New`
 
 ```
-export Aes.New(key: []u8): Error!Aes
+export Aes.New(key: []u8): BadLength!Aes
 ```
 
-- Errors: Error (BadCost, BadEncoding, BadKey, BadLength, BadTag, Encrypted)
+- Errors: BadLength
 
 Expands key, 16 bytes for AES-128 or 32 for AES-256, into an Aes. Fails
-with BadLength for any other key length. O(1); allocates nothing.
+with BadLength for any other key length. Temporary stack copies of key
+material are not wiped. O(1); allocates nothing.
 
 ### `Aes.Wipe`
 
@@ -588,7 +591,8 @@ are QUIC's ChaCha20 header protection mask (RFC 9001 5.4.4, with the
 counter the little-endian first four bytes of the sample and the nonce
 the other twelve). A building block for protocols, not a mode of
 encryption: use ChaCha20Poly1305 to encrypt. Cannot fail. Constant time
-in key, counter and nonce. O(1); allocates nothing.
+in key, counter and nonce. Temporary stack copies of key material are
+not wiped. O(1); allocates nothing.
 
 ### `ChaCha20Poly1305`
 
@@ -891,10 +895,10 @@ compressions per output block; allocates nothing.
 ### `HkdfExpandLabel`
 
 ```
-export HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): Error!void
+export HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): BadKey|BadLength!void
 ```
 
-- Errors: Error (BadCost, BadEncoding, BadKey, BadLength, BadTag, Encrypted)
+- Errors: BadKey, BadLength
 
 Fills out with HKDF-Expand-Label(prk, label, context, out.Len()) of TLS
 1.3 (RFC 8446 7.1): HkdfExpand of prk over the HkdfLabel structure, the
@@ -904,9 +908,10 @@ after a one-byte length. QUIC derives its packet keys with it (RFC 9001
 label is empty or over 249 bytes, context is over 255 bytes, or out is
 longer than 255 times the hash's output (8,160 bytes for SHA-256),
 writing nothing on any failure. Constant time in prk; the lengths and
-the label are public. O(out): one HMAC over at most HashLen + 515 bytes
-per HashLen bytes of out; allocates nothing (the 514-byte HkdfLabel is
-on the stack).
+the label are public. Temporary stack copies of key material are not
+wiped. O(out): one HMAC over at most HashLen + 515 bytes per HashLen
+bytes of out; allocates nothing (the 514-byte HkdfLabel is on the
+stack).
 
 ### `HkdfExtract`
 

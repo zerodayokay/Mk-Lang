@@ -192,7 +192,11 @@ export Main(sys: &System): ReadError|WriteError|OutOfMemory!void {
             fail ReadError
         }
         line := try arena.Dup(text)
-        answer := try Case(&arena, sys.io, line)
+        answer := if line.StartsWith("q ") {
+            tls.FxFuzzQuic(sys.heap, sys.io, try Unhex(&arena, line[2..]))
+        } else {
+            try Case(&arena, sys.io, line)
+        }
         try out.Str(answer)
         try out.Str("\n")
         try out.Flush()
@@ -207,6 +211,7 @@ const tlsFixture = `// Fixture of the std-tls tests: private entries, exported.
 
 import std.crypto
 import std.net
+import std.time
 import std.x509
 
 FxHashOf(h: int): crypto.HashKind {
@@ -697,6 +702,99 @@ export FxRewrite(msg: []u8, out: mut []u8): Error!int {
         fail Protocol
     }
     return w.at
+}
+
+// FuzzQuic feeds fuzz bytes per encryption level without blocking.
+struct FuzzQuic {
+    init: []u8
+    init_at: int
+    hs: []u8
+    hs_at: int
+}
+
+impl QuicTransport for FuzzQuic {
+    Recv(mut self, io: Io, level: QuicLevel, buf: mut []u8): Error!int {
+        match level {
+            .Initial {
+                if self.init_at >= self.init.Len() {
+                    fail net.Reset
+                }
+                avail := self.init.Len() - self.init_at
+                k := if buf.Len() < avail { buf.Len() } else { avail }
+                (mut buf[0..k]).CopyFrom(self.init[self.init_at..self.init_at + k])
+                self.init_at += k
+                return k
+            }
+            .Handshake {
+                if self.hs_at >= self.hs.Len() {
+                    fail net.Reset
+                }
+                avail := self.hs.Len() - self.hs_at
+                k := if buf.Len() < avail { buf.Len() } else { avail }
+                (mut buf[0..k]).CopyFrom(self.hs[self.hs_at..self.hs_at + k])
+                self.hs_at += k
+                return k
+            }
+            .Application {
+                fail net.Reset
+            }
+        }
+    }
+
+    Send(mut self, io: Io, level: QuicLevel, data: []u8): Error!void {
+    }
+
+    Secret(mut self, level: QuicLevel, write: bool, suite: QuicSuite, secret: []u8): Error!void {
+    }
+
+    PeerParams(mut self, params: []u8): Error!void {
+    }
+
+    Alert(mut self, io: Io, code: u8) {
+    }
+}
+
+/// FxFuzzQuic runs b as untrusted peer bytes into QuicServer, QuicClient,
+/// or QuicPostMessage. Never panics or hangs; returns "ok", "err", or
+/// "short".
+export FxFuzzQuic(h: &Heap, io: Io, b: []u8): str {
+    if b.Len() < 2 {
+        return "short"
+    }
+    mode := b[0] & 3
+    rest := b[1..]
+    if mode == 2 {
+        _ = QuicPostMessage((b[0] & 4) != 0, rest) else {
+            return "err"
+        }
+        return "ok"
+    }
+    split := int(rest[0]) % (rest.Len() + 1)
+    alpn: [1]str = ["h3"]
+    nochain: [0]x509.Certificate = []
+    if mode == 1 {
+        var pool := x509.Pool.New(nochain[..])
+        var cfg := DefaultConfig
+        cfg.roots = some(&pool)
+        cfg.handshake = time.Seconds(5)
+        var t := FuzzQuic(init: rest[0..split], init_at: 0, hs: rest[split..], hs_at: 0)
+        _ = QuicClient(h, io, mut t, &cfg, "example.com", alpn[..], b"") else {
+            return "err"
+        }
+        return "ok"
+    }
+    seed: [32]u8 = [9; 32]
+    key := crypto.PrivateKey.Ed25519(seed: seed)
+    ids: [1]Identity = [Identity(chain: nochain[..], key: &key)]
+    var scfg := DefaultConfig
+    scfg.identities = ids[..]
+    scfg.handshake = time.Seconds(5)
+    hs_slice := if mode == 3 { b"" } else { rest[split..] }
+    var t := FuzzQuic(init: rest[0..split], init_at: 0, hs: hs_slice, hs_at: 0)
+    _ = QuicServer(h, io, mut t, &scfg, alpn[..], b"") else {
+        return "err"
+    }
+    return "ok"
 }
 `
 
