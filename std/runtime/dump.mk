@@ -15,7 +15,7 @@ export error Unsupported
 export error OsError(code: i64)
 
 /// Every way a std.runtime operation fails.
-export type Error = Unsupported | OsError
+export open type Error = Unsupported | OsError
 
 /// Writes a crash dump of this process to path, which is created or
 /// truncated. On Windows the dump is a minidump that a debugger opens:

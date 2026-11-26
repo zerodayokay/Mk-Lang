@@ -11281,6 +11281,7 @@ Move `Area` into `impl Shape for Tile { Area(&self): int { ... } }`, in place of
 | `mod util;` | Nothing: a module is a directory, and every file in it sees all of it | E0101 |
 | `pat => expr` in a `match` | `pat { expr }` | E1214 |
 | `if let Some(x) = e` | `if x := e` | E1217 |
+| `.Or(x)` on an optional or fallible value `e` | `e else { x }` | E0207 |
 | `Some`, `None`, `Ok`, `Err` | `some`, `none`, `ok`, `err` | E0207 |
 | `Result<T, E>` | `E!T` | E0101 |
 | `?` after a call | `try` before it | E1208 |
@@ -12797,6 +12798,7 @@ Bitset.Count(&self): int
 Bitset.Len(&self): int
 
 // std.text. Category, Script and Property below are text's, generated from the UCD
+// Script and Property may gain members
 text.Graphemes(s: str): Clusters
 Clusters.Next(mut self): ?str from self.text
 text.Normalize(a: &Arena, s: str, form: Form): OutOfMemory!str from a

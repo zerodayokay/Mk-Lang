@@ -521,7 +521,7 @@ carrier's record.
 ### `Error`
 
 ```
-export type Error = Unsupported | OsError
+export open type Error = Unsupported | OsError
 ```
 
 Every way a std.runtime operation fails.
