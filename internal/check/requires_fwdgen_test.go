@@ -205,12 +205,12 @@ func TestNarrowedBranch(t *testing.T) {
 		{"spelled, a second open parameter (p9)", g2 + "K[U, V](): int {\n\tif U is u16 {\n\t\treturn G[u16, V]()\n\t}\n\treturn 1\n}\n", "E0706@8:10",
 			"the callee requires `SizeOf[u16]() + SizeOf[V]() < 4` here: state it on this function", 1},
 		// A forwarded const value is restated over the narrowed argument; a
-		// call inside a fn literal in the branch keeps the demand to state
-		// the clause over U, with its fix, which binds every instance.
+		// call inside a fn literal in the branch is judged at the narrowed
+		// argument, as one outside the literal is.
 		{"narrowed, a forwarded const value (p2)", gk + "K[U](const j: int): int {\n\tif U is u16 {\n\t\treturn G[U](j)\n\t}\n\treturn 0\n}\n", "E0706@8:10",
 			"the callee requires `j < SizeOf[u16]()` here: state it on this function", 1},
-		{"narrowed, in a fn literal (p5)", g + "K[U](): int {\n\tif U is u16 {\n\t\tf := fn(): int { return G[U]() }\n\t\treturn f()\n\t}\n\treturn 1\n}\n", "E0706@8:27",
-			"the callee requires `SizeOf[U]() < 4` here: state it on this function", 1},
+		{"narrowed, in a fn literal (p5)", g + "K[U](): int {\n\tif U is u16 {\n\t\tf := fn(): int { return G[U]() }\n\t\treturn f()\n\t}\n\treturn 1\n}\n", "", "", 0},
+		{"narrowed, in a fn literal, false at the narrowed argument", g + "K[U](): int {\n\tif U is u64 {\n\t\tf := fn(): int { return G[U]() }\n\t\treturn f()\n\t}\n\treturn 1\n}\n", "E0706@8:27", "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

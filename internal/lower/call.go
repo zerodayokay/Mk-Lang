@@ -425,9 +425,9 @@ func (bl *builder) environment(env Env, at source.Span) mir.Operand {
 		var p mir.Place
 		switch s.Kind {
 		case UseLocal:
-			p = bl.b.Place(bl.localOf(s.Binding, at))
+			p = bl.b.Place(bl.remapped(bl.localOf(s.Binding, at))) // inside if T is X, its narrowed copy
 		case UseParam:
-			p = bl.b.Place(mir.LocalID(s.Param))
+			p = bl.b.Place(bl.remapped(mir.LocalID(s.Param)))
 		case UseCapture:
 			p = bl.capturePlace(s.Capture, s.Direct, at)
 		default:

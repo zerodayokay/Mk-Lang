@@ -322,6 +322,8 @@ func (m *Module) declLiteral(it *types.Item, x *tctx, n *ast.FnLit) {
 		fd.Sig.Result, fd.Sig.Errors = types.Poison, types.EmptyErrors
 	}
 	it.Decl = fd
+	xc := *x
+	m.later(it, func() { m.narrowLiteral(it, xc, fd) }) // the enclosing `if T is X`
 	m.d.flows = append(m.d.flows, flowJob{it: it, sig: &fd.Sig, x: x, cl: &flowClauses{}, lit: true})
 }
 

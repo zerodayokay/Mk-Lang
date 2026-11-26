@@ -52,6 +52,22 @@ func TestNarrowedChain(t *testing.T) {
 	})
 }
 
+// TestNarrowedFnLit: a fn literal written inside `if T is u32` sees the
+// narrowing in its signature and its body, a captured value of type T
+// included; one in the else branch keeps T opaque.
+func TestNarrowedFnLit(t *testing.T) {
+	const id = "Id[T](x: T): T {\n\treturn x\n}\n\n"                // lines 1-4
+	const do = "Do(const f: fn(): int): int {\n\treturn f()\n}\n\n" // lines 5-8
+	runBodyCases(t, []bodyCase{
+		{"signature", "F[T: Plain](x: T): T {\n\tif T is u32 {\n\t\th := fn(y: T): T { return y }\n\t\treturn h(x) + 1\n\t}\n\treturn x\n}\n", ""},
+		{"type written in the body", id + "F[T: Plain](x: T): T {\n\tif T is u32 {\n\t\th := fn(y: T): T { return Id[T](y) + 1 }\n\t\treturn h(x)\n\t}\n\treturn x\n}\n", ""},
+		{"captured value", id + do + "F[T: Plain](x: T): int {\n\tif T is u32 {\n\t\treturn Do(fn(): int { return int(x) * 10 })\n\t}\n\treturn -1\n}\n", ""},
+		{"nested literal and a chain", id + "F[T: Plain, U: Plain](x: T): T {\n\tif T is U {\n\t\tif U is i64 {\n\t\t\tg := fn(a: T): T {\n\t\t\t\th := fn(b: T): T { return Id[T](b) * 2 }\n\t\t\t\treturn h(a) + 1\n\t\t\t}\n\t\t\treturn g(x)\n\t\t}\n\t}\n\treturn x\n}\n", ""},
+		{"returned as the result", "F[T: Plain](x: T): fn(T): T {\n\tif T is u32 {\n\t\treturn fn(y: T): T { return y + 1 }\n\t}\n\treturn fn(y: T): T { return y }\n}\n", ""},
+		{"else branch keeps T", "F[T: Plain](x: T): T {\n\tif T is u32 {\n\t\treturn x\n\t} else {\n\t\th := fn(y: T): T { return y + 1 }\n\t\treturn h(x)\n\t}\n}\n", "E0703@5:33"},
+	})
+}
+
 // TestNarrowedTypeExprRaw: std.raw's ReadUnaligned[T] inside `if T is u32`
 // takes a *u32 and returns a u32, and its integer bound is judged at u32;
 // in `if T is f64` it is E0701, as ReadUnaligned[f64] is.

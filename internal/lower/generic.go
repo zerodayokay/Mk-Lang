@@ -288,6 +288,21 @@ func (bl *builder) substParam(t types.TypeID, i uint32, x types.TypeID) types.Ty
 		if fs != nil {
 			return bl.tab.Record(fs)
 		}
+	case types.KFn:
+		fn := *ty.Fn
+		changed := false
+		fn.Params = append([]types.FnParam(nil), ty.Fn.Params...)
+		for k, p := range fn.Params {
+			if np := bl.substParam(p.Type, i, x); np != p.Type {
+				fn.Params[k].Type, changed = np, true
+			}
+		}
+		if r := bl.substParam(fn.Result, i, x); r != fn.Result {
+			fn.Result, changed = r, true
+		}
+		if changed {
+			return bl.tab.Fn(fn)
+		}
 	}
 	return t
 }
