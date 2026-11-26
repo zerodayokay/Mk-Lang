@@ -117,7 +117,7 @@ test "RFC 9000 / Section 3.11: half-open QConn memory footprint stays under 24 K
     }
 }
 
-test "Section 3.7, 3.11: DefaultConfig transport defaults (QT-268..272) and half-open limit" (sys: &System) {
+test "Section 3.7, 3.11: DefaultConfig transport defaults and half-open limit" (sys: &System) {
     cfg := DefaultConfig
     Assert(cfg.half_open == 1000)
     Assert(cfg.retry_above == 256)

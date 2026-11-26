@@ -2,7 +2,7 @@
 // cap out-of-order buffering at 64 KiB, retransmit lost data, and free
 // Initial/Handshake state when keys are discarded.
 //
-// What: unit tests for QT-72, QT-73, QT-96, and out-of-order CRYPTO reassembly.
+// What: unit tests for retransmission and out-of-order CRYPTO reassembly.
 //
 // How: exercises CryptoStreams directly across Space.Initial, Space.Handshake,
 // and Space.App.

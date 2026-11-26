@@ -121,7 +121,7 @@ export QDecoder.Instructions(mut self, a: &Alloc, b: []u8): QpackError|OutOfMemo
             }
             try Grow(mut self.scratch, a, name_len + val_len, self.table.max)
             sc := self.scratch.ItemsMut()
-            // Copy name into scratch before Fit evicts, in case abs is evicted (QP-9).
+            // Copy name into scratch before Fit evicts, in case abs is evicted.
             if stat {
                 (mut sc[0..name_len]).CopyFrom(QStaticTable[ni].name.AsBytes())
             } else {

@@ -28,7 +28,7 @@ SpaceOfQuicLevel(l: tls.QuicLevel): Space {
 }
 
 // Validates raw peer transport parameters and enforces RFC 9000 7.3 CID
-// authentication (QT-239..QT-243). Fails with TransportError(ErrTransportParameter, 0)
+// authentication. Fails with TransportError(ErrTransportParameter, 0)
 // on any missing or mismatched CID parameter. O(raw.Len()).
 ValidatePeerParams(
     is_server: bool,

@@ -11,7 +11,7 @@
 
 import std.net
 
-// Maximum UDP payload size advertised in transport parameters (RFC 9000 18.2, QT-272).
+// Maximum UDP payload size advertised in transport parameters (RFC 9000 18.2).
 const PoolSlotBytes: int = 1472
 
 // Slots allocated per chunk as load grows (Section 3.7.1).

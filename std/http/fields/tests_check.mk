@@ -119,7 +119,7 @@ test "RFC 9113 8.2.1: a value with leading or trailing SP or HTAB is malformed" 
         try TestAdd(h, mut b, "x-ws", v)
         TestExpectReqErr(&b, Malformed.ValueByte)
     }
-    // Non-UTF-8 value bytes give Malformed.NotText.
+    // A value with invalid UTF-8 gives Malformed.NotText.
     var b_utf8 := try TestReqBlock(h)
     defer b_utf8.Free(h)
     bad_u: [2]u8 = [0xFF, 0xFE]

@@ -247,12 +247,12 @@ KeyRing.SetHandshakeConfirmed(mut self) {
     self.handshake_confirmed = true
 }
 
-// Sets a lowered confidentiality limit for testing (QS-57). O(1).
+// Sets a lowered confidentiality limit for testing. O(1).
 KeyRing.SetConfLimitForTest(mut self, limit: ?u64) {
     self.conf_limit_override = limit
 }
 
-// Sets a lowered integrity limit for testing (QS-58). O(1).
+// Sets a lowered integrity limit for testing. O(1).
 KeyRing.SetIntegLimitForTest(mut self, limit: ?u64) {
     self.integ_limit_override = limit
 }

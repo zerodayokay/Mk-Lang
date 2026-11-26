@@ -2,9 +2,7 @@
 // mapping, unidirectional stream dispatch rule, and cancellation rule of RFC
 // 9114 4.1-4.6, 6.1-6.2, 7.2 and 8 must be pinned by exact tests.
 //
-// What: test blocks covering H3-11..H3-16, H3-19, H3-20, H3-24, H3-27, H3-28,
-// H3-50, H3-54, H3-57, H3-66, H3-70, H3-75, H3-77, H3-78, H3-82, H3-85,
-// H3-87..H3-89.
+// What: tests for stream framing, dispatch, cancellation, and error mapping.
 //
 // How: drives client/server Exchanges and raw Mux streams over std.net.pipe's
 // MuxPair and checks exact Violation codes, StreamReset codes, and connection

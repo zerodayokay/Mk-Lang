@@ -3,9 +3,9 @@
 // negative unit tests.
 //
 // What: test blocks for varints, GREASE helpers, RFC 9114 8.1 error code
-// constants (H3-83), frame header parsing/writing, reserved HTTP/2 frame
-// types (H3-81), skipped unknown/GREASE frames (H3-17), exact payload length
-// checks (H3-62), and truncated-frame FIN handling (H3-63).
+// constants, frame header parsing/writing, reserved HTTP/2 frame
+// types, skipped unknown/GREASE frames, exact payload length
+// checks, and truncated-frame FIN handling.
 //
 // How: exercises pure varint/frame codecs directly and exercises stream-level
 // frame truncation and skipping over std.net.pipe's bounded MuxPair.

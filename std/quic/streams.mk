@@ -286,7 +286,7 @@ Streams.EnsurePeerStream(mut self, a: &Alloc into self, id: i64, is_bidi: bool, 
 }
 
 // Frees a stream record and returns MAX_STREAMS credit if both halves are
-// terminal and the application has called Release (QT-51). O(active_ids.Len()).
+// terminal and the application has called Release. O(active_ids.Len()).
 Streams.MaybeReap(mut self, a: &Alloc, id: i64) {
     reap := match self.map.Get(&id) {
         none { false }
@@ -560,7 +560,7 @@ Streams.Credit(mut self, id: i64, total: u64) {
 }
 
 // Releases the application's handle to stream id; frees and returns MAX_STREAMS
-// credit once both halves are terminal (QT-51).
+// credit once both halves are terminal.
 Streams.Release(mut self, a: &Alloc, id: i64) {
     match self.map.GetMut(&id) {
         some(entry) {

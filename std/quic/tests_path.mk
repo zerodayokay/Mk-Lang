@@ -27,33 +27,33 @@ test "RFC 9000 8.2, 9: path migration, 3x amp, 1200-byte reprobe, old-path rever
     ps.SetValidated(a1)
     Assert(ps.OnPacket(io, a1, 100, 1, true, pto, now) == PathStep.Same)
 
-    // Probing-only or lower-PN packet from a2 does not migrate (QT-303).
+    // Probing-only or lower-PN packet from a2 does not migrate.
     Assert(ps.OnPacket(io, a2, 100, 2, false, pto, now) == PathStep.Probe)
     Assert(AddrEqual(&ps.Destination(), &a1))
 
-    // Non-probing highest-PN packet from a2 starts migration + 3x amp budget (QT-304, QT-305).
+    // Non-probing highest-PN packet from a2 starts migration + 3x amp budget.
     Assert(ps.OnPacket(io, a2, 200, 3, true, pto, now) == PathStep.Migrated)
     Assert(AddrEqual(&ps.Destination(), &a2))
     Assert(ps.Allowance(a2) == 600)
     ps.RecordSend(a2, 400)
     Assert(ps.Allowance(a2) == 200)
 
-    // Both new challenge and old challenge are queued (QT-309).
+    // Both new challenge and old challenge are queued.
     nch := ps.TakeNewChallenge().Must()
     Assert(AddrEqual(&nch.to, &a2))
-    // Mark unpadded (< 1200 bytes) to exercise QT-310 1200-byte reprobe.
+    // Mark unpadded (< 1200 bytes) to exercise 1200-byte reprobe.
     ps.MarkNewChallengeSent(false)
     och := ps.TakeOldChallenge().Must()
     Assert(AddrEqual(&och.to, &a1))
 
     // Responding to unpadded new challenge triggers 1200-byte reprobe (needs_1200_reprobe)
-    // and keeps old path validated until 1200-byte probe passes (QT-310).
+    // and keeps old path validated until 1200-byte probe passes.
     res1 := ps.OnResponse(io, &nch.data, pto, now)
     Assert(!res1.validated && !res1.reverted)
     nch2 := ps.TakeNewChallenge().Must()
     ps.MarkNewChallengeSent(true)
 
-    // Even a response arriving from another source address matches if token equals (QT-314).
+    // Even a response arriving from another source address matches if token equals.
     res2 := ps.OnResponse(io, &nch2.data, pto, now)
     Assert(res2.validated && !res2.ip_changed && !res2.reverted)
     Assert(AddrEqual(&ps.ValidatedAddr(), &a2))
@@ -63,14 +63,14 @@ test "RFC 9000 8.2, 9: path migration, 3x amp, 1200-byte reprobe, old-path rever
     clk.Advance(time.Millis(400))
     now = time.Now(io)
 
-    // Migration to new IP a3: old path responds -> reverts migration to a2 (QT-309).
+    // Migration to new IP a3: old path responds -> reverts migration to a2.
     Assert(ps.OnPacket(io, a3, 1200, 5, true, pto, now) == PathStep.Migrated)
     och3 := ps.TakeOldChallenge().Must()
     rev := ps.OnResponse(io, &och3.data, pto, now)
     Assert(rev.reverted && !rev.validated)
     Assert(AddrEqual(&ps.Destination(), &a2))
 
-    // Migration to a3 that times out after 3*eff_pto (>= 2997 ms) reverts to a2 (QT-318).
+    // Migration to a3 that times out after 3*eff_pto (>= 2997 ms) reverts to a2.
     clk.Advance(time.Seconds(4))
     now = time.Now(io)
     Assert(ps.OnPacket(io, a3, 1200, 6, true, pto, now) == PathStep.Migrated)

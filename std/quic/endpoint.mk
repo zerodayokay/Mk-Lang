@@ -446,7 +446,7 @@ EndpointShared.IssueSpareCids(&self, io: Io, e: mut Engine) {
         }
         var g := self.st.Lock(nc).Must()
         s := mut *g.Mut()
-        // QT-333: never collide with any live or closing CID on this endpoint.
+        // Never collide with any live or closing CID on this endpoint.
         if s.demux.Lookup(&cand).IsSome() {
             g.Unlock()
             continue
@@ -611,7 +611,7 @@ PushToSlotLocked(s: mut EndpointState, a: &Alloc into s, idx: int, dgram: []u8, 
     return true
 }
 
-// Sends a stateless INVALID_TOKEN close packet in Initial space (QT-277).
+// Sends a stateless INVALID_TOKEN close packet in Initial space.
 BuildInvalidTokenClose(client_dcid: &Cid, client_scid: &Cid, out: mut []u8, now: time.Instant): int {
     var keys := KeyRing.New(client_dcid, false)
     defer keys.Wipe()
@@ -640,10 +640,10 @@ EndpointShared.DispatchLocked(&self, nc: Io, now: time.Instant, parsed: &Parsed,
     var wake_slots_n := 0
     match *parsed {
         .VersionNeg {
-            // QT-227: never answer VN with VN.
+            // Never answer VN with VN.
         }
         .Retry {
-            // QT-223: server drops Retry packets.
+            // Server drops Retry packets.
         }
         .UnknownVersion(hdr) {
             if dgram.Len() >= MinInitialDatagramLen {
@@ -673,7 +673,7 @@ EndpointShared.DispatchLocked(&self, nc: Io, now: time.Instant, parsed: &Parsed,
                     }
                 }
             } else if dgram.Len() > MinShortPacketLen && hdr.dcid.n == LocalCidLen {
-                // QT-334..QT-336: stateless reset for unknown short-header CID.
+                // Stateless reset for unknown short-header CID.
                 if s.reset_limiter.Allow(now) {
                     tok := MakeStatelessResetToken(&self.static_key, &hdr.dcid)
                     reply_len = WriteStatelessReset(nc, reply_buf, &tok, dgram.Len())
@@ -684,7 +684,7 @@ EndpointShared.DispatchLocked(&self, nc: Io, now: time.Instant, parsed: &Parsed,
             _ = packet
             if hit := s.demux.Lookup(&hdr.dcid) {
                 if hdr.kind == PktInitial && dgram.Len() < MinInitialDatagramLen {
-                    // QT-268: server drops Initial in datagram under 1200 bytes.
+                    // Server drops Initial in datagram under 1200 bytes.
                     _ = 0
                 } else {
                     items := s.slots.ItemsMut()

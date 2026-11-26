@@ -2,8 +2,7 @@
 // MAX_PUSH_ID and excessive-load rule of RFC 9114 5.2, 6.2.1, 7.2 and 10.5
 // must be pinned by positive and negative tests over bounded Mux streams.
 //
-// What: test blocks covering H3-6, H3-7, H3-35, H3-47, H3-48, H3-58..H3-61,
-// H3-64, H3-65, H3-67..H3-69, H3-71..H3-74, H3-76, H3-79, H3-80, and H3-96.
+// What: tests for stream registration, SETTINGS, GOAWAY, and control-frame errors.
 //
 // How: opens raw unidirectional streams on std.net.pipe's MuxPair alongside
 // real Session.Client / Session.Server instances and verifies exact Violation

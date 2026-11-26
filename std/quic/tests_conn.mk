@@ -4,8 +4,7 @@
 // deterministically at the packet and engine boundary.
 //
 // What: unit tests for ValidatePeerParams, Engine/ProcessDatagram/BuildNextDatagram
-// edge cases (QT-79..89, QT-233..243, QT-262..270, QT-295..298, QT-342, QS-6,
-// QS-40), and QConn loopback stream exchange over net.Mux.
+// edge cases, and QConn loopback stream exchange over net.Mux.
 //
 // How: exercises Engine directly with simulated clocks and crafted packets, plus
 // full Connector/Acceptor handshakes over loopback UDP.
@@ -41,19 +40,19 @@ test "RFC 9000 7.3: transport parameter CID authentication for client and server
     bad := CidFromSlice(b"\xff\xff\xff\xff\xff\xff\xff\xff")
     var buf: [256]u8 = [0; 256]
 
-    // Client validating server params without Retry (QT-239, QT-241).
+    // Client validating server params without Retry.
     var sp := DefaultParams(false)
     sp.initial_scid = some(srv_scid)
     sp.original_dcid = some(odcid)
     n := EncodeParams(mut buf[..], &sp)
     _ = try ValidatePeerParams(false, buf[0..n], &odcid, none, some(srv_scid))
 
-    // Missing or mismatched initial_scid / original_dcid / unexpected retry_scid fail (QT-240..243).
+    // Missing or mismatched initial_scid / original_dcid / unexpected retry_scid fail.
     Assert(CheckTpErr(false, buf[0..n], &bad, none, some(srv_scid)))
     Assert(CheckTpErr(false, buf[0..n], &odcid, none, some(bad)))
     Assert(CheckTpErr(false, buf[0..n], &odcid, some(rscid), some(srv_scid)))
 
-    // Server params with Retry must include matching retry_scid (QT-240).
+    // Server params with Retry must include matching retry_scid.
     sp.retry_scid = some(rscid)
     n2 := EncodeParams(mut buf[..], &sp)
     _ = try ValidatePeerParams(false, buf[0..n2], &odcid, some(rscid), some(srv_scid))
@@ -67,7 +66,7 @@ test "RFC 9000 7.3: transport parameter CID authentication for client and server
     Assert(CheckTpErr(true, buf[0..n3], &odcid, none, some(bad)))
 }
 
-test "RFC 9000 10.1, 13.1, 14.1: client 1200B padding, QS-40 1-RTT gate, idle cap, PN exhaustion, and skip ACK" (sys: &System) {
+test "RFC 9000 10.1, 13.1, 14.1: client 1200B padding, 1-RTT gate, idle cap, PN exhaustion, and skip ACK" (sys: &System) {
     h := sys.heap
     var clk := try sim.Sim.New(sys.arena, 1)
     defer clk.Free()
@@ -86,13 +85,13 @@ test "RFC 9000 10.1, 13.1, 14.1: client 1200B padding, QS-40 1-RTT gate, idle ca
     var e := try Engine.New(h, io, false, &ecfg, &odcid, &odcid, &scid, no_cid, no_cid, peer, true, 0, "h3", no_sk, 0, 0)
     defer e.Free()
 
-    // Queue Initial CRYPTO data -> BuildNextDatagram emits padded 1200-byte datagram (QT-265).
+    // Queue Initial CRYPTO data -> BuildNextDatagram emits padded 1200-byte datagram.
     try e.crypto.Queue(h.Alloc(), Space.Initial, b"client-hello")
     var dgram: [MaxSendDatagram]u8 = [0; MaxSendDatagram]
     built := BuildNextDatagram(mut e, mut dgram[..], now).Must()
     Assert(built.len == MinInitialDatagramLen)
 
-    // QS-40: 1-RTT packet received before handshake completes is ignored (doesn't fail or ACK).
+    // 1-RTT packet received before handshake completes is ignored (doesn't fail or ACK).
     var fake_1rtt: [64]u8 = [0x40; 64]
     for i in 0..8 {
         fake_1rtt[1 + i] = scid.b[i]
@@ -100,7 +99,7 @@ test "RFC 9000 10.1, 13.1, 14.1: client 1200B padding, QS-40 1-RTT gate, idle ca
     ProcessDatagram(mut e, io, mut fake_1rtt[..], peer, now)
     Assert(!e.IsDead())
 
-    // QT-342: AllocSendPn skips next_skip_app_pn once reached.
+    // AllocSendPn skips next_skip_app_pn once reached.
     target := e.next_skip_app_pn
     e.rec.SkipPn(Space.App, target - 1)
     // Walk up until target is skipped.
@@ -113,13 +112,13 @@ test "RFC 9000 10.1, 13.1, 14.1: client 1200B padding, QS-40 1-RTT gate, idle ca
     Assert(p_after > target)
     Assert(e.next_skip_app_pn > p_after)
 
-    // QT-88: packet number at MaxPacketNum marks pn_exhausted silently without close.
+    // Packet number at MaxPacketNum marks pn_exhausted silently without close.
     e.rec.SkipPn(Space.App, MaxPacketNum)
     Assert(AllocSendPn(mut e, Space.App).IsNone())
     Assert(e.pn_exhausted && !e.close.IsClosed())
 }
 
-test "RFC 9001 4.1.3, QT-81: unread CRYPTO at prior level raises PROTOCOL_VIOLATION and mismatched coalesced DCID ignored" (sys: &System) {
+test "RFC 9001 4.1.3: unread CRYPTO at prior level raises PROTOCOL_VIOLATION and mismatched coalesced DCID ignored" (sys: &System) {
     h := sys.heap
     var clk := try sim.Sim.New(sys.arena, 2)
     defer clk.Free()
@@ -139,7 +138,7 @@ test "RFC 9001 4.1.3, QT-81: unread CRYPTO at prior level raises PROTOCOL_VIOLAT
     var qc := try QConn.NewClient(h, io, sock, peer, &DefaultConfig)
     defer qc.MuxAbandon()
 
-    // Feed Initial CRYPTO frame without TLS reading it, then try installing Handshake read secret (QS-6).
+    // Feed Initial CRYPTO frame without TLS reading it, then try installing Handshake read secret.
     sec: [32]u8 = [0x44; 32]
     // Simulate unread Initial CRYPTO bytes directly inside qc's Engine.
     var g := qc.eng.Lock(io).Must()
@@ -155,7 +154,7 @@ test "RFC 9001 4.1.3, QT-81: unread CRYPTO at prior level raises PROTOCOL_VIOLAT
     }
     Assert(got_proto)
 
-    // Server Initial < 1200 bytes is dropped cleanly (QT-268).
+    // Server Initial < 1200 bytes is dropped cleanly.
     var srv_e := try Engine.New(h, io, true, &ecfg, &dcid, &dcid, &scid, some(scid), no_cid, peer, false, 0, "h3", no_sk, 0, 0)
     defer srv_e.Free()
     var cli_keys := KeyRing.New(&dcid, true)

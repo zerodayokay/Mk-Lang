@@ -612,7 +612,7 @@ Exchange.RequestHeadInner(&self, io: Io, es: mut ExState, block: mut hf.FieldBlo
         return (too_large: false, stream_code: H3MessageError)
     }
     if !rh.connect && (rh.scheme == "http" || rh.scheme == "https") {
-        // RFC 9114 4.3.1 (H3-43): must contain non-empty :authority or Host.
+        // RFC 9114 4.3.1: must contain non-empty :authority or Host.
         var has_auth := false
         var has_host := false
         var empty_field := false
@@ -641,8 +641,8 @@ Exchange.RequestHeadInner(&self, io: Io, es: mut ExState, block: mut hf.FieldBlo
 }
 
 /// Reads and validates the HTTP/3 request head on a server Exchange into
-/// block (which must have been created on the session's heap). On TooLarge
-/// (H3-36), the stream stays open so the server may answer 431. Errors:
+/// block (which must have been created on the session's heap). On TooLarge,
+/// the stream stays open so the server may answer 431. Errors:
 /// TooLarge, Violation, or net.Error. O(headers); grows block as needed.
 export Exchange.RequestHead(&self, io: Io, block: mut hf.FieldBlock): Error!void {
     try self.sess.PollStreams(io, !self.sess.is_server)
@@ -857,7 +857,7 @@ export Exchange.Respond[F: hf.Field](&self, io: Io, status: int, headers: []F, e
 
 /// Writes data as one HTTP/3 DATA frame and closes the send side when end is
 /// true (RFC 9114 4.1, 7.2.1). On STOP_SENDING (StreamReset), resets the
-/// send half without disturbing the receive half (H3-21). Errors: Violation,
+/// send half without disturbing the receive half. Errors: Violation,
 /// StreamReset, or net.Error. O(data.Len()) besides wait; allocates nothing.
 export Exchange.Write(&self, io: Io, data: []u8, end: bool): Error!void {
     var g := try self.st.Lock(io)
@@ -928,7 +928,7 @@ export Exchange.Reset(&self, code: u64) {
 }
 
 /// Aborts reading further request or response bytes with STOP_SENDING(code)
-/// without resetting the send half (RFC 9114 4.1, H3-22). O(1); allocates
+/// without resetting the send half (RFC 9114 4.1). O(1); allocates
 /// nothing.
 export Exchange.StopReading(&self, code: u64) {
     var g := self.st.Lock(core.IoMasked(rt.NativeIo())).Must()

@@ -2,7 +2,7 @@
 // PTO backoff, anti-deadlock, amplification unblocking, and key discards) and
 // RFC 9000 ACK validation rules.
 //
-// What: unit tests for QT-27, QT-40..QT-42, QT-342, and LR-1..LR-31.
+// What: tests for RTT estimation, packet loss and probe timeouts.
 //
 // How: drives Recovery with std.sim's virtual clock to verify every threshold
 // and state transition deterministically.
@@ -215,7 +215,7 @@ test "RFC 9002 5.1, 5.2, 5.3: RTT estimator starts at 333 ms / 166.5 ms, resets 
     Assert(rec.RttVar().Nanos() == 22_500_000)
     Assert(rec.SmoothedRtt().Nanos() == 43_750_000)
 
-    // Third sample: 30ms < min_rtt -> min_rtt drops to 30ms; ack_delay 10ms would drop below min_rtt (LR-10) -> unsubtracted!
+    // Third sample: 30ms < min_rtt -> min_rtt drops to 30ms; ack_delay 10ms would drop below min_rtt -> unsubtracted!
     TRecSend(mut rec, h, Space.App, 2, 100, true, true, t2)
     t3 := TRecTick(mut s, time.Millis(30))
     r2 := [AckRange(lo: 2, hi: 2)]
@@ -310,17 +310,17 @@ test "RFC 9002 6.2, 6.2.1, 6.2.2: PTO formula, 999ms initial, no App PTO before 
     defer rec.Free(h)
     t0 := time.Now(s.Io())
 
-    // LR-22: First PTO is 333 + 4*166.5 + 0 = 999 ms.
+    // First PTO is 333 + 4*166.5 + 0 = 999 ms.
     Assert(rec.Pto().Nanos() == 999_000_000)
     TRecSend(mut rec, h, Space.Initial, 0, 1200, true, true, t0)
     Assert(rec.Timer(t0).Must().Nanos() == 999_000_000)
 
-    // LR-17: Initial at t0, Handshake at t0+100ms -> PTO picks earlier (Initial).
+    // Initial at t0, Handshake at t0+100ms -> PTO picks earlier (Initial).
     t1 := TRecTick(mut s, time.Millis(100))
     TRecSend(mut rec, h, Space.Handshake, 0, 1200, true, true, t1)
     Assert(rec.Timer(t1).Must().Nanos() == 899_000_000)
 
-    // LR-15 & LR-20: PTO expiry marks nothing lost and doubles backoff (client Initial ACK keeps backoff).
+    // PTO expiry marks nothing lost and doubles backoff (client Initial ACK keeps backoff).
     t2 := TRecTick(mut s, time.Millis(899))
     var lost: [4]SentFrame = [TRecFrame(0); 4]
     to := rec.OnTimeout(t2, mut lost[..])
@@ -331,13 +331,13 @@ test "RFC 9002 6.2, 6.2.1, 6.2.2: PTO formula, 999ms initial, no App PTO before 
     _ = try rec.OnAck(Space.Initial, r0[..], time.Millis(0), t2, mut acked[..], mut lost[..])
     Assert(rec.PtoCount() == 1)
 
-    // LR-23: Discarding Initial removes its bytes in flight, resets pto_count, rearms timers.
+    // Discarding Initial removes its bytes in flight, resets pto_count, rearms timers.
     TRecSend(mut rec, h, Space.Initial, 1, 1200, true, true, t2)
     Assert(rec.BytesInFlight() == 2400)
     rec.Discard(Space.Initial)
     Assert(rec.BytesInFlight() == 1200 && rec.PtoCount() == 0)
 
-    // LR-18: No Application Data PTO before handshake is confirmed!
+    // No Application Data PTO before handshake is confirmed!
     rec.Discard(Space.Handshake)
     TRecSend(mut rec, h, Space.App, 0, 500, true, true, t2)
     // Client without Handshake ACK and not confirmed -> anti-deadlock only, NOT App PTO!
@@ -355,17 +355,17 @@ test "RFC 9002 6.2.2.1: server amplification block, unblock overdue PTO, and cli
     srv.SetRole(true)
     t0 := time.Now(s.Io())
     TRecSend(mut srv, h, Space.Initial, 0, 1200, true, true, t0)
-    // LR-24: amplification-blocked server arms no PTO.
+    // Amplification-blocked server arms no PTO.
     srv.SetServerAmpBlocked(true, t0)
     Assert(srv.Timer(t0).IsNone())
 
-    // LR-25: datagram arriving past PTO runs overdue PTO immediately.
+    // Datagram arriving past PTO runs overdue PTO immediately.
     t1 := TRecTick(mut s, time.Millis(1200))
     var lost: [4]SentFrame = [TRecFrame(0); 4]
     res := srv.OnDatagramReceived(t1, mut lost[..])
     Assert(res.lost == 0 && res.probes == 2 && srv.PtoCount() == 1)
 
-    // LR-26 & LR-27: client anti-deadlock PTO with nothing in flight.
+    // Client anti-deadlock PTO with nothing in flight.
     var cli := try Recovery.New(h)
     defer cli.Free(h)
     cli.SetHandshakeKeys(false)

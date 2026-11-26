@@ -633,7 +633,7 @@ test "RFC 9204 4.5.2-4.5.6: all five field-line representations, post-Base and s
     Assert(!fb.Get(0).sensitive && !fb.Get(1).sensitive && !fb.Get(2).sensitive)
     Assert(fb.Get(3).sensitive && fb.Get(4).sensitive && fb.Get(5).sensitive)
 
-    // QP-36 & QP-37: Re-encoding FieldBlock via EncodeBlock preserves sensitive (N bit) and TooSmall leaves out unchanged.
+    // Re-encoding FieldBlock via EncodeBlock preserves sensitive (N bit) and TooSmall leaves out unchanged.
     qenc := QEncoder.New()
     var short: [4]u8 = [0xCC; 4]
     match qenc.EncodeBlock(mut short[..], &fb) {

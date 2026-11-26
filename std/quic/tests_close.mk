@@ -32,23 +32,23 @@ test "RFC 9000 10.2: CloseState Closing rate limit, keyless 3x cap, unvalidated 
     cs.SetValidatedAddr(a_val)
     cs.SetKeyless(true)
 
-    // Unvalidated source address never gets close reply (QT-328).
+    // Unvalidated source address never gets close reply.
     Assert(!cs.Answer(&a_unval, 100, 60))
 
-    // Validated address rate-limited to odd packets (1st true, 2nd false, 3rd true) (QT-326).
+    // Validated address rate-limited to odd packets (1st true, 2nd false, 3rd true).
     Assert(cs.Answer(&a_val, 30, 60))
     Assert(!cs.Answer(&a_val, 30, 60))
     // 3rd packet triggers keyless 3x amplification check: total rx=90 -> max tx=270.
-    // Already tx=60; reply 250 would be 310 > 270 -> blocked (QT-327).
+    // Already tx=60; reply 250 would be 310 > 270 -> blocked.
     Assert(!cs.Answer(&a_val, 30, 250))
 
-    // Before 3*PTO (300 ms): not expired; at 3*PTO: expired (QT-329).
+    // Before 3*PTO (300 ms): not expired; at 3*PTO: expired.
     clk.Advance(time.Millis(299))
     Assert(!cs.Expired(time.Now(io)))
     clk.Advance(time.Millis(1))
     Assert(cs.Expired(time.Now(io)))
 
-    // Draining state never answers any packet (QT-329).
+    // Draining state never answers any packet.
     var dr := CloseState.New()
     dr.OnPeerClose(0, false, time.Now(io), pto)
     Assert(dr.IsClosed())
@@ -62,7 +62,7 @@ test "RFC 9000 10.3: ResetLimiter 64/sec cap and WriteStatelessReset framing" (s
     var rl := ResetLimiter.New()
     now := time.Now(io)
 
-    // Burst of 64 allowed; 65th blocked (QT-335).
+    // Burst of 64 allowed; 65th blocked.
     for _ in 0..64 {
         Assert(rl.Allow(now))
     }
@@ -76,7 +76,7 @@ test "RFC 9000 10.3: ResetLimiter 64/sec cap and WriteStatelessReset framing" (s
     }
     Assert(!rl.Allow(now2))
 
-    // WriteStatelessReset produces strictly shorter packet with token in last 16 bytes (QT-334).
+    // WriteStatelessReset produces strictly shorter packet with token in last 16 bytes.
     tok: [16]u8 = [0xfe; 16]
     var out: [64]u8 = [0; 64]
     n := WriteStatelessReset(io, mut out[..], &tok, 45)

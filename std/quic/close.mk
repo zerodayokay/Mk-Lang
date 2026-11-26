@@ -8,15 +8,15 @@
 //
 // How: CloseState records the closing/draining deadline (3*PTO), rate-limits
 // replies (every 2nd packet received, or 1 if keyless up to 3x received bytes),
-// and rejects unvalidated addresses (QT-328). ResetLimiter enforces 64/sec and
-// strictly smaller packet length (QT-334..QT-335).
+// and rejects unvalidated addresses. ResetLimiter enforces 64/sec and
+// strictly smaller packet length.
 
 import std.crypto
 import std.net
 import std.raw
 import std.time
 
-// Maximum stateless resets an endpoint sends per second (Section 3.11, QT-335).
+// Maximum stateless resets an endpoint sends per second (Section 3.11).
 const MaxStatelessResetsPerSec: i64 = 64
 
 // Connection close lifecycle phase (RFC 9000 10.2).
@@ -94,20 +94,20 @@ CloseState.Close(mut self, code: u64, app: bool, frame_type: u64, now: time.Inst
 }
 
 // Sets the validated peer address so Closing state ignores packets from
-// unvalidated addresses (RFC 9000 10.2.1, QT-328). O(1).
+// unvalidated addresses (RFC 9000 10.2.1). O(1).
 CloseState.SetValidatedAddr(mut self, peer: net.Addr) {
     self.validated_addr = peer
     self.has_validated = true
 }
 
 // Marks this closing state as keyless (e.g. stored pre-built close packet),
-// enabling the 3x received-bytes cap (RFC 9000 10.2.1, QT-327). O(1).
+// enabling the 3x received-bytes cap (RFC 9000 10.2.1). O(1).
 CloseState.SetKeyless(mut self, keyless: bool) {
     self.keyless = keyless
 }
 
 // Enters the silent Draining state for 3*PTO upon receiving CONNECTION_CLOSE or
-// a stateless reset (RFC 9000 10.2.2, 10.3.1, QT-329, QT-341). O(1).
+// a stateless reset (RFC 9000 10.2.2, 10.3.1). O(1).
 CloseState.OnPeerClose(mut self, code: u64, app: bool, now: time.Instant, pto: time.Duration) {
     if self.phase == ClosePhase.Draining {
         return
@@ -138,7 +138,7 @@ CloseState.Expired(&self, now: time.Instant): bool {
 }
 
 // Decides whether an incoming packet of `pkt_bytes` from `from` in Closing
-// state should be answered with a CONNECTION_CLOSE frame (QT-326..QT-329).
+// state should be answered with a CONNECTION_CLOSE frame.
 // Rate-limited to at most 1 reply per 2 packets, discards unvalidated addresses,
 // and respects 3x amplification when keyless. O(1).
 CloseState.Answer(mut self, from: &net.Addr, pkt_bytes: int, reply_size: int): bool {
@@ -202,7 +202,7 @@ ResetLimiter.Allow(mut self, now: time.Instant): bool {
 }
 
 // Builds a Stateless Reset packet strictly shorter than trigger_len (at least
-// 21 bytes, RFC 9000 10.3, 10.3.3, QT-334..QT-335). Returns bytes written, or
+// 21 bytes, RFC 9000 10.3, 10.3.3). Returns bytes written, or
 // 0 if trigger_len <= 21 or out is too short. O(len).
 WriteStatelessReset(io: Io, out: mut []u8, token: &[16]u8, trigger_len: int): int {
     if trigger_len <= MinShortPacketLen {

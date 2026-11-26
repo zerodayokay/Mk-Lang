@@ -2,8 +2,7 @@
 // connections, refreshes MAX_DATA on buffering and MAX_STREAM_DATA on read or
 // admission, accounts for RESET_STREAM final sizes, and checks final-size rules.
 //
-// What: unit tests for QT-50, QT-54..QT-58, QT-60, QT-64, QT-67, QT-68,
-// QT-70, and QT-95.
+// What: tests for stream and connection flow control.
 //
 // How: configures tight local and peer limits on Streams and inspects emitted
 // MAX_DATA / MAX_STREAM_DATA / DATA_BLOCKED / STREAM_DATA_BLOCKED frames and
@@ -238,12 +237,12 @@ test "RFC 9000 4.1, 13.3, 19.13: BLOCKED frames, stale BLOCKED drop, no MAX_STRE
     sid := T23ReadVarint(out[0..r2.n], ft.next).Must()
     blim := T23ReadVarint(out[0..r2.n], sid.next).Must()
     Assert(ft.v == 0x15 && blim.v == 5)
-    // QT-68: peer sending BLOCKED for limit already raised drops cleanly.
+    // Peer sending BLOCKED for limit already raised drops cleanly.
     cli.OnDataBlocked(10)
     try cli.OnStreamDataBlocked(h, id, 10)
     cli.OnStreamsBlocked(true, 1)
 
-    // QT-70: no MAX_STREAM_DATA once final size is known (SizeKnown)!
+    // No MAX_STREAM_DATA once final size is known (SizeKnown)!
     var d60: [60]u8 = [b'a'; 60]
     try cli.OnStream(h, id, 60, d60[0..10], true) // out-of-order FIN -> SizeKnown!
     try cli.OnStream(h, id, 0, d60[..], false)    // complete -> DataRecvd
@@ -253,7 +252,7 @@ test "RFC 9000 4.1, 13.3, 19.13: BLOCKED frames, stale BLOCKED drop, no MAX_STRE
     r3 := cli.Next(h, mut out[..], 128, mut fs[..])
     Assert(r3.frames == 0)
 
-    // QT-95: lost MAX_DATA resends the CURRENT limit, and losing an older one is ignored!
+    // Lost MAX_DATA resends the CURRENT limit, and losing an older one is ignored!
     var d100: [100]u8 = [b'b'; 100]
     id2 := (try cli.Open(h, false)).Must()
     lim.max_stream_data_bidi_local = 1000

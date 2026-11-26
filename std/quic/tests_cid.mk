@@ -26,7 +26,7 @@ test "RFC 9000 5.1, 19.15: local CID issuance, duplicate suppression, active lim
     p.active_connection_id_limit = 8 // server caps at min(8, 4) = 4
     try cs.OnHandshakeAuthed(a, &p)
 
-    // Duplicate of existing local CID is rejected (QT-201).
+    // Duplicate of existing local CID is rejected.
     Assert(cs.HasLocalCid(&l0))
     Assert(cs.IssueLocal(a, &l0).Must().IsNone())
 
@@ -42,12 +42,12 @@ test "RFC 9000 5.1, 19.15: local CID issuance, duplicate suppression, active lim
     Assert(cs.IssueLocal(a, &extra).Must().IsNone())
     Assert(cs.ActiveLocalCount() == 4)
 
-    // Retiring seq 0 frees a slot, allowing another issue up to total 16 cap (QT-203, QT-205).
+    // Retiring seq 0 frees a slot, allowing another issue up to total 16 cap.
     Assert(cs.OnRetire(0, &extra).Must().IsSome())
     Assert(cs.ActiveLocalCount() == 3)
     Assert(cs.IssueLocal(a, &extra).Must().IsSome())
 
-    // Retiring the packet's own DCID is PROTOCOL_VIOLATION (QT-212).
+    // Retiring the packet's own DCID is PROTOCOL_VIOLATION.
     var got_proto := false
     self_cid := cs.local[1].cid
     _ = cs.OnRetire(1, &self_cid) else e {
@@ -59,7 +59,7 @@ test "RFC 9000 5.1, 19.15: local CID issuance, duplicate suppression, active lim
     }
     Assert(got_proto)
 
-    // Stateless reset token is deterministic per (sk, cid) and distinct across CIDs (QT-331, QT-332).
+    // Stateless reset token is deterministic per (sk, cid) and distinct across CIDs.
     t0 := MakeStatelessResetToken(&sk, &l0)
     t0_again := MakeStatelessResetToken(&sk, &l0)
     t1 := MakeStatelessResetToken(&sk, &extra)
@@ -90,14 +90,14 @@ test "RFC 9000 10.3, 19.15, 19.16: peer CID tracking, limits, retirement, and re
     try cs.OnHandshakeAuthed(a, &sp)
 
     // Zero-length peer CID is not allowed to receive NEW_CONNECTION_ID.
-    // Peer sends seq=1 with tok1; unused CID reset token is NOT matched yet (QT-338).
+    // Peer sends seq=1 with tok1; unused CID reset token is NOT matched yet.
     p1 := CidFromSlice(b"\xaa\xbb\xcc\xdd\xee\xff\x00\x02")
     tok1: [16]u8 = [0x22; 16]
     try cs.OnNewCid(a, 1, 0, &p1, &tok1)
     Assert(cs.ActivePeerCount() == 2)
     Assert(cs.IsResetToken(&tok0) && !cs.IsResetToken(&tok1))
 
-    // Duplicate seq with identical CID/token is idempotent; with different CID is PROTOCOL_VIOLATION (QT-210).
+    // Duplicate seq with identical CID/token is idempotent; with different CID is PROTOCOL_VIOLATION.
     try cs.OnNewCid(a, 1, 0, &p1, &tok1)
     p_bad := CidFromSlice(b"\x99\x99\x99\x99\x99\x99\x99\x99")
     var got_dup_err := false
@@ -109,7 +109,7 @@ test "RFC 9000 10.3, 19.15, 19.16: peer CID tracking, limits, retirement, and re
     }
     Assert(got_dup_err)
 
-    // Sending up to active limit (4) succeeds, 5th active raises CONNECTION_ID_LIMIT_ERROR (QT-207).
+    // Sending up to active limit (4) succeeds, 5th active raises CONNECTION_ID_LIMIT_ERROR.
     p2 := CidFromSlice(b"\x01\x00\x00\x00\x00\x00\x00\x02")
     p3 := CidFromSlice(b"\x01\x00\x00\x00\x00\x00\x00\x03")
     p4 := CidFromSlice(b"\x01\x00\x00\x00\x00\x00\x00\x04")
@@ -127,7 +127,7 @@ test "RFC 9000 10.3, 19.15, 19.16: peer CID tracking, limits, retirement, and re
     }
     Assert(got_lim_err)
 
-    // Increasing retire_prior_to switches Current() away from seq=0 and retires tok0 (QT-209, QT-343).
+    // Increasing retire_prior_to switches Current() away from seq=0 and retires tok0.
     p5 := CidFromSlice(b"\x01\x00\x00\x00\x00\x00\x00\x05")
     tok5: [16]u8 = [0x66; 16]
     try cs.OnNewCid(a, 5, 2, &p5, &tok5)

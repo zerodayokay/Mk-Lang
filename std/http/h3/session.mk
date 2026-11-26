@@ -537,7 +537,7 @@ Session.ApplyControlFrame(&self, io: Io, kind: u64, payload: []u8): Error!void {
         g.Unlock()
         return
     }
-    // Unknown or GREASE frame on the control stream: ignore payload (H3-17).
+    // Unknown or GREASE frame on the control stream: ignore payload.
 }
 
 // CompactCtrl shifts unread bytes to the start of cr.buf.
@@ -824,7 +824,7 @@ Session.DispatchUniStream(&self, io: Io, ps: mut PollState, s: net.MuxStream, st
         }
         return none
     }
-    // H3-85: unknown or GREASE stream type -> STOP_SENDING(H3_STREAM_CREATION_ERROR) and discard.
+    // Unknown or GREASE stream type -> STOP_SENDING(H3_STREAM_CREATION_ERROR) and discard.
     self.m.Stop(&s, H3StreamCreationError)
     self.m.Release(s)
     return none

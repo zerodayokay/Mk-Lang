@@ -14,7 +14,7 @@ import std.crypto
 import std.net
 import std.time
 
-// Minimum path validation timeout floor (3 * kInitialRtt = 999 ms, QT-318).
+// Minimum path validation timeout floor (3 * kInitialRtt = 999 ms).
 const InitialPathPtoNs: i64 = 999_000_000
 
 // Result of inspecting a received packet's source address.
@@ -117,7 +117,7 @@ PathState.ValidatedAddr(&self): net.Addr {
 }
 
 // Returns the remaining bytes sendable to `to` under the per-path 3x
-// anti-amplification rule (QT-303), or -1 when `to` is already validated. O(1).
+// anti-amplification rule, or -1 when `to` is already validated. O(1).
 PathState.Allowance(&self, to: net.Addr): int {
     if AddrEqual(&to, &self.validated) {
         return -1
@@ -145,8 +145,7 @@ PathState.RecordSend(mut self, to: net.Addr, bytes: int) {
     }
 }
 
-// Queues a PATH_RESPONSE to be sent once on the path `from` (QT-312, QT-313,
-// QT-316). Replaces the oldest queued response when full. O(1).
+// Queues a PATH_RESPONSE to be sent once on the path `from`. Replaces the oldest queued response when full. O(1).
 PathState.QueueChallengeResponse(mut self, data: &[8]u8, from: net.Addr) {
     if self.owed_resp_len == 4 {
         for i in 0..3 {
@@ -174,7 +173,7 @@ PathState.TakeOwedResponse(mut self): ?OwedPathResponse {
 // Processes a decrypted 1-RTT packet from `from` of `bytes` carrying `pn`
 // (non_probing true when it contains any frame other than PATH_CHALLENGE,
 // PATH_RESPONSE, NEW_CONNECTION_ID, PADDING). Initiates path validation on
-// non-probing migration with highest PN (RFC 9000 9, 9.3, QT-299..QT-305).
+// non-probing migration with highest PN (RFC 9000 9, 9.3).
 PathState.OnPacket(
     mut self,
     io: Io,
@@ -238,8 +237,8 @@ PathState.OnPacket(
 }
 
 // Processes a received PATH_RESPONSE frame (RFC 9000 8.2.2, 8.2.3, 9.3.3, 9.4).
-// Accepts matching responses from any path (QT-314). Returns whether the new path
-// is now validated, whether the IP changed (requiring CC/RTT reset per QT-306),
+// Accepts matching responses from any path. Returns whether the new path
+// is now validated, whether the IP changed (requiring a congestion and RTT reset),
 // and whether the old path won and reverted the migration.
 PathState.OnResponse(
     mut self,
@@ -258,7 +257,7 @@ PathState.OnResponse(
     }
     if crypto.Equal(p.challenge[..], data[..]) {
         if !p.last_challenge_padded {
-            // QT-310: first challenge could not be padded to 1200 bytes; run a
+            // First challenge could not be padded to 1200 bytes; run a
             // second validation at 1200 bytes now that the path responded.
             var ch2: [8]u8 = [0; 8]
             crypto.Random(io, mut ch2[..]) else {}
@@ -283,7 +282,7 @@ PathState.OnResponse(
     return (validated: false, ip_changed: false, reverted: false)
 }
 
-// Checks whether the active path validation expired at now (3*PTO, QT-304, QT-318).
+// Checks whether the active path validation expired at now (3*PTO).
 // Returns true if validation failed and sending reverted to last validated addr.
 PathState.OnTimeout(mut self, now: time.Instant): bool {
     p := self.probing else {
@@ -297,7 +296,7 @@ PathState.OnTimeout(mut self, now: time.Instant): bool {
     return false
 }
 
-// Re-queues pending PATH_CHALLENGE on a PTO tick (no faster than PTO, QT-318).
+// Re-queues pending PATH_CHALLENGE on a PTO tick (no faster than PTO).
 PathState.OnPto(mut self) {
     if p := self.probing {
         var next := p
@@ -317,7 +316,7 @@ PathState.TakeNewChallenge(mut self): ?(to: net.Addr, data: [8]u8) {
     return some((to: p.new_addr, data: p.challenge))
 }
 
-// Marks whether the sent new-path challenge was padded to 1200 bytes (QT-309, QT-310).
+// Marks whether the sent new-path challenge was padded to 1200 bytes.
 PathState.MarkNewChallengeSent(mut self, padded_1200: bool) {
     if p := self.probing {
         var next := p
@@ -330,7 +329,7 @@ PathState.MarkNewChallengeSent(mut self, padded_1200: bool) {
     }
 }
 
-// Pops the pending old-path challenge if owed (QT-305).
+// Pops the pending old-path challenge if owed.
 PathState.TakeOldChallenge(mut self): ?(to: net.Addr, data: [8]u8) {
     p := self.probing else {
         return none

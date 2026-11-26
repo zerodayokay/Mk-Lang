@@ -33,7 +33,7 @@ const MaxStreamSendBuf: u64 = 65_536
 // Maximum datagrams assembled in one FlushSend batch (Section 3.6.1).
 const MaxBatchDatagrams: int = 10
 
-// Maximum QUIC UDP payload size we send (RFC 9000 14.2, QT-270).
+// Maximum QUIC UDP payload size we send (RFC 9000 14.2).
 const MaxSendDatagram: int = 1200
 
 // Condition a waiting party checks under Engine lock in Driven.Begin.
@@ -498,7 +498,7 @@ Engine.ClosedError(&self): net.Error {
     return Closed
 }
 
-// Records a fatal transport/crypto error and enters Closing (QT-322..QT-325).
+// Records a fatal transport/crypto error and enters Closing.
 Engine.FailTransport(mut self, code: u64, frame: u64, now: time.Instant) {
     if self.hs_fault.IsNone() {
         self.hs_fault = some(TransportError(code: code, frame: frame))
@@ -510,7 +510,7 @@ Engine.FailTransport(mut self, code: u64, frame: u64, now: time.Instant) {
     self.RecomputeTimer(now)
 }
 
-// Restarts the idle timer upon processing an incoming packet (QT-296, QT-297).
+// Restarts the idle timer upon processing an incoming packet.
 Engine.RestartIdleOnRx(mut self, now: time.Instant) {
     self.sent_ae_since_rx = false
     if self.idle_effective_ns <= 0 {
@@ -522,7 +522,7 @@ Engine.RestartIdleOnRx(mut self, now: time.Instant) {
     self.idle_deadline = some(InstantAdd(now, time.Nanos(dur)))
 }
 
-// Restarts the idle timer on the first ack-eliciting packet sent since last Rx (QT-296).
+// Restarts the idle timer on the first ack-eliciting packet sent since last Rx.
 Engine.RestartIdleOnTx(mut self, now: time.Instant) {
     if self.sent_ae_since_rx {
         return
@@ -962,7 +962,7 @@ QConn.FinishHandshakeSuccess(&self, nc: Io, party: int): net.Error!void {
                 ep_q.Ref().RetireHandshakeCids(&e.orig_dcid, e.retry_scid)
                 e.ep_hs_cids_cleaned = true
             }
-            // Issue spare local CIDs up to peer's limit (QT-205).
+            // Issue spare local CIDs up to peer's limit.
             ep_q.Ref().IssueSpareCids(nc, e)
         }
     } else {
@@ -1106,7 +1106,7 @@ QConn.HsSecret(&self, level: Space, write: bool, suite: Suite, secret: []u8): ne
         fail err
     }
     if !write {
-        // RFC 9001 4.1.3 (QS-6): reject unread CRYPTO bytes at the previous level.
+        // RFC 9001 4.1.3: reject unread CRYPTO bytes at the previous level.
         prev := match level {
             .Handshake { Space.Initial }
             .App { Space.Handshake }
@@ -1143,7 +1143,7 @@ QConn.HsPeerParams(&self, raw: []u8): net.Error!void {
         fail ne
     }
     e.peer_params = some(p)
-    // Apply flow-control and stream limits before handshake completes (QS-64).
+    // Apply flow-control and stream limits before handshake completes.
     var lim := e.cfg.StreamLimits(!e.is_server)
     lim.peer_max_data = p.initial_max_data
     lim.peer_max_stream_data_bidi_local = p.initial_max_stream_data_bidi_local
@@ -1155,7 +1155,7 @@ QConn.HsPeerParams(&self, raw: []u8): net.Error!void {
     e.acks.SetAckDelayParams(time.Millis(Cast[i64](DefaultMaxAckDelay)), Cast[int](DefaultAckDelayExponent))
     e.rec.SetPeerMaxAckDelay(time.Millis(Cast[i64](p.max_ack_delay)))
 
-    // Compute effective idle timeout (RFC 9000 10.1, QT-295).
+    // Compute effective idle timeout (RFC 9000 10.1).
     peer_idle_ns := Cast[i64](p.max_idle_timeout) * 1_000_000
     if e.idle_effective_ns > 0 && peer_idle_ns > 0 {
         if peer_idle_ns < e.idle_effective_ns {

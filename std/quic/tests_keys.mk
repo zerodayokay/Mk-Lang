@@ -99,7 +99,7 @@ test "RFC 9001 4.9: Initial discard, Handshake discard at confirmation, and Retr
         _ { Assert(false) }
     }
 
-    // Retry re-derivation (QS-23): client re-derives Initial keys for retry_scid.
+    // Retry re-derivation: client re-derives Initial keys for retry_scid.
     rscid := CidFromSlice(b"\xaa\xbb\xcc\xdd\xee\xff\x00\x11")
     cli.ReinitInitial(&rscid)
     var srv_retry := KeyRing.New(&rscid, false)
@@ -125,7 +125,7 @@ test "RFC 9001 4.9: Initial discard, Handshake discard at confirmation, and Retr
         _ { Assert(false) }
     }
 
-    // DiscardInitial disables both Initial seal and open (QS-19, QS-20).
+    // DiscardInitial disables both Initial seal and open.
     cli.DiscardInitial()
     Assert(!cli.HasWriteKeys(Space.Initial) && !cli.HasReadKeys(Space.Initial))
     n3 := SealLongTest(mut srv_retry, Space.Initial, &scid, &rscid, 1, b"\x01hi", mut pkt[..], now, pto).Must()
@@ -137,7 +137,7 @@ test "RFC 9001 4.9: Initial discard, Handshake discard at confirmation, and Retr
         _ { Assert(false) }
     }
 
-    // Handshake keys install and then discard at confirmation (QS-21).
+    // Handshake keys install and then discard at confirmation.
     InstallMatchedSecrets(sys.heap.Alloc(), mut cli, mut srv_retry, Space.Handshake, Suite.Aes128Gcm)
     Assert(cli.HasWriteKeys(Space.Handshake) && srv_retry.HasReadKeys(Space.Handshake))
     nh := SealLongTest(mut cli, Space.Handshake, &rscid, &scid, 0, b"\x01hs", mut pkt[..], now, pto).Must()
@@ -188,12 +188,12 @@ test "RFC 9001 6: bidirectional key update, ahead-derived keys, 3*PTO retention,
     var delayed_pkt: [256]u8 = [0; 256]
     ndelayed := SealShortTest(mut cli, &dcid, 1, b"\x01p1", mut delayed_pkt[..], now, pto).Must()
 
-    // Client initiates key update at next_write_pn=2 (QS-34, QS-35).
+    // Client initiates key update at next_write_pn=2.
     Assert(cli.CanInitiateUpdate(now, pto, false))
     cli.InitiateKeyUpdate(2, now, pto, false).Must()
     Assert(cli.key_phase)
 
-    // Client seals pn=2 with phase=true; server detects flipped bit & rotates via ahead-derived keys (QS-36).
+    // Client seals pn=2 with phase=true; server detects flipped bit & rotates via ahead-derived keys.
     n2 := SealShortTest(mut cli, &dcid, 2, b"\x01p2", mut pkt[..], now, pto).Must()
     match ParsePacket(pkt[0..n2], LocalCidLen).Must() {
         .Short(hdr, packet: _) {
@@ -204,7 +204,7 @@ test "RFC 9001 6: bidirectional key update, ahead-derived keys, 3*PTO retention,
     }
     Assert(srv.key_phase)
 
-    // Delayed old-phase packet pn=1 (< min_pn_cur_read=2) still opens via app_read_prev (QS-42).
+    // Delayed old-phase packet pn=1 (< min_pn_cur_read=2) still opens via app_read_prev.
     var delayed_copy: [256]u8 = [0; 256]
     (mut delayed_copy[0..ndelayed]).CopyFrom(delayed_pkt[0..ndelayed])
     match ParsePacket(delayed_copy[0..ndelayed], LocalCidLen).Must() {
@@ -215,7 +215,7 @@ test "RFC 9001 6: bidirectional key update, ahead-derived keys, 3*PTO retention,
         _ { Assert(false) }
     }
 
-    // Forged key-phase flip with corrupted ciphertext must fail quietly without rotating (QS-45).
+    // Forged key-phase flip with corrupted ciphertext must fail quietly without rotating.
     var forged: [256]u8 = [0; 256]
     nf := SealShortTest(mut cli, &dcid, 3, b"\x01p3", mut forged[..], now, pto).Must()
     forged[nf - 1] = forged[nf - 1] ^ 0xff
@@ -227,7 +227,7 @@ test "RFC 9001 6: bidirectional key update, ahead-derived keys, 3*PTO retention,
         _ { Assert(false) }
     }
 
-    // Second update blocked while awaiting ACK on pn=2, AND during 3*PTO cooldown after ACK (QS-37, QS-43).
+    // Second update blocked while awaiting ACK on pn=2, AND during 3*PTO cooldown after ACK.
     Assert(!cli.CanInitiateUpdate(now, pto, false))
     cli.OnAck1Rtt(2, now)
     Assert(!cli.CanInitiateUpdate(now, pto, false))
@@ -235,7 +235,7 @@ test "RFC 9001 6: bidirectional key update, ahead-derived keys, 3*PTO retention,
     now = time.Now(clk.Io())
     Assert(cli.CanInitiateUpdate(now, pto, false))
 
-    // Server's prev_expire_at also expires old keys after 3*PTO (QS-41).
+    // Server's prev_expire_at also expires old keys after 3*PTO.
     srv.ExpirePrev(now)
     match ParsePacket(delayed_pkt[0..ndelayed], LocalCidLen).Must() {
         .Short(hdr, packet: _) {
@@ -262,7 +262,7 @@ test "RFC 9001 6: bidirectional key update, ahead-derived keys, 3*PTO retention,
         }
         _ { Assert(false) }
     }
-    // Check KEY_UPDATE_ERROR when old keys open a packet with PN > min_pn_cur_read (QS-44):
+    // Check KEY_UPDATE_ERROR when old keys open a packet with PN > min_pn_cur_read:
     // Keep a third pair where old_sender didn't update and seals pn=5 after pn=2 updated receiver.
     var old_cli := KeyRing.New(&dcid, true)
     defer old_cli.Wipe()
@@ -308,7 +308,7 @@ test "RFC 9001 5.5, 6.6: AEAD confidentiality and integrity limit hooks and defa
     Assert(gcm.ConfLimit() == AesGcmConfLimit && gcm.IntegLimit() == AesGcmIntegLimit)
     Assert(cc.ConfLimit() == NoConfLimit && cc.IntegLimit() == ChaChaIntegLimit)
 
-    // Confidentiality limit hook triggers proactive key update once sealed_in_phase reaches limit (QS-53).
+    // Confidentiality limit hook triggers proactive key update once sealed_in_phase reaches limit.
     gcm.SetConfLimitForTest(some(u64(2)))
     var pkt: [256]u8 = [0; 256]
     _ = SealShortTest(mut gcm, &dcid, 0, b"\x01a", mut pkt[..], now, pto).Must()
@@ -317,7 +317,7 @@ test "RFC 9001 5.5, 6.6: AEAD confidentiality and integrity limit hooks and defa
     _ = SealShortTest(mut gcm, &dcid, 2, b"\x01c", mut pkt[..], now, pto).Must()
     Assert(gcm.key_phase)
 
-    // Integrity limit hook raises ErrAeadLimitReached once failed decryptions reach limit (QS-55).
+    // Integrity limit hook raises ErrAeadLimitReached once failed decryptions reach limit.
     gcm.SetIntegLimitForTest(some(u64(3)))
     var bad: [64]u8 = [0x40; 64]
     var plain: [64]u8 = [0; 64]

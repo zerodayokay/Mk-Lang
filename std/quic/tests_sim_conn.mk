@@ -5,7 +5,7 @@
 // What: simulation tests covering 32 seeds at 0%/10%/30% packet loss,
 // anti-deadlock PTO with a 3.6 KiB certificate chain, lost-first-datagram
 // recovery while another task leads (T5 PTO/2), anti-amplification unblocking,
-// and IP-change vs port-only path-validation CC/RTT reset (QT-306).
+// and IP-change vs port-only path-validation CC/RTT reset.
 //
 // How: pairs Acceptor and Connector inside per-seed Sim instances with
 // SetNetFaults and verifies complete handshake, bidirectional echo, and clean
@@ -353,7 +353,7 @@ test "SIM-Conn lost first datagram while another task leads (T5 PTO/2)" (sys: &S
     Assert(failed.Load() == 0)
 }
 
-test "RFC 9000 9.4, RFC 9002: IP change resets congestion window/RTT while port-only rebind keeps them (QT-306)" (sys: &System) {
+test "RFC 9000 9.4, RFC 9002: IP change resets congestion window/RTT while port-only rebind keeps them" (sys: &System) {
     var clk := try sim.Sim.New(sys.arena, 99)
     defer clk.Free()
     io := clk.Io()
@@ -379,7 +379,7 @@ test "RFC 9000 9.4, RFC 9002: IP change resets congestion window/RTT while port-
     rec.OnPathValidated(false, now)
     Assert(rec.has_rtt_sample)
 
-    // IP change resets RTT sample and congestion state to initial defaults (QT-306).
+    // IP change resets RTT sample and congestion state to initial defaults.
     rec.OnPathValidated(true, now)
     Assert(!rec.has_rtt_sample)
     Assert(rec.Pto().Nanos() > 500_000_000)

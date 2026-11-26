@@ -310,7 +310,7 @@ CryptoStreams.HasPending(&self, level: Space): bool {
 }
 
 // Resets send cursors at level so the identical CRYPTO bytes are resent from
-// offset 0 after a Retry packet (RFC 9000 17.2.5.3, QT-286). O(1).
+// offset 0 after a Retry packet (RFC 9000 17.2.5.3). O(1).
 CryptoStreams.ResetTx(mut self, level: Space) {
     li := SpaceIndex(level)
     self.levels[li].tx_send = 0

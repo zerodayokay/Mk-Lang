@@ -2,7 +2,7 @@
 // cap and duplicate floor, schedules immediate or delayed ACKs, and encodes
 // ACK frames largest-first.
 //
-// What: unit tests for QT-28 through QT-39.
+// What: unit tests for through .
 //
 // How: uses std.sim's virtual clock for deterministic instants and decodes
 // emitted ACK frames to verify wire encoding.

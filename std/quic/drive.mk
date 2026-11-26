@@ -21,7 +21,7 @@ RunTimersLocked(qc: &QConn, e: mut Engine, now: time.Instant) {
     e.keys.ExpirePrev(now)
     if dl := e.idle_deadline {
         if now.Since(dl).Nanos() >= 0 {
-            // QT-298: idle expiry closes silently and sends nothing.
+            // Idle expiry closes silently and sends nothing.
             e.close.OnPeerClose(0, false, now, e.rec.Pto())
             if e.hs_net_err.IsNone() {
                 e.hs_net_err = some(Closed)

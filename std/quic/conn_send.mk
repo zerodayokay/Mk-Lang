@@ -8,13 +8,13 @@
 //
 // How: FlushSend acquires sl (SendState), builds up to 10 datagrams under eng
 // lock into SendState.batch_buf, releases eng, and sends via SharedDatagram or
-// Endpoint. Client Handshake send immediately discards Initial keys (QS-20).
+// Endpoint. Client Handshake send immediately discards Initial keys.
 
 import std.net
 import std.time
 
 // Allocates the next send packet number in space, applying the optimistic-ACK
-// skip on Space.App (QT-342) and closing silently at 2^62 - 1 (QT-88).
+// skip on Space.App and closing silently at 2^62 - 1.
 AllocSendPn(e: mut Engine, space: Space): ?i64 {
     pn := e.rec.NextPn(space)
     if pn >= MaxPacketNum {
@@ -59,7 +59,7 @@ Engine.RecordAmpSent(mut self, dst: net.Addr, bytes: int) {
     self.path.RecordSend(dst, bytes)
 }
 
-// Pads plaintext buffer in place to satisfy minimum HP sample length (QS-35)
+// Pads plaintext buffer in place to satisfy minimum HP sample length
 // plus optional extra target_plain_len (e.g. for 1,200-byte datagram padding).
 PadPlain(plain: mut []u8, cur_len: int, pn_len: int, min_total_plain: int): int {
     need_sample := cur_len + MinSamplePadding(pn_len, cur_len)
@@ -84,7 +84,7 @@ HeaderOverhead(space: Space, dcid: &Cid, scid: &Cid, token_len: int, pn_len: int
     return 7 + dcid.n + scid.n + tok_bytes + 2 + pn_len
 }
 
-// Builds a CONNECTION_CLOSE datagram across available levels (QT-323..QT-325).
+// Builds a CONNECTION_CLOSE datagram across available levels.
 BuildCloseDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int, dst: net.Addr) {
     dst := e.path.Destination()
     amp := e.RemainingAmpBudget(&dst)
@@ -111,7 +111,7 @@ BuildCloseDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int,
         pos += pkt_len
     } else {
         // Before confirmation: coalesce Initial, Handshake, and App (if keys exist),
-        // replacing 0x1d with 0x1c APPLICATION_ERROR in Initial/Handshake (QT-324, QT-325).
+        // replacing 0x1d with 0x1c APPLICATION_ERROR in Initial/Handshake.
         hs_code := if e.close.app { ErrApplication } else { e.close.code }
         hs_ft := if e.close.app { u64(0) } else { e.close.frame_type }
         if e.keys.HasWriteKeys(Space.Initial) {
@@ -163,7 +163,7 @@ BuildCloseDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int,
 }
 
 // Seals a 1-RTT path probing packet (PATH_RESPONSE or PATH_CHALLENGE), padded
-// to 1,200 bytes when the destination path's budget allows (QT-309, QT-315).
+// to 1,200 bytes when the destination path's budget allows.
 SealPathFramePacket(
     e: mut Engine,
     out: mut []u8,
@@ -202,7 +202,7 @@ SealPathFramePacket(
     pkt_len := e.keys.SealPacket(Space.App, pn, hdr.header_len, hdr.pn_offset, pn_len, plain[0..plen], out, now, pto) else {
         return none
     }
-    // Path frames are not retransmitted via loss recovery (QT-316); record empty SentFrame list
+    // Path frames are not retransmitted via loss recovery; record empty SentFrame list
     // only for PATH_CHALLENGE so bytes in flight aren't misattributed.
     empty_frames: [0]SentFrame = []
     _ = e.rec.OnSent(e.h.Alloc(), Space.App, pn, pkt_len, is_challenge, false, empty_frames[..], now) else {}
@@ -310,7 +310,7 @@ BuildNextDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int, 
     a := e.h.Alloc()
     dcid := *e.cids.Current()
 
-    // Determine which spaces have work to pack into this datagram (QT-80).
+    // Determine which spaces have work to pack into this datagram.
     init_ack := e.keys.HasWriteKeys(Space.Initial) && e.acks.HasPendingAck(Space.Initial)
     init_crypto := e.keys.HasWriteKeys(Space.Initial) && cc_ok && e.crypto.HasPending(Space.Initial)
     init_probe := e.keys.HasWriteKeys(Space.Initial) && is_probe && IsProbeSpace(probe_sp, Space.Initial)
@@ -328,7 +328,7 @@ BuildNextDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int, 
         return none
     }
 
-    // Server anti-amplification + 1200-byte Initial rule (QT-262, QT-266).
+    // Server anti-amplification + 1200-byte Initial rule.
     if e.is_server && !e.addr_validated && want_init && (init_crypto || init_probe) && dgram_max < MinInitialDatagramLen {
         e.rec.SetServerAmpBlocked(true, now)
         return none
@@ -372,7 +372,7 @@ BuildNextDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int, 
                 }
             }
             if poff > 0 {
-                // Client ALWAYS pads Initial datagrams to 1200; server pads ack-eliciting Initials (QT-265, QT-266).
+                // Client ALWAYS pads Initial datagrams to 1200; server pads ack-eliciting Initials.
                 if !e.is_server || ae {
                     need_pad_1200 = true
                 }
@@ -450,7 +450,7 @@ BuildNextDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int, 
                 if ae {
                     any_ae = true
                 }
-                // QS-20: client discards Initial keys as soon as it first sends a Handshake packet.
+                // Client discards Initial keys as soon as it first sends a Handshake packet.
                 if !e.is_server {
                     e.keys.DiscardInitial()
                     e.rec.Discard(Space.Initial)
@@ -461,7 +461,7 @@ BuildNextDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int, 
         }
     }
 
-    // 3. 1-RTT Application Data packet (always last in datagram, QT-80).
+    // 3. 1-RTT Application Data packet (always last in datagram).
     if want_app && pos + 32 < dgram_max {
         pn := AllocSendPn(e, Space.App) else { return none }
         la := e.rec.LargestAcked(Space.App) else { -1 }
@@ -517,7 +517,7 @@ BuildNextDatagram(e: mut Engine, out: mut []u8, now: time.Instant): ?(len: int, 
                 }
             }
             if cc_ok && fn_cnt < 64 && poff < room {
-                // Reload dcid in case TakePendingRetire switched current peer CID (QT-215).
+                // Reload dcid in case TakePendingRetire switched current peer CID.
                 sr := e.streams.Next(a, mut plain[poff..room], room - poff, mut frames_buf[fn_cnt..])
                 if sr.n > 0 {
                     poff += sr.n

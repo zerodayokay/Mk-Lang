@@ -2,8 +2,7 @@
 // opening, state machines for both halves, reassembly with the 32-gap cap,
 // retransmission fidelity, and role/direction frame legality.
 //
-// What: unit tests for QT-44..QT-49, QT-51..QT-53, QT-59, QT-61..QT-63,
-// QT-65..QT-67, QT-69, QT-71, QT-74..QT-78, and QT-82.
+// What: tests for stream IDs, final offsets, reset, flow control and retirement.
 //
 // How: drives Streams directly and decodes frames emitted by Next using
 // T23ReadVarint to verify both state transitions and wire output.
@@ -173,7 +172,7 @@ test "RFC 9000 2.2: out-of-order and repeated stream data reassemble in order" (
     Assert(n == 11 && T3Eq(buf[0..n], "hello world".AsBytes()))
     Assert((try srv.Read(h, 2, mut buf[..])).Must() == 0)
 
-    // 32-gap cap (QT-52, QT-82): 33rd gap fails with GapLimit and leaves state untouched.
+    // 32-gap cap: 33rd gap fails with GapLimit and leaves state untouched.
     try srv.OnStream(h, 6, 0, "a".AsBytes(), false)
     for g in 0..32 {
         try srv.OnStream(h, 6, Cast[u64](2 + g * 2), "x".AsBytes(), false)
@@ -199,7 +198,7 @@ test "RFC 9000 2.2 and 4.5: retransmission resends identical bytes and nothing i
     defer cli.Free(h)
     id := (try cli.Open(h, false)).Must()
     _ = try cli.Write(h, id, "abcdef".AsBytes(), true)
-    // QT-59: writing after FIN fails.
+    // Writing after FIN fails.
     var post_fin_err := false
     _ = cli.Write(h, id, "g".AsBytes(), false) else {
         post_fin_err = true
@@ -240,23 +239,23 @@ test "RFC 9000 3.3, 3.5, 4.4, 13.3: RESET_STREAM, STOP_SENDING, terminal silence
     rc := T23ReadVarint(out[0..r2.n], sid.next).Must()
     rfs := T23ReadVarint(out[0..r2.n], rc.next).Must()
     Assert(ft.v == 0x04 && sid.v == 0 && rc.v == 42 && rfs.v == 5)
-    // QT-71: lost RESET_STREAM resends identical code and final size.
+    // Lost RESET_STREAM resends identical code and final size.
     var out_re: [64]u8 = [0; 64]
     cli.OnLost(h, &fs[0])
     r3 := cli.Next(h, mut out_re[..], 64, mut fs[..])
     Assert(r3.n == r2.n && T3Eq(out[0..r2.n], out_re[0..r3.n]))
     cli.OnAcked(h, &fs[0])
 
-    // QT-61: receive half still works and keeps flow control after send reset!
+    // Receive half still works and keeps flow control after send reset!
     try cli.OnStream(h, id, 0, "reply".AsBytes(), true)
-    // QT-69: RESET_STREAM in DataRecvd is suppressed and buffered data is still delivered!
+    // RESET_STREAM in DataRecvd is suppressed and buffered data is still delivered!
     try cli.OnReset(h, id, 99, 5)
     var buf: [16]u8 = [0; 16]
     Assert((try cli.Read(h, id, mut buf[..])).Must() == 5)
     Assert(T3Eq(buf[0..5], "reply".AsBytes()))
     Assert((try cli.Read(h, id, mut buf[..])).Must() == 0)
 
-    // QT-63: late frames after stream closed and freed are ignored and do not reopen it.
+    // Late frames after stream closed and freed are ignored and do not reopen it.
     cli.Release(h, id)
     try cli.OnStream(h, id, 0, "late".AsBytes(), false)
     try cli.OnReset(h, id, 1, 5)
@@ -327,7 +326,7 @@ test "RFC 9000 19.4, 19.5, 19.8, 19.10, 19.13: stream-state legality checks" (sy
     var cli := try Streams.New(h, true, &lim)
     defer cli.Free(h)
 
-    // QT-74: STREAM for uncreated local bidi (0) or send-only local uni (2).
+    // STREAM for uncreated local bidi (0) or send-only local uni (2).
     var e1: u64 = 0
     cli.OnStream(h, 0, 0, "x".AsBytes(), false) else e { e1 = T3Code(e) }
     Assert(e1 == ErrStreamState)
@@ -335,7 +334,7 @@ test "RFC 9000 19.4, 19.5, 19.8, 19.10, 19.13: stream-state legality checks" (sy
     cli.OnStream(h, 2, 0, "x".AsBytes(), false) else e { e2 = T3Code(e) }
     Assert(e2 == ErrStreamState)
 
-    // QT-75 & QT-76: RESET_STREAM or STREAM_DATA_BLOCKED for send-only local uni (2).
+    // RESET_STREAM or STREAM_DATA_BLOCKED for send-only local uni (2).
     _ = try cli.Open(h, true) // creates id 2
     var e3: u64 = 0
     cli.OnReset(h, 2, 0, 0) else e { e3 = T3Code(e) }
@@ -344,7 +343,7 @@ test "RFC 9000 19.4, 19.5, 19.8, 19.10, 19.13: stream-state legality checks" (sy
     cli.OnStreamDataBlocked(h, 2, 0) else e { e4 = T3Code(e) }
     Assert(e4 == ErrStreamState)
 
-    // QT-77 & QT-78: STOP_SENDING or MAX_STREAM_DATA for uncreated local bidi (0) or recv-only peer uni (3).
+    // STOP_SENDING or MAX_STREAM_DATA for uncreated local bidi (0) or recv-only peer uni (3).
     var e5: u64 = 0
     cli.OnStop(h, 0, 0) else e { e5 = T3Code(e) }
     Assert(e5 == ErrStreamState)

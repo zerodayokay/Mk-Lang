@@ -700,7 +700,7 @@ Recovery.ResetForRetry(mut self, now: time.Instant) {
 }
 
 // Resets congestion control and RTT estimator when a peer migration changes IP
-// address, leaving them intact for a port-only NAT rebind (RFC 9000 9.4, QT-306). O(1).
+// address, leaving them intact for a port-only NAT rebind (RFC 9000 9.4). O(1).
 Recovery.OnPathValidated(mut self, ip_changed: bool, now: time.Instant) {
     if !ip_changed {
         return

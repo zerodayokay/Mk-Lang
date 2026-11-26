@@ -25,7 +25,7 @@ const MaxPendingRetires: int = 8
 // Maximum local CIDs issued over one connection's lifetime (Section 3.11).
 const MaxIssuedCids: int = 64
 
-// Generates an 8-byte unpredictable connection ID using crypto.Random (QT-201).
+// Generates an 8-byte unpredictable connection ID using crypto.Random.
 RandomLocalCid(io: Io): Canceled!Cid {
     var b: [MaxCidLen]u8 = [0; MaxCidLen]
     try crypto.Random(io, mut b[0..LocalCidLen])
@@ -33,7 +33,7 @@ RandomLocalCid(io: Io): Canceled!Cid {
 }
 
 // Derives a 16-byte stateless reset token from static_key and cid via
-// HMAC-SHA256 truncated to 16 bytes (RFC 9000 10.3.2, QT-331). O(1).
+// HMAC-SHA256 truncated to 16 bytes (RFC 9000 10.3.2). O(1).
 MakeStatelessResetToken(static_key: &[32]u8, cid: &Cid): [16]u8 {
     mac := crypto.Hmac256(static_key[..], CidBytes(cid))
     var out: [16]u8 = [0; 16]
@@ -132,13 +132,13 @@ CidState.Free(self, a: &Alloc) {
     pending_retires.Free(a)
 }
 
-// Sets the endpoint static key for stateless reset token derivation (QT-331).
+// Sets the endpoint static key for stateless reset token derivation.
 CidState.SetStaticKey(mut self, key: &[32]u8) {
     self.static_key = *key
     self.has_static_key = true
 }
 
-// Records our initial handshake SCID at sequence number 0 (QT-203).
+// Records our initial handshake SCID at sequence number 0.
 CidState.AddLocalInitial(mut self, a: &Alloc, scid: &Cid): OutOfMemory!void {
     tok := if self.has_static_key { MakeStatelessResetToken(&self.static_key, scid) } else { [0; 16] }
     try self.local.Push(a, LocalCid(
@@ -153,7 +153,7 @@ CidState.AddLocalInitial(mut self, a: &Alloc, scid: &Cid): OutOfMemory!void {
 }
 
 // Sets peer's initial handshake CID (e.g. when client switches DCID on Retry or
-// server's first Initial, QT-236, QT-238).
+// server's first Initial).
 CidState.SetPeerHandshakeCid(mut self, cid: &Cid) {
     items := self.peer.ItemsMut()
     items[0].cid = *cid
@@ -161,9 +161,9 @@ CidState.SetPeerHandshakeCid(mut self, cid: &Cid) {
     self.peer_zero_len = cid.n == 0
 }
 
-// Installs authenticated peer transport parameters once the handshake completes
-// (QS-64, QT-205, QT-321): saves peer_active_limit, seq 0 reset token, and
-// seq 1 preferred_address CID (counted toward limit, never used).
+// Installs authenticated peer transport parameters once the handshake completes.
+// Saves the active limit, sequence 0 reset token, and sequence 1 preferred
+// address CID. The latter counts toward the limit and is never used.
 CidState.OnHandshakeAuthed(mut self, a: &Alloc, p: &Params): Error!void {
     self.hs_complete = true
     self.peer_active_limit = p.active_connection_id_limit
@@ -193,7 +193,7 @@ CidState.ActiveLocalCount(&self): int {
 }
 
 // Returns true if cid matches any previously issued local CID on this connection
-// (QT-201: never issue the same CID twice on one connection).
+// (never issue the same CID twice on one connection).
 CidState.HasLocalCid(&self, cid: &Cid): bool {
     items := self.local.Items()
     for i in 0..items.Len() {
@@ -205,7 +205,7 @@ CidState.HasLocalCid(&self, cid: &Cid): bool {
 }
 
 // Issues a new local CID if below min(peer_active_limit, OurActiveCidLimit) and
-// total issued < MaxIssuedCids (QT-203, QT-205). Returns the issued LocalCid or none.
+// total issued < MaxIssuedCids. Returns the issued LocalCid or none.
 CidState.IssueLocal(mut self, a: &Alloc, new_cid: &Cid): OutOfMemory!?LocalCid {
     cap_lim := if self.peer_active_limit < OurActiveCidLimit { Cast[int](self.peer_active_limit) } else { Cast[int](OurActiveCidLimit) }
     if self.ActiveLocalCount() >= cap_lim || self.local_total_issued >= MaxIssuedCids {
@@ -247,7 +247,7 @@ CidState.OnNewCidLost(mut self, seq: u64) {
 }
 
 // Handles a received RETIRE_CONNECTION_ID(seq) frame (RFC 9000 5.1.2, 19.16).
-// pkt_dcid is the DCID of the packet that carried the frame (QT-94 / QT-215).
+// pkt_dcid is the DCID of the packet that carried the frame.
 // Returns the retired local Cid if newly retired (so the endpoint removes it).
 CidState.OnRetire(mut self, seq: u64, pkt_dcid: &Cid): Error!?Cid {
     if seq >= self.local_next_seq {
@@ -283,7 +283,7 @@ CidState.ActivePeerCount(&self): int {
 }
 
 // Queues a RETIRE_CONNECTION_ID(seq) if not already queued, enforcing the 2x
-// active_connection_id_limit pending cap (QT-208).
+// active_connection_id_limit pending cap.
 CidState.QueueRetire(mut self, a: &Alloc, seq: u64): Error!void {
     q := self.pending_retires.Items()
     for i in 0..q.Len() {
@@ -308,8 +308,7 @@ CidState.PickSurvivingPeerIdx(&self, avoid_seq: u64): int {
     return -1
 }
 
-// Processes a received NEW_CONNECTION_ID frame (RFC 9000 5.1.1, 5.1.2, 19.15,
-// QT-206..QT-213, QT-343). O(peer.Len()).
+// Processes a NEW_CONNECTION_ID frame (RFC 9000 5.1.1, 5.1.2, 19.15). O(peer.Len()).
 CidState.OnNewCid(mut self, a: &Alloc, seq: u64, retire_prior: u64, cid: &Cid, token: &[16]u8): Error!void {
     if self.peer_zero_len {
         fail TransportError(code: ErrProtocolViolation, frame: FrameNewConnectionId)
@@ -321,7 +320,7 @@ CidState.OnNewCid(mut self, a: &Alloc, seq: u64, retire_prior: u64, cid: &Cid, t
         fail TransportError(code: ErrFrameEncoding, frame: FrameNewConnectionId)
     }
 
-    // Check duplicate seq (QT-211 / QT-90).
+    // Check duplicate seq.
     items := self.peer.Items()
     for i in 0..items.Len() {
         if items[i].seq == seq {
@@ -332,10 +331,10 @@ CidState.OnNewCid(mut self, a: &Alloc, seq: u64, retire_prior: u64, cid: &Cid, t
         }
     }
 
-    // Apply Retire Prior To if it advances (QT-207, QT-212).
+    // Apply Retire Prior To if it advances.
     if retire_prior > self.retire_prior {
         self.retire_prior = retire_prior
-        // Switch away from any retired current peer CID first (QT-207).
+        // Switch away from any retired current peer CID first.
         cur_seq := self.peer[self.current_peer_idx].seq
         if cur_seq < retire_prior {
             // Try surviving existing CIDs first.
@@ -365,7 +364,7 @@ CidState.OnNewCid(mut self, a: &Alloc, seq: u64, retire_prior: u64, cid: &Cid, t
         }
     }
 
-    // Sequence below largest Retire Prior To: retire at once without counting (QT-213).
+    // Sequence below largest Retire Prior To: retire at once without counting.
     if seq < self.retire_prior {
         try self.QueueRetire(a, seq)
         return
@@ -385,14 +384,14 @@ CidState.OnNewCid(mut self, a: &Alloc, seq: u64, retire_prior: u64, cid: &Cid, t
         self.current_peer_idx = self.peer.Len() - 1
     }
 
-    // Enforce active_connection_id_limit AFTER retire_prior (QT-206).
+    // Enforce active_connection_id_limit AFTER retire_prior.
     if Cast[u64](self.ActivePeerCount()) > OurActiveCidLimit {
         fail TransportError(code: ErrConnectionIdLimit, frame: FrameNewConnectionId)
     }
 }
 
 // Pops the next pending RETIRE_CONNECTION_ID sequence number to send, ensuring
-// we never retire the current DCID used to carry the frame (QT-94, QT-215).
+// we never retire the current DCID used to carry the frame.
 CidState.TakePendingRetire(mut self): ?u64 {
     if self.peer_zero_len || self.pending_retires.Len() == 0 {
         return none
@@ -429,7 +428,7 @@ CidState.Current(&self): &Cid from self {
     return &self.peer[self.current_peer_idx].cid
 }
 
-// Returns a spare unused/unretired peer CID (for old-path PATH_CHALLENGE, QT-307),
+// Returns a spare unused/unretired peer CID (for old-path PATH_CHALLENGE),
 // or falls back to the current peer CID if none is spare. O(peer.Len()).
 CidState.SparePeerCid(&self): &Cid from self {
     items := self.peer.Items()
@@ -443,7 +442,7 @@ CidState.SparePeerCid(&self): &Cid from self {
 
 // Checks in constant time whether tail (16 bytes) matches the stateless reset
 // token of any used, unretired peer CID after handshake authentication
-// (RFC 9000 10.3.1, QS-64, QT-338..QT-340). O(peer.Len()).
+// (RFC 9000 10.3.1). O(peer.Len()).
 CidState.IsResetToken(&self, tail: &[16]u8): bool {
     if !self.hs_complete {
         return false

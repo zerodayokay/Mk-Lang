@@ -1,10 +1,9 @@
 // Why: QPACK encoder/decoder stream rules (RFC 9204 4.2) at both capacity 0
 // and capacity > 0, HTTP/3 malformed-message field rules (RFC 9114 4.1.2-4.3,
-// 10.3), header-size 431 handling (H3-36), and concurrent Serve + bounded-pipe
+// 10.3), header-size 431 handling, and concurrent Serve + bounded-pipe
 // streaming must all be pinned by exact tests.
 //
-// What: test blocks covering H3-27, H3-31..H3-33, H3-36..H3-45, H3-90..H3-94,
-// QPACK capacity > 0 dynamic-table blocking/unblocking + Section Ack, and
+// What: tests for QPACK dynamic-table blocking, section acknowledgments, and
 // concurrent Session.Serve over a 64-byte bounded PipeMux.
 //
 // How: encodes raw QPACK sections and encoder/decoder instructions over

@@ -381,7 +381,7 @@ test "QUIC: full Mk QuicClient against Mk QuicServer handshake installs matching
     var roots := x509.Pool.New(roots_certs[..])
     var ccfg := DefaultConfig
     ccfg.roots = some(&roots)
-    // QS-7: even with min_version Tls12, QUIC stays TLS 1.3 only.
+    // Even with min_version Tls12, QUIC stays TLS 1.3 only.
     ccfg.min_version = Version.Tls12
     ids: [1]Identity = [Identity(chain: certs[..], key: &key)]
     var scfg := DefaultConfig
@@ -435,9 +435,8 @@ test "QUIC: full Mk QuicClient against Mk QuicServer handshake installs matching
     Assert(QkSameSecret(&client_t.rsec[2], &server_t.wsec[2]))
     Assert(QkSameSecret(&client_t.wsec[2], &server_t.rsec[2]))
     Assert(!client_t.alert_sent && !server_t.alert_sent)
-    // Inspect the ClientHello sent at Initial: empty legacy_id (QS-66),
-    // TLS 1.3 only (QS-7), no early_data (QS-16), has ALPN (QS-59) and
-    // 0x39 (QS-62).
+    // Inspect the ClientHello sent at Initial: empty legacy_id,
+    // TLS 1.3 only, no early_data, and both ALPN and QUIC transport parameters.
     ch_msg := (ParseHandshake(client_t.sent_init[0..client_t.sent_init_len], 0xFFFFFF) else { Panic("bad CH") }) else {
         Panic("short CH")
     }
@@ -450,8 +449,7 @@ test "QUIC: full Mk QuicClient against Mk QuicServer handshake installs matching
     Assert(FindExt(ch.exts, ExtAlpn).Must().IsSome())
     Assert(FindExt(ch.exts, ExtQuicParams).Must().IsSome())
     // Inspect Handshake-level messages sent by both sides: no
-    // CertificateRequest (QS-11), no EndOfEarlyData (QS-16), no KeyUpdate
-    // (QS-43).
+    // CertificateRequest, no EndOfEarlyData, no KeyUpdate
     var off := 0
     for off < server_t.sent_hs_len {
         m := (ParseHandshake(server_t.sent_hs[off..server_t.sent_hs_len], 0xFFFFFF) else { Panic("bad server HS") }) else {
@@ -628,7 +626,7 @@ test "QUIC: RFC 9001 4.2: a QUIC ClientHello without TLS 1.3 fails with protocol
 }
 
 test "QUIC: RFC 9001 4.4, 4.6.1, 6: post-handshake CertificateRequest, NewSessionTicket early_data and KeyUpdate rules" (sys: &System) {
-    // QS-12: post-handshake CertificateRequest is PROTOCOL_VIOLATION (Protocol, not Alert).
+    // Post-handshake CertificateRequest is PROTOCOL_VIOLATION (Protocol, not Alert).
     var cr_buf: [32]u8 = [0; 32]
     var cw := Out.New(mut cr_buf[..])
     cr_exts: [8]u8 = [0, 13, 0, 4, 0, 2, 0x04, 0x03]
@@ -643,7 +641,7 @@ test "QUIC: RFC 9001 4.4, 4.6.1, 6: post-handshake CertificateRequest, NewSessio
     }
     Assert(cr_proto)
 
-    // QS-13: NewSessionTicket without early_data is dropped; with
+    // NewSessionTicket without early_data is dropped; with
     // early_data = 0xffffffff is dropped; with other value is Protocol.
     var nt_buf: [64]u8 = [0; 64]
     var nw := Out.New(mut nt_buf[..])
@@ -672,7 +670,7 @@ test "QUIC: RFC 9001 4.4, 4.6.1, 6: post-handshake CertificateRequest, NewSessio
     }
     Assert(nt_proto)
 
-    // QS-44: KeyUpdate is CRYPTO_ERROR 0x010a (Alert unexpected_message).
+    // KeyUpdate is CRYPTO_ERROR 0x010a (Alert unexpected_message).
     var ku_buf: [8]u8 = [0; 8]
     var kw := Out.New(mut ku_buf[..])
     WriteKeyUpdate(mut kw, false)
@@ -685,7 +683,7 @@ test "QUIC: RFC 9001 4.4, 4.6.1, 6: post-handshake CertificateRequest, NewSessio
     }
     Assert(ku_alert == AlertUnexpectedMessage)
 
-    // QS-44 during handshake: QuicServer receiving KeyUpdate instead of ClientHello -> 0x010a.
+    // During the handshake, QuicServer rejects KeyUpdate in place of ClientHello with 0x010a.
     certs := (try x509.ParsePem(sys.arena, NgLeafPem)).Done()
     blocks := try encoding.ParsePem(sys.arena, NgKeyPem)
     key := try crypto.ParsePrivateKey(blocks[0].der)
@@ -717,7 +715,7 @@ test "QUIC: RFC 9001 5.3: TLS_AES_128_CCM_8_SHA256 is never selected, and a Clie
     scfg.identities = ids[..]
     alpn: [1]str = ["h3"]
 
-    // QS-28: CCM_8 only (0x1305) is refused with handshake_failure.
+    // CCM_8 only (0x1305) is refused with handshake_failure.
     only_ccm8: [1]u16 = [0x1305]
     ch_bad := try QkBuildHello(a, b"", only_ccm8[..], alpn[..], true, true, false, b"")
     var st := ScriptQuic.New()
@@ -731,7 +729,7 @@ test "QUIC: RFC 9001 5.3: TLS_AES_128_CCM_8_SHA256 is never selected, and a Clie
     }
     Assert(got_unsup && st.alert_sent && st.alert_code == AlertHandshakeFailure)
 
-    // QS-29: CCM_8 + unknown + 0x1301 is accepted, choosing 0x1301.
+    // CCM_8 + unknown + 0x1301 is accepted, choosing 0x1301.
     mixed: [3]u16 = [0x1305, 0x9999, 0x1301]
     ch_ok := try QkBuildHello(a, b"", mixed[..], alpn[..], true, true, false, b"")
     var st2 := ScriptQuic.New()
@@ -744,7 +742,7 @@ test "QUIC: RFC 9001 5.3: TLS_AES_128_CCM_8_SHA256 is never selected, and a Clie
     }
     Assert(is_128)
 
-    // QS-28 (client): ServerHello selecting CCM_8 (0x1305) is refused.
+    // Client: ServerHello selecting CCM_8 (0x1305) is refused.
     roots_certs := (try x509.ParsePem(a, NgRootPem)).Done()
     var roots := x509.Pool.New(roots_certs[..])
     var ccfg := DefaultConfig
@@ -777,7 +775,7 @@ test "QUIC: RFC 9001 5.3: TLS_AES_128_CCM_8_SHA256 is never selected, and a Clie
     }
     Assert(ccm_proto && st_ccm.alert_sent && st_ccm.alert_code == AlertIllegalParameter)
 
-    // QS-28/29: AES-256-GCM (0x1302, 48-byte SHA-384 secret) and
+    // AES-256-GCM (0x1302, 48-byte SHA-384 secret) and
     // ChaCha20-Poly1305 (0x1303, 32-byte secret) are also supported.
     s256: [1]u16 = [0x1302]
     ch_256 := try QkBuildHello(a, b"", s256[..], alpn[..], true, true, false, b"")
@@ -806,7 +804,7 @@ test "QUIC: RFC 9001 4.6.2, 8.1, 8.2, 8.4: mandatory ALPN (0x0178), mandatory 0x
     alpn: [1]str = ["h3"]
     suites: [1]u16 = [0x1301]
 
-    // QS-67: non-empty legacy_session_id -> Protocol without alert.
+    // Non-empty legacy_session_id -> Protocol without alert.
     sid: [4]u8 = [1, 2, 3, 4]
     ch_sid := try QkBuildHello(a, sid[..], suites[..], alpn[..], true, true, false, b"")
     var st_sid := ScriptQuic.New()
@@ -820,7 +818,7 @@ test "QUIC: RFC 9001 4.6.2, 8.1, 8.2, 8.4: mandatory ALPN (0x0178), mandatory 0x
     }
     Assert(sid_proto && !st_sid.alert_sent)
 
-    // QS-63 (server): missing 0x39 -> AlertMissingExtension (0x6d -> 0x016d).
+    // Server: missing 0x39 -> AlertMissingExtension (0x6d -> 0x016d).
     ch_no39 := try QkBuildHello(a, b"", suites[..], alpn[..], true, false, false, b"")
     var st_no39 := ScriptQuic.New()
     st_no39.Feed(QuicLevel.Initial, ch_no39)
@@ -833,7 +831,7 @@ test "QUIC: RFC 9001 4.6.2, 8.1, 8.2, 8.4: mandatory ALPN (0x0178), mandatory 0x
     }
     Assert(no39_proto && st_no39.alert_sent && st_no39.alert_code == AlertMissingExtension)
 
-    // QS-60 (server): missing ALPN -> AlertNoApplicationProtocol (0x78 -> 0x0178).
+    // Server: missing ALPN -> AlertNoApplicationProtocol (0x78 -> 0x0178).
     no_alpn: [0]str = []
     ch_noalpn := try QkBuildHello(a, b"", suites[..], no_alpn[..], true, true, false, b"")
     var st_noalpn := ScriptQuic.New()
@@ -847,7 +845,7 @@ test "QUIC: RFC 9001 4.6.2, 8.1, 8.2, 8.4: mandatory ALPN (0x0178), mandatory 0x
     }
     Assert(noalpn_unsup && st_noalpn.alert_sent && st_noalpn.alert_code == AlertNoApplicationProtocol)
 
-    // QS-59: QuicClient with empty alpn refuses before any I/O.
+    // QuicClient with empty alpn refuses before any I/O.
     roots_certs := (try x509.ParsePem(a, NgRootPem)).Done()
     var roots := x509.Pool.New(roots_certs[..])
     var ccfg := DefaultConfig
@@ -862,7 +860,7 @@ test "QUIC: RFC 9001 4.6.2, 8.1, 8.2, 8.4: mandatory ALPN (0x0178), mandatory 0x
     }
     Assert(c0_unsup && st_c0.out_len[0] == 0)
 
-    // QS-60, QS-61, QS-63 (client EncryptedExtensions checks):
+    // Client EncryptedExtensions checks:
     m := Hello(suites: suites[..], random: [0; 32], sid: [0; 32], sni: "", alpn: alpn[..], group: GroupX25519, cookie: b"")
     var alert: u8 = 0
     // Missing 0x39 in EE -> AlertMissingExtension (0x016d).
@@ -876,14 +874,14 @@ test "QUIC: RFC 9001 4.6.2, 8.1, 8.2, 8.4: mandatory ALPN (0x0178), mandatory 0x
     var e2 := false
     _ = CheckEncryptedExtensionsWith(mut alert, ee_noalpn[..], &m, true) else { e2 = true }
     Assert(e2 && alert == AlertNoApplicationProtocol)
-    // QS-61: server selects "h2" when client offered "h3" -> 0x0178.
+    // Server selects "h2" when client offered "h3" -> 0x0178.
     alert = 0
     ee_h2: [13]u8 = [0, 16, 0, 5, 0, 3, 2, 0x68, 0x32, 0, 57, 0, 0]
     var e3 := false
     _ = CheckEncryptedExtensionsWith(mut alert, ee_h2[..], &m, true) else { e3 = true }
     Assert(e3 && alert == AlertNoApplicationProtocol)
 
-    // QS-14: server receiving ClientHello with early_data still omits
+    // Server receiving ClientHello with early_data still omits
     // early_data from EncryptedExtensions.
     ch_ed := try QkBuildHello(a, b"", suites[..], alpn[..], true, true, true, b"")
     var st_ed := ScriptQuic.New()

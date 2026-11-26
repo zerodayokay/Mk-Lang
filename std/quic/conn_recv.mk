@@ -118,8 +118,7 @@ ApplyAck(e: mut Engine, space: Space, ranges: []AckRange, delay: time.Duration, 
     }
 }
 
-// Checks whether a frame is permitted in Initial or Handshake packets (QT-83,
-// QT-84, QT-294): only PADDING, PING, ACK, CRYPTO, CONNECTION_CLOSE 0x1c.
+// Checks whether a frame is permitted in Initial or Handshake packets: only PADDING, PING, ACK, CRYPTO, CONNECTION_CLOSE 0x1c.
 IsAllowedHandshakeFrame(f: &QFrame): (ok: bool, frame_type: u64) {
     return match f {
         .Padding | .Ping | .Ack | .Crypto { (ok: true, frame_type: 0) }
@@ -149,7 +148,7 @@ IsAllowedHandshakeFrame(f: &QFrame): (ok: bool, frame_type: u64) {
 }
 
 // Drains 1-RTT post-handshake CRYPTO bytes and validates each message with
-// tls.QuicPostMessage (RFC 9001 4.4, 4.6.1, 6, QS-12, QS-13, QS-44).
+// tls.QuicPostMessage (RFC 9001 4.4, 4.6.1, 6).
 ProcessPostHandshakeCrypto(e: mut Engine): Error!void {
     a := e.h.Alloc()
     var tmp: [2048]u8 = [0; 2048]
@@ -206,7 +205,7 @@ ApplyFrames(
 ): Error!(ack_eliciting: bool, non_probing: bool) {
     _ = pn
     var ranges: [256]AckRange = [AckRange(lo: 0, hi: 0); 256]
-    // QT-221: pre-validate Initial and Handshake payloads before any mutation so
+    // Pre-validate Initial and Handshake payloads before any mutation so
     // an invalid later frame leaves no partial state.
     if space != Space.App {
         var vit := FrameIter.New(payload, !e.is_server)
@@ -257,7 +256,7 @@ ApplyFrames(
             .Crypto(offset, data) {
                 ack_eliciting = true
                 non_probing = true
-                // QS-5: CRYPTO frame in a previously installed level cannot extend past
+                // CRYPTO frame in a previously installed level cannot extend past
                 // highest offset already received at that level.
                 if space == Space.Initial && e.keys.HasReadKeys(Space.Handshake) {
                     if offset + Cast[u64](data.Len()) > e.crypto.MaxOffset(Space.Initial) {
@@ -379,7 +378,7 @@ ApplyFrames(
 }
 
 // Checks trailing 16 bytes of an unassociated/undecryptable datagram against
-// used peer stateless reset tokens (RFC 9000 10.3.1, QT-338..QT-341).
+// used peer stateless reset tokens (RFC 9000 10.3.1).
 CheckStatelessReset(e: mut Engine, dgram: []u8, now: time.Instant): bool {
     if dgram.Len() < MinShortPacketLen {
         return false
@@ -395,7 +394,7 @@ CheckStatelessReset(e: mut Engine, dgram: []u8, now: time.Instant): bool {
     return false
 }
 
-// Checks whether a Version Negotiation version list includes Version1 (QT-230).
+// Checks whether a Version Negotiation version list includes Version1.
 VnHasVersion1(versions: []u8): bool {
     var i := 0
     for i + 4 <= versions.Len() {
@@ -503,7 +502,7 @@ ProcessDatagram(e: mut Engine, io: Io, dgram: mut []u8, from: net.Addr, now: tim
                 if was_first {
                     first_dcid = hdr.dcid
                 } else if !CidEqual(&hdr.dcid, &first_dcid) {
-                    // QT-81: ignore later coalesced packets with a different DCID.
+                    // Ignore later coalesced packets with a different DCID.
                     pos += pkt_len
                     continue
                 }
@@ -610,7 +609,7 @@ ProcessDatagram(e: mut Engine, io: Io, dgram: mut []u8, from: net.Addr, now: tim
                     break
                 }
                 if e.hs_state != HsComplete && e.hs_state != HsConfirmed {
-                    // QS-40: never decrypt or acknowledge 1-RTT before handshake completes.
+                    // Never decrypt or acknowledge 1-RTT before handshake completes.
                     break
                 }
                 largest_rx := e.acks.Largest(Space.App) else { -1 }

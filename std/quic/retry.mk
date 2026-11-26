@@ -14,10 +14,10 @@ import std.crypto
 import std.net
 
 // Unencrypted prefix byte distinguishing Retry-issued tokens from unknown tokens
-// (RFC 9000 8.1.1, QT-273, QT-278).
+// (RFC 9000 8.1.1).
 const RetryTokenMarker: u8 = 0x52
 
-// Retry token lifetime: 10 seconds (Section 3.7.2, QT-275).
+// Retry token lifetime: 10 seconds (Section 3.7.2).
 const RetryTokenMaxAgeNs: i64 = 10_000_000_000
 
 // Maximum encoded Retry token length: 1 + 12 + 28 + 20 + 16 = 77 bytes.
@@ -35,7 +35,7 @@ struct RetryTokenKey {
     gcm: crypto.AesGcm
 }
 
-// Creates a RetryTokenKey from 16 random bytes (QT-274). O(1).
+// Creates a RetryTokenKey from 16 random bytes. O(1).
 RetryTokenKey.New(io: Io): Canceled!RetryTokenKey {
     var k: [16]u8 = [0; 16]
     try crypto.Random(io, mut k[..])
@@ -78,7 +78,7 @@ MakeRetryToken(io: Io, key: &RetryTokenKey, client: &net.Addr, odcid: &Cid, now_
 }
 
 // Validates token against client address, key, and max_age_ns at now_ns
-// (QT-273..QT-278). O(token.Len()).
+// O(token.Len()).
 VerifyRetryToken(key: &RetryTokenKey, token: []u8, client: &net.Addr, now_ns: i64, max_age_ns: i64): RetryTokenResult {
     if token.Len() == 0 {
         return RetryTokenResult.NotRetry
@@ -133,7 +133,7 @@ VerifyRetryToken(key: &RetryTokenKey, token: []u8, client: &net.Addr, now_ns: i6
 }
 
 // Writes a Retry packet with its 16-byte Retry Integrity Tag into out[0..]
-// (RFC 9000 17.2.5, RFC 9001 5.8, QT-279). Returns bytes written, or 0 if invalid.
+// (RFC 9000 17.2.5, RFC 9001 5.8). Returns bytes written, or 0 if invalid.
 WriteRetryPacket(out: mut []u8, dcid: &Cid, scid: &Cid, token: []u8, odcid: &Cid): int {
     if dcid.n > MaxCidLen || scid.n > MaxCidLen || token.Len() == 0 {
         return 0

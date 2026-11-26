@@ -65,7 +65,7 @@ WakeNext[D: Driven](d: &D, wake: int) {
 }
 
 /// Waits until party `p`'s condition holds, reading the connection for
-/// everyone while the read token is `p`'s (rules L1, L2, T1-T6). Fails with
+/// everyone while the read token is `p`'s. Fails with
 /// Canceled when `io` is cancelled, passing the read token on first.
 /// O(1) per wake plus the Driven calls; allocates nothing.
 export Wait[D: Driven](d: &D, io: Io, p: int): Canceled!void {

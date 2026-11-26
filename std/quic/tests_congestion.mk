@@ -2,7 +2,7 @@
 // enforce window bounds, slow start, recovery entry/exit, congestion avoidance,
 // burst limits, and app-limited freezes per RFC 9002 Section 7 and Appendix B.
 //
-// What: unit tests for QT-43 and LR-32 through LR-48.
+// What: tests for congestion control, recovery, and pacing.
 //
 // How: drives Recovery with std.sim's virtual clock over realistic packet
 // sequences and checks exact cwnd, ssthresh, bytes_in_flight, and pacing delays.
@@ -65,7 +65,7 @@ test "RFC 9002 7.2, 7.3.1, 7.3.2, 7.3.3, 7.4: initial window, slow start, loss r
     Assert(rec.Cwnd() == 13200)
 
     // Send packets 1..5 at t1; ack packet 5 -> packet 1 lost (5 >= 1 + 3).
-    // Note packet 1 was sent AFTER acknowledged packet 0 (LR-41).
+    // Note packet 1 was sent AFTER acknowledged packet 0.
     for i in 1..6 {
         TCcSend(mut rec, h, Space.App, i64(i), 1200, true, true, t1)
     }
@@ -77,7 +77,7 @@ test "RFC 9002 7.2, 7.3.1, 7.3.2, 7.3.3, 7.4: initial window, slow start, loss r
     // Entering recovery halves 13200 -> 6600.
     Assert(rec.Ssthresh() == 6600 && rec.Cwnd() == 6600)
 
-    // Packets 2..4 were sent at t1 <= recovery_start (t2): losing 2 later does NOT reduce cwnd again (LR-39).
+    // Packets 2..4 were sent at t1 <= recovery_start (t2): losing 2 later does NOT reduce cwnd again.
     t3 := TCcTick(mut s, time.Millis(40))
     _ = rec.OnTimeout(t3, mut lost[..])
     Assert(rec.Cwnd() == 6600)
@@ -87,7 +87,7 @@ test "RFC 9002 7.2, 7.3.1, 7.3.2, 7.3.3, 7.4: initial window, slow start, loss r
     t4 := TCcTick(mut s, time.Millis(20))
     r6 := [AckRange(lo: 6, hi: 6)]
     _ = try rec.OnAck(Space.App, r6[..], time.Millis(0), t4, mut acked[..], mut lost[..])
-    // CA: adds 1200 * 1200 / 6600 = 218 bytes (at most 1200 per cwnd acked, LR-40).
+    // CA: adds 1200 * 1200 / 6600 = 218 bytes (at most 1200 per cwnd acked).
     Assert(rec.Cwnd() == 6600 + 218)
 }
 
@@ -133,7 +133,7 @@ test "RFC 9002 7, 7.5: cwnd blocks normal sends past limit, allows one recovery 
     }
     Assert(rec.BytesInFlight() == 12000)
     Assert(!rec.CanSend(1200, t0))
-    // Probe is never blocked by cwnd and counts in bytes_in_flight (LR-42).
+    // Probe is never blocked by cwnd and counts in bytes_in_flight.
     try rec.OnProbeSent(h, Space.App, 10, 1200, [TCcFrame(10)][..], t0)
     Assert(rec.BytesInFlight() == 13200)
 }
@@ -200,7 +200,7 @@ test "RFC 9002 7.7: sends are paced at 1.25 windows per smoothed_rtt with bursts
     Assert(delay.Nanos() > 7_000_000 && delay.Nanos() < 8_000_000)
     t3 := TCcTick(mut s, delay)
     Assert(rec.CanSend(1200, t3))
-    // LR-47: ACK-only packet leaves immediately without touching pacer or cwnd.
+    // ACK-only packet leaves immediately without touching pacer or cwnd.
     TCcSend(mut rec, h, Space.App, 11, 50, false, false, t2)
     Assert(rec.BytesInFlight() == 12000)
 }

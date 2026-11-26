@@ -1,8 +1,8 @@
 // Why: Token and Wait[D: Driven] implement the read-token protocol once for
-// multiplexed connections, so every invariant (FIFO, O(1) leave, L1, T1-T6)
+// multiplexed connections, so every invariant (FIFO, O(1) leave)
 // must be pinned directly and under std.sim's PCT scheduler.
 //
-// What: unit tests for Token and protocol tests (T1-T6, L1) over a toy Driven
+// What: unit tests for Token and protocol tests over a toy Driven
 // fake connection running on std.sim.
 //
 // How: a FakeConn wraps a Token inside a Mutex[FakeState], per-party Notify
