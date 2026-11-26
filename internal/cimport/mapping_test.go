@@ -182,9 +182,11 @@ func TestCTypeParse(t *testing.T) {
 // path the unit read itself (#include_next: Clang's stdint.h, then the
 // sysroot's).
 func TestCImport_Negatives(t *testing.T) {
-	root, res, sys := filepath.FromSlash("/p"), filepath.FromSlash("/r/include"), filepath.FromSlash("/s")
+	tmp := t.TempDir()
+	root, res, sys := filepath.Join(tmp, "p"), filepath.Join(tmp, "r", "include"), filepath.Join(tmp, "s")
 	deps := []string{filepath.Join(root, "a.h"), filepath.Join(res, "stdint.h"), filepath.Join(sys, "stdint.h"), filepath.Join(sys, "w.h")}
-	got := Negatives(deps, []string{root, res, sys}, nil)
+	writeFiles(t, deps...)
+	got, _ := Negatives(deps, []string{root, res, sys}, nil)
 	want := []string{filepath.Join(res, "a.h"), filepath.Join(sys, "a.h"), filepath.Join(root, "stdint.h"), filepath.Join(root, "w.h"), filepath.Join(res, "w.h")}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
@@ -197,9 +199,10 @@ func TestCImport_Negatives(t *testing.T) {
 // would shadow, as well as "y.h" through inc/sub; each name also under
 // inc/sub, the directory of a file of the unit.
 func TestCImport_NegativesNested(t *testing.T) {
-	root := filepath.FromSlash("/p")
+	root := filepath.Join(t.TempDir(), "p")
 	inc, sub := filepath.Join(root, "inc"), filepath.Join(root, "inc", "sub")
-	got := Negatives([]string{filepath.Join(sub, "y.h")}, []string{root, inc, sub}, nil)
+	writeFiles(t, filepath.Join(sub, "y.h"))
+	got, _ := Negatives([]string{filepath.Join(sub, "y.h")}, []string{root, inc, sub}, nil)
 	want := []string{filepath.Join(sub, "inc", "sub", "y.h"), filepath.Join(root, "sub", "y.h"), filepath.Join(sub, "sub", "y.h"), filepath.Join(root, "y.h"), filepath.Join(inc, "y.h")}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
@@ -220,7 +223,7 @@ func TestCImport_NegativesExisting(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got := Negatives([]string{filepath.Join(b, "x.h"), filepath.Join(b, "y.h")}, []string{a, b}, nil)
+	got, _ := Negatives([]string{filepath.Join(b, "x.h"), filepath.Join(b, "y.h")}, []string{a, b}, nil)
 	if want := []string{filepath.Join(a, "x.h")}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
 	}
@@ -236,7 +239,8 @@ func TestCImport_NegativesBesideIncluder(t *testing.T) {
 	root := t.TempDir()
 	a, c, src := filepath.Join(root, "a", "inc"), filepath.Join(root, "c"), filepath.Join(root, "src")
 	deps := []string{filepath.Join(c, "api.h"), filepath.Join(a, "dep.h"), filepath.Join(a, "sub", "z.h")}
-	got := Negatives(deps, []string{root, a}, []string{filepath.Join(src, "m.c")})
+	writeFiles(t, append(slices.Clone(deps), filepath.Join(src, "m.c"))...)
+	got, _ := Negatives(deps, []string{root, a}, []string{filepath.Join(src, "m.c")})
 	for _, p := range []string{filepath.Join(c, "dep.h"), filepath.Join(src, "dep.h"), filepath.Join(c, "sub", "z.h"),
 		filepath.Join(src, "sub", "z.h"), filepath.Join(root, "dep.h"), filepath.Join(src, "c", "api.h")} {
 		if !slices.Contains(got, p) {

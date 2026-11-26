@@ -389,7 +389,7 @@ func clangVersionLine(clang string) (string, error) {
 // never of check keys. The rule is in it so that a cache never mixes the
 // outputs of two toolchains.
 func (t *Tools) Identity() source.Hash {
-	h := source.NewHasher("mk.toolchain.identity.v2")
+	h := source.NewHasher("mk.toolchain.identity.v3")
 	h.String(t.Found.String())
 	h.String(t.Dir)
 	for i, p := range []string{t.Clang, t.LLDLink, t.LDLLD, t.LLVMLib, t.LLD} {

@@ -36,17 +36,17 @@ func TestScrubbedEnv(t *testing.T) {
 	get := func(k string) string { return host[k] }
 	win := scrubbedEnv("windows", get)
 	wantWin := []string{`SystemRoot=C:\WINDOWS`, "SystemDrive=C:", `TEMP=C:\t`, `TMP=C:\t`,
-		"SOURCE_DATE_EPOCH=0", "LC_ALL=C", "ZERO_AR_DATE=1"}
+		"SOURCE_DATE_EPOCH=0", "LC_ALL=C", "ZERO_AR_DATE=1", "CLANG_NO_DEFAULT_CONFIG=1"}
 	if !reflect.DeepEqual(win, wantWin) {
 		t.Errorf("windows env = %q", win)
 	}
 	lin := scrubbedEnv("linux", get)
-	wantLin := []string{"PATH=/usr/bin:/bin", "TMPDIR=/tmp/x", "SOURCE_DATE_EPOCH=0", "LC_ALL=C", "ZERO_AR_DATE=1"}
+	wantLin := []string{"PATH=/usr/bin:/bin", "TMPDIR=/tmp/x", "SOURCE_DATE_EPOCH=0", "LC_ALL=C", "ZERO_AR_DATE=1", "CLANG_NO_DEFAULT_CONFIG=1"}
 	if !reflect.DeepEqual(lin, wantLin) {
 		t.Errorf("linux env = %q", lin)
 	}
 	// Absent host variables are left out, not set empty.
-	if got := scrubbedEnv("windows", func(string) string { return "" }); len(got) != 3 {
+	if got := scrubbedEnv("windows", func(string) string { return "" }); len(got) != 4 {
 		t.Errorf("empty host env = %q", got)
 	}
 }

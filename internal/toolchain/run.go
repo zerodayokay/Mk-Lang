@@ -142,8 +142,12 @@ func toolError(ctx context.Context, tool, cmdline, stderr string, ps *os.Process
 // scrubbedEnv is the whole environment a tool sees. Windows keeps only
 // SystemRoot, SystemDrive, TEMP and TMP from the host; Linux gets
 // PATH=/usr/bin:/bin and keeps TMPDIR; both get SOURCE_DATE_EPOCH=0,
-// LC_ALL=C and ZERO_AR_DATE=1. The order is fixed. Every other host fact is
-// either absent or part of Tools.Identity.
+// LC_ALL=C, ZERO_AR_DATE=1 and CLANG_NO_DEFAULT_CONFIG=1. The order is
+// fixed. Every other host fact is either absent or part of Tools.Identity.
+// The last keeps clang from reading its default configuration files
+// (<triple>.cfg and clang.cfg beside it or in a configuration directory),
+// whose flags no cache key holds; it is the environment and not
+// --no-default-config because a -cc1 command line refuses that flag.
 func scrubbedEnv(goos string, getenv func(string) string) []string {
 	var env []string
 	keep := func(k string) {
@@ -160,7 +164,7 @@ func scrubbedEnv(goos string, getenv func(string) string) []string {
 		env = append(env, "PATH=/usr/bin:/bin")
 		keep("TMPDIR")
 	}
-	return append(env, "SOURCE_DATE_EPOCH=0", "LC_ALL=C", "ZERO_AR_DATE=1")
+	return append(env, "SOURCE_DATE_EPOCH=0", "LC_ALL=C", "ZERO_AR_DATE=1", "CLANG_NO_DEFAULT_CONFIG=1")
 }
 
 // CommandLine renders a command for E0001's `command` fact and for logs: the
