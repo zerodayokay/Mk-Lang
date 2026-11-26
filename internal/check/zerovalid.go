@@ -14,7 +14,7 @@
 // (whose call would read as fallible); `raw.Atomic[T]` and `atomic.Atomic[T]`
 // need an integer `T` of 1, 2, 4 or 8 bytes or a raw pointer, and their
 // arithmetic (Add, AddOrd to XorOrd, FetchAdd to FetchXor) an integer;
-// `raw.ReadUnaligned[T]` an integer `T`; `Pool[T].Free` a T that is not
+// `raw.ReadUnaligned[T]` and `raw.WriteUnaligned[T]` an integer `T`; `Pool[T].Free` a T that is not
 // linear. zeroValid records every type item its answer depends on.
 
 package check
@@ -70,13 +70,14 @@ func (c *Checker) poolFree(it types.ItemID) bool {
 }
 
 // readUnaligned reports whether item it is the free function
-// `std.raw.ReadUnaligned` (an align 1 load of an integer).
+// `std.raw.ReadUnaligned` or `std.raw.WriteUnaligned` (an align 1 load or
+// store of an integer).
 func (c *Checker) readUnaligned(it types.ItemID) bool {
 	if it == types.NoItem {
 		return false
 	}
 	item := c.cfg.Items.Get(it)
-	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType || c.cfg.Interner.Str(item.Name) != "ReadUnaligned" {
+	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType || c.cfg.Interner.Str(item.Name) != "ReadUnaligned" && c.cfg.Interner.Str(item.Name) != "WriteUnaligned" {
 		return false
 	}
 	mod := c.cfg.Items.Module(item.Module)

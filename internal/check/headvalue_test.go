@@ -153,13 +153,13 @@ func TestE0301_ForeignHeadNotValue(t *testing.T) {
 	}
 }
 
-// rawDecls is a std.raw stub with the two declarations the integer
+// rawDecls is a std.raw stub with the declarations the integer
 // bounds key on, as std/raw/raw.mk declares them.
-const rawDecls = "export ReadUnaligned[T: Plain](p: *T): T\n\nexport struct Atomic[T: Plain] {\n\tv: T\n}\n\nexport Atomic[T].New(x: T): Atomic[T]\n\nexport Atomic[T].Load(&self): T\n"
+const rawDecls = "export ReadUnaligned[T: Plain](p: *T): T\n\nexport WriteUnaligned[T: Plain](p: *T, x: T)\n\nexport struct Atomic[T: Plain] {\n\tv: T\n}\n\nexport Atomic[T].New(x: T): Atomic[T]\n\nexport Atomic[T].Load(&self): T\n"
 
 // TestRawImplicitBounds: `raw.Atomic[T]` needs an integer T of 1, 2,
 // 4 or 8 bytes or a raw pointer (TestAtomicBounds has more cases)
-// and `raw.ReadUnaligned[T]` an integer T, else E0701 at the instantiation
+// and `raw.ReadUnaligned[T]` and `raw.WriteUnaligned[T]` an integer T, else E0701 at the instantiation
 // (a type) or the call (an inferred or fn-value instance).
 func TestRawImplicitBounds(t *testing.T) {
 	w := newWorld(t, true)
@@ -201,6 +201,12 @@ func TestRawImplicitBounds(t *testing.T) {
 		{"unaligned fn value u32", imp + "F() {\n\tg: fn(p: *u32): u32 from p = raw.ReadUnaligned[u32]\n}\n", ""},
 		{"unaligned written fn value", imp + "F() {\n\tg := raw.ReadUnaligned[f64]\n}\n", "E0701@4:7"},
 		{"unaligned written fn value u8", imp + "F() {\n\tg := raw.ReadUnaligned[u8]\n}\n", ""},
+		{"unaligned store u64", imp + "F(p: *u64, x: u64) {\n\tunsafe \"test\" {\n\t\traw.WriteUnaligned(p, x)\n\t}\n}\n", ""},
+		{"unaligned store u16", imp + "F(p: *u16) {\n\tunsafe \"test\" {\n\t\traw.WriteUnaligned[u16](p, 7)\n\t}\n}\n", ""},
+		{"unaligned store record", imp + "F(p: *(a: u8, b: u16), x: (a: u8, b: u16)) {\n\tunsafe \"test\" {\n\t\traw.WriteUnaligned(p, x)\n\t}\n}\n", "E0701@5:3"},
+		{"unaligned store f64", imp + "F(p: *f64) {\n\tunsafe \"test\" {\n\t\traw.WriteUnaligned[f64](p, 1.5)\n\t}\n}\n", "E0701@5:3"},
+		{"unaligned store fn value", imp + "F() {\n\tg: fn(p: *f32, x: f32) = raw.WriteUnaligned[f32]\n}\n", "E0701@4:27"},
+		{"unaligned store fn value u32", imp + "F() {\n\tg: fn(p: *u32, x: u32) = raw.WriteUnaligned[u32]\n}\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := w.add("std.m"+string(rune('a'+i)), opt{std: true}, tc.src)

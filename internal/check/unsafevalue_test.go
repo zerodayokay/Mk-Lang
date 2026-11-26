@@ -14,9 +14,9 @@ import (
 	"testing"
 )
 
-// rawStub is the std.raw surface the cases need: ReadUnaligned is unsafe,
-// Ctz64 and the carry intrinsics (AddCarry64, SubBorrow64) are safe.
-const rawStub = "export ReadUnaligned[T: Plain](p: *T): T\n\nexport Ctz64(x: u64): int\n\n" +
+// rawStub is the std.raw surface the cases need: ReadUnaligned and
+// WriteUnaligned are unsafe, Ctz64 and the carry intrinsics (AddCarry64, SubBorrow64) are safe.
+const rawStub = "export ReadUnaligned[T: Plain](p: *T): T\n\nexport WriteUnaligned[T: Plain](p: *T, x: T)\n\nexport Ctz64(x: u64): int\n\n" +
 	"export AddCarry64(x: u64, y: u64, c: u64): (sum: u64, carry: u64)\n\nexport SubBorrow64(x: u64, y: u64, b: u64): (diff: u64, borrow: u64)\n"
 
 func TestUnsafeOnlyNamedAsValue(t *testing.T) {
