@@ -61,6 +61,7 @@ var untrusted = []untrustedEntry{
 	{"the QPACK decoder and encoder-stream instructions", "std.http.fields", []string{"FuzzStdHttpFields_Qpack"}},
 	{"HTTP field validation", "std.http.fields", []string{"FuzzStdHttpFields_Check"}},
 	{"the HTTP/2 frame and SETTINGS parsers", "std.http.h2", []string{"FuzzStdHttpH2_Frames"}},
+	{"QUIC ACK range and recovery state", "std.quic", []string{"FuzzStdQuic_Ack"}},
 	// Further entry points held to the same bar (their fuzz files say so).
 	{"net.ParseAddr", "std.net", []string{"FuzzStdNet_ParseAddr"}},
 	{"AesGcm.Open, HKDF and HMAC on peer bytes", "std.crypto", []string{"FuzzSTDCRYPTO_TlsPrimitives"}},
