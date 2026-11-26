@@ -45,6 +45,22 @@ test "StreamTable grows to limit, keeps O(1) lookup, and bumps generation on Rel
     Assert(tbl.active == 24)
 }
 
+test "StreamTable keeps its map capacity during stream churn" (sys: &System) {
+    a := sys.heap.Alloc()
+    var tbl := StreamTable.New(a, 8).Must()
+    defer tbl.Free(a)
+    anchor := tbl.AllocSlot(a, 1, 65535, 65535, 65535).Must().Must()
+    cap := tbl.map.Len()
+    for i in 1..513 {
+        sid := Trunc[u32](1 + i * 2)
+        idx := tbl.AllocSlot(a, sid, 65535, 65535, 65535).Must().Must()
+        Assert(tbl.Find(sid) == idx)
+        tbl.ReleaseSlot(idx, a)
+        Assert(tbl.Find(1) == anchor && tbl.Find(sid) == -1)
+    }
+    Assert(tbl.map.Len() == cap && tbl.map_used == 1)
+}
+
 test "ResetSet tracks 256 ids as FIFO without duplicates" {
     var rs := ResetSet.New()
     rs.Add(0)

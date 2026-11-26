@@ -43,7 +43,7 @@ export Conn.TryOpen[F: fields.Field](&self, io: Io, pseudo: &fields.Pseudo, list
     var sg := core_.st.Lock(nc).Must()
     st := mut *sg.Mut()
     cap := EffectiveMaxStreams(&st.peer_settings, self.lim.streams)
-    if st.fault.IsSome() || st.drive_stop || st.goaway_recvd || st.next_stream_id > MaxStreamId || st.streams.open >= cap {
+    if st.ClientDraining() || st.streams.open >= cap || st.streams.active >= st.streams.cap_limit {
         sg.Unlock()
         wg.Unlock()
         return none
@@ -356,15 +356,17 @@ ReleaseClientSlot(st: mut State, idx: int, gen_: u32): (matched: bool, sid: u32,
     return (matched: true, sid: sid, was_open: was_open, release: release, dropped_bytes: dropped_bytes)
 }
 
-/// Whether the connection can never open another stream: it failed, the
-/// peer sent GOAWAY, or its stream identifiers are used up (RFC 9113 5.1.1).
-/// Unlike Usable, a connection at its stream limit is not draining. Never
-/// fails. O(1); allocates nothing.
+State.ClientDraining(&self): bool {
+    return self.fault.IsSome() || self.drive_stop || self.goaway_recvd || self.next_stream_id > MaxStreamId
+}
+
+/// Reports whether retirement, a fault, peer GOAWAY, or exhausted stream
+/// identifiers have permanently closed the connection to new client streams.
+/// Never fails. O(1); allocates nothing.
 export Conn.Draining(&self): bool {
     nc := core.IoMasked(rt.NativeIo())
     g := self.Core().st.Lock(nc).Must()
-    st := g.Ref()
-    d := st.fault.IsSome() || st.drive_stop || st.goaway_recvd || st.next_stream_id > MaxStreamId
+    d := g.Ref().ClientDraining()
     g.Unlock()
     return d
 }

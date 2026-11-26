@@ -225,7 +225,6 @@ struct IdEntry {
 }
 
 const IdEmpty: u32 = 0
-const IdTomb: u32 = 0xFFFF_FFFF
 
 linear view struct StreamTable {
     slots: HeapList[Stream]
@@ -287,7 +286,7 @@ StreamTable.Rehash(mut self, a: &Alloc into self, new_cap: int): OutOfMemory!voi
     var used := 0
     items := nm.ItemsMut()
     for e in self.map.Items() {
-        if e.id != IdEmpty && e.id != IdTomb {
+        if e.id != IdEmpty {
             var pos := HashId(e.id, mask)
             for items[pos].id != IdEmpty {
                 pos = (pos + 1) & mask
@@ -308,20 +307,14 @@ StreamTable.MapInsert(mut self, a: &Alloc into self, id: u32, idx: int): OutOfMe
     mask := self.map.Len() - 1
     items := self.map.ItemsMut()
     var pos := HashId(id, mask)
-    var tomb := -1
     for {
         cur := items[pos].id
         if cur == IdEmpty {
-            target := if tomb >= 0 { tomb } else { pos }
-            if tomb < 0 {
-                self.map_used += 1
-            }
-            items[target] = IdEntry(id: id, idx: idx)
+            items[pos] = IdEntry(id: id, idx: idx)
+            self.map_used += 1
             return
         }
-        if cur == IdTomb && tomb < 0 {
-            tomb = pos
-        } else if cur == id {
+        if cur == id {
             items[pos].idx = idx
             return
         }
@@ -342,7 +335,19 @@ StreamTable.MapRemove(mut self, id: u32) {
             return
         }
         if cur == id {
-            items[pos] = IdEntry(id: IdTomb, idx: -1)
+            // Backshift probe chains through the hole without retaining tombstones.
+            var hole := pos
+            var next := (pos + 1) & mask
+            for items[next].id != IdEmpty {
+                home := HashId(items[next].id, mask)
+                if ((hole - home) & mask) < ((next - home) & mask) {
+                    items[hole] = items[next]
+                    hole = next
+                }
+                next = (next + 1) & mask
+            }
+            items[hole] = IdEntry(id: IdEmpty, idx: -1)
+            self.map_used -= 1
             return
         }
         pos = (pos + 1) & mask
@@ -350,7 +355,7 @@ StreamTable.MapRemove(mut self, id: u32) {
 }
 
 StreamTable.Find(&self, id: u32): int {
-    if id == 0 || id == IdTomb || self.map.Len() == 0 {
+    if id == IdEmpty || self.map.Len() == 0 {
         return -1
     }
     mask := self.map.Len() - 1

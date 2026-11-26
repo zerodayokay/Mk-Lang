@@ -157,6 +157,7 @@ test "H2 client Drive exits after idle_limit when idle and stays running while i
         s.Cancel()
     }
     Assert(cli_box.Ref().Draining())
+    Assert(!cli_box.Ref().Usable())
     p := fields.Pseudo(method: "GET", scheme: "http", authority: "example.com", path: "/new")
     var hs: [0]TestField = []
     Assert(cli_box.Ref().TryOpen(io, &p, hs[..], true).Must().IsNone())

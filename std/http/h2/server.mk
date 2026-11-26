@@ -7,11 +7,11 @@
 // Conn.Done.
 //
 // How: Serve reads frames in batches under keep-alive, header-block and
-// progress-floor deadlines, delivers complete requests from rd.ready_reqs,
+// progress-floor deadlines, delivers complete requests from its read batch,
 // and triggers Writer via wr_wake; Respond and Write encode responses and
 // flow-controlled DATA frames (honouring MinDataUnit, DribbleWait and
-// ProgressFloor) into wr.cur; Done recycles cached FieldBlock/body buffers
-// and returns body admission budget in FIFO order.
+// ProgressFloor) into wr.cur; Done releases the request buffers and returns
+// body admission budget in FIFO order.
 
 import std.core
 import std.http.fields
@@ -24,9 +24,9 @@ import std.time
 export linear struct Request {
     /// Stream handle for Respond, Write and Done.
     export stream: StreamRef
-    /// Decoded request header block (reset and returned via Done).
+    /// Decoded request header block (released via Done).
     export head: fields.FieldBlock
-    /// Whole request body bytes (cleared and returned via Done).
+    /// Whole request body bytes (released via Done).
     export body: HeapList[u8]
 }
 

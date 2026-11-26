@@ -500,6 +500,10 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         try DecodeDiscard(mut rp.dec, a, block)
         var sg := core_.st.Lock(nc).Must()
         st := mut *sg.Mut()
+        if st.streams.slots.Items()[idx].id != stream {
+            sg.Unlock()
+            return
+        }
         MarkStreamError(a, st, idx, StreamClosed, now) else e {
             sg.Unlock()
             fail e
@@ -520,8 +524,12 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         rp.scratch_block.Reset()
         var sg := core_.st.Lock(nc).Must()
         st := mut *sg.Mut()
+        slot := mut st.streams.slots.ItemsMut()[idx]
+        if slot.id != stream || slot.state == StClosed {
+            sg.Unlock()
+            return
+        }
         if ok {
-            slot := mut st.streams.slots.ItemsMut()[idx]
             skip_cl := slot.head_method || slot.cli_head_status == 204 || slot.cli_head_status == 304
             if cl := slot.content_length {
                 if !skip_cl && slot.data_recvd != cl {
@@ -553,54 +561,46 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         blk.Free(a)
         fail e
     }
-    if out == fields.Outcome.TooLarge {
-        blk.Free(a)
-        var sg := core_.st.Lock(nc).Must()
-        st := mut *sg.Mut()
-        MarkClientHeadTooLarge(st, idx, stream)
-        sg.Unlock()
-        self.WakeStream(idx)
-        return
-    }
-    resp := fields.CheckResponse(&blk) else {
-        blk.Free(a)
-        var sg := core_.st.Lock(nc).Must()
-        st := mut *sg.Mut()
-        st.streams.slots.ItemsMut()[idx].cli_head_malformed = true
-        MarkStreamError(a, st, idx, ProtocolError, now) else e {
-            sg.Unlock()
-            fail e
-        }
-        sg.Unlock()
-        self.WakeStream(idx)
-        return
-    }
-    if resp.status >= 100 && resp.status < 200 {
-        blk.Free(a)
-        if end_stream {
-            var sg := core_.st.Lock(nc).Must()
-            st := mut *sg.Mut()
-            st.streams.slots.ItemsMut()[idx].cli_head_malformed = true
-            MarkStreamError(a, st, idx, ProtocolError, now) else e {
-                sg.Unlock()
-                fail e
+    var status := 0
+    var cl: ?i64 = none
+    var malformed := false
+    if out == fields.Outcome.Fits {
+        match fields.CheckResponse(&blk) {
+            ok(resp) {
+                status = resp.status
+                cl = resp.content_length
             }
-            sg.Unlock()
-            self.WakeStream(idx)
+            err(_) {
+                malformed = true
+            }
         }
+    }
+    interim := status >= 100 && status < 200
+    if interim && !end_stream {
+        blk.Free(a)
         return
     }
     blk_bytes := blk.Bytes()
     var sg := core_.st.Lock(nc).Must()
     st := mut *sg.Mut()
-    if st.retained_head_bytes + blk_bytes > 4 * self.lim.header_bytes {
-        MarkClientHeadTooLarge(st, idx, stream)
+    // Decoding ran without st. Release or Reset may have closed this stream.
+    slot := mut st.streams.slots.ItemsMut()[idx]
+    if slot.id != stream || slot.state == StClosed {
         sg.Unlock()
         blk.Free(a)
-        self.WakeStream(idx)
         return
     }
-    bad_cl := CheckClientEndCl(st, idx, end_stream, resp.status, resp.content_length)
+    if out == fields.Outcome.TooLarge || (!malformed && !interim && st.retained_head_bytes + blk_bytes > 4 * self.lim.header_bytes) {
+        MarkClientHeadTooLarge(st, idx, stream)
+        self.WakeStream(idx)
+        sg.Unlock()
+        blk.Free(a)
+        return
+    }
+    if malformed || interim {
+        slot.cli_head_malformed = true
+    }
+    bad_cl := malformed || interim || CheckClientEndCl(st, idx, end_stream, status, cl)
     if bad_cl {
         MarkStreamError(a, st, idx, ProtocolError, now) else e {
             sg.Unlock()
@@ -612,7 +612,7 @@ Conn.DispatchClientHeaders(&self, nc: Io, rp: mut ReadParser, kind: u8, stream: 
         self.WakeStream(idx)
         return
     }
-    StoreClientHead(a, st, idx, blk_bytes, resp.status, resp.content_length, end_stream, blk)
+    StoreClientHead(a, st, idx, blk_bytes, status, cl, end_stream, blk)
     sg.Unlock()
     self.WakeStream(idx)
 }

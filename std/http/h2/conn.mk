@@ -354,15 +354,14 @@ BuildPreface(out: mut []u8, lim: Limits, is_client: bool): int {
     return off
 }
 
-/// Processes nothing; reports whether a new client stream may be opened right
-/// now (no fault, no GOAWAY, stream ids not exhausted, under the peer's and
-/// our stream limits). O(1); allocates nothing.
+/// Reports whether a new client stream can be opened right now. Checks
+/// retirement, the stream ID space, and both stream limits. O(1); allocates nothing.
 export Conn.Usable(&self): bool {
     nc := core.IoMasked(rt.NativeIo())
     g := self.Core().st.Lock(nc).Must()
     st := g.Ref()
     cap := EffectiveMaxStreams(&st.peer_settings, self.lim.streams)
-    ok := st.fault.IsNone() && !st.goaway_recvd && st.next_stream_id <= MaxStreamId && st.streams.open < cap
+    ok := !st.ClientDraining() && st.streams.open < cap && st.streams.active < st.streams.cap_limit
     g.Unlock()
     return ok
 }
