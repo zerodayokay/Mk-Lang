@@ -70,6 +70,26 @@ export NonCom.Safe(&self): i32 {
 			want: "E1101@4:7",
 		},
 		{
+			name: "aliased struct method call outside unsafe",
+			src:  "import cmod\nimport std.raw\n\ntype MyObj = cmod.Obj\n\nF(): i32 {\n\td: MyObj = cmod.Obj(lp_vtbl: raw.Null[cmod.Vtbl]())\n\treturn d.Ping()\n}\n",
+			want: "E1101@8:9",
+		},
+		{
+			name: "aliased struct method named outside unsafe",
+			src:  "import cmod\n\ntype MyObj = cmod.Obj\n\nF() {\n\tg := MyObj.Pong\n\t_ = g\n}\n",
+			want: "E1101@6:7",
+		},
+		{
+			name: "embedded COM struct field method call outside unsafe",
+			src:  "import cmod\nimport std.raw\n\nstruct Holder {\n\tinner: cmod.Obj\n}\n\nF(): i32 {\n\th := Holder(inner: cmod.Obj(lp_vtbl: raw.Null[cmod.Vtbl]()))\n\treturn h.inner.Ping()\n}\n",
+			want: "E1101@10:9",
+		},
+		{
+			name: "generic function calling COM method outside unsafe",
+			src:  "import cmod\nimport std.raw\n\nG[T](o: &cmod.Obj, x: T): i32 {\n\t_ = x\n\treturn o.Ping()\n}\n\nF(): i32 {\n\td := cmod.Obj(lp_vtbl: raw.Null[cmod.Vtbl]())\n\treturn G(&d, 1)\n}\n",
+			want: "E1101@6:9",
+		},
+		{
 			name: "method call inside unsafe allowed",
 			src:  "import cmod\nimport std.raw\n\nF(): i32 {\n\td := cmod.Obj(lp_vtbl: raw.Null[cmod.Vtbl]())\n\tunsafe \"d is valid\" {\n\t\treturn d.Ping()\n\t}\n}\n",
 			want: "",
