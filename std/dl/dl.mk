@@ -108,6 +108,22 @@ export Library.Symbol(&self, name: str): ?*u8 {
     return sys.DlSymbol(self.h, name)
 }
 
+/// Present reports whether f, a bodiless extern function named directly
+/// (`dl.Present(io, GetThing)`), can be called. For a function of a lazily
+/// bound library (pkg.Link kind "lazy") it loads the library if it is not
+/// loaded yet, running its initializers on the carrier's system stack and
+/// blocking the carrier as Open does, and finds the function, without
+/// calling it; a later call of f then costs one indirect call. For any
+/// other extern it is true when the program is built, since the loader
+/// resolved the function before Main. Naming f here needs no unsafe:
+/// Present never calls it. A failed load is not remembered: asking again
+/// loads again. Calling a lazily bound function that is not present panics
+/// (code 17, unresolved function), so a program that may run without the
+/// library asks first. Any other argument is E0705 reason
+/// present-argument. O(1) plus the loader's work on the first ask;
+/// allocates nothing.
+export Present[F](io: Io, f: F): bool
+
 /// Releases the library. The OS unloads it, running its detach code, when
 /// this was its last reference. It never fails: a release the OS refuses
 /// leaves the library loaded. It blocks the carrier and cannot be

@@ -478,9 +478,16 @@ func (u *unit) unsafeDoors(it types.ItemID) string {
 // unsafeCall never sees, so the name carries the obligation, as a cpu
 // function's and a naked function's do. A bodiless extern
 // is one too: calling it needs unsafe, and a call
-// through its value would run C code outside any unsafe block.
+// through its value would run C code outside any unsafe block. The
+// argument of a dl.Present call names an extern without unsafe: the
+// intrinsic never calls it (present.go), and Present itself is never a
+// value, unsafe or not.
 func (u *unit) unsafeValue(at ast.Node, it types.ItemID) {
-	if u.unsafeDepth > 0 {
+	if u.presentItem(it) {
+		u.presentValue(at) // present.go
+		return
+	}
+	if u.unsafeDepth > 0 || u.presentArg != nil && at == ast.Node(u.presentArg) {
 		return
 	}
 	if op := u.unsafeOnly(it); op != "" {
