@@ -357,6 +357,8 @@ func (rc *rangeCopy) stmt(st *mir.Statement) {
 				*rv = mir.Rvalue{Kind: mir.RvUse, A: mir.Const(types.Str, rc.bl.strConst(rc.f.name))}
 			}
 		}
+	case mir.StConsume:
+		st.Place = rc.place(st.Place)
 	case mir.StScopeEnd, mir.StJoin:
 		st.Local = rc.local(st.Local)
 	}

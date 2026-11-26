@@ -4,7 +4,7 @@
 //
 // What: tacc (the access rule), ownerAccess, taggedAccess, retag and
 // retagRef, tgEnter and tgPopFrame (function entry and exit), tgScopeEnd,
-// tgMoved, the fallible-call error edge (tgArgUndo, tgErrorEdge,
+// tgMoved, tgConsumed, the fallible-call error edge (tgArgUndo, tgErrorEdge,
 // tgErrorExit), and tgStorePtr.
 //
 // How: an access checks liveness, then interior bytes (liveness, init and
@@ -160,6 +160,7 @@ func (m *Machine) tacc(a, off uint32, n uint64, tag uint32, mode uint8) {
 				for k := i; k < j; k++ {
 					if l := ta.segs[k].local; l >= 0 {
 						ta.locals[l].owned = true
+						ta.locals[l].taken = nil
 					}
 				}
 			}
@@ -490,6 +491,7 @@ func (m *Machine) tgScopeEnd(f *frame, x mir.LocalID) {
 		m.violation(Violation{Kind: VLinear, Where: m.localName(f.code.body, f.item, int(x)), Off: l.lo, Len: l.hi - l.lo})
 	}
 	l.owned = false
+	l.taken = nil
 	if l.hi == l.lo {
 		return
 	}
@@ -536,20 +538,105 @@ func (m *Machine) tgMoved(f *frame, p mir.Place, src loc) {
 	}
 }
 
-// tgConsumed is StConsume p: like a take (tgMoved), it consumes the whole
-// value, so p's local no longer owns a linear value. p is a struct with no
-// fields: no bytes stop being written.
+// tgConsumed ends a fieldless struct at p without changing the init bits.
+// A projection consumes only its own part, even if it shares the byte
+// offset of another empty field.
 func (m *Machine) tgConsumed(f *frame, p mir.Place) {
-	b := f.code.body
-	for i := p.Proj.Start; i < p.Proj.End(); i++ {
-		if b.Projections[i].Kind == mir.ProjDeref {
+	ta := m.tg.rec(f.base)
+	if !ta.frame || int(p.Local) >= len(ta.locals) {
+		return
+	}
+	l := &ta.locals[p.Local]
+	if !l.linear || !l.owned {
+		return
+	}
+	path := f.code.body.Proj(p)
+	for _, pr := range path {
+		if pr.Kind != mir.ProjField && pr.Kind != mir.ProjDowncast {
 			return
 		}
 	}
-	ta := m.tg.rec(f.base)
-	if ta.frame && int(p.Local) < len(ta.locals) {
-		ta.locals[p.Local].owned = false
+	l.taken = append(l.taken, path)
+	if m.tgCovered(f.code.localTI[p.Local], l.taken) {
+		l.owned, l.taken = false, nil
 	}
+}
+
+// tgCovered reports whether the paths leave no linear part of ti live.
+// A downcast on the executed path identifies the active variant.
+func (m *Machine) tgCovered(ti *tinfo, paths [][]mir.Projection) bool {
+	if ti.layout.Shape.Kind != types.Linear {
+		return true
+	}
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		if len(path) == 0 {
+			return true
+		}
+	}
+	if ti.ty.Kind == types.KArray {
+		elem, n := m.ti(ti.ty.Elem), m.arrayLen(ti.ty)
+		if elem.layout.Shape.Kind != types.Linear {
+			return true
+		}
+		// Each linear element needs a path of its own, even at size zero.
+		if n > uint64(len(paths)) {
+			return false
+		}
+		for i := uint64(0); i < n; i++ {
+			if !m.tgCovered(elem, takenFields(paths, uint32(i))) {
+				return false
+			}
+		}
+		return true
+	}
+	fields := ti.layout.Fields
+	if ti.layout.HasTag {
+		pr := paths[0][0]
+		if pr.Kind != mir.ProjDowncast {
+			return false
+		}
+		var i uint32
+		switch pr.Sel {
+		case mir.SelSome:
+			i = 1
+		case mir.SelOk:
+		case mir.SelEnum:
+			i = pr.A
+		default:
+			return false
+		}
+		if int(i) >= len(ti.layout.Variants) {
+			return false
+		}
+		fields = ti.layout.Variants[i].Fields
+		var payload [][]mir.Projection
+		for _, path := range paths {
+			if path[0] == pr {
+				payload = append(payload, path[1:])
+			}
+		}
+		paths = payload
+	}
+	for i, field := range fields {
+		if !m.tgCovered(m.ti(field.Type), takenFields(paths, uint32(i))) {
+			return false
+		}
+	}
+	return true
+}
+
+// takenFields is the tail of every consumed path through field i.
+func takenFields(paths [][]mir.Projection, i uint32) [][]mir.Projection {
+	var out [][]mir.Projection
+	for _, path := range paths {
+		if len(path) != 0 && path[0].Kind == mir.ProjField && path[0].A == i {
+			out = append(out, path[1:])
+		}
+	}
+	return out
 }
 
 // tgArgUndo records, before a fallible call's argument a moves out of a
