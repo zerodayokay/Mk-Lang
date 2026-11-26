@@ -73,6 +73,9 @@ var DAG = []Edge{
 	{"tools/dogfood", []string{"tools/machinelock"}},
 	{"tools/machinelock", nil},
 	{"tools/synth", nil},
+	// The system view generator: the importer and the check through the
+	// driver, the archives.
+	{"tools/sysview", []string{"driver", "sysview"}},
 	// The release tool: the archive format and keys, the tree hash, the tag
 	// read.
 	{"tools/release", []string{"release", "fetch", "git"}},

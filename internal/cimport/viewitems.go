@@ -18,10 +18,31 @@
 package cimport
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"maps"
+	"slices"
 	"strings"
 
 	"mk/internal/sysview"
 )
+
+// ImporterFormat names the mapping from C to Mk this importer writes (the
+// cache's format): an input of every generated system view.
+const ImporterFormat = formatVersion
+
+// ToolsetHeadersHash is the hash of mk's MSVC toolset headers (names and
+// texts), which the names of a Windows SDK view depend on: an input of
+// every Windows system view.
+func ToolsetHeadersHash() string {
+	h := sha256.New()
+	files := MicrosoftHeaders()
+	names := slices.Sorted(maps.Keys(files))
+	for _, n := range names {
+		h.Write([]byte(n + "\x00" + files[n] + "\x00"))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
 
 // ViewItems returns, for each binding (texts in import order, names[i] the
 // import name of texts[i]), its items and required views, and the items to
