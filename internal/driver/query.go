@@ -543,7 +543,7 @@ func (qx *queryIndex) modules() []string {
 	}
 	var std, classes []string
 	for _, m := range qx.s.stdB.mods {
-		if m.mod == nil || isStdInternal(m.path) {
+		if m.mod == nil || !m.std || isStdInternal(m.path) {
 			continue
 		}
 		std = append(std, m.path)

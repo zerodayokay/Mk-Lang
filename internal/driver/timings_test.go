@@ -47,8 +47,8 @@ func TestTimingsSlowFunctions(t *testing.T) {
 			if sp <= len("func ") || !strings.HasSuffix(l, "ms") {
 				t.Errorf("line %q, want func <key> <ms>ms", l)
 			}
-			if !strings.HasPrefix(key, "std.") {
-				funcs = append(funcs, key) // std's bodies are listed too
+			if !strings.HasPrefix(key, "std.") && !strings.HasPrefix(key, sysViewPrefix) {
+				funcs = append(funcs, key)
 			}
 		default:
 			t.Errorf("unexpected line %q", l)
