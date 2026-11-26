@@ -20,7 +20,7 @@ import (
 
 // Release is the version of Mk this compiler implements: the tag it ships
 // at.
-const Release = "0.6.0"
+const Release = "0.7.0"
 
 // commit overrides the VCS stamp when set at link time
 // (-ldflags "-X mk/internal/driver.commit=<hash>"), for a build made outside

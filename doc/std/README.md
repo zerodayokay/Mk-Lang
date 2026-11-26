@@ -350,7 +350,7 @@ Every public item of the language, the tools and std has a stability level, whic
 
 ### Releases before 1.0
 
-Mk is at 0.6.0. Until 1.0:
+Mk is at 0.7.0. Until 1.0:
 
 - A patch release (0.1.1) fixes bugs. It adds, removes and changes no public item.
 - A minor release (0.2.0) may change or remove a Stable item. Each such change has an entry in [CHANGELOG.md](../../CHANGELOG.md) under that release and shows in `mk apidiff`. When a source form changes, an `mk fix` rewrite comes with it wherever the rewrite is certain. When the old and new forms can live side by side, the old one is deprecated first.
