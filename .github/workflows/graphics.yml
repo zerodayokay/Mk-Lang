@@ -85,7 +85,9 @@ jobs:
           scene=Dogfoods/scene/cases/scenes/shadow.scene
           "$RUNNER_TEMP/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
           test -s "$RUNNER_TEMP/shadow.png"
-          xvfb-run -a "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3
+          output=$(xvfb-run -a "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3)
+          printf '%s\n' "$output"
+          grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"
 
       - name: Render and present on macOS
         if: runner.os == 'macOS'
@@ -97,4 +99,6 @@ jobs:
           scene=Dogfoods/scene/cases/scenes/shadow.scene
           "$RUNNER_TEMP/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
           test -s "$RUNNER_TEMP/shadow.png"
-          "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3
+          output=$("$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3)
+          printf '%s\n' "$output"
+          grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"

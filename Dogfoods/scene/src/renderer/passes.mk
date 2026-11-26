@@ -421,11 +421,18 @@ export SceneRenderer.ResizeTargets(mut self, io: Io, w: int, h: int): gpu.Error!
     self.blur_stride_u32 = blur_stride_u32
 }
 
-/// Renders one frame into the swapchain and presents it; returns false when the
-/// window is hidden, so the caller waits for an event. The blur runs offscreen
-/// only.
+/// The viewer's next action after trying a frame.
+export enum SwapchainFrame {
+    Presented
+    Retry
+    Hidden
+}
+
+/// Renders one frame into the swapchain and reports whether to count it, try
+/// again after a surface change, or wait for a window event. The blur runs
+/// offscreen only.
 /// Errors: gpu.Error. O(objects + instances); allocates nothing per frame.
-export SceneRenderer.DrawSwapchainFrame(mut self, io: Io, w: int, h: int, time_deg: f32): gpu.Error!bool {
+export SceneRenderer.DrawSwapchainFrame(mut self, io: Io, w: int, h: int, time_deg: f32): gpu.Error!SwapchainFrame {
     try self.UpdateUniforms(time_deg)
     match Replace(mut self.sc, none) {
         some(swap_in) {
@@ -484,28 +491,31 @@ export SceneRenderer.DrawSwapchainFrame(mut self, io: Io, w: int, h: int, time_d
                         self.clear_a,
                     )
                     try enc.Submit()
-                    _ = try self.dev.Present(io, frame)
+                    presented := try self.dev.Present(io, frame)
                     if prev := Replace(mut self.sc, some(swap)) {
                         prev.Close(io, mut self.dev)
                     }
-                    return true
+                    return if presented.suboptimal { SwapchainFrame.Retry } else { SwapchainFrame.Presented }
                 }
                 .Outdated {
                     if prev := Replace(mut self.sc, some(swap)) {
                         prev.Close(io, mut self.dev)
                     }
+                    if w <= 0 || h <= 0 {
+                        return SwapchainFrame.Hidden
+                    }
                     try self.ResizeTargets(io, w, h)
-                    return true
+                    return SwapchainFrame.Retry
                 }
                 .Hidden {
                     if prev := Replace(mut self.sc, some(swap)) {
                         prev.Close(io, mut self.dev)
                     }
-                    return false
+                    return SwapchainFrame.Hidden
                 }
             }
         }
-        none { return false }
+        none { return SwapchainFrame.Hidden }
     }
 }
 

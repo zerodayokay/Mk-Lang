@@ -541,18 +541,20 @@ CmdView(sys: &System, args: []str): int {
             break
         }
         (width, height) := win.Size()
-        drawn := r.DrawSwapchainFrame(sys.io, width, height, deg) else e {
+        frame := r.DrawSwapchainFrame(sys.io, width, height, deg) else e {
             _ = sys.PrintErr("scene: frame error: {m}\n", (m: FormatGpuError(sys.arena, e))) else {}
             status = ExitFail
             break
         }
-        if drawn {
-            presented += 1
-            if max_frames > 0 && presented >= max_frames {
-                running = false
+        match frame {
+            .Presented {
+                presented += 1
+                if max_frames > 0 && presented >= max_frames {
+                    running = false
+                }
             }
-        } else {
-            win.Wait(sys.io) else { break }
+            .Retry {}
+            .Hidden { win.Wait(sys.io) else { break } }
         }
         deg += 0.5
     }
