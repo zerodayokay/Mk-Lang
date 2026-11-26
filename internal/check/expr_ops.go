@@ -382,9 +382,16 @@ func (u *unit) call(e *ast.CallExpr, want types.TypeID) types.TypeID {
 	builtin := BuiltinNone
 	switch f := e.Fun.(type) {
 	case *ast.Ident:
-		if r := u.ref(f); r.Kind == resolve.RefPrim {
+		switch r := u.ref(f); r.Kind {
+		case resolve.RefPrim:
 			to = types.TypeID(r.A)
 			builtin = BuiltinConvert
+		case resolve.RefTypeParam:
+			// `T(x)` inside `if T is X` is the conversion `X(x)`; outside
+			// one, T is no value (notValue).
+			if int(r.A) < len(u.env.narrow) && u.env.narrow[r.A] != types.NoType {
+				to, builtin = u.x.typeOf(f, posPlain), BuiltinConvert
+			}
 		}
 	case *ast.IndexExpr:
 		if id, ok := f.X.(*ast.Ident); ok {

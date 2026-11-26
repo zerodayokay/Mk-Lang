@@ -72,6 +72,7 @@ var corpusExcepted = map[string]string{
 	"codes/E1102.mk":                                       "an unsafe block outside unsafe_modules is the driver's E1102; check's is only a section clause or an extern var",
 	"codes/E0701_math_integer.mk":                          "math.Integer is std.math's, which this harness's prelude does not load; mk corpus judges it",
 	"codes/E0704_math_integer.mk":                          "math.Integer is std.math's, which this harness's prelude does not load; mk corpus judges it",
+	"codes/E0706_simd_narrow_restated.mk":                  "std.simd's NarrowSat clause is imported, judged at the narrowed arguments only by the evaluator; this harness has none (mk corpus judges it)",
 	"codes/E0706_atomic_unordered.mk":                      "atomic.Unordered and the CanX clauses are std.atomic's, read through the evaluator; this harness has neither (mk corpus judges it)",
 	"codes/E0701_offsetof_generic.mk":                      "mem.OffsetOf is std.mem's, which this harness's prelude does not load; mk corpus judges it",
 	"codes/E0701_mem_zeroed.mk":                            "mem.Zeroed is std.mem's, which this harness's prelude does not load; mk corpus judges it",

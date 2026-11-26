@@ -278,6 +278,13 @@ func (x *tctx) named(n ast.Node, r resolve.Ref, args []ast.TypeOrExpr, p tpos) t
 			x.errorf(diag.E0301, n.Span(), "a const parameter is a value, not a type").Text("expected", "type").Text("found", "const parameter")
 			return types.Poison
 		}
+		// Inside `if T is X` a type written T is X, as a value of type T
+		// is (a type argument, a local's type, a cast's target).
+		if x.unitEnv != nil {
+			if env := x.unitEnv(); env != nil && int(r.A) < len(env.narrow) && env.narrow[r.A] != types.NoType {
+				return env.narrow[r.A]
+			}
+		}
 		return tab.Param(r.A)
 	case resolve.RefSelfType:
 		if x.self == types.NoType {
