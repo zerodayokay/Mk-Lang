@@ -561,7 +561,6 @@ export Device.SwapchainAcquire(mut self, io: Io, sc_id: u64, win_w: int, win_h: 
     f := st.swapchains[sc_idx].frames_in_flight
     ring_len := if st.planted_bug == BugAcqRingF { f } else { f + 1 }
     ai := st.swapchains[sc_idx].acq_cursor % ring_len
-    st.swapchains[sc_idx].acq_cursor = (ai + 1) % ring_len
     waited_by := st.swapchains[sc_idx].acq[ai].waited_by
     if waited_by > 0 && PollCompletedSerial(st) < waited_by {
         Panic("vk swapchain: acquire semaphore reused before prior submit completed")
@@ -622,6 +621,7 @@ export Device.SwapchainAcquire(mut self, io: Io, sc_id: u64, win_w: int, win_h: 
     }
 
     img_idx := arg.out_img
+    st.swapchains[sc_idx].acq_cursor = (ai + 1) % ring_len
     st.swapchains[sc_idx].handed_out = true
     st.swapchains[sc_idx].handed_image = img_idx
     st.swapchains[sc_idx].pending_submit_wait = true

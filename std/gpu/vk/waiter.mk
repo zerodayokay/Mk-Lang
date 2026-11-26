@@ -39,7 +39,7 @@ WaiterThreadMain(arg: *u8) {
         wait_fn := raw.FnFromAddr[vulkan.PfnVkWaitSemaphores]((*sh).wait_fn_addr).Must()
         get_fn := raw.FnFromAddr[vulkan.PfnVkGetSemaphoreCounterValue]((*sh).get_counter_fn_addr).Must()
 
-        var sems: [2]vulkan.VkSemaphore = [tsem, csem]
+        var sems: [2]vulkan.VkSemaphore = [csem, tsem]
         for (*sh).stop.Load() == 0 {
             ctrl_seq := (*sh).control_seq.Load()
             tgt := (*sh).target.Load()
@@ -51,21 +51,14 @@ WaiterThreadMain(arg: *u8) {
                 break
             }
             cur_val = PublishCompleted(&(*sh).completed, cur_val)
-            var wait_dev: u64 = 0xFFFF_FFFF_FFFF_FFFF
-            if tgt > 0 {
-                if cur_val >= tgt {
-                    (*sh).waker.Wake()
-                    // Wait until target changes or control_sem advances.
-                    wait_dev = 0xFFFF_FFFF_FFFF_FFFF
-                } else {
-                    wait_dev = tgt
-                }
+            if tgt > 0 && cur_val >= tgt {
+                (*sh).waker.Wake()
             }
-            var vals: [2]u64 = [wait_dev, ctrl_seq + 1]
+            var vals: [2]u64 = [ctrl_seq + 1, tgt]
             var wi := mem.Zeroed[vulkan.VkSemaphoreWaitInfo]()
             wi.s_type = vulkan.VkStructureTypeSemaphoreWaitInfo
             wi.flags = Cast[u32](vulkan.VkSemaphoreWaitAnyBit)
-            wi.semaphore_count = 2
+            wi.semaphore_count = if cur_val < tgt { 2 } else { 1 }
             wi.p_semaphores = raw.Data(sems[..])
             wi.p_values = raw.Data(vals[..])
             wr := wait_fn(dev, raw.Of(&wi), WaiterTimeoutNs)

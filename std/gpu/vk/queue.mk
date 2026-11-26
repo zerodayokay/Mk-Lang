@@ -176,6 +176,8 @@ FlushPendingZeroAndCopies(st: mut VkDeviceState, cmd: vulkan.VkCommandBuffer) {
         }
 
         for i in 0..st.pending_copies.Len() {
+            // Consecutive writes may overlap in the same destination range.
+            if i > 0 { EmitGlobalSubmissionBarrier(&*st, cmd) }
             op := st.pending_copies[i]
             if op.kind == 0 {
                 bidx := Cast[int](op.dst_handle)

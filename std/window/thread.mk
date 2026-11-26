@@ -163,6 +163,8 @@ EnqueueReq(rec_addr: uint, bit: u32) {
         r := raw.FromAddr[WindowRec](rec_addr)
         (*r).req_pending = (*r).req_pending | bit
         if !(*r).req_queued {
+            // The queue owns a reference until ProcessReq finishes.
+            _ = (*r).refs.FetchAdd(1, atomic.AcqRel)
             (*r).req_queued = true
             (*r).req_next = 0
             if list.tail == 0 {
@@ -511,6 +513,7 @@ DrainRequests() {
             break
         }
         ProcessReq(popped.addr, popped.bits)
+        ReleaseWindowRecRef(popped.addr)
     }
 }
 
