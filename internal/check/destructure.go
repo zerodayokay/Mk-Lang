@@ -267,9 +267,14 @@ func (u *unit) errorPat(at source.Span, it *types.Item, t types.TypeID) bool {
 		}
 		pat += "(" + strings.Join(fs, ", ") + ")"
 	}
-	d := u.err(diag.E0306, at, msg+"; take it apart with `match`").Text("reason", "refutable").
-		Alt("use `match e { " + pat + " { ... } }`")
-	if len(ms) == 1 && field != "" {
+	d := u.err(diag.E0306, at, msg+"; take it apart with `match`").Text("reason", "refutable")
+	if len(ms) > 1 {
+		// One arm alone would miss the other errors (E0306 again).
+		d.Alt("use `match e` with an arm `" + pat + " { ... }` and an arm for each other error, or `_ { ... }`")
+		return true
+	}
+	d.Alt("use `match e { " + pat + " { ... } }`")
+	if field != "" {
 		d.Alt("read the error's fields: `e." + field + "`")
 	}
 	return true

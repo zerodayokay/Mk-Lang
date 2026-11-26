@@ -22,6 +22,8 @@ func TestErrorPatternDestructure(t *testing.T) {
 		{"nested", pre + "F(w: W): int {\n\tW(e: Bad(code: c)) := w\n\treturn c\n}\n", "E0306@10:7", "`Bad` is an error"},
 		{"no such error", pre + "F(e: Other): int {\n\tBad(code: c) := e\n\treturn c\n}\n", "E0301@10:2", "the pattern names `Bad`, the value is `Other`"},
 		{"the forms that work", pre + "F(e: Bad): int {\n\tn := e.code\n\treturn match e {\n\t\tBad(code) { code + n }\n\t}\n}\n", "", ""},
+		{"a set of two, matched", pre + "F(e: Bad | Other): int {\n\treturn match e {\n\t\tBad(code) { code }\n\t\t_ { 0 }\n\t}\n}\n", "", ""},
+		{"a set of two, one arm", pre + "F(e: Bad | Other): int {\n\treturn match e {\n\t\tBad(code) { code }\n\t}\n}\n", "E0306@10:9", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -36,9 +38,18 @@ func TestErrorPatternDestructure(t *testing.T) {
 			// The alternatives are forms that compile ("the forms that
 			// work" checks them): a match arm naming the fields, and for
 			// one error a field read.
-			if tc.want == "E0306@10:2" {
-				alts := strings.Join(d.Alternatives, "; ")
-				if !strings.Contains(alts, "match e { Bad(code) { ... } }") || (tc.name == "one error") != strings.Contains(alts, "`e.code`") {
+			// For a set of several, one arm alone is non-exhaustive, so the
+			// alternative names the other arms ("a set of two, matched"
+			// checks that such a match compiles, "a set of two, one arm"
+			// that one arm does not).
+			alts := strings.Join(d.Alternatives, "; ")
+			switch tc.name {
+			case "one error":
+				if !strings.Contains(alts, "match e { Bad(code) { ... } }") || !strings.Contains(alts, "`e.code`") {
+					t.Errorf("alternatives %q", alts)
+				}
+			case "a set of two":
+				if !strings.Contains(alts, "an arm `Bad(code) { ... }` and an arm for each other error, or `_ { ... }`") || strings.Contains(alts, "e.code") {
 					t.Errorf("alternatives %q", alts)
 				}
 			}
