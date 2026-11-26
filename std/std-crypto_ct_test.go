@@ -422,6 +422,9 @@ func TestSTDCRYPTO_AllowanceTables(t *testing.T) {
 			if !known {
 				t.Errorf("%s: back-edge count for %s, which its tables do not list", tb.test, fn)
 			}
+			if len(per) == 0 {
+				t.Errorf("%s: back-edge entry for %s has no builds: drop the empty entry", tb.test, fn)
+			}
 			for b, n := range per {
 				switch {
 				case !slices.Contains(tb.builds, b):
@@ -512,10 +515,12 @@ func ctParse(dis string) []ctInsn {
 // when it steps a counter (ctStep: an add or sub of an immediate, an inc or
 // a dec), or is a cmp or test of a counter outside any memory operand; a
 // counter is a register the loop body (target to the edge) writes at least
-// once and only with steps, and, when it is caller-saved, holds no call.
-// Any other back edge may exit on data (a rejection loop's test of a drawn
-// secret, a compare of a loaded byte), and is counted in [2] for its
-// reading (ctClassifyBack lists them, ctBackTable bounds them).
+// once and only with steps targeting the exact same register width (any
+// write to an aliased subregister disqualifies it), and, when it is
+// caller-saved, holds no call. Any other back edge may exit on data (a
+// rejection loop's test of a drawn secret, a compare of a loaded byte), and
+// is counted in [2] for its reading (ctClassifyBack lists them, ctBackTable
+// bounds them).
 func ctClassify(ins []ctInsn) (map[string][]string, map[string][3]int) {
 	other, _, counts := ctClassifyBack(ins)
 	return other, counts
@@ -527,6 +532,58 @@ var (
 	// ctCallerSaved are the registers a call may change (System V).
 	ctCallerSaved = map[string]bool{"rax": true, "rcx": true, "rdx": true, "rsi": true, "rdi": true, "r8": true, "r9": true, "r10": true, "r11": true}
 )
+
+// ctOperands returns args with any trailing objdump comment (# ...) outside
+// symbol names (<...>) removed.
+func ctOperands(args string) string {
+	depth := 0
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case '<':
+			depth++
+		case '>':
+			if depth > 0 {
+				depth--
+			}
+		case '#':
+			if depth == 0 {
+				return strings.TrimSpace(args[:i])
+			}
+		}
+	}
+	return strings.TrimSpace(args)
+}
+
+// ctUnwrap strips trailing comments and leading non-write instruction prefixes.
+func ctUnwrap(x ctInsn) (string, string) {
+	op, args := x.op, ctOperands(x.args)
+	for {
+		switch op {
+		case "lock", "bnd", "notrack", "data16", "rex", "rex64":
+			parts := strings.Fields(args)
+			if len(parts) == 0 {
+				return op, ""
+			}
+			op = parts[0]
+			args = strings.TrimSpace(args[len(op):])
+			continue
+		}
+		break
+	}
+	return op, args
+}
+
+var ctImplicitWrites = map[string][]string{
+	"cqto": {"rdx"}, "cltd": {"rdx"}, "cwtd": {"rdx"},
+	"cltq": {"rax"}, "cwtl": {"rax"}, "cbtw": {"rax"},
+	"cpuid": {"rax", "rbx", "rcx", "rdx"},
+	"rdtsc": {"rax", "rdx"}, "rdtscp": {"rax", "rdx", "rcx"},
+	"xgetbv": {"rax", "rdx"}, "rdpmc": {"rax", "rdx"},
+	"lahf": {"rax"}, "xlat": {"rax"}, "xlatb": {"rax"},
+	"syscall": {"rax", "rcx", "r11"},
+	"enter":   {"rbp", "rsp"}, "leave": {"rbp", "rsp"},
+	"loop": {"rcx"}, "loope": {"rcx"}, "loopz": {"rcx"}, "loopne": {"rcx"}, "loopnz": {"rcx"},
+}
 
 // ctReg is the 64-bit register a register operand (with its %) is part of.
 func ctReg(r string) string {
@@ -556,34 +613,38 @@ func ctReg(r string) string {
 }
 
 // ctStep reports whether x steps a register by a constant (an add or sub
-// of an immediate, an inc or a dec), and which.
-func ctStep(x ctInsn) (string, bool) {
-	fields := strings.Split(x.args, ",")
+// of an immediate, an inc or a dec), returning its 64-bit register family
+// and exact register operand.
+func ctStep(x ctInsn) (base, raw string, ok bool) {
+	op, args := ctUnwrap(x)
+	fields := strings.Split(args, ",")
 	dst := strings.TrimSpace(fields[len(fields)-1])
 	if !strings.HasPrefix(dst, "%") {
-		return "", false
+		return "", "", false
 	}
 	switch {
-	case strings.HasPrefix(x.op, "inc"), strings.HasPrefix(x.op, "dec"):
-		return ctReg(dst), true
-	case strings.HasPrefix(x.op, "add"), strings.HasPrefix(x.op, "sub"):
-		return ctReg(dst), ctImmRe.MatchString(x.args)
+	case strings.HasPrefix(op, "inc"), strings.HasPrefix(op, "dec"):
+		return ctReg(dst), dst, true
+	case strings.HasPrefix(op, "add"), strings.HasPrefix(op, "sub"):
+		if ctImmRe.MatchString(args) {
+			return ctReg(dst), dst, true
+		}
 	}
-	return "", false
+	return "", "", false
 }
 
 // ctWrites reports whether x may write r: as its last operand (not for a
 // compare, a test, a jump or a push, whose last operand is read), or as
 // one an instruction writes without naming it last (mul and div, the sign
-// extensions, xchg, xadd, cmpxchg, mulx, cpuid, rdtsc, syscall, the string
-// instructions); a call is ctCounter's.
+// extensions, xchg, xadd, cmpxchg, mulx, cpuid, rdtsc/rdtscp, xgetbv,
+// rdpmc, syscall, enter/leave, loop, the string instructions); a call is
+// ctCounter's.
 func ctWrites(x ctInsn, r string) bool {
-	op := x.op
-	implicit := map[string][]string{"cqto": {"rdx"}, "cltd": {"rdx"}, "cwtd": {"rdx"}, "cltq": {"rax"}, "cwtl": {"rax"}, "cpuid": {"rax", "rbx", "rcx", "rdx"}, "rdtsc": {"rax", "rdx"}, "syscall": {"rax", "rcx", "r11"}}
-	if regs, ok := implicit[op]; ok {
+	op, args := ctUnwrap(x)
+	if regs, ok := ctImplicitWrites[op]; ok {
 		return slices.Contains(regs, r)
 	}
-	fields := strings.Split(x.args, ",")
+	fields := strings.Split(args, ",")
 	named := func() bool {
 		for _, f := range fields {
 			if f = strings.TrimSpace(ctMemRe.ReplaceAllString(f, "")); strings.HasPrefix(f, "%") && ctReg(f) == r {
@@ -595,17 +656,26 @@ func ctWrites(x ctInsn, r string) bool {
 	switch {
 	case strings.HasPrefix(op, "xchg"), strings.HasPrefix(op, "xadd"), strings.HasPrefix(op, "mulx"):
 		return named()
+	case op == "cmpxchg8b", op == "cmpxchg16b":
+		return r == "rax" || r == "rdx"
 	case strings.HasPrefix(op, "cmpxchg"):
 		return r == "rax" || named()
-	case strings.HasPrefix(op, "rep"), strings.HasPrefix(op, "stos"), strings.HasPrefix(op, "lods"), strings.HasPrefix(op, "scas"), strings.Contains(x.args, "%es:"), strings.Contains(x.args, "%ds:"):
+	case strings.HasPrefix(op, "rep"), strings.HasPrefix(op, "stos"), strings.HasPrefix(op, "lods"), strings.HasPrefix(op, "scas"),
+		op == "movsb", op == "movsw", op == "movsl", op == "movsq",
+		op == "cmpsb", op == "cmpsw", op == "cmpsl", op == "cmpsq",
+		strings.Contains(args, "%es:"), strings.Contains(args, "%ds:"):
 		return r == "rsi" || r == "rdi" || r == "rcx" || r == "rax"
 	case (strings.HasPrefix(op, "mul") || strings.HasPrefix(op, "div") || strings.HasPrefix(op, "idiv") || strings.HasPrefix(op, "imul")) && len(fields) == 1:
 		return r == "rax" || r == "rdx"
+	case strings.HasPrefix(op, "push"):
+		return r == "rsp"
+	case strings.HasPrefix(op, "pop") && r == "rsp":
+		return true
 	}
 	if strings.HasPrefix(op, "bt") && !strings.HasPrefix(op, "bts") && !strings.HasPrefix(op, "btr") && !strings.HasPrefix(op, "btc") {
 		return false
 	}
-	for _, p := range []string{"cmp", "test", "ptest", "ucomis", "comis", "j", "push", "nop"} {
+	for _, p := range []string{"cmp", "test", "ptest", "ucomis", "comis", "j", "nop"} {
 		if strings.HasPrefix(op, p) && !strings.HasPrefix(op, "cmov") {
 			return false
 		}
@@ -614,22 +684,23 @@ func ctWrites(x ctInsn, r string) bool {
 	return strings.HasPrefix(dst, "%") && ctReg(dst) == r
 }
 
-// ctCounter reports whether ins[from:to] writes r at least once and only
-// with steps (ctStep), with no call when r is caller-saved.
-func ctCounter(ins []ctInsn, r string, from, to int) bool {
+// ctCounter reports whether ins[from:to] writes base at least once and only
+// with steps (ctStep) targeting raw, with no call when base is caller-saved.
+func ctCounter(ins []ctInsn, base, raw string, from, to int) bool {
 	steps := 0
 	for k := from; k < to; k++ {
 		y := ins[k]
-		if strings.HasPrefix(y.op, "call") {
-			if ctCallerSaved[r] {
+		yOp, _ := ctUnwrap(y)
+		if strings.HasPrefix(yOp, "call") {
+			if ctCallerSaved[base] {
 				return false
 			}
 			continue
 		}
-		if !ctWrites(y, r) {
+		if !ctWrites(y, base) {
 			continue
 		}
-		if s, ok := ctStep(y); !ok || s != r {
+		if sBase, sRaw, ok := ctStep(y); !ok || sBase != base || sRaw != raw {
 			return false
 		}
 		steps++
@@ -678,14 +749,15 @@ func ctClassifyBack(ins []ctInsn) (map[string][]string, map[string][]string, map
 			return false
 		}
 		set := ins[i-1]
-		if r, ok := ctStep(set); ok {
-			return ctCounter(ins, r, from, i)
+		if base, raw, ok := ctStep(set); ok {
+			return ctCounter(ins, base, raw, from, i)
 		}
-		if !strings.HasPrefix(set.op, "cmp") && !strings.HasPrefix(set.op, "test") {
+		setOp, setArgs := ctUnwrap(set)
+		if !strings.HasPrefix(setOp, "cmp") && !strings.HasPrefix(setOp, "test") {
 			return false
 		}
-		for _, r := range ctRegRe.FindAllString(ctMemRe.ReplaceAllString(set.args, ""), -1) {
-			if ctCounter(ins, ctReg(r), from, i-1) {
+		for _, r := range ctRegRe.FindAllString(ctMemRe.ReplaceAllString(setArgs, ""), -1) {
+			if ctCounter(ins, ctReg(r), r, from, i-1) {
 				return true
 			}
 		}
@@ -967,6 +1039,58 @@ func TestSTDCRYPTO_ConstantTimeClassifier(t *testing.T) {
 	_, back4, counts4 := ctClassifyBack(ctParse(dis4))
 	if c := counts4["mk.std.crypto.SecretLoop"]; c != [3]int{0, 4, 4} || len(back4["mk.std.crypto.SecretLoop"]) != 4 {
 		t.Fatalf("got counts %v, back %q; want [0 4 4] and 4 non-induction back edges", c, back4["mk.std.crypto.SecretLoop"])
+	}
+	// Trailing objdump comments on writes, mismatched subregister widths
+	// between step and compare, prefixed atomic writes, and implicit
+	// register writes must disqualify a counter and classify in [2], while
+	// trailing comments on a clean step stay in [1].
+	const dis5 = `
+0000000000005000 <mk.std.crypto.CounterWidths>:
+    5000:      	addq	$0x1, %r8 # imm = 0x1
+    5004:      	cmpq	%rdx, %r8
+    5007:      	jb	0x5000 <mk.std.crypto.CounterWidths>
+    5010:      	movq	0x10(%rip), %rax # 0x9200 <mk.main.Main#report>
+    5017:      	addq	$0x1, %rax
+    501b:      	cmpq	%rdx, %rax
+    501e:      	jb	0x5010 <mk.std.crypto.CounterWidths+0x10>
+    5020:      	andq	$0x7f, %rbx # imm = 0x7F
+    5024:      	addq	$0x1, %rbx
+    5028:      	cmpq	%rdx, %rbx
+    502b:      	jb	0x5020 <mk.std.crypto.CounterWidths+0x20>
+    5030:      	addb	$0x1, %al
+    5032:      	cmpq	%rdx, %rax
+    5035:      	jb	0x5030 <mk.std.crypto.CounterWidths+0x30>
+    5040:      	addb	$0x1, %al
+    5042:      	cmpb	%dl, %ah
+    5044:      	jne	0x5040 <mk.std.crypto.CounterWidths+0x40>
+    5050:      	addq	$0x1, %rax
+    5054:      	cmpb	%al, %dl
+    5056:      	jne	0x5050 <mk.std.crypto.CounterWidths+0x50>
+    5060:      	addl	$0x1, %eax
+    5063:      	lock	xaddl	%eax, (%rdi)
+    5067:      	testl	%eax, %eax
+    5069:      	jne	0x5060 <mk.std.crypto.CounterWidths+0x60>
+    5070:      	addq	$0x1, %rcx
+    5074:      	rdtscp
+    5077:      	cmpq	%rdx, %rcx
+    507a:      	jb	0x5070 <mk.std.crypto.CounterWidths+0x70>
+    5080:      	addq	$0x1, %rdx
+    5084:      	cmpxchg8b	(%rdi)
+    5087:      	cmpq	%rbx, %rdx
+    508a:      	jb	0x5080 <mk.std.crypto.CounterWidths+0x80>
+    5090:      	addq	$0x1, %rax
+    5094:      	cbtw
+    5096:      	cmpq	%rbx, %rax
+    5099:      	jb	0x5090 <mk.std.crypto.CounterWidths+0x90>
+    50a0:      	addq	$0x1, %rdi
+    50a4:      	movsb
+    50a5:      	cmpq	%rbx, %rdi
+    50a8:      	jb	0x50a0 <mk.std.crypto.CounterWidths+0xa0>
+    50aa:      	retq
+`
+	_, back5, counts5 := ctClassifyBack(ctParse(dis5))
+	if c := counts5["mk.std.crypto.CounterWidths"]; c != [3]int{0, 11, 10} || len(back5["mk.std.crypto.CounterWidths"]) != 10 {
+		t.Fatalf("got counts %v, back %q; want [0 11 10] and 10 non-induction back edges", c, back5["mk.std.crypto.CounterWidths"])
 	}
 }
 
