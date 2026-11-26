@@ -2,7 +2,8 @@
 // copies, mappings, paths, sockets, terminals) each need checking on both
 // routes and both targets.
 // What: the RT8-Call-* blocks for std/rt/call.mk, std/task/io_call.mk and
-// each target's sys/call.mk, with helpers CaBytes, CaWrite and CaFifoCopy.
+// each target's sys/call.mk, with helpers CaBytes, CaWrite, CaFifoCopy and
+// the gated copy (CaGateIo, CaGateCall, CaGateJob).
 // How: run by the scheduler harness, and on both targets at 1 and 16
 // carriers by std/rt_deadline_test.go (its RT8- blocks). Files are made in
 // the temporary directory (FlName: TEMP or TMP on Windows, TMPDIR or /tmp
@@ -12,6 +13,7 @@
 import std.core
 import std.raw
 import std.rt
+import std.sys
 
 // CaBytes is s's bytes, the form the call functions take a path in.
 CaBytes(s: str): []u8 from s {
@@ -198,11 +200,84 @@ test "RT8-Call-LockCancelFree a waiting Lock in a cancelled scope returns Cancel
 }
 
 // CaBig is the size of RT8-Call-CopyCancel's source: written by the
-// kernel in no less than tens of milliseconds, so a copy cut at 5 ms is
-// cut mid-way.
+// kernel in about a hundred milliseconds, so a copy cut at 5 ms is
+// cut mid-way when the deadline is delivered on time.
 const CaBig: i64 = 512 * 1024 * 1024
 
-test "RT8-Call-CopyCancel a deadline ends a running CopyFile with Canceled and a prefix in dst; a scope cancelled first copies nothing (prefix)" (sys: &System) {
+// CaGate is what the gated copy's job saw: 1 in saw when its cancel word
+// was set before it ran the copy, and the nanoseconds it waited in waited.
+struct CaGate {
+    saw: raw.Atomic[u32]
+    waited: raw.Atomic[i64]
+}
+
+var CaGated: CaGate = CaGate(saw: raw.Atomic[u32].New(0), waited: raw.Atomic[i64].New(0))
+
+// CaHold carries the call's own job from CaGateCall to CaGateJob.
+struct CaHold {
+    job: fn(*core.IoCallArgs)
+}
+
+// CaGateTable is the native table whose call entry gates a copy
+// (CaGateCall).
+const CaGateTable = core.IoTable(open: NativeOpen, read: NativeRead, write: NativeWrite, size: NativeSize,
+    sync: NativeSync, close: NativeClose, rename: NativeRename, remove: NativeRemove, listen: NativeListen,
+    accept: NativeAccept, dial: NativeDial, recv: NativeRecv, send: NativeSend, now: NativeNow,
+    sleep: NativeSleep, random: NativeRandom, yield: NativeYield, signal: NativeSignal, wait: NativeWait,
+    wake: NativeWake, mkdir: NativeMkdir, stat: NativeStat, opendir: NativeOpenDir, readdir: NativeReadDir,
+    udp: NativeUdp, sendto: NativeSendTo, recvfrom: NativeRecvFrom, resolve: NativeResolveAll,
+    spawn: NativeSpawn, procwait: NativeProcWait, prockill: NativeProcKill, inherited: NativeInherited,
+    enter: core.InertHook, leave: core.InertHook, deadline: NativeDeadline, stdio: NativeStdio,
+    call: CaGateCall)
+
+CaGateIo(): Io {
+    unsafe "CaGateTable is a static IoTable, live for the whole program" {
+        return core.MakeIo(raw.Of(&CaGateTable), 0)
+    }
+}
+
+// CaGateCall is the native call entry, except that a copy's job is
+// CaGateJob, which runs the copy's own job (kept in w.a, a word a copy
+// does not use) only once its cancel word is set.
+CaGateCall(io: Io, a: *core.IoCallArgs): core.IoResult {
+    unsafe "a is the caller's record, live until this returns; hold lives in this frame until then" {
+        if (*a).op != core.IoOpCopy {
+            return NativeCall(io, a)
+        }
+        var hold := CaHold(job: (*a).job)
+        (*a).w.a = Trunc[i64](raw.Addr(raw.Of(&hold)))
+        (*a).job = CaGateJob
+        return NativeCall(io, a)
+    }
+}
+
+// CaGateJob is a gated copy's pool job: it waits, on its pool thread,
+// until its cancel word is set (DlBound at most, through the pool's
+// interrupt), notes that in CaGated, and then runs the copy's own job with
+// that word. A copy so gated cannot end before its deadline is delivered:
+// when the delivery never comes, the copy runs whole and is not Canceled.
+CaGateJob(a: *core.IoCallArgs) {
+    unsafe "w.a is CaGateCall's hold; stop is this pool job's cancel word, both live until the call returns" {
+        // Off the pool (no cancel word) nothing is gated, and saw stays 0.
+        if !raw.IsNull((*a).stop) {
+            word := raw.PtrCast[u32, raw.Atomic[u32]]((*a).stop)
+            t0 := BenchNow()
+            for (*word).Load() == 0 && BenchNow() - t0 < DlBound {
+                sys.SleepNanos(DlMs)
+            }
+            if (*word).Load() != 0 {
+                CaGated.waited.Store(BenchNow() - t0)
+                CaGated.saw.Store(1)
+            }
+        }
+        hold := raw.FromAddr[CaHold](Trunc[uint]((*a).w.a))
+        (*a).w.a = 0
+        job := (*hold).job
+        job(a)
+    }
+}
+
+test "RT8-Call-CopyCancel a deadline ends a CopyFile in its call with Canceled, dst never made; a copy that races its deadline ends Canceled with a prefix in dst or copies all; a scope cancelled first copies nothing (prefix)" (sys: &System) {
     io := sys.io
     var nb: [256]u8 = [0; 256]
     var cb: [256]u8 = [0; 256]
@@ -213,18 +288,44 @@ test "RT8-Call-CopyCancel a deadline ends a running CopyFile with Canceled and a
     h := Trunc[uint](NativeOpen(io, src, 2).value)
     Assert(rt.FileTruncate(io, h, CaBig).err == core.SysErr.None)
     Assert(NativeClose(io, h).err == core.SysErr.None)
-    var r := core.IoResult(value: 0, err: core.SysErr.None, os: 0)
+    _ = NativeRemove(io, dst)
+    // Gated: the copy is in its call on a pool thread and cannot end
+    // before the 5 ms deadline reaches its cancel word, however late a
+    // busy machine delivers it; then it ends Canceled and makes no dst
+    // (both targets read the word before their first step).
+    gio := CaGateIo()
+    var g := core.IoResult(value: 0, err: core.SysErr.None, os: 0)
     t0 := BenchNow()
-    scope s := io.Scope() {
+    scope s := gio.Scope() {
         s.CancelAfter(core.DurationOf(5 * DlMs))
+        g = rt.CopyFile(gio, CaBytes(src), CaBytes(dst))
+    }
+    took := BenchNow() - t0
+    Assert(CaGated.saw.Load() == 1)
+    Assert(g.err == core.SysErr.Canceled)
+    Assert(took < DlBound)
+    var w := core.IoWords(a: 0, b: 0, c: 0, d: 0)
+    Assert(rt.StatEx(io, CaBytes(dst), false, mut w).err == core.SysErr.NotFound)
+    sys.PrintErr("RT8-Call-CopyCancel gated: the deadline reached the copy after {wu} us, Canceled after {tu} us\n",
+        (wu: CaGated.waited.Load() / 1000, tu: took / 1000)) else {}
+    // Ungated, the whole native path: a deadline delivered within the
+    // copy's time ends it Canceled with a prefix in dst (none on Windows,
+    // which deletes it); one that a busy machine delivers after the copy
+    // ended finds it whole. Nothing in between.
+    var r := core.IoResult(value: 0, err: core.SysErr.None, os: 0)
+    t1 := BenchNow()
+    scope s1 := io.Scope() {
+        s1.CancelAfter(core.DurationOf(5 * DlMs))
         r = rt.CopyFile(io, CaBytes(src), CaBytes(dst))
     }
-    Assert(r.err == core.SysErr.Canceled)
-    Assert(BenchNow() - t0 < DlBound)
-    // Prefix: dst is gone (Windows deletes it) or shorter than src.
-    var w := core.IoWords(a: 0, b: 0, c: 0, d: 0)
+    Assert(BenchNow() - t1 < DlBound)
     st := rt.StatEx(io, CaBytes(dst), false, mut w)
-    Assert(st.err == core.SysErr.NotFound || (st.err == core.SysErr.None && w.b < CaBig))
+    if r.err == core.SysErr.Canceled {
+        Assert(st.err == core.SysErr.NotFound || (st.err == core.SysErr.None && w.b < CaBig))
+    } else {
+        Assert(r.err == core.SysErr.None && r.value == CaBig)
+        Assert(st.err == core.SysErr.None && w.b == CaBig)
+    }
     // A scope cancelled before the call: Canceled, and the copy never ran.
     _ = NativeRemove(io, dst)
     var c := core.IoResult(value: 0, err: core.SysErr.None, os: 0)
