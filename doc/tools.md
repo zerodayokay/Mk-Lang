@@ -118,6 +118,9 @@ PASS src "words"
 | `--cover`, `--cover-out file` | Print line coverage per file, and write it as lcov |
 | `--fuzz name`, `--fuzztime d` | Run the fuzz target of the named test ([section 10](#10-debugging-coverage-fuzzing-and-profiling)) |
 | `--std module` | Run the standard library's own tests for this module and the modules under it (`std` for all). Takes no path |
+| `--show-output` | Also print each passing test's output under its `PASS` line, indented as a failing test's is |
+
+A failing test's output is printed under its `FAIL` line, and a passing test's only with `--show-output`, which goes with every other flag. `--prop` prints each contract's output whatever its result. With `--json`, every test's object carries its output in `output`, with or without the flag. `mk bench` prints its statistics, not the output, and does not take the flag.
 
 ### `mk fmt`
 
