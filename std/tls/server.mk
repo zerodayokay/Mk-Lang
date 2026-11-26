@@ -516,13 +516,13 @@ ServerHandshake(h: &Heap, io: Io, conn: &net.Conn, c: &Config, hv: &Halves): Err
     return chosen
 }
 
-// Accept is the server connector's function: tls.Server over conn,
+// AcceptAlpn is the server connector's function: tls.Server over conn,
 // accepting offer's protocols in its order when offer is not empty, in a
 // box reserved before the handshake and filled after it; host is unused.
 // It needs no `h into conn` of its own: ConnSlot.Fill takes t with no
 // clause, so filling the box stores nothing into conn. The
 // connector type it is given as keeps the clause.
-Accept(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
+AcceptAlpn(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
     slot := try net.ReserveConn[Secured](h)
     n := WithOffer(c, offer)
     t := Server(h, io, conn, &n) else e {
@@ -533,6 +533,13 @@ Accept(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): n
     return (conn: slot.Fill(Secured(c: t)), chosen: chosen)
 }
 
+// Accept is AcceptAlpn with c's own protocols.
+Accept(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
+    own: [0]str = []
+    (conn: t, chosen: _) := try AcceptAlpn(c, h, io, conn, host, own[..])
+    return t
+}
+
 /// A server connector over c, to put in http.ServerOptions.secure: each
 /// connection the server accepts goes through tls.Server with c. A failed
 /// handshake is net.SecureFailed(why: Handshake), and one past c.handshake
@@ -540,5 +547,5 @@ Accept(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): n
 /// their order, in place of c.alpn. It is a plain value that borrows c;
 /// copy it freely. O(1); allocates nothing until it accepts.
 export Acceptor(c: &Config): net.Secure from c {
-    return net.Secure.Of[Config](core.ErasedCall.Of[Config, SecureFn](c, Accept))
+    return net.Secure.OfAlpn[Config](core.TypedCall[ConnectFn].Of[Config](c, Accept), core.TypedCall[NegotiateFn].Of[Config](c, AcceptAlpn))
 }

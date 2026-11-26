@@ -289,11 +289,15 @@ export Main(sys: &System) {
 		{"a program cannot build a Secure", `import std.net
 
 Forge(s: net.Secure): net.Secure {
-    return net.Secure(call: s.call, thunk: Hand)
+    return net.Secure(call: s.call, thunk: Hand, nego: s.nego, negotiate: Pick)
 }
 
-Hand(s: &net.Secure, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
-    return (conn: conn, chosen: -1)
+Hand(s: &net.Secure, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
+    return conn
+}
+
+Pick(s: &net.Secure, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
+    return (conn: conn, chosen: 0)
 }
 `, []string{"4:12: E0204"}},
 		{"a Secure is plain: a record holding one copies", `import std.net

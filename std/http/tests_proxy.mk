@@ -54,17 +54,17 @@ struct PxSec {
     calls: raw.Atomic[u32]
 }
 
-type PxSecType = fn(&PxSec, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn
+type PxSecType = fn(&PxSec, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn
 
 // PxHandshake counts a handshake and gives conn back, or refuses a name
 // other than s.host (the connection staying the caller's).
-PxHandshake(s: &PxSec, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
+PxHandshake(s: &PxSec, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
     // Edge: none needed; the count is read after the client's calls return.
     _ = s.calls.Add(1)
     if host != s.host {
         fail net.Refused
     }
-    return (conn: conn, chosen: -1)
+    return conn
 }
 
 // PxSecure is the net.Secure over s.

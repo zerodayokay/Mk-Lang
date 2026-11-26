@@ -1,8 +1,9 @@
 // Why: std.http's client and std.websocket's Dial open https and wss
 // connections through a net.Secure; this is TLS's.
 //
-// What: tls.Connector and Connect, and Secured, a private net.Transport
-// over a tls.Conn that maps tls.Error to net.Error.
+// What: tls.Connector and its functions Connect and ConnectAlpn, and
+// Secured, a private net.Transport over a tls.Conn that maps tls.Error to
+// net.Error.
 //
 // How: the connection is boxed by net.ReserveConn and ConnSlot.Fill: the
 // box is reserved first and filled last, so a failed handshake leaves the
@@ -102,8 +103,11 @@ HandshakeError(e: &Error): net.Error {
     }
 }
 
-// SecureFn is the function type net.Secure.Of's call carries.
-type SecureFn = fn(&Config, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn
+// ConnectFn is the type of the connectors' functions, the call
+// net.Secure.Connect makes; NegotiateFn of the ones net.Secure.Negotiate
+// makes.
+type ConnectFn = fn(&Config, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn
+type NegotiateFn = fn(&Config, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn
 
 // WithOffer is c with offer as its ALPN list, or c's own list when offer
 // is empty: a copy of the record on the stack, so the handshake checks
@@ -130,11 +134,11 @@ OfferIndex(t: &Conn, offer: []str): int {
     return -1
 }
 
-// Connect is the client connector's function: tls.Client over conn for
-// host, offering offer's protocols when it is not empty, in a box reserved
-// before the handshake and filled after it. Like Accept, it needs no
-// `h into conn` of its own.
-Connect(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
+// ConnectAlpn is the client connector's function: tls.Client over conn
+// for host, offering offer's protocols when it is not empty, in a box
+// reserved before the handshake and filled after it. Like AcceptAlpn, it
+// needs no `h into conn` of its own.
+ConnectAlpn(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
     slot := try net.ReserveConn[Secured](h)
     n := WithOffer(c, offer)
     t := Client(h, io, conn, &n, host) else e {
@@ -143,6 +147,13 @@ Connect(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): 
     }
     chosen := OfferIndex(&t, offer)
     return (conn: slot.Fill(Secured(c: t)), chosen: chosen)
+}
+
+// Connect is ConnectAlpn with c's own protocols.
+Connect(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
+    own: [0]str = []
+    (conn: t, chosen: _) := try ConnectAlpn(c, h, io, conn, host, own[..])
+    return t
 }
 
 /// A client connector over c, to put in http.ClientLimits.secure or
@@ -156,5 +167,5 @@ Connect(c: &Config, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): 
 /// Its Negotiate offers the caller's protocols in place of c.alpn, with the
 /// same checks. It is a plain value that borrows c; copy it freely.
 export Connector(c: &Config): net.Secure from c {
-    return net.Secure.Of[Config](core.ErasedCall.Of[Config, SecureFn](c, Connect))
+    return net.Secure.OfAlpn[Config](core.TypedCall[ConnectFn].Of[Config](c, Connect), core.TypedCall[NegotiateFn].Of[Config](c, ConnectAlpn))
 }

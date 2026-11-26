@@ -4,6 +4,7 @@
 package lsp
 
 var surfaceDocs2 = map[string]surfaceDoc{
+	"Writer.Str":                        {Module: "", Lines: []string{"Writer.Str(mut self, s: str): WriteError!void"}},
 	"Xx64State.Bytes":                   {Module: "std.hash", Lines: []string{"Xx64State.Bytes(mut self, data: []u8)"}},
 	"Xx64State.New":                     {Module: "std.hash", Lines: []string{"Xx64State.New(seed: u64): Xx64State"}},
 	"Xx64State.Sum":                     {Module: "std.hash", Lines: []string{"Xx64State.Sum(self): u64"}},
@@ -697,6 +698,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"net.Secure.Connect":                {Module: "std.net", Lines: []string{"Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn"}},
 	"net.Secure.Negotiate":              {Module: "std.net", Lines: []string{"Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn"}},
 	"net.Secure.Of":                     {Module: "std.net", Lines: []string{"Secure.Of[T: Share](c: core.ErasedCall): Secure from c"}},
+	"net.Secure.OfAlpn":                 {Module: "std.net", Lines: []string{"Secure.OfAlpn[T: Share](c: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn], n: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn]): Secure from c, n"}},
 	"net.SecureFailed":                  {Module: "std.net", Lines: []string{"error SecureFailed(why: SecureFailure)"}},
 	"net.SecureFailure":                 {Module: "std.net", Lines: []string{"enum SecureFailure"}},
 	"net.Shutdown":                      {Module: "std.net", Lines: []string{"enum Shutdown"}},
@@ -902,6 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"simd.Vec.Sqrt":                     {Module: "std.simd", Lines: []string{"Vec[T, N].Sqrt(self): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Vec.SubSat":                   {Module: "std.simd", Lines: []string{"Vec[T, N].SubSat(self, b: Vec[T, N]): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"simd.Vec.ToArray":                  {Module: "std.simd", Lines: []string{"Vec[T, N].ToArray(self): [N]T requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
-	"simd.Vec.Trunc":                    {Module: "std.simd", Lines: []string{"Vec[T, N].Trunc[U: Lane](self): Vec[U, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
-	"simd.Vec.WidenHi":                  {Module: "std.simd", Lines: []string{"Vec[T, N].WidenHi[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
 }

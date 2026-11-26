@@ -11979,8 +11979,9 @@ interface Transport {
     Abandon(self)
 }
 
-// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall, so only std calls it, and std.http and std.websocket call Connect and Negotiate (provisional)
+// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall and OfAlpn (provisional) two core.TypedCalls, so only std calls them, and std.http and std.websocket call Connect and Negotiate (provisional)
 Secure.Of[T: Share](c: core.ErasedCall): Secure from c
+Secure.OfAlpn[T: Share](c: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn], n: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn]): Secure from c, n
 Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn
 Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn
 

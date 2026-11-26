@@ -83,13 +83,13 @@ struct SlowSec {
     delay: i64
 }
 
-type SlowType = fn(&SlowSec, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn
+type SlowType = fn(&SlowSec, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn
 
 // SlowConnect wraps conn in a SlowClose (no handshake).
-SlowConnect(s: &SlowSec, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
+SlowConnect(s: &SlowSec, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
     // The box first, so a failure leaves conn with the caller.
     slot := try net.ReserveConn[SlowClose](h)
-    return (conn: slot.Fill(SlowClose(inner: conn, delay: s.delay)), chosen: -1)
+    return slot.Fill(SlowClose(inner: conn, delay: s.delay))
 }
 
 // SlowSecure is the net.Secure over s.

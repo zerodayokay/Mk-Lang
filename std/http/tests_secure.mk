@@ -16,18 +16,18 @@ struct FakeSec {
 }
 
 // FakeType is the type of FakeConnect, the connector's function.
-type FakeType = fn(&FakeSec, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn
+type FakeType = fn(&FakeSec, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn
 
 // FakeConnect sleeps s.delay ms, then returns conn (or refuses it, the
 // connection staying the caller's).
-FakeConnect(s: &FakeSec, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
+FakeConnect(s: &FakeSec, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
     io.Sleep(time.Millis(s.delay)) else {
         fail Canceled
     }
     if s.refuse {
         fail net.Refused
     }
-    return (conn: conn, chosen: -1)
+    return conn
 }
 
 // FakeSecure is the net.Secure over s.

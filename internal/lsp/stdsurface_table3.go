@@ -4,6 +4,8 @@
 package lsp
 
 var surfaceDocs3 = map[string]surfaceDoc{
+	"simd.Vec.Trunc":             {Module: "std.simd", Lines: []string{"Vec[T, N].Trunc[U: Lane](self): Vec[U, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
+	"simd.Vec.WidenHi":           {Module: "std.simd", Lines: []string{"Vec[T, N].WidenHi[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
 	"simd.Vec.WidenLo":           {Module: "std.simd", Lines: []string{"Vec[T, N].WidenLo[U: Lane, const M: int](self): Vec[U, M] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires M * 2 == N && M >= 2 && SizeOf[U]() == 2 * SizeOf[T]()"}},
 	"simd.Vec.With":              {Module: "std.simd", Lines: []string{"Vec[T, N].With(self, const i: int, x: T): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64 requires i >= 0 && i < N"}},
 	"simd.Vec.Zero":              {Module: "std.simd", Lines: []string{"Vec[T, N].Zero(): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},

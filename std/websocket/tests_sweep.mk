@@ -404,16 +404,16 @@ struct TripSec {
     at: int
 }
 
-type TripType = fn(&TripSec, h: &Heap into conn, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn
+type TripType = fn(&TripSec, h: &Heap into conn, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn
 
 // TripConnect fails with Canceled when at is 1, the connection staying
 // the caller's, and otherwise wraps it in a Trip.
-TripConnect(s: &TripSec, h: &Heap, io: Io, conn: net.Conn, host: str, offer: []str): net.Error!(conn: net.Conn, chosen: int) from h, conn {
+TripConnect(s: &TripSec, h: &Heap, io: Io, conn: net.Conn, host: str): net.Error!net.Conn from h, conn {
     if s.at == 1 {
         fail Canceled
     }
     slot := try net.ReserveConn[Trip](h)
-    return (conn: slot.Fill(Trip(inner: conn, calls: Mutex[int].New(0), at: s.at - 1)), chosen: -1)
+    return slot.Fill(Trip(inner: conn, calls: Mutex[int].New(0), at: s.at - 1))
 }
 
 // DialAt dials wss://127.0.0.1:7600/ through a TripSec cut at at against

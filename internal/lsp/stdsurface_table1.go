@@ -650,6 +650,7 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Secure.Connect":             {Module: "std.net", Lines: []string{"Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn"}},
 	"Secure.Negotiate":           {Module: "std.net", Lines: []string{"Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn"}},
 	"Secure.Of":                  {Module: "std.net", Lines: []string{"Secure.Of[T: Share](c: core.ErasedCall): Secure from c"}},
+	"Secure.OfAlpn":              {Module: "std.net", Lines: []string{"Secure.OfAlpn[T: Share](c: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn], n: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn]): Secure from c, n"}},
 	"SecureFailed":               {Module: "std.net", Lines: []string{"error SecureFailed(why: SecureFailure)"}},
 	"SecureFailure":              {Module: "std.net", Lines: []string{"enum SecureFailure"}},
 	"Selectable":                 {Module: "std.sync", Lines: []string{"interface Selectable"}},
@@ -903,5 +904,4 @@ var surfaceDocs1 = map[string]surfaceDoc{
 	"Words.Next":                 {Module: "", Lines: []string{"Words.Next(mut self): ?str from self.text"}},
 	"Writer.Bytes":               {Module: "", Lines: []string{"Writer.Bytes(mut self, b: []u8): WriteError!void"}},
 	"Writer.Flush":               {Module: "", Lines: []string{"Writer.Flush(mut self): WriteError!void"}},
-	"Writer.Str":                 {Module: "", Lines: []string{"Writer.Str(mut self, s: str): WriteError!void"}},
 }
