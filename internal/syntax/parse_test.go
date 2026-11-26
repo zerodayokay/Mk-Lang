@@ -167,6 +167,7 @@ func TestAliases(t *testing.T) {
 		{name: "const", src: "const N: int = 4\nconst T = Table() fuel 1000\n", tree: []string{"ConstDecl"}},
 		{name: "global", src: "var count: int = 0\n", tree: []string{"GlobalDecl"}},
 		{name: "global no type", src: "var count = 0\n", codes: "E0101", msg: "a top-level var needs a type and a value"},
+		{name: "global fuel", src: "var count: int = Count() fuel 1000\n", codes: "E0101", msg: "a var cannot state `fuel`: do the work in a const with `fuel`, and initialize the var from that const"},
 	})
 }
 

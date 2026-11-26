@@ -146,7 +146,7 @@ For the borrow and flow codes, [the memory model](memory.md) explains the rules 
 | E0806 | try-in-defer | A `defer` or `onerr` body that exits through `try`, `fail`, `return`, `become`, or a `break` or `continue` to a loop outside it | Alternatives |
 | E0807 | onerr-two-values | One `onerr` body consumes two linear values | Proven: split it |
 | E0901 | const-failed | A panic during compile-time evaluation, or an operation that compile-time evaluation cannot do: raw memory access outside what the evaluation allocated (the copies of consts it reads count as allocated, but are read-only, so a raw write to one is refused); reading a pointer's bytes as an integer; a `var` global's memory; an `Io` operation or `sys.Syscall`; a call of a bodiless `extern`; `asm` or a call of a `naked` function (`refused: asm`); and a `std.mmio` access (`refused: volatile`). The report gives what was refused and a trace | Alternatives |
-| E0902 | fuel-exhausted | Compile-time evaluation ran out of fuel at this site | Compiles: raise `fuel` |
+| E0902 | fuel-exhausted | Compile-time evaluation ran out of fuel at this site | Compiles: raise `fuel`; a `var` global cannot state `fuel`, so its alternative is a `const` with the raised `fuel` that the global is initialized from |
 | E0903 | generator-error | A generator reported an error at a location in your code. Each generator's page lists what it refuses: doc/std/dyn.md and doc/std/derive.md | Alternatives |
 | E0904 | generated-edited | A file under `gen/` differs from the hash it was generated with | Proven: regenerate |
 | E0905 | generated-invalid | Generated code fails to check. The report cites the generated line, the generator and the `gen` line | Alternatives |
