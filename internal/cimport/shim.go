@@ -5,7 +5,7 @@
 // What: ShimFunc and shimDefs, one such function's definition; ShimText,
 // which writes one generated C file defining each under its C name,
 // compiled in the same build graph; KeptShim, the file a build compiles,
-// with only the functions its pruned bindings keep; cDecl and join for C
+// with only the functions the program names; cDecl and join for C
 // declarator spelling, shimmable and retWord.
 //
 // How: the headers are included with every static inline function renamed
@@ -13,7 +13,7 @@
 // as a call of the renamed one; a macro is first wrapped in a static inline
 // function. So the binding's extern names its symbol as every other extern
 // does. The translation keeps every function's definition apart, and a
-// build defines only those whose externs its pruned bindings declare.
+// build defines only those the program names.
 
 package cimport
 
@@ -180,47 +180,22 @@ func ShimText(imports []Import, fs []ShimFunc) string {
 }
 
 // KeptShim is the shim file of imports that defines only the functions of
-// fs whose externs the bindings texts (one per import, pruned: PruneAll)
-// still declare; "" when they declare none. A build compiles this one, so
-// an unused static inline function or macro that calls what nothing links
-// never reaches the link, and the object's key (its text) follows the set
-// of functions used.
-func KeptShim(imports []Import, fs []ShimFunc, texts []string) string {
-	declared := make([]map[string]bool, len(texts))
+// fs the program names: those whose C name want (the names the importing
+// files use, Uses, by import name) lists, exactly, for the function's own
+// import; "" when it names none. A build compiles this one, so an unused
+// static inline function or macro that calls what nothing links never
+// reaches the link, and the object's key (its text) follows the set of
+// functions used. The pruned bindings would keep more: prune keeps every
+// item a kept one mentions, and a field or a parameter named like a
+// function is such a mention.
+func KeptShim(imports []Import, fs []ShimFunc, want Want) string {
 	var kept []ShimFunc
 	for _, f := range fs {
-		if f.Import < 0 || f.Import >= len(texts) {
-			continue
-		}
-		if declared[f.Import] == nil {
-			declared[f.Import] = externFuncs(texts[f.Import])
-		}
-		if declared[f.Import][f.Name] {
+		if f.Import >= 0 && f.Import < len(imports) && want[imports[f.Import].Name][f.Name] {
 			kept = append(kept, f)
 		}
 	}
 	return ShimText(imports, kept)
-}
-
-// externFuncs are the names of the extern functions a binding text
-// declares: its column-0 "export extern NAME(" lines. A pruned binding is
-// mostly blank lines, so the scan visits only the kept ones.
-func externFuncs(text string) map[string]bool {
-	const mark = "\nexport extern "
-	out := map[string]bool{}
-	for i := strings.Index(text, mark); i >= 0; {
-		rest := text[i+len(mark):]
-		line, _, _ := strings.Cut(rest, "\n")
-		if name, _, ok := strings.Cut(line, "("); ok && !strings.ContainsAny(name, " :") {
-			out[name] = true
-		}
-		j := strings.Index(rest, mark)
-		if j < 0 {
-			break
-		}
-		i += len(mark) + j
-	}
-	return out
 }
 
 // retWord is "return " unless the function returns void.

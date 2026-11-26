@@ -166,7 +166,7 @@ type cImports struct {
 	vendoredShim []string
 	// imports and shimFuncs are the translation's imports and the
 	// functions of its whole shim; prune sets shim to those of them the
-	// pruned bindings keep.
+	// program names.
 	imports   []cimport.Import
 	shimFuncs []cimport.ShimFunc
 }
@@ -340,10 +340,11 @@ func (ci *cImports) prune(w *world, builds []*build) {
 	for i, text := range pruned {
 		ci.trees[i].mem[ci.names[i]+".mk"] = text
 	}
-	// The shim defines only the externs the pruned bindings keep: an
-	// unused static inline function may call what nothing links. Its text,
-	// and so its object's key, follows the functions used.
-	ci.shim = cimport.KeptShim(ci.imports, ci.shimFuncs, pruned)
+	// The shim defines only the functions the files name (used, before
+	// PruneAll adds what kept items mention): an unused static inline
+	// function may call what nothing links. Its text, and so its object's
+	// key, follows the functions used.
+	ci.shim = cimport.KeptShim(ci.imports, ci.shimFuncs, used)
 	target := w.cfg.Target.Name
 	for _, o := range ci.others {
 		theirs := cimport.PruneAll(ci.names, o.full, cloneWant(used))

@@ -1,8 +1,8 @@
 // Why: the C import's shim must define only the static inline functions
 // and declared macros a program uses: an unused one may call a function
 // nothing links, and the link fails on a symbol the program never names.
-// What: TestCImport_ShimUnusedInline, _ShimSecondInline,
-// _ShimInlineCallsInline and _ShimUnusedMacro.
+// What: TestCImport_ShimUnusedInline, _ShimNamedLikeAField,
+// _ShimSecondInline, _ShimInlineCallsInline and _ShimUnusedMacro.
 // How: small packages over one header, built and run for the host; the
 // session's pruned shim text is inspected, and a second build after an
 // edit must hit the translation's cache and still link the new function.
@@ -52,6 +52,25 @@ func TestCImport_ShimUnusedInline(t *testing.T) {
 		t.Errorf("printed %q, want 5 6", out)
 	}
 	if strings.Contains(ci.shim, "k_unused") || !strings.Contains(ci.shim, "int k_inc(int a0)") {
+		t.Errorf("shim:\n%s", ci.shim)
+	}
+}
+
+// TestCImport_ShimNamedLikeAField: an unused static inline function named
+// like a field of a struct the program uses, or like a parameter of a
+// function it calls, is not defined by the shim, though the pruned binding
+// keeps it (a kept item mentions its name); each calls a function nothing
+// defines, so defining it broke the link ("undefined symbol k_missing").
+func TestCImport_ShimNamedLikeAField(t *testing.T) {
+	needTools(t)
+	h := "int k_missing(void);\nstruct k_s { int k_field; int k_n; };\nstatic inline int k_used(int k_param) { return k_param + 1; }\n" +
+		"static inline int k_field(void) { return k_missing(); }\nstatic inline int k_param(void) { return k_missing(); }\n"
+	dir := writeTree(t, cBin("sf", h, "", cMain("import std.mem\n", "        s := mem.Zeroed[k.KS]()\n        a := k.k_used(s.k_n)\n", "{a}", "a: a")))
+	out, ci := shimBuild(t, dir, t.TempDir())
+	if out != "1\n" {
+		t.Errorf("printed %q, want 1", out)
+	}
+	if strings.Contains(ci.shim, "k_field") || strings.Contains(ci.shim, "k_param") || !strings.Contains(ci.shim, "int k_used(int a0)") {
 		t.Errorf("shim:\n%s", ci.shim)
 	}
 }

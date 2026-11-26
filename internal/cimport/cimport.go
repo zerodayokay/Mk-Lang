@@ -69,7 +69,7 @@ type Result struct {
 	Modules []string // the Mk source of c.<name>, one per Import, in order
 	Shim    string   // the shim C file of every binding item; "" when there is nothing to shim
 	// ShimFuncs are Shim's functions one by one, so a build can define
-	// only those its pruned bindings keep (KeptShim).
+	// only those the program names (KeptShim).
 	ShimFuncs []ShimFunc
 	Stats     []Stats // one per Import
 	// Deps are every file the translation unit read (-MD), absolute, in
