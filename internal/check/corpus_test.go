@@ -84,6 +84,9 @@ var corpusExcepted = map[string]string{
 	"codes/E0705_offsetof.mk":                              "mem.OffsetOf is std.mem's, which this harness's prelude does not load; mk corpus judges it",
 	"codes/E0901_divwide.mk":                               "math.DivWide's panics are evaluation failures, which need the evaluator; this harness has none (mk corpus judges it)",
 	"codes/E0901_offsetof.mk":                              "mem.OffsetOf's E0901 is an evaluation failure, which needs the evaluator; this harness has none (mk corpus judges it)",
+	"codes/E0901_requires_entry_false.mk":                  "an entry-checked requires failure in a generic call is an evaluation failure, which needs the evaluator; this harness has none (mk corpus judges it)",
+	"codes/E0901_requires_entry_overflow.mk":               "an entry-checked requires overflow in a generic call is an evaluation failure, which needs the evaluator; this harness has none (mk corpus judges it)",
+	"codes/E0901_requires_entry_signed.mk":                 "an entry-checked requires signed-comparison failure in a generic call is an evaluation failure, which needs the evaluator; this harness has none (mk corpus judges it)",
 	"codes/E1002_const_pointee.mk":                         "E1002 on a const's evaluated value is the declaration evaluation's (EvalConst, constPointee), which this harness does not run (mk corpus passes it; driver TestE1002_ConstPointeeIsReadOnly)",
 	"codes/E0609.mk":                                       "closure syntax `|x| e` is the parser's E0609; check's E0609 is a method named without a call",
 }
