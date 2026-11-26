@@ -11,7 +11,8 @@
 // literals and tracks the #define line it is on. A lookup's argument must
 // be a quoted or angled name; a bare mention (#ifdef __has_include,
 // defined(__has_include)) and the definition of a fallback
-// (#define __has_include(x) 0) look nothing up. A lookup whose argument is
+// (#define __has_include(x) 0) look nothing up, but a bare name in a
+// macro's body (#define HAS __has_include) is not modelled. A lookup whose argument is
 // a parameter of the function-like macro being defined makes that macro a
 // wrapper, whose invocations with a literal name are lookups too (glibc's
 // __glibc_has_include). Any other form (a macro argument, a wrapper called
@@ -123,12 +124,19 @@ func scanProbes(text string, wrappers map[string]wrapper, learn bool) ([]probe, 
 			lineStart = false
 			continue
 		case isIdentStart(c):
+			start := s.i
 			id := s.ident()
 			lineStart = false
 			if next, ok := probeIdents[id]; ok {
 				p, form, param := s.argument()
 				switch form {
 				case argNone:
+					// In a macro's body (#define HAS __has_include) the name
+					// may be called through the macro: not modelled, unless
+					// it is defined's operand.
+					if s.defName != "" && !s.afterDefined(start) {
+						return nil, false
+					}
 				case argName:
 					out = append(out, probe{name: p.name, quoted: p.quoted, next: next})
 				case argParam:
@@ -252,6 +260,18 @@ func (s *scanState) callArgument(param int) (probe, int) {
 		return probe{}, argOther
 	}
 	return probe{name: a[1 : len(a)-1], quoted: a[0] == '"'}, argName
+}
+
+// afterDefined reports whether the text before j ends with the operator
+// defined, as in "defined X" or "defined(X)".
+func (s *scanState) afterDefined(j int) bool {
+	t := strings.TrimRight(s.text[:j], " \t")
+	t = strings.TrimRight(strings.TrimSuffix(t, "("), " \t")
+	if !strings.HasSuffix(t, "defined") {
+		return false
+	}
+	k := len(t) - len("defined")
+	return k == 0 || !isIdent(t[k-1])
 }
 
 // directive reads a directive's name after '#'; for #define, the macro's

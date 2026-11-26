@@ -58,6 +58,9 @@ func TestCImport_Probes(t *testing.T) {
 		{"wrapper", []string{"#define HAS(h) __has_include(h)\n", "#if HAS(<w.h>) && HAS(\"v.h\")\n#endif\n"},
 			[]probe{{name: "w.h"}, {name: "v.h", quoted: true}}, true},
 		{"wrapper next", []string{"#define HN(a, h) __has_include_next(h)\n#if HN(1, <n.h>)\n"}, []probe{{name: "n.h", next: true}}, true},
+		{"alias", []string{"#define HAS __has_include\n#if HAS(\"opt.h\")\n#endif\n"}, nil, false},
+		{"alias of a wrapper's lookup", []string{"#define W(h) __has_include_next\n"}, nil, false},
+		{"defined in a body", []string{"#define HAVE_HI defined(__has_include) && defined __has_embed\n"}, nil, true},
 		{"macro argument", []string{"#define H \"opt.h\"\n#if __has_include(H)\n"}, nil, false},
 		{"wrapper with a macro", []string{"#define HAS(h) __has_include(h)\n#if HAS(H)\n"}, nil, false},
 		{"not a parameter", []string{"#define HAS(h) __has_include(g)\n"}, nil, false},
@@ -119,6 +122,13 @@ func TestCImport_NegativesDotDot(t *testing.T) {
 	}
 	if slices.Contains(got, x) {
 		t.Errorf("a dependency is a negative: %q", got)
+	}
+	// A search directory spelled with "..": the path begins with it as
+	// spelled, so the unit is modelled and a/x.h is still a negative.
+	sys := root + sep + "c" + sep + ".." + sep + "b"
+	got, ok = Negatives([]string{sys + sep + "x.h"}, []string{filepath.Join(root, "a"), sys}, nil)
+	if !ok || !slices.Contains(got, filepath.Join(root, "a", "x.h")) {
+		t.Errorf("a directory spelled with ..: %v %q", ok, got)
 	}
 }
 

@@ -6,9 +6,10 @@
 // CommandLine.
 //
 // How: a tool gets a scrubbed, fixed-order environment (SOURCE_DATE_EPOCH=0,
-// LC_ALL=C, ZERO_AR_DATE=1 and a few host variables); toolError checks the
-// context before the exit status, because a process killed for a done
-// context looks like a real failure on Windows.
+// LC_ALL=C, ZERO_AR_DATE=1, CLANG_NO_DEFAULT_CONFIG=1 and a few host
+// variables); toolError checks the context before the exit status, because
+// a process killed for a done context looks like a real failure on
+// Windows.
 
 package toolchain
 

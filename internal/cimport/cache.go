@@ -234,8 +234,10 @@ func (d *DepHasher) Save() {
 // A name with ".." is not a name under any directory once the path is
 // clean, so deps are the paths as -MD wrote them, which keep the spelling
 // (dir/../x.h): the part before the first ".." is the directory it was
-// found through or one below it, and the rest of the name follows. A
-// spelling that no search or includer directory begins is not modelled.
+// found through or one below it, and the rest of the name follows; or the
+// path begins with a search directory as that is spelled (a sysroot given
+// as a/../sys). A spelling that no search or includer directory begins is
+// not modelled.
 //
 // __has_include and its kin (probes) leave no trace in -MD when the file
 // is absent, so every file of the unit is read for them: each name is a
@@ -304,6 +306,13 @@ func Negatives(deps, dirs, roots []string) ([]string, bool) {
 		if prefix, rest, ok := dotDot(d); ok {
 			found := false
 			for k, dir := range dirs {
+				// A directory spelled with ".." itself (a sysroot given as
+				// a/../sys) begins the path as spelled.
+				raw := strings.TrimRight(filepath.FromSlash(dir), string(filepath.Separator))
+				if name, ok := strings.CutPrefix(filepath.FromSlash(d), raw+string(filepath.Separator)); ok && name != "" {
+					through(k, name)
+					found = true
+				}
 				if rel, ok := dirName(dir, prefix); ok {
 					through(k, rel+rest)
 					found = true
