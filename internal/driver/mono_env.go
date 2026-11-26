@@ -14,6 +14,7 @@
 package driver
 
 import (
+	"encoding/binary"
 	"sync"
 
 	"mk/internal/eval"
@@ -58,6 +59,67 @@ func (r *readingEnv) ImplMethod(ifc types.ItemID, m uint32, self types.TypeID) (
 // instance folded, as eval records a body it enters.
 func (r *readingEnv) ReadBody(item types.ItemID) {
 	r.reads.Add(types.Read{Kind: types.ReadBody, Key: r.w.items.Get(item).Key})
+}
+
+// ReadLayout (mono.LayoutReader) records ReadLayout for every named or error
+// type a by-value walk of t reaches, matching eval's noteType, so a folded
+// requires predicate or substituted SizeOf argument invalidates a warm front
+// cache when a private or generic layout it read changes.
+func (r *readingEnv) ReadLayout(t types.TypeID) {
+	w := r.w
+	if w.sem5 == nil {
+		return
+	}
+	s := w.sem5
+	tab := w.tab
+	seen := map[types.TypeID]bool{}
+	seenErr := map[types.ItemID]bool{}
+	var visit func(types.TypeID)
+	visit = func(cur types.TypeID) {
+		if cur == types.NoType || seen[cur] {
+			return
+		}
+		seen[cur] = true
+		ty := tab.Get(cur)
+		switch ty.Kind {
+		case types.KNamed:
+			it := w.items.Get(ty.Item)
+			l := s.chk.Layout(cur)
+			h := s.hash.Layout(&l)
+			name := s.hash.LayoutName(ty.Args)
+			r.reads.Add(types.Read{Kind: types.ReadLayout, Key: it.Key, Name: name, Hash: h})
+			for _, a := range ty.Args {
+				if !a.IsConst {
+					visit(a.Type)
+				}
+			}
+		case types.KArray, types.KOptional:
+			visit(ty.Elem)
+		case types.KErrorUnion, types.KErrorSet:
+			visit(ty.Elem)
+			for _, m := range tab.Members(ty.Errors) {
+				if !m.IsParam && !seenErr[m.Item] {
+					seenErr[m.Item] = true
+					it := w.items.Get(m.Item)
+					if d, ok := it.Decl.(*types.ErrorDecl); ok {
+						b := binary.AppendUvarint(nil, uint64(len(d.Fields)))
+						for _, f := range d.Fields {
+							l := s.chk.Layout(f.Type)
+							lh := s.hash.Layout(&l)
+							b = append(b, lh[:]...)
+						}
+						h := source.HashBytes("mk.eval.errorlayout.v1", b)
+						r.reads.Add(types.Read{Kind: types.ReadLayout, Key: it.Key, Hash: h})
+					}
+				}
+			}
+		case types.KRecord:
+			for _, f := range ty.Fields {
+				visit(f.Type)
+			}
+		}
+	}
+	visit(t)
 }
 
 func (s *semantics) monoEnv(w *world) *monoEnv {
