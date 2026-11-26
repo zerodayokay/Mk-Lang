@@ -25,6 +25,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 ### Fixed
 
 - Converting another module's negative integer const to a wider type gives its value: `i64(m.C)` and `int(m.C)` of an `export const C: i32 = -4` are -4, as `i64` of the module's own const is. Lowering folded the conversion from the const's bits without sign-extending them, so it gave 4294967292 (an `i8` or `i16` const likewise), in a run-time expression, a loop bound and a `const` initializer alike, in every profile. A C import's negative macro or enum constant (`i64(k.Neg)` of `#define NEG (-4)`) had the same wrong value. A const argument (`F(i64(m.C))` for a `const k: i64`), `Cast`, `Trunc`, operators and patterns over such a const were right.
+- A narrowing conversion of another module's constant is judged by the constant's value, as one of the module's own is: `i8(m.C)` of an `export const C: i32 = -4` compiles and gives -4, through a third module's re-export, an alias of the type or a C import's macro or enum constant too. It was E0303 (`i8(i32)` can lose information), since `T(x)` judged a qualified name by its type, so the value had to be copied into a local const or narrowed with `Trunc`. A value that does not fit is still E0303 with the same text (`i8(m.Big)` of a `Big: i32 = 300`). A `u64` or `uint` constant above the largest `i64` was read as negative, so `i64(Top)` of a `const Top: u64 = 9223372036854775808` compiled and gave -9223372036854775808; it is now E0303.
 
 ### Diagnostics
 

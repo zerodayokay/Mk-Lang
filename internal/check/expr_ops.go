@@ -657,10 +657,12 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 			return false
 		}
 		v = x
-	case *ast.Ident:
-		// A named const is judged by its value (`u64(PageCount)`).
-		// A same-module const has no value before its evaluation; it is
-		// accepted here rather than reported falsely.
+	case *ast.Ident, *ast.FieldExpr:
+		// A named const is judged by its value (`u64(PageCount)`), and so
+		// is another module's, named qualified (`i8(m.C)`), a C import's
+		// macro or enum constant among them. A same-module const has no
+		// value before its evaluation; it is accepted here rather than
+		// reported falsely.
 		r := u.ref(a)
 		if r.Kind != resolve.RefItem {
 			return false
@@ -674,10 +676,14 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 			return to == types.F32 && u.floatConstFitsF32(it, a.Span())
 		}
 		var x int64
+		// wide is an unsigned value past the int64 range (a u64 or uint
+		// above MaxInt64): its magnitude is x's bits, never a negative x.
+		wide := false
 		if d.HasValue {
 			if x, ok = u.c.constInt(d.Value); !ok {
 				return false
 			}
+			wide = x < 0 && !u.tab.Get(u.c.cfg.Consts.Get(d.Value).Type).Signed
 		} else {
 			// A same-module const whose value the driver has not written
 			// yet: folded here when its initializer folds (fold.go), else
@@ -686,14 +692,23 @@ func (u *unit) constFits(arg ast.Expr, from, to types.TypeID) bool {
 			// reported at the use, any other failure is the const's own.
 			f := u.constFolder()
 			fv, good, _ := f.fold(a)
-			if !good || fv.isBool || !fv.n.IsInt64() {
+			switch {
+			case !good || fv.isBool:
+				return true
+			case fv.n.IsInt64():
+				x = fv.n.Int64()
+			case fv.n.IsUint64():
+				x, wide = int64(fv.n.Uint64()), true
+			default:
 				return true
 			}
-			x = fv.n.Int64()
 		}
-		if x < 0 {
+		switch {
+		case wide:
+			v = uint64(x)
+		case x < 0:
 			neg, v = !neg, uint64(-x)
-		} else {
+		default:
 			v = uint64(x)
 		}
 	case *ast.BinaryExpr, *ast.UnaryExpr:

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"mk/internal/diag"
 	"mk/internal/types"
 )
 
@@ -34,18 +35,21 @@ type widenForm struct {
 
 // widenRow is one const: its name, declared type ("" for untyped), the
 // integer type its value has, its initializer, whether relay re-exports
-// it, and the forms to print.
+// it, and the forms to print. A narrowing row names in narrow the type
+// its first form converts to, which a match matches against that form's
+// const; loop adds a loop bounded by that conversion.
 type widenRow struct {
 	name, decl, st, value string
 	relay                 bool
 	forms                 []widenForm
+	narrow                string
+	loop                  bool
 }
 
 // intForms are the forms over an integer const of type st; signed adds one
 // for a signed st, small adds f64(@) (lossless only up to 32 bits), and
-// wider lists the lossless conversions to wider types. A narrowing `T(C)`
-// of a qualified const is judged by type, not value (E0303), so narrowing
-// goes through Trunc and Cast.
+// wider lists the lossless conversions to wider types. Narrowing `T(C)` by
+// value is narrowForms'.
 func intForms(st string, signed, small bool, wider ...string) []widenForm {
 	fs := []widenForm{{"i8", "Trunc[i8](@)"}, {"u16", "Trunc[u16](@)"},
 		{st, "@ >> 1"}, {st, "@ / 3"}, {st, "@ % 3"}, {"bool", "@ < 0"}, {"bool", "@ == 0"},
@@ -68,6 +72,20 @@ func intForms(st string, signed, small bool, wider ...string) []widenForm {
 	return fs
 }
 
+// narrowForms are the narrowing conversions `T(@)` whose value fits T, each
+// also widened back with Cast, an i8 one also as a const argument, then
+// extra.
+func narrowForms(to []string, extra ...widenForm) []widenForm {
+	var fs []widenForm
+	for _, t := range to {
+		fs = append(fs, widenForm{t, t + "(@)"}, widenForm{"i64", "Cast[i64](" + t + "(@))"})
+		if t == "i8" {
+			fs = append(fs, widenForm{"i64", "Scale8(i8(@))"})
+		}
+	}
+	return append(fs, extra...)
+}
+
 var widenRows = []widenRow{
 	{name: "S8", decl: "i8", st: "i8", value: "-4", relay: true, forms: intForms("i8", true, true, "i16", "i32", "i64", "int")},
 	{name: "M8", decl: "i8", st: "i8", value: "-128", forms: intForms("i8", true, true, "i16", "i32")},
@@ -83,6 +101,21 @@ var widenRows = []widenRow{
 	{name: "U32", decl: "u32", st: "u32", value: "4000000000", forms: intForms("u32", false, false, "u64", "uint")},
 	{name: "U64", decl: "u64", st: "u64", value: "18446744073709551615", forms: intForms("u64", false, false)},
 	{name: "AL", decl: "Off", st: "i32", value: "-7", relay: true, forms: intForms("i32", true, true)},
+	// Narrowing conversions, judged by value: signed and unsigned sources
+	// and targets of every width, at the targets' bounds.
+	{name: "N32", decl: "i32", st: "i32", value: "-4", relay: true, narrow: "i8", loop: true,
+		forms: narrowForms([]string{"i8", "i16"}, widenForm{"f32", "f32(@)"}, widenForm{"i64", "i64(i8(@)) - 1"})},
+	{name: "N32L", decl: "i32", st: "i32", value: "-128", narrow: "i8", loop: true, forms: narrowForms([]string{"i8"})},
+	{name: "N32H", decl: "i32", st: "i32", value: "127", narrow: "i8", forms: narrowForms([]string{"i8", "u8", "u32", "u64"})},
+	{name: "N16", decl: "i16", st: "i16", value: "255", narrow: "u8", forms: narrowForms([]string{"u8"})},
+	{name: "N64", decl: "i64", st: "i64", value: "-4", narrow: "i8", loop: true, forms: narrowForms([]string{"i8", "i16", "i32"})},
+	{name: "N64L", decl: "i64", st: "i64", value: "-2147483648", narrow: "i32", forms: narrowForms([]string{"i32"})},
+	{name: "NI", decl: "int", st: "int", value: "100", narrow: "i8", loop: true, forms: narrowForms([]string{"i8", "u8", "i32", "u32", "uint"})},
+	{name: "NU32", decl: "u32", st: "u32", value: "200", relay: true, narrow: "u8", loop: true,
+		forms: narrowForms([]string{"u8", "i16", "i32"}, widenForm{"char", "char(@)"})},
+	{name: "NU64", decl: "u64", st: "u64", value: "255", narrow: "u8", forms: narrowForms([]string{"u8", "i16", "u32", "i64", "int"})},
+	{name: "NUI", decl: "uint", st: "uint", value: "9223372036854775807", narrow: "i64", forms: narrowForms([]string{"i64", "int"})},
+	{name: "NAL", decl: "Off", st: "i32", value: "-4", relay: true, narrow: "i8", loop: true, forms: narrowForms([]string{"i8"})},
 	{name: "EN", decl: "Lv", st: "Lv", value: "Lv.Lo", forms: []widenForm{
 		{"i8", "i8(@)"}, {"i16", "i16(@)"}, {"i64", "i64(@)"}, {"int", "int(@)"}}},
 }
@@ -93,6 +126,7 @@ func widenPackage() map[string]string {
 	cs.WriteString("export type Off = i32\n\nexport enum Lv: i8 {\n    Lo = -2\n    Hi = 3\n}\n\n")
 	ms.WriteString("import consts\nimport relay\n\ntype Off = i32\n\nenum Lv: i8 {\n    Lo = -2\n    Hi = 3\n}\n\n")
 	ms.WriteString("Scale(const k: i64): i64 {\n    return k * 2\n}\n\n")
+	ms.WriteString("Scale8(const k: i8): i64 {\n    return i64(k) * 2\n}\n\n")
 	ms.WriteString("Sum(lo: i64): i64 {\n    var s: i64 = 0\n    for i in lo..lo + 3 {\n        s += i\n    }\n    return s\n}\n\n")
 	rs.WriteString("import consts\n\n")
 	decl := func(r widenRow) string {
@@ -115,13 +149,20 @@ func widenPackage() map[string]string {
 			for i, f := range r.forms {
 				ms.WriteString(fmt.Sprintf("const K%s%d: %s = %s\n", fn, i, f.t, strings.ReplaceAll(f.text, "@", v[1])))
 			}
+			if r.narrow != "" {
+				// The narrowed const as a match pattern, through the form's const.
+				ms.WriteString(fmt.Sprintf("\nPatN%s(x: %s): int {\n    return match x {\n        K%s0 { 1 }\n        _ { 0 }\n    }\n}\n", fn, r.narrow, fn))
+			}
 			if r.st != "Lv" {
 				ms.WriteString(fmt.Sprintf("\nPat%s(x: %s): int {\n    return match x {\n        %s { 1 }\n        _ { 0 }\n    }\n}\n", fn, r.st, v[1]))
 				// The const as a loop's bounds, as itself and widened.
 				c := v[1]
 				ms.WriteString(fmt.Sprintf("\nLoop%s(): i64 {\n    var s: i64 = 0\n    for i in %s..(%s | 1) {\n        s += Cast[i64](i)\n    }\n", fn, c, c))
-				if r.st != "u64" {
+				if r.st != "u64" && r.st != "uint" {
 					ms.WriteString(fmt.Sprintf("    for i in i64(%s)..i64(%s) + 2 {\n        s += i\n    }\n", c, c))
+				}
+				if r.loop {
+					ms.WriteString(fmt.Sprintf("    for i in %s(%s)..%s(%s) + 2 {\n        s += Cast[i64](i)\n    }\n", r.narrow, c, r.narrow, c))
 				}
 				ms.WriteString("    return s\n}\n")
 			}
@@ -134,6 +175,11 @@ func widenPackage() map[string]string {
 				ms.WriteString(fmt.Sprintf("    x: %s = %s\n    y: %s = 0\n", r.st, v[1], r.st))
 				ms.WriteString(fmt.Sprintf("    p := Pat%s(x)\n    q := Pat%s(y)\n    l := Loop%s()\n", fn, fn, fn))
 				ms.WriteString("    try sys.Print(\" {p} {q} {l}\", (p, q, l))\n")
+			}
+			if r.narrow != "" {
+				ms.WriteString(fmt.Sprintf("    xn: %s = %s(%s)\n    yn: %s = 0\n", r.narrow, r.narrow, v[1], r.narrow))
+				ms.WriteString(fmt.Sprintf("    pn := PatN%s(xn)\n    qn := PatN%s(yn)\n", fn, fn))
+				ms.WriteString("    try sys.Print(\" {pn} {qn}\", (pn, qn))\n")
 			}
 			ms.WriteString("    try sys.Print(\"\\n\", ())\n}\n\n")
 			calls.WriteString(fmt.Sprintf("    try Print%s(sys)\n", fn))
@@ -197,6 +243,16 @@ func TestImportedConstMatchesLocal(t *testing.T) {
 			if strings.Contains(lines["same S32"], "4294967292") || !strings.Contains(lines["same S32"], " -4 -4 -4 -4") {
 				t.Errorf("same S32 = %q: i64(S32) of S32 = -4 is not -4", lines["same S32"])
 			}
+			// A narrowing `T(m.C)` is folded by lower from the value check
+			// judged: its first form, at run time and as a const, widened back.
+			for name, want := range map[string]string{"N32": "-4", "N32L": "-128", "N32H": "127", "N16": "255",
+				"N64": "-4", "N64L": "-2147483648", "NI": "100", "NU32": "200", "NU64": "255",
+				"NUI": "9223372036854775807", "NAL": "-4"} {
+				w := name + ": " + strings.Repeat(want+" ", 3) + want
+				if got := lines["cross "+name]; !strings.HasPrefix(got, w) {
+					t.Errorf("cross %s = %q, want it to begin %q", name, got, w)
+				}
+			}
 		})
 	}
 }
@@ -211,5 +267,30 @@ func TestCImportNegativeConstWidens(t *testing.T) {
 			"{a} {b} {c}", "a: a, b: b, c: c")))
 	if out := buildRun(t, dir, t.TempDir()); out != "-4 -5 -4\n" {
 		t.Errorf("printed %q, want -4 -5 -4", out)
+	}
+}
+
+// TestCImportConstNarrowing: a C import's macro and enum constant are
+// judged by value in a narrowing `T(k.X)`, as a Mk module's const is: one
+// that fits compiles and keeps its value, one that does not is E0303.
+func TestCImportConstNarrowing(t *testing.T) {
+	needTools(t)
+	const h = "#define NEG (-4)\n#define SMALL 200\n#define BIG 300\nenum { ENEG = -5 };\n"
+	dir := writeTree(t, cBin("cn", h, "",
+		cMain("", "        a := i8(k.Neg)\n        b := i8(k.Eneg)\n        c := u8(k.Small)\n        d := Cast[i64](i8(k.Neg))\n",
+			"{a} {b} {c} {d}", "a: a, b: b, c: c, d: d")))
+	if out := buildRun(t, dir, t.TempDir()); out != "-4 -5 200 -4\n" {
+		t.Errorf("printed %q, want -4 -5 200 -4", out)
+	}
+	dir = writeTree(t, cBin("cb", h, "", cMain("", "        a := u8(k.Big)\n        b := u8(k.Neg)\n", "{a} {b}", "a: a, b: b")))
+	r, _ := buildAt(t, dir, t.TempDir())
+	n := 0
+	for _, d := range r.Report.Diags {
+		if d.Diag.Code == diag.E0303 {
+			n++
+		}
+	}
+	if n != 2 || len(r.Report.Diags) != 2 {
+		t.Errorf("u8(k.Big), u8(k.Neg): want two E0303\n%s", r.Report.Text(r.Sources))
 	}
 }
