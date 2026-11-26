@@ -34,6 +34,7 @@ var moduleClasses = []struct{ path, class, why string }{
 	{"std.dl", ClassProvisional, ""},
 	{"std.free", ClassProvisional, ""},
 	{"std.mmio", ClassProvisional, ""},
+	{"std.quic", ClassExperimental, "not yet reviewed by an outside cryptographer"},
 	{"std.sim", ClassProvisional, ""},
 	{"std.simd", ClassProvisional, ""},
 	{"std.tls", ClassExperimental, "not yet reviewed by an outside cryptographer"},

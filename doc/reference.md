@@ -11424,6 +11424,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.term` | `Open IsTerminal UseColor Term Std Event Key Mods Style Color Sanitize MoveTo Clear AltScreen ShowCursor BracketedPaste MouseCapture KittyKeys Error` |
 | `std.x509` | `Parse ParsePem Certificate Pool SystemRoots SystemPool Verify Error`, Experimental |
 | `std.tls` | `Client Server Connector Acceptor Conn Config DefaultConfig Identity Version Error`, Experimental |
+| `std.quic` | `Version1`, Experimental |
 | `std.csv` | `Records Record Options DefaultOptions WriteRecord Codec Error` |
 | `std.dl` | `Open Library Search Error`, Provisional |
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
@@ -11434,7 +11435,7 @@ This table lists the importable modules and the names each one exports. The [lib
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
 
-The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target` and `std.simd.kernel` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
+The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel`, `std.http.fields`, `std.http.h2`, `std.http.h3`, `std.sync.lead` and `std.net.pipe` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
 
 Every public item of std has a stability level, which says how it may change from one release to the next. The [library guide](std/README.md#9-stability) lists the modules and items that are not Stable and what each level allows before and after 1.0.
 
@@ -13404,6 +13405,9 @@ enum Version {
     Tls12
     Tls13
 }
+
+// std.quic, Experimental
+const Version1: u32 = 0x00000001
 
 // std.csv. Records, Record, Options and Error below are csv.Records, csv.Record, csv.Options and csv.Error
 error Quote(line: i64, column: int)

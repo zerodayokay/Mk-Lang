@@ -13,7 +13,7 @@ The library has four layers. A module imports only from its own layer and the la
 | 0, core | `core` (the prelude types, interfaces, slices, `str`, `Cell`, `Format`), `math`, `simd`, `atomic`, `mmio`, `hash`, `build` | Nothing: no allocator, no OS |
 | 1, memory | `mem` (allocators), `coll` (containers), `text` (`Text`, Unicode, formatting) | Layer 0, and a source of memory pages |
 | 2, system | `fs`, `net`, `time`, `proc`, `term`, `sync`, `log`, `dl`, `runtime`, `vm`, `linux`; the private `rt`, `sys` and `task` | Layer 1, and an OS |
-| 3, batteries | `http`, `json`, `crypto`, `compress`, `regex`, `cli`, `sim`, `db.sqlite`, `big`, `encoding`, `url`, `websocket`, `csv`, `x509`, `tls`, `testing`, `libc` | Layer 2 |
+| 3, batteries | `http`, `json`, `crypto`, `compress`, `regex`, `cli`, `sim`, `db.sqlite`, `big`, `encoding`, `url`, `websocket`, `csv`, `x509`, `tls`, `quic`, `testing`, `libc` | Layer 2 |
 
 The generator modules `derive` and `dyn` run at compile time and belong to no layer: the code they emit uses layer 0 alone.
 
@@ -311,6 +311,7 @@ Each name links the module's page. Run `mk doc --std std.<module>` for one modul
 | [`std.mmio`](mmio.md) | Volatile access to device registers. Unsafe only, Provisional |
 | [`std.net`](net.md) | TCP, UDP and Unix sockets, name resolution, addresses |
 | [`std.proc`](proc.md) | Child processes with captured output, signals, pseudo-terminals, `Supervise` for worker processes that share a listening socket |
+| `std.quic` | QUIC (RFC 9000, RFC 9001), the transport of HTTP/3. Experimental |
 | [`std.raw`](raw.md) | Unsafe intrinsics. Only from modules listed in `unsafe_modules`; Provisional outside std |
 | [`std.regex`](regex.md) | Linear-time regular expressions, and `gen regex.Matcher` to compile one at build time |
 | [`std.runtime`](runtime.md) | The scheduler and the process: processor counts, task stacks, dedicated threads, the blocking pool, wakers, fault filters |
@@ -328,7 +329,7 @@ Each name links the module's page. Run `mk doc --std std.<module>` for one modul
 | [`std.websocket`](websocket.md) | WebSocket client and server |
 | [`std.x509`](x509.md) | Certificate parsing and verification. Experimental |
 
-The modules `std.core`, `std.rt`, `std.sys`, `std.task`, `std.target` and `std.simd.kernel` are the library's own internals. A program cannot import them (E0202); what they export that you need is in the prelude or in `std.runtime`. `std.pkg` holds the types a `pkg.mk` manifest is written in, reached through the manifest's `pkg` name ([packages](../packages.md)).
+The modules `std.core`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel`, `std.http.fields`, `std.http.h2`, `std.http.h3`, `std.sync.lead` and `std.net.pipe` are the library's own internals. A program cannot import them (E0202); what they export that you need is in the prelude or in `std.runtime`. `std.pkg` holds the types a `pkg.mk` manifest is written in, reached through the manifest's `pkg` name ([packages](../packages.md)).
 
 ### Reading an API section
 
@@ -342,7 +343,7 @@ Every public item of the language, the tools and std has a stability level, whic
 |---|---|---|
 | Stable | As the [release rules](#releases-before-10) below say | Language: the language of [reference](../reference.md) sections 1 to 16, the [memory model](../memory.md), the error codes, every field of `pkg.mk`. Library: everything not listed below. Tools: the `mk` commands and their flags |
 | Provisional | In any minor release, with no deprecation first | Language: `asm` and `naked`; the `cpu` clause; the `mk lsp` surface; the kernel forms (`align(n)`, `section`, `extern var`, `general-regs-only`, the freestanding target, `MkEntry` and `MkPanicHook`). Library: `std.simd`, `std.sim`, `std.mmio`, `std.free`, `std.dl`, `std.raw` outside std, `proc.Pty`, `Command.terminal`, `net.Transport`, `net.NewConn`, `net.ConnSlot`, `net.ReserveConn`, `encoding.Codec`, `Encoding.Of`, `runtime.ForeignIo` with `IoTable`, `mem.Custom` with `AllocTable` |
-| Experimental | In any minor release, and may be withdrawn | Library: `std.tls`, `std.x509`. Target: `x86_64-nutshell` |
+| Experimental | In any minor release, and may be withdrawn | Library: `std.tls`, `std.x509`, `std.quic`. Target: `x86_64-nutshell` |
 
 ### Releases before 1.0
 

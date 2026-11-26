@@ -52,7 +52,7 @@ var PreludeNames = [65]string{"Alloc", "Arch", "Arena", "Block", "Box", "Cancele
 
 // Internal lists the std modules that only std modules may import. An import
 // of one from outside std is E0202 with the fact reason: std-internal.
-var Internal = [...]string{"std.core", "std.raw", "std.rt", "std.sys", "std.target", "std.task", "std.http.fields"}
+var Internal = [...]string{"std.core", "std.raw", "std.rt", "std.sys", "std.target", "std.task", "std.http.fields", "std.http.h2", "std.http.h3", "std.net.pipe", "std.sync.lead"}
 
 // TestPreludePath is the FS path of the corpus test prelude.
 // It is not a module: only the corpus runner reads it, and mk build, run,
