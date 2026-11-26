@@ -15,6 +15,8 @@ import std.http.fields
 import std.net
 import std.net.pipe
 import std.rt
+import std.sim
+import std.time
 
 struct TestField {
     name: str
@@ -246,6 +248,41 @@ test "H2 server sends SETTINGS and conn WINDOW_UPDATE and prioritizes PING ACK" 
     }
     srv_box.Take(a).Abandon()
     _ = sink.Into()
+}
+
+test "H2 server half closes after a fault GOAWAY and drains pending input" (sys: &System) {
+    var simulation := sim.Sim.New(sys.arena, 19).Must()
+    defer simulation.Free()
+    io := simulation.Io()
+    a := sys.heap.Alloc()
+    for peer_finishes in [true, false] {
+        (a: transport, b: peer) := pipe.ConnPair(sys.heap, 8192).Must()
+        defer peer.Abandon()
+        empty: [0]u8 = []
+        box := Conn.Server(sys.heap, io, transport, TestDefaultLimits(), empty[..]).Must()
+        defer box.Take(a).Abandon()
+        conn := box.Ref()
+        start := time.Now(io)
+
+        scope s := io.Scope() {
+            s.CancelAfter(core.DurationOf(2_000_000_000))
+            conn.FailConn(io.NoCancel(), Violation(code: FlowControlError, stream: 0), some(FlowControlError), false)
+            s.go TestWriterTask(io, conn)
+            (found, code, last: _) := TestWaitGoaway(a, io, &peer)
+            Assert(found && code == FlowControlError)
+            var eof: [1]u8 = [0]
+            Assert(peer.Read(io, mut eof[..]).Must() == 0)
+            if peer_finishes {
+                peer.WriteAll(io, "pending".AsBytes()).Must()
+                peer.Shutdown(io, net.Shutdown.Write).Must()
+            }
+        }
+        if !peer_finishes {
+            elapsed := time.Now(io).Since(start).Nanos()
+            limit := FaultLingerLimit.Nanos()
+            Assert(elapsed >= limit && elapsed < limit + 1_000_000)
+        }
+    }
 }
 
 test "H2 server rejects bad preface and non-SETTINGS first frame with PROTOCOL_ERROR" (sys: &System) {

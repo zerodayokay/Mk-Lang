@@ -19,6 +19,8 @@ import std.time
 
 const WriteFlushCap: int = 16384
 const ShrinkCapThreshold: int = 65536
+const FaultLingerBytes: int = 65536
+const FaultLingerLimit: time.Duration = core.DurationOf(500_000_000)
 const Zeros: [16384]u8 = [0; 16384]
 
 linear view struct WriteState {
@@ -393,6 +395,10 @@ Conn.WriteTurnLocked(&self, io: Io, close_mode: bool): Error!bool {
     wr := mut *wg.Mut()
     var sg := core_.st.Lock(nc).Must()
     st := mut *sg.Mut()
+    var linger_fault := false
+    if g := st.owed.goaway {
+        linger_fault = !close_mode && !self.is_client && st.fault.IsSome() && g.code != NoError
+    }
     was_full := wr.cur.Len() >= WriteFlushCap
     EmitOwed(a, wr, st, wout) else e {
         sg.Unlock()
@@ -445,10 +451,35 @@ Conn.WriteTurnLocked(&self, io: Io, close_mode: bool): Error!bool {
         self.FailConn(nc, err, none, true)
         fail err
     }
+    if linger_fault {
+        self.LingerAfterGoaway(io)
+    }
     if should_shutdown {
         self.NetConn().Shutdown(nc, net.Shutdown.Both) else {}
     }
     return true
+}
+
+// The server reader has exited the frame loop on the connection error.
+// Keep receiving briefly after the final GOAWAY so unread input cannot
+// reset the TCP connection before the peer reads the error.
+Conn.LingerAfterGoaway(&self, io: Io) {
+    conn := self.NetConn()
+    limit := if self.lim.close_limit.Nanos() < FaultLingerLimit.Nanos() { self.lim.close_limit } else { FaultLingerLimit }
+    var buf: [4096]u8 = [0; 4096]
+    scope s := io.Scope() {
+        s.CancelAfter(limit)
+        conn.Shutdown(io, net.Shutdown.Write) else { return }
+        var remaining := FaultLingerBytes
+        for remaining > 0 {
+            want := if remaining < buf.Len() { remaining } else { buf.Len() }
+            n := conn.Read(io, mut buf[0..want]) else { return }
+            if n == 0 {
+                return
+            }
+            remaining -= n
+        }
+    }
 }
 
 // FlushWrites acquires wl if free and drains wr.cur and st.owed until both
