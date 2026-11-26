@@ -75,6 +75,14 @@ func TestLazyUnwind(t *testing.T) {
 			t.Errorf("mk_lazy_stub's unwind entry lacks %s:\n%s", want, entry)
 		}
 	}
+	// The epilogue's last jump must be REX.W FF /4 (48 ff 20): Windows'
+	// unwinder takes only that form, or FF 25, as an epilogue's end, and
+	// with a plain ff 20 it unwinds an asynchronous stop on that jump
+	// through the caller's rbp, a garbage frame.
+	dis := runTool(t, filepath.Join(needLLVM(t), "llvm-objdump"), "-d", "--disassemble-symbols="+symLazyStub, obj)
+	if !strings.Contains(dis, "48 8d 65 00") || !strings.Contains(dis, "5d ") || !strings.Contains(dis, "48 ff 20") {
+		t.Errorf("mk_lazy_stub's epilogue is not lea 0(%%rbp),%%rsp; pop %%rbp; rex64 jmp *(%%rax):\n%s", dis)
+	}
 	syms := runTool(t, filepath.Join(needLLVM(t), "llvm-nm"), obj)
 	for _, l := range lazyLibs {
 		for _, n := range l.Names {

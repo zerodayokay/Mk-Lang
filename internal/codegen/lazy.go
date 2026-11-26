@@ -75,8 +75,10 @@ func LazySymOK(s string) bool {
 // caller's shadow space and stack arguments above the return address are
 // never touched, and rsp is 16-aligned at the call (8 mod 16 at entry, the
 // push makes it 0). MkLazyResolve returns the slot, which then holds the
-// function; the epilogue is the documented lea/pop/jmp form, jmp through
-// memory (ModRM mod 00), so an unwinder recognizes it.
+// function; the epilogue is the documented lea/pop/jmp form, its jmp
+// through memory (ModRM mod 00) with a REX.W prefix: Windows' unwinder
+// takes only REX.W FF /4 (or FF 25) as an epilogue's last jump, so a
+// thread stopped on a plain FF 20 would unwind through the caller's rbp.
 const win64LazyStub = `
 pushq %rbp
 .seh_pushreg %rbp
@@ -104,7 +106,7 @@ movaps 64(%rsp), %xmm2
 movaps 80(%rsp), %xmm3
 leaq 0(%rbp), %rsp
 popq %rbp
-jmpq *(%rax)
+rex64 jmpq *(%rax)
 `
 
 // EmitLazy writes the lazy-binding object of libs for cfg's target (only
