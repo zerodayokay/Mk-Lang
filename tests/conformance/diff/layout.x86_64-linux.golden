@@ -42,7 +42,7 @@ OptU8 2 1 0 1
 OptPair 24 8 0 8
 BadI64 16 8 0 8
 BadU8 8 4 0 4
-BigU8 16 8 0 8
+BigU8 16 8 0 4 8
 CellI32 4 4
 PageTable 4096 4096
 Align16 16 16
