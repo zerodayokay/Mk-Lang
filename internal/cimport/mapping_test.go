@@ -77,7 +77,7 @@ func TestCImport_Mapping(t *testing.T) {
 	}
 }
 
-// TestCImport_Linux: long is 64 bits on the musl triple, and SysV puts a
+// TestCImport_Linux: long is 64 bits on the Linux triple, and SysV puts a
 // bitfield after a char in the next byte of an int-aligned record, which
 // Mk's struct cannot say: opaque, with the bitfield read as the u8 at
 // byte 1.

@@ -227,11 +227,14 @@ func (e *emitter) transparent(d *decl, name string, l *recLayout) bool {
 	for i := 0; i < len(d.fields); i++ {
 		f := &d.fields[i]
 		fl := l.fields[i]
-		if f.bits >= 0 {
+		if f.bits == 0 {
+			continue
+		}
+		if f.bits > 0 {
 			// A run of bitfields: one unit per run that fits one integer.
 			j := i
 			lo, hi := fl.bit, fl.bit+int64(fl.width)
-			for j+1 < len(d.fields) && d.fields[j+1].bits >= 0 {
+			for j+1 < len(d.fields) && d.fields[j+1].bits > 0 {
 				nl := l.fields[j+1]
 				if end := nl.bit + int64(nl.width); end > hi {
 					if end-lo > 64 {
@@ -629,8 +632,8 @@ func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *name
 	lo, hi := fl.bit, fl.bit+int64(fl.width)
 	taken := e.otherBytes(d, l, i)
 	free := func(o, s int64) bool {
-		for b := o; b < o+s; b++ {
-			if taken[b] {
+		for _, r := range taken {
+			if o < r[1] && r[0] < o+s {
 				return false
 			}
 		}
@@ -686,17 +689,17 @@ func (e *emitter) opaqueBits(d *decl, name string, l *recLayout, i int, sc *name
 		name, s, vt, f.name, ut, off, name, mptr, store, load, clear, val, mask, shift)
 }
 
-// otherBytes are the bytes of record d that bitfield i's unit may not
-// hold: those of every other member but the bitfields of i's run (C11
+// otherBytes returns the byte intervals [start, end) that bitfield i's
+// unit may not hold: every other member but the bitfields of i's run (C11
 // 6.7.2.1: adjacent bitfields of nonzero width are one memory location; a
 // zero-width bitfield or another member ends the run). A member of unknown
 // size takes every byte up to the next member's offset or the record's
 // end. In a union every member holds the same bytes, so none is taken.
-func (e *emitter) otherBytes(d *decl, l *recLayout, i int) map[int64]bool {
-	taken := map[int64]bool{}
+func (e *emitter) otherBytes(d *decl, l *recLayout, i int) [][2]int64 {
 	if d.union {
-		return taken
+		return nil
 	}
+	var taken [][2]int64
 	runLo, runHi := i, i
 	for runLo > 0 && d.fields[runLo-1].bits > 0 {
 		runLo--
@@ -733,8 +736,8 @@ func (e *emitter) otherBytes(d *decl, l *recLayout, i int) map[int64]bool {
 				}
 			}
 		}
-		for b := from; b < to; b++ {
-			taken[b] = true
+		if from < to {
+			taken = append(taken, [2]int64{from, to})
 		}
 	}
 	return taken

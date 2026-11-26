@@ -2,7 +2,7 @@
 // unit may hold no byte of another member: C's own store to the field
 // writes none, and a store to that member made at the same time would be
 // lost.
-// What: TestCImport_BitfieldUnitsOwnBytes and TestCImport_BitfieldRunUnit.
+// What: tests of bitfield unit boundaries in opaque and transparent records.
 // How: translates records whose aligned unit would start inside a
 // neighbour, under the GNU (x86_64-linux) and MSVC (x86_64-windows)
 // layouts, and checks every accessor's bytes against every member's, read
@@ -167,5 +167,27 @@ func TestCImport_BitfieldRunUnit(t *testing.T) {
 		if !seen {
 			t.Errorf("%s: R.b has no accessor\n%s", target, text)
 		}
+	}
+}
+
+func TestCImport_BitfieldSeparateTransparentRuns(t *testing.T) {
+	const h = `struct R { unsigned char a : 4; unsigned char : 0; unsigned char b : 4; };`
+	for _, target := range []string{"x86_64-linux", "x86_64-windows"} {
+		t.Run(target, func(t *testing.T) {
+			res := translate(t, target, map[string]string{"r.h": h}, Import{Name: "r", Headers: []string{"r.h"}})
+			wantLines(t, res.Modules[0], "export bits0: u8", "export bits1: u8",
+				"// C: bitfield a, 4 bits at bit 0 of bits0", "// C: bitfield b, 4 bits at bit 0 of bits1")
+		})
+	}
+}
+
+func TestCImport_BitfieldLargeMemberRange(t *testing.T) {
+	const n = 4095
+	ch := &ctype{kind: tBuiltin, name: "char"}
+	d := &decl{fields: []field{{t: &ctype{kind: tArray, elem: ch, n: n}, bits: -1}, {bits: 12}}}
+	l := &recLayout{size: n + 2, fields: []fieldLayout{{width: -1}, {bit: n * 8, width: 12}}}
+	e := &emitter{}
+	if got := len(e.otherBytes(d, l, 1)); got != 1 {
+		t.Errorf("neighbour occupies %d ranges, want one regardless of its byte size", got)
 	}
 }

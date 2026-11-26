@@ -42,6 +42,7 @@ import (
 
 	"mk/internal/source"
 	"mk/internal/toolchain"
+	"mk/internal/types"
 )
 
 // Import is one pkg.CImport.
@@ -101,29 +102,12 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Msg }
 
-// ParseTriple is the Clang triple the headers of a Mk target are read
-// for. On Windows it is the triple the C sources and the shim compile for
-// (types.Target.LLVMTriple), so the binding's record layouts, predefined
-// macros and enum types are the objects' own: mingw-w64's triple lays out
-// a packed record with a bitfield and a long double otherwise. A mingw-w64
-// header tree as the sysroot is read under it as the shim reads it. Linux
-// reads musl's, whose SysV layouts are glibc's.
+// ParseTriple uses the native jobs' triple so the headers are translated
+// with the same target macros and ABI as the C sources and the shim.
+// A target already spelled as a Clang triple passes through unchanged.
 func ParseTriple(target string) string {
-	switch target {
-	case "x86_64-windows":
-		return "x86_64-pc-windows-msvc"
-	case "x86_64-linux":
-		return "x86_64-linux-musl"
-	case "aarch64-linux":
-		return "aarch64-linux-musl"
-	case "aarch64-macos":
-		return "arm64-apple-macos"
-	case "x86_64-freestanding":
-		return "x86_64-unknown-none-elf"
-	case "x86_64-nutshell":
-		return "x86_64-unknown-nutshell-elf"
-	case "aarch64-nutshell":
-		return "aarch64-unknown-nutshell-elf"
+	if t, ok := types.TargetByName(target); ok {
+		return t.LLVMTriple
 	}
 	return target
 }

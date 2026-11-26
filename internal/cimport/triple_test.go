@@ -1,9 +1,7 @@
-// Why: on Windows the binding's record layouts must be the layouts of the C
-// objects it links with, which clang compiles for the MSVC triple.
-// What: TestCImport_WindowsLayoutTriple.
-// How: translates records whose layout differs between the mingw-w64 and
-// the MSVC triples for x86_64-windows and checks their sizes, alignments
-// and bitfield units against clang's MSVC layout.
+// Why: a binding must share the linked C objects' record layouts.
+// What: tests of record layout and predefined macros under the native target.
+// How: translates records whose layouts change with the target triple or
+// with a target's predefined macros, and checks their resulting sizes.
 
 package cimport
 
@@ -44,6 +42,24 @@ func TestCImport_WindowsLayoutTriple(t *testing.T) {
 		"// C: bitfield w, 20 bits at bit 0 of the u32 at byte 1",
 		"// C: struct R, 5 bytes, align 1: opaque, members through accessors",
 		"// C: bitfield w, 20 bits at bit 0 of the u32 at byte 1")
+}
+
+func TestCImport_NativeTargetMacros(t *testing.T) {
+	const h = `struct R {
+#if defined(__APPLE__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 110000
+    int old_macos[2];
+#elif defined(__linux__) && defined(__NO_MATH_ERRNO__)
+    int musl[2];
+#else
+    int expected;
+#endif
+};`
+	for _, target := range []string{"x86_64-linux", "aarch64-linux", "x86_64-macos", "aarch64-macos"} {
+		t.Run(target, func(t *testing.T) {
+			res := translate(t, target, map[string]string{"r.h": h}, Import{Name: "r", Headers: []string{"r.h"}})
+			wantLines(t, res.Modules[0], "// C: struct R, 4 bytes, align 4", "export expected: i32")
+		})
+	}
 }
 
 func TestCImport_WindowsClangTarget(t *testing.T) {
