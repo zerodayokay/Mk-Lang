@@ -5,7 +5,8 @@
 // What: matchStmt, matchUnion and matchCall (match F(x) with ok and err
 // arms), unionArms for their two sides; test, rangeTest and subTests for
 // pattern tests; bindPat for bindings, with takeWhole for a linear struct
-// of plain fields; arms for the sequential fallback.
+// of plain fields and takeAlts for alternatives of struct patterns; arms
+// for the sequential fallback.
 //
 // How: arms are compiled by the decision tree of decision.go or, past its
 // size guard, by sequential testing: the first matching arm in source order,
@@ -494,7 +495,70 @@ func (bl *builder) bindPat(q ast.Pattern, p mir.Place, mode BindMode) {
 		if mode == ByValue {
 			bl.takeWhole(p, q.Span())
 		}
+	case PAlt:
+		if mode == ByValue {
+			bl.takeAlts(q.(*ast.AltPattern).Alts, p)
+		}
 	}
+}
+
+// takeAlts takes p apart when every alternative is a struct pattern on it
+// (`Ticket(id: 1) | Ticket(id: 2)`), as each would alone: an alternative
+// binds nothing, so a linear struct of plain fields is consumed only by
+// these takes. A field every alternative matches with a struct pattern is
+// taken apart the same way. Any other alternative (a variant, `some`, a
+// literal) leaves p as it is: its place may not hold the same shape on
+// every path.
+func (bl *builder) takeAlts(alts []ast.Pattern, p mir.Place) {
+	var flat []ast.Pattern
+	var walk func(q ast.Pattern) bool
+	walk = func(q ast.Pattern) bool {
+		switch bl.in.Pattern(q.ID()).Kind {
+		case PAlt:
+			for _, a := range q.(*ast.AltPattern).Alts {
+				if !walk(a) {
+					return false
+				}
+			}
+			return true
+		case PStruct:
+			flat = append(flat, q)
+			return true
+		}
+		return false
+	}
+	for _, a := range alts {
+		if !walk(a) {
+			return
+		}
+	}
+	if len(flat) == 0 {
+		return
+	}
+	byField := map[uint32][]ast.Pattern{}
+	first := map[uint32]*ast.PatField{}
+	var order []uint32
+	for _, q := range flat {
+		for _, f := range patFields(q) {
+			if f.Pat == nil {
+				continue
+			}
+			k := bl.in.Pattern(f.ID()).Field
+			if _, ok := byField[k]; !ok {
+				order = append(order, k)
+			}
+			byField[k] = append(byField[k], f.Pat)
+			if len(byField[k]) == 1 {
+				first[k] = f
+			}
+		}
+	}
+	for _, k := range order {
+		if subs := byField[k]; len(subs) == len(flat) {
+			bl.takeAlts(subs, bl.structField(p, first[k]))
+		}
+	}
+	bl.takeWhole(p, flat[0].Span())
 }
 
 // takeWhole ends a by-value struct pattern on p whose fields are all plain

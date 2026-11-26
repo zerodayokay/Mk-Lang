@@ -81,3 +81,18 @@ Payload(o: ?Res): i32 {
         none { 0 }
     }
 }
+
+Alternatives(h: H): i32 {
+    return match h {
+        H(r: Res(id: 1), o: _) | H(r: Res(id: 2), o: none) { 0 }
+        H(r: Res(id), o: _) { id }
+    }
+}
+
+PayloadAlternatives(o: ?Res): i32 {
+    return match o {
+        some(Res(id: 1) | Res(id: 2)) { 0 }
+        some(Res(id)) { id }
+        none { 1 }
+    }
+}

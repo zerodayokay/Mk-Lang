@@ -64,3 +64,26 @@ Sequential(j: J): int {
         .B(n: m, r: none) { m }
     }
 }
+
+Joined(s: S): int {
+    return match s { // <- E0402
+        S(a: none, b: none, o: some(0)) { 0 }
+        S(a: some(_), b: none, o: none) { 1 }
+        S(a, b, o: _) {
+            Take(a)
+            Take(b)
+            2
+        }
+    }
+}
+
+AltDiscarded(s: S): int {
+    return match s { // <- E0402
+        S(a: some(_), b: none, o: _) | S(a: none, b: none, o: _) { 0 }
+        S(a, b, o: _) {
+            Take(a)
+            Take(b)
+            1
+        }
+    }
+}
