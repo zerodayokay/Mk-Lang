@@ -229,18 +229,33 @@ func TestCore_FilterPortGrowRejects(t *testing.T) {
 
 // TestCore_FilterPortGrowBoxLoans targets both takes with a legal Reader
 // construction: the fill may update a local pointer for as long as bx lives.
+// Each take is judged twice: with the Reader used after it (r holds bx's
+// loan directly) and with the fill's target read after it (local holds
+// bx's loan only through the Reader's "*f into f" store).
 func TestCore_FilterPortGrowBoxLoans(t *testing.T) {
 	probe := strings.Replace(core8GrowZzf2, "core.FilterPort[Ds]", "core.FilterPortGrow[Ds]", 1)
 	probe = strings.Replace(probe, "    var f := core.Filtered[Ds].New(Ds(a: bx.Ref(), b: out))",
 		"    var local := *out\n    var f := core.Filtered[Ds].New(Ds(a: bx.Ref(), b: mut local))", 1)
 	const take = "_ = bx.Take(h.Alloc())"
 	const read = "    _ = r.Read(mut d[..]) else {\n        }"
+	const peek = "    x := *local\n    _ = x"
+	errTake, okTake := "        "+take+"\n        return", "    "+take+"\n}"
 	for _, c := range []struct {
-		name, from, to, want string
+		name, from, to string
+		want           []string // every diagnostic, as path:line:col: code
+		holder         string   // the holder of bx's loan that the E0503 names
 	}{
 		{name: "last use precedes both takes"},
-		{"error path", "        " + take + "\n        return", "        " + take + "\n    " + read + "\n        return", "std/zzf2/p.mk:42:13: E0503"},
-		{"success path", "    " + take + "\n}", "    " + take + "\n" + read + "\n}", "std/zzf2/p.mk:45:9: E0503"},
+		{"error path, the Reader read after the take", errTake, "        " + take + "\n    " + read + "\n        return",
+			[]string{"std/zzf2/p.mk:42:13: E0503"}, "r"},
+		{"success path, the Reader read after the take", okTake, "    " + take + "\n" + read + "\n}",
+			[]string{"std/zzf2/p.mk:45:9: E0503"}, "r"},
+		// The read of local is E0504 as well: the store of f's loans into
+		// what f writes counts f's exclusive loan of local among them.
+		{"error path, the fill's target read after the take", errTake, "        " + take + "\n    " + peek + "\n        return",
+			[]string{"std/zzf2/p.mk:42:13: E0503", "std/zzf2/p.mk:43:9: E0504"}, "local"},
+		{"success path, the fill's target read after the take", okTake, "    " + take + "\n" + peek + "\n}",
+			[]string{"std/zzf2/p.mk:45:9: E0503", "std/zzf2/p.mk:46:5: E0504"}, "local"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			src := probe
@@ -251,14 +266,20 @@ func TestCore_FilterPortGrowBoxLoans(t *testing.T) {
 				src = strings.Replace(src, c.from, c.to, 1)
 			}
 			out, status := core8GrowCheck(t, "zzf2", src)
-			if c.want == "" {
+			if c.want == nil {
 				if status != 0 {
 					t.Fatalf("legal Reader setup was rejected:\n%s", out)
 				}
 				return
 			}
-			if status == 0 || strings.Count(out, ": E") != 1 || !strings.Contains(strings.ReplaceAll(out, "\\", "/"), c.want) {
-				t.Fatalf("want only %s, exit %d:\n%s", c.want, status, out)
+			slashed := strings.ReplaceAll(out, "\\", "/")
+			ok := status != 0 && strings.Count(out, ": E") == len(c.want) &&
+				strings.Contains(out, "E0503 move-while-borrowed: bx conflicts with a live shared loan held by "+c.holder+"\n")
+			for _, w := range c.want {
+				ok = ok && strings.Contains(slashed, w)
+			}
+			if !ok {
+				t.Fatalf("want exactly %q with bx's loan held by %s, exit %d:\n%s", c.want, c.holder, status, out)
 			}
 		})
 	}
