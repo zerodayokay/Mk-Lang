@@ -740,6 +740,12 @@ func (e *emitter) signedOf(t *ctype) string {
 				// an alias by its Mk name).
 				return e.signedOf(d.fixed)
 			}
+			if !e.win && d.enumMin >= 0 {
+				// GNU C's type for an enum with no negative constant is
+				// unsigned (unsigned int, or wider), and so its
+				// bitfield; on the MSVC target it is int.
+				return ""
+			}
 			m = e.enumInt(d)
 		}
 	}

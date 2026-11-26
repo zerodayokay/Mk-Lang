@@ -2,7 +2,7 @@
 // record's end must get accessors, under both bitfield layouts, and a
 // signed bitfield of an enum whose fixed type is a typedef must read its
 // sign.
-// What: TestCImport_SpanBitfieldForms.
+// What: TestCImport_SpanBitfieldForms and TestCImport_EnumBitfieldSign.
 // How: translates one header for x86_64-linux (the GNU layout) and
 // x86_64-windows (the MSVC layout) and checks the accessors' lines.
 
@@ -45,5 +45,22 @@ func TestCImport_SpanBitfieldForms(t *testing.T) {
 			"b = (b & 0xfffffffffff00000) | ((Trunc[u64](i64(v)) & 0xfffff) << 0)",
 			"E(&self): i16 {",
 			"F(&self): i16 {")
+	}
+}
+
+// TestCImport_EnumBitfieldSign: a bitfield of an enum with no fixed type
+// reads as C's type for that enum does: on the GNU layout unsigned when no
+// constant is negative (G), signed when one is (H); on the MSVC target the
+// enum is int, so both are signed.
+func TestCImport_EnumBitfieldSign(t *testing.T) {
+	const h = "enum G { GA = 1, GB = 2, GC = 3 };\nenum H { HA = -1, HB = 1 };\ntypedef enum G GT;\n" +
+		"struct T { enum G g : 2; enum H h : 2; GT gt : 2; };\n"
+	for target, want := range map[string][]string{
+		"x86_64-linux":   {"T.G(&self): u32 {", "T.H(&self): i32 {", "T.Gt(&self): u32 {"},
+		"x86_64-windows": {"T.G(&self): i32 {", "T.H(&self): i32 {", "T.Gt(&self): i32 {"},
+	} {
+		res := translate(t, target, map[string]string{"g.h": h}, Import{Name: "g", Headers: []string{"g.h"}})
+		dumpIf(t, target+"-g.mk", res.Modules[0])
+		wantLines(t, res.Modules[0], want...)
 	}
 }
