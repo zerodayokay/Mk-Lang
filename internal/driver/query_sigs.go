@@ -75,17 +75,18 @@ type SigEntry struct {
 	Exported  bool     `json:"exported"`
 	// Impl is the interface an impl method implements, "" otherwise.
 	Impl string `json:"impl"`
-	// Generated is true for a function or item a gen line wrote; Gen is
-	// that line, file:line:col, "" otherwise.
+	// Generated is true for a function or item a gen line wrote, and for
+	// the built-in Format of an error one wrote; Gen is that line,
+	// file:line:col, "" otherwise.
 	Generated bool   `json:"generated"`
 	Gen       string `json:"gen"`
 	// Kind is the item's kind as find names it: func, struct, enum, error,
 	// interface, alias, const or global.
 	Kind string `json:"kind"`
-	// Subject is a spelling `mk query sig` resolves to this item (Name,
-	// then the module's last segment or its path before it), "" when none
-	// does: an impl method, an error's built-in Format, or an item every
-	// spelling of which an earlier item takes.
+	// Subject is a spelling `mk query sig`, asked in the member, resolves
+	// to this item (Name, then the module's last segment or its path
+	// before it), "" when none does: an impl method, an error's built-in
+	// Format, or an item every spelling of which an earlier item takes.
 	Subject string `json:"subject"`
 	// Doc is the item's /// lines that `sig Subject`'s answer holds, after
 	// its cap; Truncated is that answer's count of lines the cap cut. An
@@ -247,9 +248,13 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 			e := SigEntry{Name: name, Module: m.path, Contracts: []string{}, Exported: it.Exported, Impl: impl,
 				Kind: it.Kind.String(), Resolved: qx.sigResolved(name, sig)}
 			doc := qx.doc(it)
+			formatOf := types.NoItem // the error whose built-in Format this is
 			if impl == "" {
 				e.Subject = subject(id, name, m.path)
-			} else if im, ok := qx.w.items.Get(it.Owner).Decl.(*types.ImplDecl); ok && qx.providedFormatOf(im) != types.NoItem {
+			} else if im, ok := qx.w.items.Get(it.Owner).Decl.(*types.ImplDecl); ok {
+				formatOf = qx.providedFormatOf(im)
+			}
+			if formatOf != types.NoItem {
 				doc = nil // it is located at the error's name: those lines are the error's
 			}
 			answer(&e, qEntry{id: id, name: name, mod: m.path, module: m}, doc)
@@ -261,10 +266,15 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 				}
 				e.Contracts = append(e.Contracts, w+c.Text)
 			}
-			// An impl method carries no origin of its own: its impl does.
+			// An impl method carries no origin of its own: its impl does,
+			// and the compiler's Format impl of an error none: the error
+			// does, at whose name the method is located.
 			o := it.Origin
 			if o == nil && impl != "" {
 				o = qx.w.items.Get(it.Owner).Origin
+			}
+			if o == nil && formatOf != types.NoItem {
+				o = qx.w.items.Get(formatOf).Origin
 			}
 			genMark(&e, o)
 			l.Functions = append(l.Functions, e)
@@ -273,7 +283,7 @@ func (s *Session) Signatures(member string) (*SigList, Result) {
 	// Entries hold no dependency's module path to localize (modPath): a
 	// sig or head spells types by their names alone and the member's own
 	// module, and a contract and a doc line are as their source writes
-	// them, so each entry is sig Name's answer as built.
+	// them, so each entry is sig Name's answer in the member as built.
 	order := func(a, b SigEntry) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Col, b.Col),
 			cmp.Compare(a.Name, b.Name))
