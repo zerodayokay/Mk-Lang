@@ -449,7 +449,7 @@ func TestStdNoProcessResidue_Rules(t *testing.T) {
 		{"a Fetch is closed (D8-30)", true},
 		{"Path.Base drops trailing separators", false},
 		{"UTF-8 round trip", false},
-		{"RT-F8-PanicTextIsCodeName the 16 panic texts", false},
+		{"RT-F8-PanicTextIsCodeName the 17 panic texts", false},
 	}
 	for _, c := range names {
 		if got := len(rules.testNameResidue(c.s)) > 0; got != c.want {

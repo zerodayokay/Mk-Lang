@@ -14,6 +14,9 @@ import std.raw
 // stack and registers, the module list and the thread times.
 const MiniDumpType: u32 = 0x1000
 
+// LOAD_LIBRARY_SEARCH_SYSTEM32: dbghelp.dll from System32 only.
+const LoadSystem32: u32 = 0x800
+
 /// MiniDump writes a minidump of this process to path, created or
 /// truncated: 0, or the OS's error code (GetLastError), or -1 when dbghelp
 /// or its entry cannot be loaded. It runs on the calling stack, which

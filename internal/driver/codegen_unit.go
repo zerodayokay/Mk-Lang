@@ -68,9 +68,12 @@ func (w *world) buildRoots(mainMod string, pkg []*modNode, allFuncs, gro bool) [
 			it := w.items.Get(id)
 			// A function with a section clause is emitted though no Mk code
 			// calls it (a boot entry).
+			// The lazy stubs' entries (lazylink.go) are collected with the
+			// first lazily bound extern, never as C-callable exports: one
+			// alone would call the others by symbol.
 			if fd, ok := it.Decl.(*types.FuncDecl); ok && (fd.Sig.Extern && it.Exported || allFuncs && it.Kind == types.KindFunc && !fd.Sig.Extern ||
 				fd.Section != "" && it.Kind == types.KindFunc) &&
-				!fd.Bodiless && len(fd.Sig.Generics) == 0 && !hasConstParam(&fd.Sig) && w.sem5.body(id) != nil {
+				!fd.Bodiless && len(fd.Sig.Generics) == 0 && !hasConstParam(&fd.Sig) && w.sem5.body(id) != nil && !isLazyRuntime(it.Key) {
 				exports = append(exports, id)
 			}
 		}

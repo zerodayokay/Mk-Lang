@@ -12,6 +12,7 @@ import std.dl
 - [The main pieces](#the-main-pieces)
 - [Where Open looks](#where-open-looks)
 - [Libraries and symbols](#libraries-and-symbols)
+- [Present](#present)
 - [Errors](#errors)
 - [Linux](#linux)
 - [Examples](#examples): [open and look up](#open-and-look-up), [keep a library loaded](#keep-a-library-loaded), [call a function](#call-a-function)
@@ -25,6 +26,7 @@ import std.dl
 | Find an exported function or variable | `Library.Symbol(name)` |
 | Unload it | `Library.Close` |
 | Keep it loaded until the process exits | `Library.Detach` |
+| Ask whether an `extern` function can be called | `Present(io, f)` |
 
 Loading and looking up are safe. Calling through an address that `Symbol` returns is `unsafe`, in a module listed in the manifest's `unsafe_modules`.
 
@@ -40,7 +42,7 @@ Loading and looking up are safe. Calling through an address that `Symbol` return
 
 A name of the wrong form for its `Search`, such as a name with a directory for `System` or a relative name for `Path`, is `BadName`. So is an empty name, one holding a NUL, and one over 1,024 UTF-16 units.
 
-Windows looks for the DLLs a program links at start-up only among the KnownDLLs, in the executable's directory and in System32. A bin whose package graph links a DLL is built with the load configuration flag `DependentLoadFlags` 0xA00, so the current directory and `PATH` are never searched. Ship a third-party DLL beside the executable, or open it with `dl.Open` and `Search.Path`. There is no delay-loading.
+Windows looks for the DLLs a program links at start-up only among the KnownDLLs, in the executable's directory and in System32. A bin whose package graph links a DLL is built with the load configuration flag `DependentLoadFlags` 0xA00, so the current directory and `PATH` are never searched. Ship a third-party DLL beside the executable, or open it with `dl.Open` and `Search.Path`. A DLL linked with `kind: "lazy"` is loaded on the first call of one of its functions, with the same search (`Search.Application`'s flags); see [Present](#present).
 
 ## Libraries and symbols
 
@@ -52,6 +54,56 @@ A `Library` is linear: end it with `Close`, or with `Detach` to keep the library
 - `Open` and `Close` run the library's initializers or finalizers on the calling carrier and block it until they return. They cannot be cancelled.
 
 To call a function, turn its address into a `fn` value of the right C signature with `raw.FnFromAddr` inside `unsafe`. The signature is yours to get right: nothing checks it. The call runs on the calling task's stack, not on the system stack that a call of an `extern` gets ([the C stack](../reference.md#functions-c-can-call-export-extern)), so call a library that uses much stack from a task spawned with `StackSize.Large`.
+
+## Present
+
+A package that links a DLL with `kind: "lazy"` ([linking libraries](../reference.md#linking-libraries)) calls its functions as `extern`s, but the DLL is not in the import table: the program starts on a machine that lacks it, and the first call loads it. `Present(io, f)` asks before calling:
+
+- `f` names a bodiless `extern` function directly. Anything else, such as a local holding one, a function with a body or a call, is E0705 `reason: present-argument`. Naming `f` here needs no `unsafe`: `Present` never calls it.
+- For a lazily bound `f` it loads the DLL if it is not loaded, as the first call would, and finds `f` without calling it. The initializer runs on the carrier's system stack and blocks the carrier, as `Open` does; so `Present`, like `Open`, takes `io`.
+- For any other `extern` it is `true` when the program is built: the loader bound the function before `Main`.
+- A failed load is not remembered: a later `Present` or call tries again.
+- Calling a lazily bound function that is not present panics with `unresolved function`, naming the function and the DLL.
+
+The program below asks about kernel32's `SetThreadDescription`, which is bound eagerly: there `Present` is `true` when the program is built, and a Windows that lacks the function would not start the program at all. A function of a lazily bound DLL is asked the same way, and there the answer comes at run time:
+
+```mk
+// verdict: ok
+import std.dl
+
+// SetThreadDescription and GetCurrentThread are kernel32's.
+extern SetThreadDescription(thread: uint, name: *u16): i32
+extern GetCurrentThread(): uint
+
+export Main(sys: &System): WriteError!void {
+    var named := false
+    if Target.os == Os.Windows {
+        if dl.Present(sys.io, SetThreadDescription) {
+            named = true // call it here, inside unsafe
+        }
+    }
+    try sys.Print("can name threads: {named}\n", (named))
+}
+```
+
+```text
+$ mk run present.mk
+can name threads: true
+```
+
+A package that binds Direct3D 12 lazily, so the program also runs where d3d12.dll is absent, writes `d3d12.def` with the names it uses (`D3D12CreateDevice`, one per line) and links it:
+
+```mk
+// verdict: parse
+const Package = pkg.Package(
+    name: "viewer",
+    bins: [pkg.Bin(name: "viewer", root: "src", subsystem: "console")],
+    unsafe_modules: ["src"],
+    links: [pkg.Link(name: "d3d12.dll", kind: "lazy", path: "d3d12.def", target: "x86_64-windows")],
+)
+```
+
+Then `dl.Present(sys.io, D3D12CreateDevice)` picks the Direct3D path or the software one.
 
 ## Errors
 
@@ -314,6 +366,27 @@ export error Os(code: i64)
 ```
 
 Any other failure, with the OS's own code (Windows only).
+
+### `Present`
+
+```
+export Present[F](io: Io, f: F): bool
+```
+
+Present reports whether f, a bodiless extern function named directly
+(`dl.Present(io, GetThing)`), can be called. For a function of a lazily
+bound library (pkg.Link kind "lazy") it loads the library if it is not
+loaded yet, running its initializers on the carrier's system stack and
+blocking the carrier as Open does (it cannot be cancelled), and finds
+the function without calling it; a later call of f then costs one
+indirect call. For any other extern it is true when the program is built, since the loader
+resolved the function before Main. Naming f here needs no unsafe:
+Present never calls it. A failed load is not remembered: asking again
+loads again. Calling a lazily bound function that is not present panics
+(code 17, unresolved function), so a program that may run without the
+library asks first. Any other argument is E0705 reason
+present-argument. O(1) plus the loader's work on the first ask;
+allocates nothing.
 
 ### `Search`
 

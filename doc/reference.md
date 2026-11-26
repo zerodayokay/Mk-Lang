@@ -6312,6 +6312,7 @@ The first line names the cause and the position. A backtrace of the calls follow
 | `free non-empty` | `FreeEmpty` on a container that is not empty |
 | `wrong allocator` | A heap container given a different allocator from the one it was made with |
 | `suspend in callback` | A wait in code that runs off a task, such as a callback from C on a system stack |
+| `unresolved function` | A call of a function of a lazily bound DLL that cannot be loaded or does not export it ([lazy libraries](#linking-libraries)); the message names the function and the DLL |
 
 Library functions also panic on misuse their documentation names: a `Chunks` length below 1, a negative `Chan` capacity, or an erased `dyn` reference recovered as a type it was not made from.
 
@@ -9781,7 +9782,8 @@ extern take_vec(v: simd.Vec[f32, 4]): f32 // <- E1107
 **Linking.** An `extern` function is defined by a C source of the package, or by a library. A name that std does not define itself resolves to the first library that exports it:
 
 1. the links of the bin's packages, in manifest order, the root package's first ([linking libraries](#linking-libraries));
-2. when building for `x86_64-windows` on a Windows host, the system DLLs `kernel32`, `user32`, `gdi32`, `winspool`, `comdlg32`, `advapi32`, `shell32`, `ole32`, `oleaut32` and `ws2_32`.
+2. for `x86_64-windows`, the DLLs std binds lazily (`crypt32.dll`), loaded from System32 on the first call;
+3. when building for `x86_64-windows` on a Windows host, the system DLLs `kernel32`, `user32`, `gdi32`, `winspool`, `comdlg32`, `advapi32`, `shell32`, `ole32`, `oleaut32` and `ws2_32`.
 
 A name nothing defines is E0001 at link, "undefined symbol". Built on another host, a system DLL's function needs a `pkg.Link` with a `.def` file. On a Windows host, it needs no manifest entry:
 
@@ -9959,19 +9961,39 @@ const Package = pkg.Package(
 
 | Field | Values |
 |---|---|
-| `name` | A dynamic library's exact file name, as the loader looks it up, with no separator. A static library's name labels it in diagnostics |
-| `kind` | `"dynamic"`: the OS loader opens it when the program starts. `"static"`: an archive linked into the executable |
-| `path` | Package-relative. A Windows DLL: `""` for the host's System32 copy (on a Windows host only), a `.def` file listing one exported name per line (on any host), or the `.dll` itself, which mk copies beside the executable. A Linux library: `""`, or a `.def` whose names may carry `@VERSION`. An archive: the `.lib` or `.a` file |
+| `name` | A dynamic or lazy library's exact file name, as the loader looks it up, with no separator. A static library's name labels it in diagnostics |
+| `kind` | `"dynamic"`: the OS loader opens it when the program starts. `"lazy"`: a DLL loaded on the first call of one of its functions, never in the import table (`x86_64-windows` only). `"static"`: an archive linked into the executable |
+| `path` | Package-relative. A Windows DLL, dynamic or lazy: `""` for the host's System32 copy (on a Windows host only), a `.def` file listing one exported name per line (on any host), or the `.dll` itself, which mk copies beside the executable. A Linux library: `""`, or a `.def` whose names may carry `@VERSION`. An archive: the `.lib` or `.a` file |
 | `target` | `"x86_64-windows"`, `"x86_64-linux"` or `"aarch64-linux"` |
 
-- A fault in a `Link` is E0202 at the `Link`, `reason: link`. An import library (`.lib` for a DLL) is not an archive (E0202).
+- A fault in a `Link` is E0202 at the `Link`, `reason: link`. An import library (`.lib` for a DLL) is not an archive (E0202). `kind: "lazy"` for any target but `x86_64-windows` is E0202: lazy binding is built for Windows only. One DLL linked `"lazy"` by one link and `"dynamic"` by another is E0202.
 - A name an archive defines wins over any DLL. A library enters the executable only when a name it supplies is used.
 - Only functions resolve through links. An `extern var` in a DLL or a shared object is E0001.
-- Windows looks for a linked DLL only in KnownDLLs, the executable's directory and System32, never in the current directory or `PATH`. Ship a third-party DLL beside the executable. There is no delay-load.
+- Windows looks for a linked DLL only in KnownDLLs, the executable's directory and System32, never in the current directory or `PATH`. Ship a third-party DLL beside the executable. A lazy DLL is searched the same way (`LoadLibraryExW` with `LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`).
 - An archive must be built with no C runtime: `-ffreestanding -fno-stack-protector` for Clang or GCC, `/GS- /Zl` for MSVC. A symbol it needs that nothing supplies is E0001, naming the member and the symbol.
 - An archive member that holds static constructors or thread-local storage is E0001: a Mk program never sets them up.
 - A Linux bin with a dynamic link loads the system C library ([system-libc mode](std/libc.md#system-libc-mode-on-linux)).
 - To open a library while the program runs, use [std.dl](std/dl.md).
+
+**Lazy libraries.** A program can name a function of a DLL that some machines lack, such as an optional system component, and still start on every machine. A hard import of a missing DLL ends the process before `Main`. A lazy DLL is not in the import table:
+
+- Each function of it the program uses is called through a slot. The first call loads the DLL, once per DLL, and finds the function. The library's initializer runs on the carrier's system stack when the caller is a task, so a task's small stack is enough. The call then continues with its arguments intact.
+- The first call may come from any thread, one Mk did not start included, and from C code. Two first calls at once both succeed. A load that fails is not remembered: a later call or `dl.Present` tries again.
+- Later calls jump through the slot: one indirect call, what an import-table call costs.
+- [`dl.Present(io, f)`](std/dl.md#present) tells whether `f` can be called, loading the DLL if needed, without calling it. For a function that is not lazily bound it is `true` at compile time.
+- Calling a lazy function whose DLL cannot be loaded, or which the DLL does not export, panics with `unresolved function`. The report names the function and the DLL.
+- Taking such a function as a `fn` value gives an address that works before and after the first call.
+- A program that never calls a function of a lazy DLL carries nothing of it.
+
+```mk
+// verdict: parse
+const Package = pkg.Package(
+    name: "viewer",
+    bins: [pkg.Bin(name: "viewer", root: "src", subsystem: "console")],
+    unsafe_modules: ["src"],
+    links: [pkg.Link(name: "d3d12.dll", kind: "lazy", path: "d3d12.def", target: "x86_64-windows")],
+)
+```
 
 ### CPU features
 
@@ -13433,6 +13455,7 @@ error Os(code: i64)
 type Error = NotFound | Invalid | InitFailed | BadName | Unsupported | Os
 dl.Open(io: Io, name: str, search: Search): dl.Error!Library
 Library.Symbol(&self, name: str): ?*u8
+dl.Present[F](io: Io, f: F): bool
 Library.Close(self, io: Io)
 Library.Detach(self)
 

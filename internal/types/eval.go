@@ -58,13 +58,16 @@ const (
 	// PanicSuspendInCallback: an Io operation in a Mk function called from C
 	// on a system stack.
 	PanicSuspendInCallback
+	// PanicUnresolved: a call of a lazily bound function whose library or
+	// symbol the loader cannot find.
+	PanicUnresolved
 
 	numPanicCodes
 )
 
 var panicNames = [numPanicCodes]string{"none", "overflow", "bounds", "divide by zero", "shift amount",
 	"cast", "must", "assert", "explicit", "stack limit", "str boundary", "free non-empty",
-	"wrong allocator", "enum tag", "contract", "unreachable", "suspend in callback"}
+	"wrong allocator", "enum tag", "contract", "unreachable", "suspend in callback", "unresolved function"}
 
 // String is the panic's short name.
 func (c PanicCode) String() string {
