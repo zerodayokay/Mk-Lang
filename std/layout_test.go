@@ -10,6 +10,7 @@
 package std
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path"
@@ -83,7 +84,11 @@ func TestTestPreludeMatchesReference(t *testing.T) {
 		t.Fatalf("the reference's test prelude block does not start with a verdict line: %q", body)
 	}
 	want := body[nl+1:]
-	got := readText(t, TestPreludePath)
+	disk, err := os.ReadFile(TestPreludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.ReplaceAll(string(disk), "\r\n", "\n")
 	if got != want {
 		t.Errorf("%s differs from the reference's test prelude:\n--- got\n%s--- want\n%s", TestPreludePath, got, want)
 	}
@@ -92,7 +97,7 @@ func TestTestPreludeMatchesReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.ReplaceAll(string(emb), "\r\n", "\n") != want {
+	if !bytes.Equal(emb, disk) {
 		t.Error("the embedded test prelude differs from the file on disk")
 	}
 }

@@ -13754,6 +13754,13 @@ The examples in this reference use these names without declaring them. They are 
 
 ```mk
 // verdict: parse
+// Why: the examples in the documentation are short and call helpers they do
+// not declare; they still have to compile as tests.
+// What: the corpus test prelude: Point, the linear Res with Close and
+// Acquire, and the stubs MakePoint, Cond, Use, UseMut and Take.
+// How: the corpus runner and mk doc --check give it to each example block;
+// the bodiless declarations are signatures only, enough for the checker.
+
 struct Point {
     x: i32
     y: i32
