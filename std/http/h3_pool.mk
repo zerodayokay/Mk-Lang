@@ -103,7 +103,7 @@ CloseH3(a: &Alloc, p: *H3Conn, io: Io, limit: time.Duration, code: u64) {
 // of a retired slot leaves. Indices remain stable while borrowed.
 Client.H3PutBack(&self, io: Io, idx: int, driver: bool, retire: bool): *H3Conn {
     nc := io.NoCancel()
-    var g := self.h3_pool.Lock(nc).Must()
+    var g := self.H3State().Must().pool.Lock(nc).Must()
     s := mut (*g.Mut())[idx]
     if driver {
         s.driving = false
@@ -125,7 +125,7 @@ Client.H3PutBack(&self, io: Io, idx: int, driver: bool, retire: bool): *H3Conn {
 
 Client.H3Retire(&self, io: Io, key: &Origin) {
     nc := io.NoCancel()
-    var g := self.h3_pool.Lock(nc).Must()
+    var g := self.H3State().Must().pool.Lock(nc).Must()
     for i in 0..H3Slots {
         slot := mut (*g.Mut())[i]
         if !raw.IsNull(slot.conn) && OriginEq(&slot.origin, key) {
@@ -157,7 +157,7 @@ DriveH3(client: &Client, conn: &H3Conn, io: Io, idx: int) {
         }
         if retry && client.H3Running() {
             nc := io.NoCancel()
-            g := client.h3_pool.Lock(nc).Must()
+            g := client.H3State().Must().pool.Lock(nc).Must()
             s := &(*g.Ref())[idx]
             alive = !s.retired && (s.requests > 0 || client.limits.idle.Nanos() <= 0)
             if !alive && !s.retired {
@@ -214,6 +214,52 @@ DialH3Conn(h: &Heap, io: Io, lim: &ClientLimits, dialer: &net.MuxDialer, host: s
     fail last
 }
 
+struct H3ClientState {
+    pool: Mutex[[16]H3Slot]
+    routes: Mutex[[64]AltOrigin]
+}
+
+NewH3ClientState(): H3ClientState {
+    return H3ClientState(pool: Mutex[[16]H3Slot].New(NewH3Slots()), routes: Mutex[[64]AltOrigin].New([NoAltOrigin; 64]))
+}
+
+FreeH3ClientState(a: &Alloc, p: *H3ClientState) {
+    H3ClientState(pool, routes) := H3Take(a, p)
+    _ = routes.Into()
+    slots := pool.Into()
+    for sl in &slots[..] {
+        DropH3(a, sl.conn)
+    }
+}
+
+Client.H3State(&self): ?&H3ClientState from self {
+    p := self.h3_state.Load()
+    if raw.IsNull(p) {
+        return none
+    }
+    unsafe "only Client.Close removes this initialized state, and it cannot consume the client while self is borrowed" {
+        return some(&*p)
+    }
+}
+
+Client.EnsureH3State(&self): OutOfMemory!&H3ClientState from self {
+    if state := self.H3State() {
+        return state
+    }
+    a := self.heap.Alloc()
+    state := NewH3ClientState()
+    p := H3Store(a, state) else {
+        H3ClientState(pool, routes) := state
+        _ = pool.Into()
+        _ = routes.Into()
+        fail OutOfMemory
+    }
+    if !self.h3_state.Cas(raw.Null[H3ClientState](), p) {
+        FreeH3ClientState(a, p)
+    }
+    return self.H3State().Must()
+}
+
 struct H3Claim {
     index: int
     conn: *H3Conn
@@ -226,10 +272,14 @@ Client.ClaimH3(&self, io: Io, key: Origin, host: str, port: int): Error!?H3Claim
     if key.n < 0 {
         return none
     }
+    if !self.limits.h3_direct && self.H3State().IsNone() {
+        return none
+    }
+    state := try self.EnsureH3State()
     nc := io.NoCancel()
     for self.H3Running() {
         try CancelCheck(io)
-        var g := self.h3_pool.Lock(nc).Must()
+        var g := state.pool.Lock(nc).Must()
         routes := self.H3Routes(io, &key, port)
         if routes.clear {
             g.Unlock()
@@ -302,7 +352,7 @@ Client.ClaimH3(&self, io: Io, key: Origin, host: str, port: int): Error!?H3Claim
         if raw.IsNull(p) && !canceled && !oom {
             self.H3Broken(io, key)
         }
-        var finish := self.h3_pool.Lock(nc).Must()
+        var finish := state.pool.Lock(nc).Must()
         result := mut (*finish.Mut())[empty]
         published := !raw.IsNull(p) && self.H3Running() && !canceled
         if published {

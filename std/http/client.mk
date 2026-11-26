@@ -58,15 +58,14 @@ export linear mut view struct Client {
     drive_stop: raw.Atomic[u32]
     drive_active: raw.Atomic[u32]
     drive_ready: sync.Notify
-    h3_pool: Mutex[[16]H3Slot]
+    h3_state: raw.Atomic[*H3ClientState]
     h3_wake: sync.Notify
-    alt_cache: Mutex[[64]AltOrigin]
 }
 
 /// A client with the limits l and an empty pool. O(16): the pool has 16 slots;
 /// allocates nothing: the pool's table is inside the client.
 export Client.New(h: &Heap, l: ClientLimits): Client from h, l {
-    return Client(heap: h, limits: l, slots: NewSlots(), mux: NewMuxSlots(), mux_dial: Mutex[int].New(0), drive_wake: sync.Notify.New(), drive_stop: raw.Atomic[u32].New(0), drive_active: raw.Atomic[u32].New(0), drive_ready: sync.Notify.New(), h3_pool: Mutex[[16]H3Slot].New(NewH3Slots()), h3_wake: sync.Notify.New(), alt_cache: Mutex[[64]AltOrigin].New([NoAltOrigin; 64]))
+    return Client(heap: h, limits: l, slots: NewSlots(), mux: NewMuxSlots(), mux_dial: Mutex[int].New(0), drive_wake: sync.Notify.New(), drive_stop: raw.Atomic[u32].New(0), drive_active: raw.Atomic[u32].New(0), drive_ready: sync.Notify.New(), h3_state: raw.Atomic[*H3ClientState].New(raw.Null[H3ClientState]()), h3_wake: sync.Notify.New())
 }
 
 /// Releases the client: every idle connection is closed without speaking
@@ -74,13 +73,12 @@ export Client.New(h: &Heap, l: ClientLimits): Client from h, l {
 /// Exchange borrows the client, so none can be open here. Never blocks or
 /// fails. O(idle connections); allocates nothing.
 export Client.Close(self) {
-    Client(heap, limits: _, slots, mux, mux_dial: _, drive_wake: _, drive_stop: _, drive_active: _, drive_ready: _, h3_pool, h3_wake: _, alt_cache) := self
+    Client(heap, limits: _, slots, mux, mux_dial: _, drive_wake: _, drive_stop: _, drive_active: _, drive_ready: _, h3_state, h3_wake: _) := self
     FreeSlots(slots)
     FreeMuxSlots(heap.Alloc(), mux)
-    _ = alt_cache.Into()
-    h3_slots := h3_pool.Into()
-    for sl in &h3_slots[..] {
-        DropH3(heap.Alloc(), sl.conn)
+    h3 := h3_state.Load()
+    if !raw.IsNull(h3) {
+        FreeH3ClientState(heap.Alloc(), h3)
     }
 }
 

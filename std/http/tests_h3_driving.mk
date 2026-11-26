@@ -31,3 +31,10 @@ test "WaitDriving is canceled when no Drive starts in its scope" (sys: &System) 
         }
     }
 }
+
+test "an HTTP client leaves the H3 pool off the stack until it needs it" (sys: &System) {
+    c := Client.New(sys.heap, DefaultClientLimits)
+    defer c.Close()
+    Assert(SizeOf[Client]() < 16384)
+    Assert(c.H3State().IsNone())
+}
