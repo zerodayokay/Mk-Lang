@@ -67,8 +67,11 @@ export Main(sys: &System): WriteError|crypto.Error!void {
 var cr2CtAllow = map[string]int{
 	// Main: the probe's try edges (nine, or eight in masked without PGO),
 	// 13 write error tags, and seven inlined Writer.Bytes pairs of tests
-	// on remaining capacity and whether the buffer is empty.
-	"mk.main.Main": 36,
+	// on remaining capacity and whether the buffer is empty. Under PGO the
+	// five u8 values' FmtU64 is inlined too: v >= 100 and v >= 10 on the
+	// printed byte, and its Writer.Bytes pair (56). The buffer's fill moves
+	// only with the text already printed, which the probe writes out.
+	"mk.main.Main": 56,
 
 	// aes_ct64 and the key schedule: the round count (nr, from the key's
 	// length) and the schedule's word counters (j == 0, j == 4 for 256-bit
@@ -102,11 +105,20 @@ var cr2CtAllow = map[string]int{
 	// kernel answer, the length zero, a whole 64-byte group left, the
 	// loop and the tail's 16-byte step; Ghash's ghni flag and the guard of
 	// GhashBlocks inlined twice (whole blocks, padded tail: 2 x 5) and the
-	// tail's length; Tag's the same, partly inlined (PGO: both Ghash calls'
-	// whole-or-tail tests, the ghni flag and the kernel's answers). Ctr
-	// with loop versioning: 11 in the kernel build, 10 masked, 4 under
-	// kernel-pgo and 6 under masked-pgo (the (n & 63) - 1 == 0 tail test is
-	// read as an "other", not a check).
+	// tail's length; Tag's the same, partly inlined (masked-pgo: both Ghash
+	// calls' whole-or-tail tests, the ghni flag and the kernel's answers).
+	// Tag under kernel-pgo, 29: its three Ghash calls inlined, each with
+	// the ghni flag, GhashBlocks' guard (two simd.Cpu() cache tests, the
+	// pclmul and aes bits) for the whole blocks and for the tail, and the
+	// whole-or-tail length test, then Block with the guard of the kernel's
+	// AesEncryptBlocks (the cache test, the aes bit) and the round count's
+	// dispatch (0xb, 0xd). Ctr with loop versioning: 11 in the kernel
+	// build, 10 masked, 7 under each PGO build (the (n & 63) - 1 == 0 tail
+	// test is read as an "other", not a check): kernel-pgo inlines the
+	// kernel's AesCtr (its Cpu() cache test and aes bit, the round count's
+	// 0xb and 0xd) beside the 64-byte step and two tail tests; masked-pgo
+	// inlines AesEncrypt4, whose round loop tests nr, beside the loop's
+	// entry on n, the 64-byte step and four tail tests.
 	// Beyond the five above, every new jump is in the tail loop
 	// (dst[i + t] = src[i + t] ^ ks[t]): the versioning guard, which tests n - 1
 	// against dst's length and n & 63 against [1, 64] (one or of two setcc
@@ -121,7 +133,7 @@ var cr2CtAllow = map[string]int{
 	"mk.std.crypto.AesGcm:New":   6,
 	"mk.std.crypto.AesGcm:Open":  5,
 	"mk.std.crypto.AesGcm:Seal":  3,
-	"mk.std.crypto.AesGcm:Tag":   9,
+	"mk.std.crypto.AesGcm:Tag":   29,
 	"mk.std.crypto.AesGcm:Wipe":  0,
 	"mk.std.crypto.GcmJ0":        0,
 	// HMAC and HKDF: the key length above the block (0x41, 0x81) and the
@@ -216,17 +228,15 @@ var cr2CtAllow = map[string]int{
 
 // cr2CtByBuild is this test's per-build counts (ctByBuild): each function
 // whose four builds read different counts, at the count each build has (from
-// the test's -v log; Ctr under masked-pgo and Tag under kernel-pgo include
-// the (n & 63) - 1 == 0 tail test and a Cpu() cache test, read), every one
-// at or below the reading above. CtrNi's three instances
+// the test's -v log; Ctr under masked-pgo includes the (n & 63) - 1 == 0
+// tail test, read), every one at or below the reading above. CtrNi's three instances
 // differ under PGO (12, 10 and 5); the name without its hash
 // takes the most. A build not named keeps the table's count.
 var cr2CtByBuild = ctByBuild{
-	"mk.main.Main":                {"masked": 35},
-	"mk.std.crypto.AesGcm:Ctr":    {"masked": 10, "kernel-pgo": 4, "masked-pgo": 6},
-	"mk.std.crypto.AesGcm:Ghash":  {"kernel-pgo": 10},
+	"mk.main.Main":                {"kernel": 36, "masked": 35},
+	"mk.std.crypto.AesGcm:Ctr":    {"masked": 10, "kernel-pgo": 7, "masked-pgo": 7},
 	"mk.std.crypto.AesGcm:New":    {"kernel-pgo": 2, "masked": 2, "masked-pgo": 2},
-	"mk.std.crypto.AesGcm:Tag":    {"kernel": 6, "kernel-pgo": 6, "masked": 2},
+	"mk.std.crypto.AesGcm:Tag":    {"kernel": 6, "masked": 2, "masked-pgo": 9},
 	"mk.std.crypto.Wipe":          {"kernel-pgo": 0, "masked-pgo": 0},
 	"mk.std.simd.kernel.Wipe":     {"kernel": 0, "masked": 0},
 	"mk.std.simd.kernel.CtrNi":    {"kernel-pgo": 12},
@@ -251,11 +261,14 @@ var cr2CtInstance = regexp.MustCompile(`\.[0-9a-f]{16}$`)
 // cr2CtNi requires absent there).
 var cr2CtAbsent = map[string][]string{
 	"mk.std.crypto.AesGcm:Block":          {"*"},
-	"mk.std.crypto.AesGcm:Ghash":          {"masked", "masked-pgo"},
+	"mk.std.crypto.AesAddRoundKey":        {"masked-pgo"}, // AesEncrypt4, AesGcm:Ctr
+	"mk.std.crypto.AesGcm:Ghash":          {"kernel-pgo", "masked", "masked-pgo"},
 	"mk.std.crypto.AesInterleaveIn":       {"*"},
 	"mk.std.crypto.AesInterleaveOut":      {"*"},
 	"mk.std.crypto.AesMixColumns":         {"*"},
-	"mk.std.crypto.AesOrtho":              {"kernel-pgo"}, // AesSchedule
+	"mk.std.crypto.AesOrtho":              {"kernel-pgo", "masked-pgo"}, // AesSchedule, AesSubWord
+	"mk.std.crypto.AesSbox":               {"masked-pgo"},               // AesSchedule, AesSubWord, AesGcm:Ctr
+	"mk.std.crypto.AesShiftRows":          {"masked-pgo"},               // AesGcm:Ctr
 	"mk.std.crypto.AesSubWord":            {"*"},
 	"mk.std.crypto.Be32":                  {"*"},
 	"mk.std.crypto.Be64":                  {"kernel", "masked", "masked-pgo"},
@@ -275,8 +288,8 @@ var cr2CtAbsent = map[string][]string{
 	"mk.std.crypto.PutBe64":               {"*"},
 	"mk.std.crypto.PutLe32":               {"*"},
 	"mk.std.crypto.PutLe64":               {"kernel", "masked", "masked-pgo"},
-	"mk.std.simd.kernel.AesCtr":           {"masked", "masked-pgo"},
-	"mk.std.simd.kernel.AesEncryptBlocks": {"masked", "masked-pgo"},
+	"mk.std.simd.kernel.AesCtr":           {"kernel-pgo", "masked", "masked-pgo"},
+	"mk.std.simd.kernel.AesEncryptBlocks": {"kernel-pgo", "masked", "masked-pgo"},
 	"mk.std.simd.kernel.BlocksNi":         {"masked", "masked-pgo"},
 	"mk.std.simd.kernel.Counter":          {"*"},
 	"mk.std.simd.kernel.CtrNi":            {"masked", "masked-pgo"},
@@ -303,8 +316,10 @@ var cr2CtAbsent = map[string][]string{
 }
 
 // cr2CtMust are functions every build must hold out of line, so the check
-// cannot pass by reading nothing.
-var cr2CtMust = []string{"mk.std.crypto.AesEncrypt4", "mk.std.crypto.AesSbox", "mk.std.crypto.GhashPortable"}
+// cannot pass by reading nothing: the portable AES rounds and GHASH. The
+// S-box, inlined into the rounds' callers under masked-pgo, is held out of
+// line in the other builds by ctRequirePresent.
+var cr2CtMust = []string{"mk.std.crypto.AesEncrypt4", "mk.std.crypto.GhashPortable"}
 
 // cr2CtChecked reports whether fn is on the probe's secret path and read
 // here: std.crypto's functions (std.hash's are std-hash2's test), the
@@ -441,12 +456,13 @@ func cr2CtBuild(t *testing.T, objdump string, forces []sdForce, pgo bool) ([]ctI
 // no copy, by build (ctRequirePresent): in the masked builds the AES and GHASH instruction path
 // s8AesOff leaves out (the kernel's Ni functions, their helpers and
 // callers; GhashBlocks and GhashKey only without PGO, which keeps their
-// guard). Under PGO, AesMixColumns has no out-of-line call or inline DIE.
-// Its only source caller is AesEncrypt4, which applies the straight-line
-// transform in every non-final round. cr2CtMust requires that caller's
-// emitted body in both PGO modes, and its jump allowance covers the loop.
+// guard). Under kernel-pgo, AesMixColumns has no out-of-line call or
+// inline DIE. Its only source caller is AesEncrypt4, which applies the
+// straight-line transform in every non-final round. cr2CtMust requires
+// that caller's emitted body, and its jump allowance covers the loop;
+// under masked-pgo the DWARF records its copy in AesGcm:Ctr.
 var cr2CtUnrecorded = map[string][]string{
-	"mk.std.crypto.AesMixColumns":    {"kernel-pgo", "masked-pgo"},
+	"mk.std.crypto.AesMixColumns":    {"kernel-pgo"},
 	"mk.std.simd.kernel.BlocksNi":    {"masked", "masked-pgo"},
 	"mk.std.simd.kernel.Counter":     {"masked", "masked-pgo"},
 	"mk.std.simd.kernel.CtrNi":       {"masked", "masked-pgo"},
