@@ -2,9 +2,9 @@
 // person, headless on every target or through a real window on Windows,
 // and an interactive session paints with the mouse.
 //
-// What: Main, HelpText, Run (the shared step loop), Common (the steps that
-// need no window), Synth (the events a headless run feeds), the error
-// texts, and the export command.
+// What: Main, HelpText, CmdCheckScript (the headless step loop), Common (the
+// steps that need no window), Synth (the events a headless run feeds), the
+// error texts, and the export and check-shaders commands.
 //
 // How: a step either produces window events (posted for real by
 // src/main/window.mk, made up here when headless) or acts on the program's
@@ -18,6 +18,7 @@ import std.window
 import src.app
 import src.doc
 import src.script
+import src.shaders
 
 const ExitOk: int = 0
 const ExitFail: int = 1
@@ -31,6 +32,7 @@ const HelpText: str = """
       script SCRIPT [options]     run SCRIPT through a real window (Windows)
       draw [FILE] [options]       paint with the mouse; FILE is loaded and saved on close
       export FILE OUT.png         paint a saved FILE and write it as a PNG
+      check-shaders               check the embedded shaders against their recorded hashes
       help                        print this help text
 
     window options:
@@ -254,7 +256,10 @@ CmdCheckScript(sys: &System, args: []str): int {
     for i in 0..sc.steps.Len() {
         st := &sc.steps[i]
         done := Common(sys, mut ap, px, st) else e { return Failed(sys, path, e) }
-        if !done {
+        if done {
+            // A load replaces the picture: repaint before the next step.
+            _ = ap.Sync(px)
+        } else {
             Synth(sys, mut ap, px, st, mut last) else e { return Failed(sys, path, e) }
         }
         if ap.closing {
@@ -392,6 +397,14 @@ export Main(sys: &System): int {
     }
     if cmd.Eq(&"export") {
         return CmdExport(sys, rest)
+    }
+    if cmd.Eq(&"check-shaders") {
+        n := shaders.VerifyAll(sys.arena) else {
+            _ = sys.PrintErr("sketch: the embedded shaders do not match their hashes, or fail CheckShader\n") else {}
+            return ExitFail
+        }
+        _ = sys.Print("shaders: {n} ok\n", (n)) else {}
+        return ExitOk
     }
     if cmd.Eq(&"script") {
         if rest.Len() < 1 {

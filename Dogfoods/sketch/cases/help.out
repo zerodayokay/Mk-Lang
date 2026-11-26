@@ -5,6 +5,7 @@ commands:
   script SCRIPT [options]     run SCRIPT through a real window (Windows)
   draw [FILE] [options]       paint with the mouse; FILE is loaded and saved on close
   export FILE OUT.png         paint a saved FILE and write it as a PNG
+  check-shaders               check the embedded shaders against their recorded hashes
   help                        print this help text
 
 window options:

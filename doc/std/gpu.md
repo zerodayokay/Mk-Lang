@@ -41,7 +41,7 @@ import std.gpu
 
 - **Targets.** `x86_64-windows`. On every other target the module compiles, and `Adapters` and `Open` fail with `Unsupported`, so a program can check for a GPU and carry on without one.
 - **Direct3D 12.** An adapter at feature level 11_0 or higher. WARP, the software adapter Windows ships, is always present: `DeviceOptions.software = true` picks it, which is how tests and machines without a GPU run. `Backend.Auto` tries Direct3D 12 first.
-- **Vulkan.** A Vulkan 1.3 driver (`vulkan-1.dll`, loaded at run time; nothing is linked). Without one, `Open` with `Backend.Vulkan` fails with `NoAdapter`.
+- **Vulkan.** A Vulkan 1.3 driver (`vulkan-1.dll`, loaded at run time; nothing is linked). Without one, `Adapters` lists no Vulkan adapter and `Open` with `Backend.Vulkan` fails.
 - **Debug layers.** `DebugMode.Validate` uses the Direct3D 12 debug layer (the Windows "Graphics Tools" optional feature) or the Vulkan validation layers (the Vulkan SDK) when installed, and goes on without them; `DebugMode.Strict` fails with `Missing(feature: Feature.DebugLayer)` when they are absent.
 - **Shaders.** Both blobs of every shader, SPIR-V and DXIL, made ahead of time from HLSL; see [Compiling shaders](#compiling-shaders). Nothing compiles shaders at run time.
 
@@ -60,7 +60,7 @@ import std.gpu
 
 - Recording only stores commands; nothing calls the driver until `Submit`, which replays them in one go. A pass's calls cost a few stores each.
 - Synchronisation is the library's: it tracks the state of every buffer and every texture subresource and inserts the barriers each use needs, including between passes and between a copy and a draw. A program never writes a barrier.
-- Draw and dispatch state is checked when it is recorded: a draw with no pipeline, a bind group whose layout does not match the pipeline's, a missing vertex or index buffer, or a dynamic offset count that differs from the layout fails the recording with `Invalid`, and `at` gives the index of the offending command.
+- Draw and dispatch state is checked as it is recorded: a draw with no pipeline, a bind group whose layout does not match the pipeline's, a missing vertex or index buffer, or a dynamic offset count that differs from the layout is noted, and `Encoder.Submit` then fails with the first one, `Invalid(misuse, at)` with `at` the index of the offending command, before anything reaches the driver. The encoder is still the caller's, to `Abandon`.
 - `Device.WriteBuffer` and `Device.WriteTexture` copy at once through an upload ring and are ordered before the next submit. `Device.ReadTexture` waits for the GPU and copies a region into an arena.
 - A buffer the CPU reads or writes directly is a staging buffer: `map_read` with only `copy_dst`, or `map_write` with only `copy_src`. Copy into or out of it on the encoder; `Device.MapRead` waits for the GPU's last use and returns a linear `Mapped` view, ended by `Unmap`.
 

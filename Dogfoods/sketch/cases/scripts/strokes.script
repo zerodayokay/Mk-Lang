@@ -39,7 +39,6 @@ save drawing.sketch
 print
 key clear
 expect strokes 4 undone 0
-key undo
 load drawing.sketch
 expect saved drawing.sketch
 expect strokes 3 undone 0
