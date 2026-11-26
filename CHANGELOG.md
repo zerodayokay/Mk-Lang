@@ -119,6 +119,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 ### Fixed
 
 - The borrow checker now keeps the loans of moved call arguments live in argument slots across the remaining arguments (including reborrows) of the same call, catching aliasing exclusive borrows such as `F(p, mut *p)`, `xs.Sort(fn(a, b) { xs[0] = 1; ... })`, and `LineConnRead(l, io, mut l.rb[..])` (`E0501`), and scopes `allocSelf` on hidden capture environments per capture field so storing a shorter-lived capture loan into a captured `Arena` is rejected (`E0609`).
+- Fixed Windows task-slot stack guard initialization (`std.rt`/`std.task`): fresh, grown, and trimmed task slots (and `Start`'s non-task stack) now establish the full 20 KiB `TaskGuarantee + 4096` `PAGE_GUARD` window via `sys.GuardPages` instead of a single 4 KiB guard page, preventing hardware exceptions (including `x86_64-windows` release `TrapForm` `ud1` calls) near the top of a fresh stack from overflowing past a single guard page into uncommitted memory on hosts with larger CET / AVX-512 / AMX exception frames.
 
 ## 0.5.0 (2026-11-23)
 

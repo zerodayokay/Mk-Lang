@@ -111,12 +111,22 @@ export GuardBytes(): int {
 }
 // FreshCommit is the top a fresh Windows slot commits: one page, which
 // holds the 512-byte top, the usual argument block and the initial frame; a
-// task that needs more grows through the PAGE_GUARD page below it as any
-// Windows thread stack does (one guard fault per page, on the slot's first
-// use only: a reused slot keeps its pages). One page rather than 8 KiB
-// keeps 4 KiB less committed per idle task (TestRtSched_IdleWindows bounds
-// an idle task's commit).
+// task that needs more grows through the WinGuardBytes PAGE_GUARD window
+// below it as any Windows thread stack does (one guard fault per page, on
+// the slot's first use only: a reused slot keeps its pages). One page
+// rather than 8 KiB keeps 4 KiB less committed per idle task
+// (TestRtSched_IdleWindows bounds an idle task's commit).
 const FreshCommit: int = 4096
+
+/// WinGuardBytes is the PAGE_GUARD window below a Windows stack's StackLimit:
+/// std.task's TaskGuarantee (16 KiB) plus one page (20 KiB), matching the
+/// guard region Windows itself maintains for GuaranteedStackBytes = 16384.
+/// Keeping all five guard pages committed from the start ensures a hardware
+/// exception (such as a release TrapForm ud1) near the top of a fresh or
+/// trimmed slot never writes its kernel exception frame (which can exceed
+/// 8 KiB on CET / AVX-512 / AMX hosts) past a single guard page into
+/// uncommitted memory. Fits inside the smallest 64 KiB slot class.
+export const WinGuardBytes: int = 20480
 
 /// The guard kind of Linux slots: GuardUntried until the first
 /// slot is prepared, GuardLight while madvise(MADV_GUARD_INSTALL) works (the
@@ -251,7 +261,7 @@ RegionOf(class: u8): *Region {
 }
 
 // Prepare makes a never-used slot usable. Windows: the top
-// FreshCommit bytes, then a PAGE_GUARD page below them. Linux: the
+// FreshCommit bytes, then a WinGuardBytes PAGE_GUARD window below them. Linux: the
 // whole slot read-write, then a light guard on its lowest page; if the
 // kernel refuses it, that page is made PROT_NONE and every later slot is
 // prepared the older way (GuardProt): read-write above the PROT_NONE page,
@@ -268,7 +278,7 @@ Prepare(top: uint, slot: int, retried: bool): bool {
             if !sys.Commit(c, FreshCommit) {
                 return false
             }
-            if !sys.GuardPage(raw.Offset(c, -4096)) {
+            if !sys.GuardPages(raw.Offset(c, -WinGuardBytes), WinGuardBytes) {
                 return false
             }
             h := raw.FromAddr[SlotHeader](top - Trunc[uint](HeaderBytes))
@@ -307,8 +317,8 @@ Prepare(top: uint, slot: int, retried: bool): bool {
 }
 
 /// GrowTop commits the top need bytes of a Windows slot when they are not
-/// committed yet, moving the guard page below them. Linux slots are
-/// committed whole.
+/// committed yet, moving the WinGuardBytes PAGE_GUARD window below them.
+/// Linux slots are committed whole.
 /// False when the OS refuses the commit. O(1): at most one commit and one guard
 /// move; commits need bytes of the slot.
 export GrowTop(h: *SlotHeader, need: int): bool {
@@ -323,7 +333,12 @@ export GrowTop(h: *SlotHeader, need: int): bool {
         want := (need + 4095) / 4096 * 4096
         top := raw.Addr(h) + Trunc[uint](HeaderBytes)
         lo := raw.FromAddr[u8](top - Trunc[uint](want))
-        if !sys.Commit(lo, want - have) || !sys.GuardPage(raw.Offset(lo, -4096)) {
+        slot := 1 << ClassShift((*h).class)
+        var guard := slot - want
+        if guard > WinGuardBytes {
+            guard = WinGuardBytes
+        }
+        if !sys.Commit(lo, want - have) || (guard > 0 && !sys.GuardPages(raw.Offset(lo, -guard), guard)) {
             return false
         }
         (*h).committed_pages = Trunc[u16](want / 4096)
@@ -548,11 +563,11 @@ export TrimSlots(class: u8): int {
 // is discarded (sys.Discard, madvise(MADV_DONTNEED)), so its pages
 // are dropped and read zero on the next touch, with the mapping and its
 // protection kept; the guard page of either kind is not in the range.
-// Windows: everything below the page under the top FreshCommit bytes is
-// decommitted, and that page, still committed (the slot had grown past
-// it), becomes the PAGE_GUARD page again, so the slot is as Prepare leaves
-// a fresh one, with committed_pages to match (the next task's StackLimit,
-// spawn.mk); a slot that never grew is left.
+// Windows: everything below the WinGuardBytes window under the top
+// FreshCommit bytes is decommitted, and those WinGuardBytes pages, still
+// committed (or newly armed), become the PAGE_GUARD window again, so the
+// slot is as Prepare leaves a fresh one, with committed_pages to match
+// (the next task's StackLimit, spawn.mk); a slot that never grew is left.
 // Neither target can refuse (one madvise, no VMA split, so nothing can
 // fail near vm.max_map_count). False only from the test hook TrimRefuse: the slot
 // is then cold and unready, and TakeSlot readies it (ReadyCold) before a
@@ -565,14 +580,21 @@ TrimOne(h: *SlotHeader, slot: int): bool {
             if int((*h).committed_pages) * 4096 <= FreshCommit {
                 return true
             }
-            g := top - Trunc[uint](FreshCommit) - 4096
+            g := top - Trunc[uint](FreshCommit) - Trunc[uint](WinGuardBytes)
             sys.Decommit(raw.FromAddr[u8](base), Trunc[int](g - base))
-            // A committed page changes protection: no commit charge, so the
-            // call does not fail for want of memory. If it did, the page
-            // stays read-write and counted, and a task that grows past it
+            // Committed pages change protection: no commit charge, so the
+            // call does not fail for want of memory. If it did, the pages
+            // stay as committed and counted, and a task that grows past them
             // faults as on a full slot.
-            guarded := sys.GuardPage(raw.FromAddr[u8](g))
-            (*h).committed_pages = Trunc[u16](if guarded { FreshCommit / 4096 } else { FreshCommit / 4096 + 1 })
+            guarded := sys.GuardPages(raw.FromAddr[u8](g), WinGuardBytes)
+            if guarded {
+                (*h).committed_pages = Trunc[u16](FreshCommit / 4096)
+            } else {
+                cap_pages := (FreshCommit + WinGuardBytes) / 4096
+                if int((*h).committed_pages) > cap_pages {
+                    (*h).committed_pages = Trunc[u16](cap_pages)
+                }
+            }
             return true
         }
         sys.Discard(TrimLo(h, slot), slot - GuardBytes() - 4096)

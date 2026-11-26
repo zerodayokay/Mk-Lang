@@ -204,6 +204,7 @@ test "RT-Layout-SlotTop the header, the task record and the scope record fit the
     Assert(SizeOf[rt.SlotHeader]() <= rt.HeaderBytes)
     Assert(SizeOf[Task]() <= TaskOffset)
     Assert(rt.HeaderBytes + TaskOffset == TopBytes)
+    Assert(int(TaskGuarantee) + 4096 == rt.WinGuardBytes)
     Assert(SizeOf[ScopeRec]() <= ErrOffset)
     Assert(SizeOf[ScopeRec]() <= SizeOf[Scope]())
 }
