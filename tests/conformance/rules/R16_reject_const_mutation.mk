@@ -14,11 +14,11 @@ const Count = 1
 const Maybe: ?ConstPair = some(ConstPair(x: 0))
 
 WriteConst() {
-    Count = 2 // <- E0301
-    (Pairs[0].x) += 1 // <- E0301
-    _ = mut Pairs[0].x // <- E0301
-    _ = mut Pairs[..] // <- E0301
-    Pairs[0].Set() // <- E0301
+    Count = 2            // <- E0301
+    (Pairs[0].x) += 1    // <- E0301
+    _ = mut Pairs[0].x   // <- E0301
+    _ = mut Pairs[..]    // <- E0301
+    Pairs[0].Set()       // <- E0301
     for p in mut Pairs { // <- E0301
         p.Set()
     }
