@@ -3,12 +3,13 @@
 // as the translation's entry does.
 // What: tests that a C object's candidate keeps its negative lookups and
 // misses once one exists, that a path that existed when the candidate was
-// saved is no negative, and that a shadowing header added between two
-// builds rebuilds the shim and the C source's objects, not only the
-// binding.
+// saved is no negative, that a shadowing header added between two builds
+// rebuilds the shim and the C source's objects, not only the binding,
+// also through nested include directories, and that a header found beside
+// its includer leaves the translation's entry a hit.
 // How: cobjKey and cobjCandidate over a store with a fake dependency
-// file, and a package with include_dirs ["a/inc", "b/inc"] built twice
-// against one cache.
+// file, and packages with include_dirs built or checked twice against one
+// cache.
 
 package driver
 
@@ -67,7 +68,8 @@ func TestCObj_NegativeLookups(t *testing.T) {
 	if err := os.WriteFile(shadow, []byte("int y;\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cobjCandidate(st, dh, base); ok {
+	// The next build's DepHasher: one remembers its stats for a build.
+	if _, ok := cobjCandidate(st, cimport.NewDepHasher(st), base); ok {
 		t.Error("a header shadowing a dependency still hit the candidate")
 	}
 }
@@ -135,6 +137,61 @@ func TestCImport_IncludeDirsShadow(t *testing.T) {
 		want := c.magic + " " + c.magic + " " + c.magic + "\n"
 		if out := buildRun(t, dir, cache); out != want {
 			t.Errorf("after adding %s printed %q, want %q", c.path, out, want)
+		}
+	}
+}
+
+// TestCImport_NestedIncludeDirsShadow: with include_dirs ["inc",
+// "inc/sub"], lib/k.h's "sub/y.h" is found through inc; a sub/y.h added to
+// the package root shadows it, and the binding, the shim and the C source
+// all read the new one.
+func TestCImport_NestedIncludeDirsShadow(t *testing.T) {
+	needTools(t)
+	files := cBin("nested", "#include \"sub/y.h\"\nint k_fn(void);\nstatic inline int k_inl(void) { return DEP_MAGIC; }\n",
+		"#include \"lib/k.h\"\nint k_fn(void) { return DEP_MAGIC; }\n",
+		cMain("", "        a := k.k_inl()\n        b := k.k_fn()\n", "{a} {b} {c}", "a: a, b: b, c: k.DepMagic"))
+	files["pkg.mk"] = strings.Replace(files["pkg.mk"], "vendor: false)", `vendor: false, include_dirs: ["inc", "inc/sub"])`, 1)
+	files["inc/sub/y.h"] = "#define DEP_MAGIC 2\n"
+	dir := writeTree(t, files)
+	cache := t.TempDir()
+	if out := buildRun(t, dir, cache); out != "2 2 2\n" {
+		t.Fatalf("first build printed %q, want 2 2 2", out)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "y.h"), []byte("#define DEP_MAGIC 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := buildRun(t, dir, cache); out != "1 1 1\n" {
+		t.Errorf("after adding sub/y.h printed %q, want 1 1 1", out)
+	}
+}
+
+// TestCImport_SiblingIncludeHits: b/inc/x.h includes "y.h", found beside
+// it though a/inc, earlier on the path, has a y.h too; that a/inc/y.h is no
+// negative lookup, so a second check hits the translation.
+func TestCImport_SiblingIncludeHits(t *testing.T) {
+	tools := needTools(t)
+	files := cBin("sib", "#include \"x.h\"\nint k_fn(void);\n", "", cMain("", "        a := k.k_fn()\n", "{a} {c}", "a: a, c: k.DepMagic"))
+	files["pkg.mk"] = strings.Replace(files["pkg.mk"], "vendor: false)", `vendor: false, include_dirs: ["a/inc", "b/inc"])`, 1)
+	files["a/inc/y.h"] = "#define DEP_MAGIC 7\n"
+	files["b/inc/x.h"] = "#include \"y.h\"\n"
+	files["b/inc/y.h"] = "#define DEP_MAGIC 2\n"
+	dir := writeTree(t, files)
+	cache := t.TempDir()
+	for i, want := range []bool{false, true} {
+		s, err := NewSession(Config{Root: dir, Tools: tools, CacheDir: cache})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := s.Check()
+		if len(r.Report.Diags) > 0 {
+			t.Fatalf("check %d:\n%s", i, r.Report.Text(r.Sources))
+		}
+		view, _ := os.ReadFile(filepath.Join(dir, "gen", HostTarget().Name, "c", "k.mk"))
+		if s.w.cimports.hit != want || !strings.Contains(string(view), "export const DepMagic: i32 = 2") {
+			t.Errorf("check %d: hit %v, want %v; view:\n%s", i, s.w.cimports.hit, want, view)
 		}
 	}
 }

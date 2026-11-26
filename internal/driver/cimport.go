@@ -778,7 +778,7 @@ next:
 			}
 		}
 		for _, n := range c.Neg {
-			if _, err := os.Stat(n); err == nil {
+			if dh.Exists(n) {
 				continue next
 			}
 		}
@@ -815,15 +815,7 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dir
 			c.Deps = append(c.Deps, cobjDep{Path: p, Hash: h})
 			deps = append(deps, p)
 		}
-		// A negative that exists now was not picked by this compile (a
-		// quoted include found beside its includer first, which Negatives
-		// does not model): it shadows nothing, and keeping it would make
-		// the candidate miss on every build.
-		for _, n := range cimport.Negatives(deps, dirs) {
-			if _, err := os.Stat(n); err != nil {
-				c.Neg = append(c.Neg, n)
-			}
-		}
+		c.Neg = cimport.Negatives(deps, dirs)
 	}
 	return cobjObjKey(base, c), c, true
 }
