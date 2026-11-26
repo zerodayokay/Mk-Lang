@@ -45,7 +45,19 @@ An executable for `x86_64-linux` or `aarch64-linux` enters system-libc mode when
 
 In this mode the executable loads the system's dynamic loader (`/lib64/ld-linux-x86-64.so.2` or `/lib/ld-linux-aarch64.so.1`) and links `libc.so.6` and the named `.so` files. A Linux executable with neither trigger is static. [std.dl](dl.md#linux) shows the manifest of a program that needs only `std.dl`.
 
-This standalone Linux program prints its parent process ID.
+This Linux package prints its parent process ID. Its `pkg.mk` grants `app`
+permission to use `unsafe`.
+
+```mk
+// verdict: parse
+const Package = pkg.Package(
+    name: "posix-demo",
+    bins: [pkg.Bin(name: "posix-demo", root: "app", subsystem: "console")],
+    unsafe_modules: ["app"],
+)
+```
+
+Save this as `app/main.mk`.
 
 ```mk
 // verdict: parse
@@ -64,6 +76,7 @@ In system-libc mode:
 
 - `std.libc` is not linked, and a bin that reaches it is E0001. C sources and archives use the system's C library, so all C code shares one allocator.
 - The system stub includes std's `libc.so.6` list and the reached glibc functions of `c.posix`. For additional functions, supply a link whose `.def` names them. For example, `fabs` belongs to `libm.so.6`.
+- The view records default symbol versions through `GLIBC_2.34`. The generator omits function declarations redirected to a different ABI symbol, such as `strerror_r` and `scanf`.
 - mk links against a stub made from each link's list of names, so it builds from any host. A `.def` name with `@VERSION` binds that version. A name without one binds whichever version the loader picks, which for glibc is the oldest, so a list should give a version for every name. Versions differ by architecture: glibc's oldest is `GLIBC_2.2.5` on x86_64 and `GLIBC_2.17` on aarch64, so each target takes its own link and list. The oldest supported glibc is 2.34.
 - The program starts through `__libc_start_main`, and its threads are made with `pthread_create`. std keeps its own system calls for I/O, signals (never signals 32 and 33), processes and exit. So C `atexit` handlers do not run, and C stdio buffers are not flushed, at exit.
 - The executable exports nothing. A name that a link's list supplies and the executable also defines is E0001. Such names are the compiler's `memcpy`, `memmove`, `memset`, `memcmp` and `bcmp`, an `export extern` function, or a function of a C source.

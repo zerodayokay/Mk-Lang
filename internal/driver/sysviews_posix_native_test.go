@@ -1,5 +1,5 @@
 // Why: using the shipped POSIX view must select the glibc ABI on each Linux target.
-// What: exercises the embedded view in a standalone Mk program.
+// What: exercises the embedded view in a Mk package with no explicit links.
 // How: verifies the ELF dependency and symbol version, then runs on the matching host.
 
 package driver
@@ -7,7 +7,6 @@ package driver
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 
@@ -25,12 +24,12 @@ export Main(sys: &System): WriteError!void {
     try sys.Print("{parent}\n", (parent))
 }
 `
-	dir := writeTree(t, map[string]string{"main.mk": main})
+	dir := writeTree(t, sysPkg(main, nil))
 	for _, target := range []types.Target{types.X86_64Linux, types.Aarch64Linux} {
 		t.Run(target.Name, func(t *testing.T) {
 			for _, profile := range []types.Profile{types.Dev, types.Release} {
 				t.Run(fmt.Sprint(profile), func(t *testing.T) {
-					exe := buildProgram(t, filepath.Join(dir, "main.mk"), target, profile, t.TempDir())
+					exe := mustBuild(t, dir, target, profile)
 					spec := libcSpecs[target.Name]
 					interp, needed := elfDyn(t, exe)
 					if interp != spec.interp || !slices.Equal(needed, []string{"libc.so.6"}) {

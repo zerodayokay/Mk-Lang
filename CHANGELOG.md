@@ -4,7 +4,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ## Unreleased
 
-- `import c.posix` supplies glibc declarations on x86-64 and ARM64 Linux. Reaching a versioned POSIX function selects system-libc mode and links the matching symbol without a manifest. Imports used for types or constants keep the existing link mode. [System views](doc/reference.md#system-views)
+- `import c.posix` supplies glibc declarations on x86-64 and ARM64 Linux. Reaching a versioned POSIX function selects system-libc mode and links the matching symbol without a `pkg.Link`. Imports used for types or constants keep the existing link mode. [System views](doc/reference.md#system-views)
 
 ### Language
 

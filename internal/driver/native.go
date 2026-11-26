@@ -548,74 +548,18 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	if j.gro {
 		opt.GeneralRegsOnly, opt.Bin = true, j.name
 	}
-	var insts *mono.Instances
-	var ds []*diag.Diagnostic
-	var ie *source.InternalError
-	collect := func() {
-		ie = source.Guard("instances of "+j.mainMod, source.Span{}, func() {
-			insts, ds = mono.Collect(env, w.fromCRoots(w.buildRoots(j.mainMod, j.pkg, j.allFuncs, j.gro), j.lib != nil), opt)
-		})
-	}
-	j.timed("instances", func() {
-		// Decode cached non-std bodies reachable from this bin's modules in
-		// parallel before mono.Collect runs single-threaded; otherwise edit
-		// builds decode every unchanged module's bodies sequentially on one
-		// goroutine.
-		w.prefetchBinBodies(j)
-		collect()
-	})
-	if ie != nil {
-		return "", []*diag.Diagnostic{diag.FromInternal(ie)}
-	}
-	if len(ds) > 0 {
-		return "", ds
-	}
 	var cobjs []string
 	var ckeys []source.Hash
-	var cds []*diag.Diagnostic
 	cBuilt := false
-	buildC := func() {
-		cobjs, ckeys, cds = w.cObjects(ctx, tools, st, triple, w.cfg.Profile.Optimized(), work, cTargetFlags(w.cfg.Target, cpu, j.gro))
+	buildC := func() ([]string, []*diag.Diagnostic) {
+		var ds []*diag.Diagnostic
+		cobjs, ckeys, ds = w.cObjects(ctx, tools, st, triple, w.cfg.Profile.Optimized(), work, cTargetFlags(w.cfg.Target, cpu, j.gro))
 		cBuilt = true
+		return cobjs, ds
 	}
-	posix := posixFinal
-	if ds := w.unsupportedPosix(insts); len(ds) > 0 {
+	insts, posix, ds := w.nativeInstances(&j, env, &opt, buildC)
+	if len(ds) > 0 {
 		return "", ds
-	}
-	if !opt.LibcMode && len(w.posixNames(insts)) > 0 {
-		buildC()
-		if len(cds) > 0 {
-			return "", cds
-		}
-		// The provisional plan needs referenced extern vars for archive
-		// selection, but no pack ownership or emitted Mk code.
-		members := make([]int, len(insts.List))
-		for i := range members {
-			members[i] = i
-		}
-		globals := w.globalsOf(insts, []mono.Pack{{Members: members}}, j.pkg)
-		trial, planDs := w.linkPlanFor(insts, globals, cobjs, posixDiscover)
-		if len(planDs) > 0 {
-			return "", planDs
-		}
-		if trial != nil && len(trial.sos) != 0 {
-			if j.lib != nil {
-				return "", []*diag.Diagnostic{diag.New(diag.E0202, source.Span{},
-					"bin "+j.name+": reaching a c.posix function requires system-libc mode, which only an executable takes").
-					Text("target", w.cfg.Target.Name).Text("reason", "not-built")}
-			}
-			// linkedMods attached std exports for C's static fallback. A
-			// libc-mode bin keeps the program's roots and libc's allocator.
-			j.pkg = slices.DeleteFunc(slices.Clone(j.pkg), func(m *modNode) bool { return m.std })
-			posix, opt.LibcMode = posixSelected, true
-			j.timed("instances", collect)
-			if ie != nil {
-				return "", []*diag.Diagnostic{diag.FromInternal(ie)}
-			}
-			if len(ds) > 0 {
-				return "", ds
-			}
-		}
 	}
 	if isFree(w.cfg.Target) {
 		if fd := w.freeTaskUses(insts); len(fd) > 0 {
@@ -669,10 +613,9 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	// follow the packs' objects, by their own content keys. They come
 	// first here because their undefined names choose import libraries.
 	if !cBuilt {
-		buildC()
-	}
-	if len(cds) > 0 {
-		return "", cds
+		if _, ds := buildC(); len(ds) > 0 {
+			return "", ds
+		}
 	}
 	// The package graph's links (links.go): nil when none applies to the
 	// target, so the link is exactly the one a package without links gets.

@@ -8,10 +8,12 @@ package driver
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"mk/internal/diag"
 	"mk/internal/mono"
+	"mk/internal/source"
 	"mk/internal/types"
 )
 
@@ -22,6 +24,62 @@ const (
 	posixDiscover
 	posixSelected
 )
+
+// nativeInstances selects the runtime before Mk code generation. It only
+// probes the link plan when a reached POSIX call could change the mode.
+func (w *world) nativeInstances(j *nativeJob, env mono.Env, opt *mono.Options, buildC func() ([]string, []*diag.Diagnostic)) (*mono.Instances, posixMode, []*diag.Diagnostic) {
+	var insts *mono.Instances
+	var ds []*diag.Diagnostic
+	collect := func() {
+		if ie := source.Guard("instances of "+j.mainMod, source.Span{}, func() {
+			insts, ds = mono.Collect(env, w.fromCRoots(w.buildRoots(j.mainMod, j.pkg, j.allFuncs, j.gro), j.lib != nil), *opt)
+		}); ie != nil {
+			ds = []*diag.Diagnostic{diag.FromInternal(ie)}
+		}
+	}
+	j.timed("instances", func() {
+		// Decode reachable cached bodies in parallel before serial collection.
+		w.prefetchBinBodies(*j)
+		collect()
+	})
+	if len(ds) > 0 {
+		return nil, posixFinal, ds
+	}
+	if ds := w.unsupportedPosix(insts); len(ds) > 0 {
+		return nil, posixFinal, ds
+	}
+	if opt.LibcMode || len(w.posixNames(insts)) == 0 {
+		return insts, posixFinal, nil
+	}
+	cobjs, ds := buildC()
+	if len(ds) > 0 {
+		return nil, posixFinal, ds
+	}
+	// Archive selection needs referenced extern vars, but no pack ownership.
+	members := make([]int, len(insts.List))
+	for i := range members {
+		members[i] = i
+	}
+	globals := w.globalsOf(insts, []mono.Pack{{Members: members}}, j.pkg)
+	trial, ds := w.linkPlanFor(insts, globals, cobjs, posixDiscover)
+	if len(ds) > 0 {
+		return nil, posixFinal, ds
+	}
+	if trial == nil || len(trial.sos) == 0 {
+		return insts, posixFinal, nil
+	}
+	if j.lib != nil {
+		return nil, posixFinal, []*diag.Diagnostic{diag.New(diag.E0202, source.Span{},
+			"bin "+j.name+": reaching a c.posix function requires system-libc mode, which only an executable takes").
+			Text("target", w.cfg.Target.Name).Text("reason", "not-built")}
+	}
+	// linkedMods attached std exports for C's static fallback. A libc-mode
+	// bin keeps the program's roots and libc's allocator.
+	j.pkg = slices.DeleteFunc(slices.Clone(j.pkg), func(m *modNode) bool { return m.std })
+	opt.LibcMode = true
+	j.timed("instances", collect)
+	return insts, posixSelected, ds
+}
 
 // posixNames returns symbol -> version for the bin's reached libc functions.
 // A hand-written or package C import's extern of the same name cannot
