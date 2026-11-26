@@ -1,0 +1,8 @@
+# One textured cube, no extras.
+size 128 128
+clear 0.08 0.1 0.14 1
+camera 1.6 1.4 2.4 0 0 0 50
+light -0.5 -1 -0.4 1 0.96 0.9
+texture checker ../assets/checker.png
+mesh cube ../assets/cube.obj
+object box cube checker 0 0 0 30 1 1 1 1

@@ -1,7 +1,10 @@
-// Why: an arena must keep every live block valid while its frames come and go.
-// What: randomized frame and Alloc free tests for Arena.
-// How: a source allocator tracks and poisons returned chunks while the model
-// checks every live block after each operation.
+// Why: FreeOwnChunk returns chunks to the source when freed through
+// Alloc(), so a randomized ledger fuzz verifies no live block is ever
+// freed or overwritten across nested arenas and resets.
+// What: TaFzLedger, TaFzState, the TaFz* fuzz harness and the frame/Alloc
+// fuzz test block (split from tests_arena.mk).
+// How: runs 192 deterministic seeds against a poisoning ledger heap under
+// mk test --std=std.core.
 
 import std.raw
 

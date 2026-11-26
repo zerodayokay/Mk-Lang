@@ -69,13 +69,62 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 
 ## std.net
 
-- `Secure.Of[T: Share](c: core.ErasedCall): Secure from c` (reference): the constructor a TLS library calls to hand its connector to `std.http` and `std.websocket`; its argument is the erased call std.core builds, so a program names it only when it writes a TLS stack of its own, and the dogfoods take `tls.Connector`, as a program that wants https does. Covered instead: its execution, which `cover` finds in fetch's https and wss cases (COVERAGE.md lists them under this line), and std/tls's tests, which build the connector through it.
+- `error StreamReset(code: u64)` (both): the dogfoods check cancellation at the HTTP exchange boundary. Covered instead: std/net/pipe/tests_pipe.mk's reset cases.
+- `error MuxClosed(code: u64, app: bool, peer: bool)` (both): the dogfoods check reconnects and closure at the HTTP exchange boundary. Covered instead: std/net/pipe/tests_pipe.mk's connection close cases.
+- `Secure.Of[T: Share](c: core.ErasedCall): Secure from c` (both): the constructor of a connector that negotiates nothing; its argument is the erased call std.core builds, so a program names it only when it writes a TLS stack of its own, and std.tls's connectors are made by `Secure.OfAlpn`. Covered instead: the test connectors of std/http (tests_secure.mk, tests_limits.mk, tests_proxy.mk) and std/websocket (tests_sweep.mk), and std/std-net_secure_test.go, which also checks that a mismatched call panics.
+- `Secure.OfAlpn[T: Share](c: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn], n: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn]): Secure from c, n` (reference): the constructor a TLS library calls to hand its connector to `std.http` and `std.websocket`; its arguments are typed calls std.core builds, so a program names it only when it writes a TLS stack of its own, and the dogfoods take `tls.Connector`, as a program that wants https does. Covered instead: its execution, which `cover` finds in fetch's https and wss cases, and std/std-net_secure_test.go, which also checks that a call of the wrong type is E0301.
+- `Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn` (reference): Fetch and Chat exercise HTTP/2 over TLS through std.http. Covered instead: std/tls/tests_negotiate.mk, std/std-tls_negotiate_test.go (against Go's crypto/tls in both roles) and std/std-net_secure_test.go.
 - `Stream.SendHandles(&self, io: Io, data: []u8, handles: []Pass): net.Error!void` (both): no dogfood calls it. Covered instead: std/net/tests_unix.mk's SendHandles and RecvHandles blocks.
 - `Stream.RecvHandles(&self, a: &Alloc, io: Io, buf: mut []u8, into: mut HeapList[Passed]): net.Error!int` (both): no dogfood calls it. Covered instead: std/net/tests_unix.mk's SendHandles and RecvHandles blocks.
 - `Passed.Close(self)` (both): no dogfood calls it. Covered instead: std/net/tests_unix.mk's RecvHandles blocks and std/proc/tests_handles.mk.
 - `Passed.Adopt(p: rt.Passed): Passed` (both): no dogfood calls it. Covered instead: std/net/tests_unix.mk's RecvHandles blocks and std/proc/tests_handles.mk's Inherited blocks.
 - `enum Pass {` (both): no dogfood calls it. Covered instead: std/net/tests_unix.mk's SendHandles blocks.
 - `enum Passed {` (both): no dogfood calls it. Covered instead: std/net/tests_unix.mk and std/proc/tests_handles.mk.
+
+- `Datagram.Connect(&self, io: Io, to: Addr): net.Error!void` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `Datagram.LocalAddr(&self): Addr` (both): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `Datagram.SetBuffers(&self, recv: int, send: int): net.Error!void` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `Datagram.Share(self): SharedDatagram` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `SharedDatagram.Send(&self, io: Io, data: []u8, to: ?Addr): net.Error!void` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `SharedDatagram.SendBatch(&self, io: Io, buf: []u8, seg: int, to: ?Addr): net.Error!void` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `SharedDatagram.Recv(&self, io: Io, buf: mut []u8): net.Error!(n: int, peer: Addr)` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `SharedDatagram.TryRecv(&self, io: Io, buf: mut []u8): net.Error!?(n: int, peer: Addr)` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `SharedDatagram.Port(&self): int` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `SharedDatagram.LocalAddr(&self): Addr` (both): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `SharedDatagram.Close(self)` (reference): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `linear struct SharedDatagram {` (both): the HTTP/3 dogfoods delegate UDP socket handling to QUIC. Covered instead: std/net/tests_udp_shared.mk.
+- `Datagram.SetDontFragment(&self): net.Error!void` (reference): QUIC configures datagram fragmentation internally. Covered instead: std/std-quic_dgram_test.go.
+- `Datagram.DontFragment(&self): net.Error!bool` (both): QUIC configures datagram fragmentation internally. Covered instead: std/std-quic_dgram_test.go.
+- `Stream.SetBuffers(&self, recv: int, send: int): net.Error!void` (both): the dogfoods use the TCP defaults. Covered instead: the socket-buffer checks in std/net/tests_net.mk.
+- `MuxStream.Id(&self): i64` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Open(&self, io: Io, uni: bool, wait: bool): net.Error!?MuxStream` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Accept(&self, io: Io, uni: bool, wait: bool): net.Error!?MuxStream` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Read(&self, io: Io, s: &MuxStream, buf: mut []u8, wait: bool): net.Error!?int` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Write(&self, io: Io, s: &MuxStream, data: []u8, fin: bool): net.Error!void` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Credit(&self, s: &MuxStream, total: i64)` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Wait(&self, io: Io, ids: []i64, incoming: bool): net.Error!MuxReady` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Reset(&self, s: &MuxStream, code: u64)` (both): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Stop(&self, s: &MuxStream, code: u64)` (both): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Release(&self, s: MuxStream)` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Limits(&self): MuxLimits` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `Mux.Close(self, io: Io, code: u64): net.Error!void` (reference): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `enum MuxReady {` (both): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `struct MuxLimits {` (both): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `linear struct MuxStream {` (both): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `linear view struct Mux {` (both): the HTTP/3 dogfoods work through HTTP exchanges. Covered instead: std/net/pipe/tests_pipe.mk and the QUIC loopback in std/quic/tests_conn.mk.
+- `MuxListener.Run(&self, io: Io): net.Error!void` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `MuxListener.Accept(&self, io: Io): net.Error!Mux` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `MuxListener.Port(&self): int` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `MuxListener.Close(self)` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `MuxDialer.Dial(&self, h: &Heap, io: Io, to: Addr, host: str, alpn: str): net.Error!Mux from h` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `MuxServer.Listen(&self, h: &Heap, io: Io, addr: str, alpn: str): net.Error!MuxListener from h, self` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `linear view struct MuxListener {` (both): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `plain view struct MuxDialer {` (both): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `plain view struct MuxServer {` (both): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `Mux.Of[T: MuxEngine + Send + Share](h: &Heap, b: core.SealedBox): Mux from h, b` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `MuxListener.Of[T: MuxListening + Send + Share](h: &Heap, b: core.SealedBox): MuxListener from h, b` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `MuxDialer.Of[T: Share](c: core.ErasedCall): MuxDialer from c` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
+- `MuxServer.Of[T: Share](c: core.ErasedCall): MuxServer from c` (reference): std.http and std.quic construct and drive the multiplexed endpoints. Covered instead: the client and server loopback in std/quic/tests_conn.mk and std/quic/tests_sim_endpoint.mk.
 
 ## std.fs
 
@@ -108,8 +157,7 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 ## std.http
 
 - `error ProxyRefused(code: int)` (both): no dogfood calls it. Covered instead: std/http/tests_proxy.mk's CONNECT blocks.
-- `http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in chat's web cases through ServeWith, and std/http/tests_serveon.mk's blocks.
-- `http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void` (both): no dogfood calls it. Covered instead: std/http/tests_servechan.mk's blocks.
+- `http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void` (both): no dogfood calls it. Covered instead: std/http/tests_servechan.mk's blocks.
 
 ## std.crypto
 
@@ -117,6 +165,11 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 - `crypto.Argon2id(h: &Heap, c: Argon2Cost, password: []u8, salt: []u8, secret: []u8, ad: []u8, out: mut []u8): crypto.BadLength|crypto.BadCost|OutOfMemory!void` (both): no dogfood calls it. Covered instead: std/crypto/tests_argon2.mk's RFC 9106 blocks.
 - `crypto.Argon2idVerify(h: &Heap, c: Argon2Cost, password: []u8, salt: []u8, secret: []u8, ad: []u8, tag: []u8): crypto.BadLength|crypto.BadCost|OutOfMemory!bool` (both): no dogfood calls it. Covered instead: std/crypto/tests_argon2.mk's blocks.
 - `struct Argon2Cost {` (both): no dogfood calls it. Covered instead: std/crypto/tests_argon2.mk's blocks.
+- `crypto.ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8` (both): QUIC applies this header protection for the ChaCha20 suite. The HTTP/3 dogfoods leave suite selection to QUIC. Covered instead: std/crypto/tests_block.mk's RFC 8439 2.3.2 and RFC 9001 A.5 blocks.
+- `crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.BadKey|crypto.BadLength!void` (reference): QUIC derives packet keys for the HTTP/3 dogfoods. Covered instead: std/crypto/tests_block.mk's RFC 9001 A.1 and A.5 blocks and its length blocks.
+- `Aes.New(key: []u8): crypto.BadLength!Aes` (reference): QUIC sets up AES header protection for Initial packets in the HTTP/3 dogfoods. Covered instead: std/crypto/tests_block.mk's FIPS 197 and RFC 9001 A.2 and A.3 blocks.
+- `Aes.Encrypt(&self, block: &[16]u8): crypto.BadKey![16]u8` (reference): QUIC applies AES header protection to Initial packets in the HTTP/3 dogfoods. Covered instead: std/crypto/tests_block.mk's FIPS 197 and RFC 9001 A.2 and A.3 blocks.
+- `Aes.Wipe(mut self)` (reference): QUIC wipes temporary AES state internally in the HTTP/3 dogfoods. Covered instead: std/crypto/tests_block.mk's Wipe block.
 
 ## std.compress
 
@@ -140,3 +193,12 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 ## std.x509
 
 - `x509.SystemPool(h: &Heap, io: Io): x509.Error!&Pool` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in fetch's handshake cases through std.tls, and std/x509/tests_system.mk's blocks.
+
+## std.sim
+
+- `Sim.Blackhole(mut self, port: int, on: bool)` (both): the networking dogfoods inject loss through SetNetFaults. Covered instead: the Blackhole and Rebind blocks in std/sim/tests_netfaults.mk.
+- `Sim.Rebind(mut self, port: int)` (both): the networking dogfoods inject loss through SetNetFaults. Covered instead: the Blackhole and Rebind blocks in std/sim/tests_netfaults.mk.
+
+## std.quic
+
+- `const Version1: u32 = 0x00000001` (both): the QUIC implementation negotiates the protocol version internally. Covered instead: the packet and version negotiation blocks in std/quic/tests_packet.mk and std/quic/tests_sim_endpoint.mk.

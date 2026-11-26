@@ -2510,7 +2510,7 @@ export Main(sys: &System): WriteError!void {
 2
 ```
 
-- A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. The rules are in [globals](memory.md#r16-globals).
+- A global is never assigned or borrowed `mut` (E0507), nor moved out (E0409): its methods change it. E0507 applies to a qualified name such as `settings.Count` too. The rules are in [globals](memory.md#r16-globals).
 - A table of atomics starts zeroed with [`mem.Zeroed`](#zero-valid-types), since `[e; n]` copies its `e` and an atomic is not Plain: `var Table: [4096]atomic.Atomic[u64] = mem.Zeroed[[4096]atomic.Atomic[u64]]()`.
 - Its initial value is computed at compile time, as a constant's is.
 
@@ -6453,6 +6453,7 @@ The first line names the cause and the position. A backtrace of the calls follow
 | `free non-empty` | `FreeEmpty` on a container that is not empty |
 | `wrong allocator` | A heap container given a different allocator from the one it was made with |
 | `suspend in callback` | A wait in code that runs off a task, such as a callback from C on a system stack |
+| `unresolved function` | A call of a function of a lazily bound DLL that cannot be loaded or does not export it ([lazy libraries](#linking-libraries)); the message names the function and the DLL |
 
 Library functions also panic on misuse their documentation names: a `Chunks` length below 1, a negative `Chan` capacity, or an erased `dyn` reference recovered as a type it was not made from.
 
@@ -9927,7 +9928,10 @@ extern take_vec(v: simd.Vec[f32, 4]): f32 // <- E1107
 **Linking.** An `extern` function is defined by a C source of the package, or by a library. A name that std does not define itself resolves to the first library that exports it:
 
 1. the links of the bin's packages, in manifest order, the root package's first ([linking libraries](#linking-libraries));
-2. when building for `x86_64-windows` on a Windows host, the system DLLs `kernel32`, `user32`, `gdi32`, `winspool`, `comdlg32`, `advapi32`, `shell32`, `ole32`, `oleaut32` and `ws2_32`.
+2. for `x86_64-windows`, the DLLs std binds lazily (`crypt32.dll`), loaded from System32 on the first call;
+3. when building for `x86_64-windows` on a Windows host, the system DLLs `kernel32`, `user32`, `gdi32`, `winspool`, `comdlg32`, `advapi32`, `shell32`, `ole32`, `oleaut32` and `ws2_32`;
+4. for a [system view](#system-views) function, the DLL recorded in its view (classic desktop DLLs eagerly, every other DLL lazily);
+5. for a `pkg.CImport` with `sdk: true` on `x86_64-windows`, the Windows SDK's import libraries (ambiguities across multiple SDK libraries fail with E0001 naming the `pkg.Link` to add).
 
 A name nothing defines is E0001 at link, "undefined symbol". Built on another host, a system DLL's function needs a `pkg.Link` with a `.def` file. On a Windows host, it needs no manifest entry:
 
@@ -9975,7 +9979,7 @@ export Main(sys: &System): WriteError!void {
 
 **Unwinding.** Nothing in Mk unwinds, so nothing unwinds across C. A panic in a function C called aborts the process.
 
-**The C stack.** A call of a bodiless `extern` function runs on the operating system thread's own stack, 8 MiB, not the task's. A call through a `fn` value does not: a C function's address and a Mk function's look the same there, so C code reached that way (a symbol from [`std.dl`](std/dl.md), a function pointer in a C import's struct, a COM method) runs on the calling task's stack. An `extern` passed to a `const` parameter of `fn` type is no such value: the body is compiled for that argument, and its call is a direct `extern` call. Give that task the stack the C code needs, `StackSize.Large` through `io.ScopeWith` for a library such as Direct3D ([limits and stacks](#limits-and-stacks)), or reach the C function through an `extern`. The same rule makes a `fn` value the way to call an assembly stub that uses no stack without the switch ([stubs that use no stack](#c-sources-and-assembly-files)). While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks.
+**The C stack.** A call of a bodiless `extern` function runs on the operating system thread's own stack, 8 MiB, not the task's. A call through a `fn` value does not: a C function's address and a Mk function's look the same there, so C code reached that way (a symbol from [`std.dl`](std/dl.md), a function pointer in a C import's struct, a COM method) runs on the calling task's stack. An `extern` passed to a `const` parameter of `fn` type is no such value: the body is compiled for that argument, and its call is a direct `extern` call. Give that task the stack the C code needs, `StackSize.Large` through `io.ScopeWith` for a library such as Direct3D ([limits and stacks](#limits-and-stacks)), or reach the C function through an `extern`. The same rule makes a `fn` value the way to call an assembly stub that uses no stack without the switch ([stubs that use no stack](#c-sources-and-assembly-files)). While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks. A Mk callback that C may invoke on a foreign thread should only record state and wake a task through [`runtime.Waker`](std/runtime.md#wakers). Inside std itself, deep OS calls (such as lazy DLL loading) switch to the carrier's system stack through `std.task.MkSystemRun`.
 
 ### C imports
 
@@ -10052,26 +10056,71 @@ How C declarations appear in Mk:
 | C | Mk |
 |---|---|
 | A function | `export extern`, with its C name: `geom.geom_dist2` |
+| `extern int geom_count;` | `export extern var geom_count: i32`, with its C name. Declared again, it binds once, with the type the declarations give together: `extern int z[];` then `extern int z[3];` is `[3]i32` |
 | `struct geom_point` | `struct GeomPoint`, its fields in snake_case: `maxCount` is `max_count` |
 | `enum geom_kind` and its constants | `type GeomKind = i32` and `const GeomKindLine: GeomKind = 1` |
 | `union num` | A struct of bytes with a getter and a setter per member: `Num.I`, `Num.SetI` |
 | A record whose layout no Mk struct has (a packed record with a bitfield, say) | Also a struct of bytes with a getter and a setter per member and bitfield. A member or a bitfield's unit that the record's alignment does not align is read and written at alignment 1. A bitfield's unit holds no byte of another member but the bitfields next to it, so a setter stores none of a neighbour's bytes, as C's own store does not: it is the smallest integer at an aligned offset that holds the field, else the smallest at the field's first byte. A bitfield that no such unit inside the record holds (a 20-bit field at byte 3 of a 6-byte packed record, or after an `int` at byte 1) is read and written through its own bytes alone; one spanning more than 8 bytes gets no accessor. A signed bitfield reads sign-extended: one of a signed type, of an enum whose fixed type is signed, or of an enum without one that has a negative constant (on the `x86_64-windows` target, where such an enum is `int`, any enum without a fixed type) |
 | An incomplete `struct opaque` | An empty `struct Opaque`, used through `*Opaque` |
+| `DECLARE_HANDLE(HWND)` | `struct HwndStruct` and `type Hwnd = *HwndStruct` |
+| A COM interface (`lpVtbl`) | `struct IDemo { lp_vtbl: *IDemoVtbl }` plus methods (`d.Query(...)`); calling or naming a method needs `unsafe` (E1101) |
 | A typedef | A type alias: `typedef int32_t` is `Int32T = i32` |
-| `#define NAME 3` | `const Name: i32 = 3` |
-| A `static inline` function | An `extern` that a generated shim defines in the same build |
+| `#define NAME 3` | `const Name: i32 = 3`; integer-cast pointer macros (`(HANDLE)-1`) as `uint`; wide strings (`L"hi"`) as `[]u16` |
+| `static const` and `INITGUID` `DEFINE_GUID` | `export const` (`VkPipelineStage2CopyBit`, `IidIdxgiFactory6: windows.Guid`) when initialized by a constant expression, needing no `dxguid.lib` |
+| A `static inline` function | An `extern` that a generated shim defines in the same build, if the program uses it |
 | A function-like macro | Bound only when `macros` declares its prototype, also through a shim |
 | A function-pointer field | `?fn(...)`. Reading it needs `unsafe` (E1101): calling it runs C code |
 
 - Types and constants become PascalCase, and fields snake_case. Functions keep their C names. Each declaration's C form is in a comment above it.
+- A COM-style struct (whose first field is `lp_vtbl: *Vtbl`, where `Vtbl` holds function pointers whose first parameter is `*Self`) emits one `&self` method per vtable slot (`(*device).GetNodeCount()`). Because safe code could forge `lp_vtbl`, calling or naming the method outside `unsafe` is E1101.
 - A struct is made by naming every field, or zeroed whole as C's `= {0}` does with [`mem.Zeroed`](#zero-valid-types): `mem.Zeroed[geom.GeomPoint]()`. A C struct's fields (integers, floats, raw pointers, `?fn`, arrays, nested structs, a union's bytes, bitfield units) are all zero-valid, so it needs no `unsafe`. In a struct, a non-bitfield member or a zero-width bitfield separates bitfield runs. The units for separate runs never overlap.
-- `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
+- `mk cimport` prints, for each import, how many declarations it bound and which it skipped and why. `--skipped` lists every skipped declaration with its kind and reason; `--why <name>` explains how a single C name was bound or why it was skipped. It writes the translation to `gen/<target>/c/<name>.mk`, which you can read; never edit it.
 - `headers` are paths from the package root. `defines` are macros the headers are read with, `NAME` or `NAME=value`.
 - `include_dirs` are directories of the package searched for headers after the package root, for a library whose headers include each other by a name under their own include directory: `pkg.CImport(name: "z", headers: ["third_party/z/include/z.h"], defines: [], macros: [], vendor: false, include_dirs: ["third_party/z/include"])`, where `z.h` has `#include "zconf.h"`. Each is a relative path with `/` separators inside the package, other than the root itself (E0202 otherwise). The field may be left out.
 - All the C imports of a package share one translation unit. A dependency's C imports form its own, and only it can import them. So their `include_dirs` form one search path, in the order the imports list them, and the shim and the package's C sources are compiled with the same path.
 - The binding, shim and C sources use the native target's Clang triple by default. On `x86_64-windows` it is `x86_64-pc-windows-msvc19.33.0`, so the default `_MSC_VER` is 1933 independently of the installed Visual Studio. A C source's explicit flags and freestanding mode can change what its headers see. The headers must declare the same layout on both sides of the binding.
 - `mk check` runs Clang to translate the C imports, with a minimal environment. It compiles no C source.
+- A target's system headers come only from `MK_SYSROOT_<target>`, where `_` may stand for `-` (`MK_SYSROOT_x86_64-windows` is read first, then `MK_SYSROOT_x86_64_windows`): a list of directories separated as `PATH` is (`;` on Windows, `:` elsewhere), searched in order after Clang's own headers. A directory that has an `include` subdirectory stands for that subdirectory. Without the variable, only Clang's headers and the package's are seen. The C imports, the shim and the package's C sources all use this list.
+- For `x86_64-windows`, a Windows SDK (the first directory holding `windows.h` also holds `winnt.h`, and no directory holds `_mingw.h`) gets mk's toolset headers below before its own; every `x86_64-windows` sysroot is read for `x86_64-pc-windows-msvc` and Visual C++ 19.33 (`_MSC_VER` 1933, the version Clang assumes with no Visual Studio) even where a Visual Studio is installed, whose version Clang would otherwise take: the SDK's headers depend on it, and the layouts match the C objects. The shim and the package's C sources are compiled for the same version. List its `um`, `shared` and `ucrt` directories: `C:\Program Files (x86)\Windows Kits\10\Include\10.0.28000.0\um;...\shared;...\ucrt`.
+- The SDK includes four headers of the MSVC toolset that it does not ship: `vcruntime.h`, `vadefs.h`, `vcruntime_string.h` and `excpt.h`. mk supplies its own, generated, before the SDK's directories, and uses them even when the list names a toolset directory, so a binding's names never depend on the machine. With them `size_t` is `SizeT`, as on every target, and the SDK's `SIZE_T` is `SizeTType`. No other toolset header is supplied, so a header that includes one fails with E0001 naming it: `<wchar.h>` and `<intrin.h>` need `setjmp.h`, `<process.h>` and `<corecrt_startup.h>` need `vcruntime_startup.h`, and `<crtdbg.h>` needs `vcruntime_new_debug.h` (`'setjmp.h' file not found`). A function of the SDK links as any extern does ([linking](#linking-libraries)): through `pkg.Link`, or the system DLLs mk links on a Windows host.
+- `sdk: true` reads the headers with the host's SDK, for a library whose header includes `<windows.h>`: the first of `MK_SYSROOT_<target>`; for `x86_64-windows` on a Windows host, the newest Windows SDK under the registry's `KitsRoot10` (`HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots`), then under `%ProgramFiles(x86)%\Windows Kits\10`, with mk's toolset headers first; for a Linux target on a Linux host, the target's multiarch directory and `/usr/include`; then `$MK_EVIDENCE/c-import/sysroots/<target>`. None is E0213 `reason: no-sysroot`, unless every import says `vendor: true`. On any C import of a package it applies to the package's one translation unit. On `x86_64-windows`, `sdk: true` also reads the SDK's import libraries (`Lib/<version>/um/x64`) to link used functions automatically, failing with E0001 if a symbol is exported by multiple libraries not resolved by precedence (`pkg.Link` settles it). When the program also imports [system views](#system-views) generated for the build's target, a declaration a view binds (a struct or union and its tag, an enum, a typedef, a function, an extern var) is not bound again: the binding names the view's item (`windows.Hwnd`), and a record whose size or alignment differs from the view's is an error. A view read from another target's declarations, as `c.windows` and `c.vulkan` are in a build for Linux, shares nothing, since a C `long` or `wchar_t` there is not the target's. Without `sdk: true` nothing changes.
 - The bindings are made per target. `mk check --all-targets` translates them for both `x86_64-windows` and `x86_64-linux` and reports an item the package uses whose API differs (E0213). A constant's value is not part of the API. It needs each target's system headers, from `MK_SYSROOT_<target>`, or `vendor: true` to read the committed `gen/<target>/c/` files instead. Without either, it is E0213, `reason: no-sysroot`.
+
+#### System views
+
+A system view is a C import that ships inside mk: `import c.windows` needs no `pkg.CImport`, no header, no SDK and no Clang, on any machine, and binds the same declarations everywhere.
+
+```mk
+// verdict: parse
+import c.windows
+
+export Main(sys: &System): WriteError!void {
+    var pid: windows.Dword = 0
+    unsafe "GetCurrentProcessId takes nothing and cannot fail" {
+        pid = windows.GetCurrentProcessId()
+    }
+    try sys.Print("{pid}\n", (pid))
+}
+```
+
+| View | Headers | Generated from | Targets |
+|---|---|---|---|
+| `c.windows` | `windows.h`, `windowsx.h` | Windows SDK 10.0.28000.0 | `x86_64-windows` |
+| `c.dxgi` | `dxgi1_6.h`, `dxgidebug.h` | the same | `x86_64-windows` |
+| `c.d3d12` | `d3d12.h`, `d3d12sdklayers.h` | the same | `x86_64-windows` |
+| `c.d3dcompiler` | `d3dcompiler.h` | the same | `x86_64-windows` |
+| `c.vulkan` | `vulkan/vulkan.h` | Vulkan-Headers 1.4.363.0 | `x86_64-windows` |
+| `c.posix` | POSIX and standard C library headers | glibc | `x86_64-linux`, `aarch64-linux` |
+
+- The views of one target are generated together, as one translation unit, by `go run ./tools/sysview`, from the inputs `mk sdk views` prints: the SDK's version, mk's toolset headers, the importer's format and Clang's version. A declaration several views reach belongs to the first in the table, so `HWND` is `windows.Hwnd` in every view, and `c.dxgi`'s items name `c.windows`'s types. The whole of every view type-checks; what does not is left out and listed, and so is every `static inline` function, which only a shim compiled from the headers could define. This mk carries `c.windows`, `c.dxgi`, `c.d3d12`, `c.d3dcompiler` and `c.vulkan` for `x86_64-windows` only. On Linux and macOS, `c.vulkan` falls back to the Windows declarations. `std.gpu` uses the common Vulkan types to call the host loader. Calls to Windows-specific entry points need a Windows target check.
+- A view's names are a C import's: functions keep their C names, types and constants are PascalCase, fields snake_case. The view is a C import's binding for every rule: calling its functions or COM methods needs `unsafe`, reading a C function pointer is E1101, and its `extern var`s are C's, never defined by the build. Because the Windows views are generated with `INITGUID`, interface GUIDs (`dxgi.IidIdxgiFactory6`, `d3d12.IidID3D12Device`) are Mk `const` values needing no `dxguid.lib`.
+- A build takes only the items its files name and what those items need, from every view a view needs. The rest of `windows.h` costs nothing. The items a program uses are one module for the whole program, so a `windows.Hwnd` from a dependency or from the standard library is the package's.
+- `import c.<name>` is, first, the package's `pkg.CImport` of that name, which wins over a view of the same name. Else it is the system view of that name. Else it is E0202 `no-cimport`, whose message names the views. In a standard-library module it is always the system view.
+- A view may be imported in a build for any target: its declarations are plain Mk. A build for a target the view is not generated for reads the view of the table's first target, so `c.windows` checks in a build for `x86_64-linux`. A function that is never reached emits nothing, so a call behind `if Target.os == Os.Windows` builds for Linux. A call that is reached on such a target is E0001 at the link, naming the function and its view.
+- `mk check --all-targets` compares nothing for a view every target reads from the same declarations: one generated for one target, and `c.vulkan` while this mk carries it for `x86_64-windows` only. A view this mk carries per target is compared as a `pkg.CImport` is: an item the package uses whose API differs between `x86_64-windows` and `x86_64-linux` is E0213.
+- A Windows SDK view's functions carry their DLL link from the SDK's import libraries: classic desktop DLLs (`kernel32.dll`, `user32.dll`, `gdi32.dll`, `advapi32.dll`, `shell32.dll`, `ole32.dll`, `oleaut32.dll`, `ws2_32.dll`, `winspool.drv`, `comdlg32.dll`) link eagerly, and every other DLL (`dxgi.dll`, `d3d12.dll`, `d3dcompiler_47.dll`, `bcrypt.dll`, ...) binds lazily (`kind: "lazy"`), so `import c.dxgi` and `import c.d3d12` need no `pkg.Link`. An explicit `pkg.Link` in the manifest overrides a view's link, and a library outside the Windows SDK (`vulkan-1.dll`) still links through `pkg.Link`.
+
+- A reachable `c.posix` call on Linux selects [system-libc mode](std/libc.md#system-libc-mode-on-linux) and links the function to its recorded glibc version. An import or use of types and constants alone leaves a static executable static. An explicit link can supply a function instead. The ordinary C-import limits apply to macros, shims, and calling conventions.
 
 ### C sources and assembly files
 
@@ -10121,19 +10170,39 @@ const Package = pkg.Package(
 
 | Field | Values |
 |---|---|
-| `name` | A dynamic library's exact file name, as the loader looks it up, with no separator. A static library's name labels it in diagnostics |
-| `kind` | `"dynamic"`: the OS loader opens it when the program starts. `"static"`: an archive linked into the executable |
-| `path` | Package-relative. A Windows DLL: `""` for the host's System32 copy (on a Windows host only), a `.def` file listing one exported name per line (on any host), or the `.dll` itself, which mk copies beside the executable. A Linux library: `""`, or a `.def` whose names may carry `@VERSION`. An archive: the `.lib` or `.a` file |
+| `name` | A dynamic or lazy library's exact file name, as the loader looks it up, with no separator. A static library's name labels it in diagnostics |
+| `kind` | `"dynamic"`: the OS loader opens it when the program starts. `"lazy"`: a DLL loaded on the first call of one of its functions, never in the import table (`x86_64-windows` only). `"static"`: an archive linked into the executable |
+| `path` | Package-relative. A Windows DLL, dynamic or lazy: `""` for the host's System32 copy (on a Windows host only), a `.def` file listing one exported name per line (on any host), or the `.dll` itself, which mk copies beside the executable. A Linux library: `""`, or a `.def` whose names may carry `@VERSION`. An archive: the `.lib` or `.a` file |
 | `target` | `"x86_64-windows"`, `"x86_64-linux"` or `"aarch64-linux"` |
 
-- A fault in a `Link` is E0202 at the `Link`, `reason: link`. An import library (`.lib` for a DLL) is not an archive (E0202).
+- A fault in a `Link` is E0202 at the `Link`, `reason: link`. An import library (`.lib` for a DLL) is not an archive (E0202). `kind: "lazy"` for any target but `x86_64-windows` is E0202: lazy binding is built for Windows only. One DLL linked `"lazy"` by one link and `"dynamic"` by another is E0202.
 - A name an archive defines wins over any DLL. A library enters the executable only when a name it supplies is used.
 - Only functions resolve through links. An `extern var` in a DLL or a shared object is E0001.
-- Windows looks for a linked DLL only in KnownDLLs, the executable's directory and System32, never in the current directory or `PATH`. Ship a third-party DLL beside the executable. There is no delay-load.
+- Windows looks for a linked DLL only in KnownDLLs, the executable's directory and System32, never in the current directory or `PATH`. Ship a third-party DLL beside the executable. A lazy DLL is searched the same way (`LoadLibraryExW` with `LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`).
 - An archive must be built with no C runtime: `-ffreestanding -fno-stack-protector` for Clang or GCC, `/GS- /Zl` for MSVC. A symbol it needs that nothing supplies is E0001, naming the member and the symbol.
 - An archive member that holds static constructors or thread-local storage is E0001: a Mk program never sets them up.
 - A Linux bin with a dynamic link loads the system C library ([system-libc mode](std/libc.md#system-libc-mode-on-linux)).
 - To open a library while the program runs, use [std.dl](std/dl.md).
+
+**Lazy libraries.** A program can name a function of a DLL that some machines lack, such as an optional system component, and still start on every machine. A hard import of a missing DLL ends the process before `Main`. A lazy DLL is not in the import table:
+
+- Each function of it the program uses is called through a slot. The first call loads the DLL, once per DLL, and finds the function. The library's initializer runs on the carrier's system stack when the caller is a task, so a task's small stack is enough. The call then continues with its arguments intact.
+- The first call may come from any thread, one Mk did not start included, and from C code. Two first calls at once both succeed. A load that fails is not remembered: a later call or `dl.Present` tries again.
+- Later calls jump through the slot: one indirect call, what an import-table call costs.
+- [`dl.Present(io, f)`](std/dl.md#present) tells whether `f` can be called, loading the DLL if needed, without calling it. For a function that is not lazily bound it is `true` at compile time.
+- Calling a lazy function whose DLL cannot be loaded, or which the DLL does not export, panics with `unresolved function`. The report names the function and the DLL.
+- Taking such a function as a `fn` value gives an address that works before and after the first call.
+- A program that never calls a function of a lazy DLL carries nothing of it.
+
+```mk
+// verdict: parse
+const Package = pkg.Package(
+    name: "viewer",
+    bins: [pkg.Bin(name: "viewer", root: "src", subsystem: "console")],
+    unsafe_modules: ["src"],
+    links: [pkg.Link(name: "d3d12.dll", kind: "lazy", path: "d3d12.def", target: "x86_64-windows")],
+)
+```
 
 ### CPU features
 
@@ -11558,14 +11627,14 @@ This table lists the importable modules and the names each one exports. The [lib
 | Import | Names |
 |---|---|
 | `std.fs` | `File Dir Entry Info ReadText ReadBytes WriteAll Create Open Rename Remove MakeDir Stat Error OpenWith OpenPath Options DefaultOptions ReadOnly ReadWrite CreateNew Append Whence LockMode Kind Permissions Map Mapping Walk Walker WalkEntry MakeDirAll RemoveAll Copy CreateTemp TempDir Symlink ReadLink StatLink StatPath SetModified SetPermissions Cwd Absolute` |
-| `std.net` | `Listen Dial Listener Stream Bind Datagram Addr ParseAddr Resolve Error ListenWith ListenOptions DefaultListenOptions ListenUnix DialUnix Shutdown Conn NewConn Transport ReserveConn ConnSlot Secure SecureFailure Pass Passed` |
+| `std.net` | `Listen Dial Listener Stream Bind Datagram SharedDatagram Addr ParseAddr Resolve Error ListenWith ListenOptions DefaultListenOptions ListenUnix DialUnix Shutdown Conn NewConn Transport ReserveConn ConnSlot Secure SecureFailure Pass Passed Mux MuxStream MuxReady MuxLimits MuxListener MuxDialer MuxServer MuxEngine MuxListening` |
 | `std.time` | `Instant Duration Now Seconds Millis Minutes Hours Micros Nanos ParseDuration Time Wall FromUnix Date FromDate Zone Database LocalName ParseRfc3339 ParseHttpDate FormatHttpDate TimedOut Error` |
 | `std.time.tzdata` | `Database`, the embedded zones, linked only into a binary that names it |
 | `std.proc` | `Run Output Supervise WaitSignal Signal Exit Error Pipe PipeReader PipeWriter Spawn Command DefaultCommand Env Stdio Child Status Pty Pass Inherited` |
 | `std.sync` | `RwLock ReadGuard Select Selectable Shared Semaphore Notify Barrier Once` |
 | `std.atomic` | `AtomicInt AtomicBool Atomic Spin SpinGuard Order Relaxed Acquire Release AcqRel SeqCst Fence Unordered Pause` |
 | `std.mmio` | `Load Store Fence Reg`, every call inside an unsafe block |
-| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch Zeroed` |
+| `std.mem` | `Fixed FixedHeap Fallback Counting Limit Failing Null Pool PoolIter Handle AllocTable OffsetOf Prefetch Zeroed AsBytes SliceAsBytes` |
 | `std.coll` | `Deque HeapDeque PriorityQueue BTree HeapBTree BTreeIter Bitset` |
 | `std.text` | `Graphemes Clusters Normalize Form FoldCase Width ToUtf16 FromUtf16 WordBounds SentenceBounds Bounds ParagraphBounds BidiLevels Levels Run Direction Mirror LineBreaks Breaks Capped Sink CategoryOf Category ScriptOf Script ScriptExtensions Has Property UnicodeVersion` |
 | `std.math` | `Min Max Abs Sqrt Rng Integer AddOverflow SubOverflow MulOverflow WrapI32 WrapU32 CastSat CastSatF32 MulWide DivWide AddCarry SubBorrow`, the functions of section 18 in `f64` and with an `F32` suffix in `f32`, the integer bit operations with a width suffix, `Gcd CheckedPow CheckedPowU64 Pi E Ln2 Sqrt2 Inf Nan ShortestDigits ShortestDigitsInto ExactDigits Digits DigitMode` |
@@ -11574,16 +11643,16 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.libc` | No Mk names: C-callable functions that a package's C sources link against, written in Mk and exported with `export extern`: the memory and string functions, `malloc`, `calloc`, `realloc` and `free` over the `Heap`, and what sqlite needs as `SQLITE_OS_OTHER`; on `x86_64-windows` also `__C_specific_handler`, the language handler a C source's `__try`, `__except` and `__finally` need, forwarded to ntdll's |
 | `std.hash` | `Xx Xx64 Crc32 Sip13 Sha256 Sha512 Blake3 Crc32State Xx64State Sip13State Sha256State Sha512State Blake3State Sha1 Sha1State Sha384 Sha384State` |
 | `std.json` | `Parse Value Member Json Codec Error` |
-| `std.http` | `Serve Fetch ReadRequest Dispatch Request Response Reply Header Route Error Client ClientRequest ClientLimits DefaultClientLimits Exchange ServeWith ServeOn ServeChan ServerOptions DefaultServerOptions Link Taken` |
+| `std.http` | `Serve Fetch ReadRequest Dispatch Request Response Reply Header Route Error Client ClientRequest ClientLimits DefaultClientLimits Exchange ServeWith ServeOn ServeChan ServerOptions DefaultServerOptions HttpVersion Link Taken` |
 | `std.regex` | `Compile Regex Match Matcher Error` |
-| `std.crypto` | `Hmac256 ChaCha20Poly1305 X25519 Ed25519 Random Equal Error Hmac384 Hmac512 HkdfExtract HkdfExpand Prk HashKind AesGcm EcSecret Curve EcdhShared EcdsaSign EcdsaVerify SigFormat RsaPublic RsaVerifyPkcs1 RsaVerifyPss PublicKey PrivateKey ParsePublicKey ParsePrivateKey Wipe Argon2id Argon2idVerify Argon2Cost` |
+| `std.crypto` | `Hmac256 ChaCha20Poly1305 X25519 Ed25519 Random Equal Error Hmac384 Hmac512 HkdfExtract HkdfExpand HkdfExpandLabel Prk HashKind AesGcm Aes ChaCha20Block EcSecret Curve EcdhShared EcdsaSign EcdsaVerify SigFormat RsaPublic RsaVerifyPkcs1 RsaVerifyPss PublicKey PrivateKey ParsePublicKey ParsePrivateKey Wipe Argon2id Argon2idVerify Argon2Cost` |
 | `std.compress` | `Inflate Gunzip Deflate Gzip Inflater Error Zlib Unzlib Adler32 Adler32State Encoder Framing ZstdDecoder Content GzipContent DeflateContent ZstdContent` |
 | `std.cli` | `Args Error` |
 | `std.log` | `Logger Level Sink Stderr Stdout ToFile` |
 | `std.dyn`, `std.derive` | Generators: `dyn.Of`, `derive.Eq`, `derive.Hash`, `derive.Format` |
 | `std.dyn` | `Ref` |
 | `std.dyn.erased` | `Key` |
-| `std.sim` | `Sim Op Fault Recorder Replayer` |
+| `std.sim` | `Sim Op Fault NetFaults Recorder Replayer` |
 | `std.db.sqlite` | `Open Db Stmt Error` |
 | `std.big` | `Int FromI64 FromBytes FromWords Parse Error` |
 | `std.encoding` | `Base64Encode Base64Decode Base64EncodeTo Base64DecodeTo Base64Len Alphabet Base64 Base64Url Base64Raw Base64UrlRaw Base64Forgiving HexEncode HexDecode PercentEncode PercentDecode PercentSet Lookup Encoding Decoder Utf8 Utf16Le Utf16Be Replacement XUserDefined Ibm866 Iso88592 Iso88593 Iso88594 Iso88595 Iso88596 Iso88597 Iso88598 Iso88598I Iso885910 Iso885913 Iso885914 Iso885915 Iso885916 Koi8R Koi8U Macintosh Windows874 Windows1250 Windows1251 Windows1252 Windows1253 Windows1254 Windows1255 Windows1256 Windows1257 Windows1258 XMacCyrillic Codec ParsePem FormatPem PemBlock DerRead DerValue DerIter DerWriter Error` |
@@ -11593,17 +11662,21 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.term` | `Open IsTerminal UseColor Term Std Event Key Mods Style Color Sanitize MoveTo Clear AltScreen ShowCursor BracketedPaste MouseCapture KittyKeys Error` |
 | `std.x509` | `Parse ParsePem Certificate Pool SystemRoots SystemPool Verify Error`, Experimental |
 | `std.tls` | `Client Server Connector Acceptor Conn Config DefaultConfig Identity Version Error`, Experimental |
+| `std.quic` | `Version1 Config DefaultConfig Connector Acceptor`, Experimental |
 | `std.csv` | `Records Record Options DefaultOptions WriteRecord Codec Error` |
-| `std.dl` | `Open Library Search Error`, Provisional |
+| `std.dl` | `Open Present Library Search Error`, Provisional |
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
 | `std.testing` | `Fuzz FuzzSys Bench BenchSys ExpectPanic` |
+| `std.image` | `Compare DecodeLimits DecodePng DefaultDecodeLimits Difference EncodePng Error Image Invalid Pixels TooLarge Unsupported Why`, Provisional |
+| `std.window` | `Button Cursor CursorMode DefaultWindowOptions Error Event EventKind Fullscreen InputState Key Mods Native Open Os Surface Unsupported Window WindowOptions`, Experimental |
+| `std.gpu` | `Acquired AdapterId AdapterInfo AdapterKind Adapters Address Aspect Backend BindEntry BindGroup BindGroupLayout BindingKind Blend BlendComponent BlendFactor BlendOp BlendOver Bound Buffer BufferUsage Call CheckShader ColorAttachment ColorOf ColorTarget ColorWrites Compare ComputePass ComputePipeline Cull DataLayout DebugMode DefaultDeviceOptions DefaultRenderPipeline DefaultSamplerDesc DefaultSwapchainOptions DefaultTextureDesc DefaultViewDesc DepthAttachment DepthBias DepthOf DepthStencil Device DeviceLimits DeviceLost DeviceOptions Driver Encoder Error Extent Feature Features Filter FormatCaps FrontFace IndexFormat Invalid LayoutEntry Leaks Load LoadDepth LoadStencil LossReason Mapped MappedMut Message Missing Misuse NoAdapter NoBufferUsage NoFeatures NoTextureUsage Open OutOfDeviceMemory PassDesc PipelineLayout Power Presented PresentMode RenderPass RenderPipeline RenderPipelineDesc Sampler SamplerDesc SampleType Severity Shader ShaderCode Stage Stencil StencilFace StencilOp StepMode Store SurfaceLost SurfaceTexture Swapchain SwapchainInfo SwapchainOptions Texture TextureDesc TextureFormat TextureRegion TextureUsage TextureView Topology Unsupported VertexAttribute VertexFormat VertexLayout ViewDesc ViewDimension Visibility WriteAll`, Experimental |
 | `std.build` | `File Profile ProfileKind`, read at compile time only |
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
 
-The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target` and `std.simd.kernel` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
+The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel`, `std.gpu.dx`, `std.gpu.vk`, `std.http.fields`, `std.http.h2`, `std.http.h3`, `std.sync.lead` and `std.net.pipe` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
 
 Every public item of std has a stability level, which says how it may change from one release to the next. The [library guide](std/README.md#9-stability) lists the modules and items that are not Stable and what each level allows before and after 1.0.
 
@@ -11677,6 +11750,9 @@ The [library guide](std/README.md) holds the conventions every module shares. Ea
 - [`std.sync`](std/sync.md)
 - [`std.term`](std/term.md)
 - [`std.testing`](std/testing.md)
+- [`std.image`](std/image.md)
+- [`std.window`](std/window.md)
+- [`std.gpu`](std/gpu.md)
 - [`std.text`](std/text.md)
 - [`std.time`](std/time.md), with `std.time.tzdata`
 - [`std.tls`](std/tls.md)
@@ -12088,11 +12164,15 @@ struct Info {
 error Os(code: i64)
 error Unsupported
 error SecureFailed(why: SecureFailure)
-type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | OutOfMemory
+// Provisional: StreamReset and MuxClosed, which multiplexed connections report
+error StreamReset(code: u64)
+error MuxClosed(code: u64, app: bool, peer: bool)
+type Error = Refused | Reset | AddrInUse | Unreachable | InvalidAddress | Os | Canceled | Closed | time.TimedOut | Unsupported | SecureFailed | StreamReset | MuxClosed | OutOfMemory
 net.Listen(io: Io, addr: str): net.Error!Listener
 net.Dial(io: Io, addr: str): net.Error!Stream
 Listener.Accept(&self, io: Io): net.Error!Stream
 Listener.Port(&self): int
+Listener.Addr(&self): Addr
 Listener.Close(self)
 Stream.Read(&self, io: Io, buf: mut []u8): net.Error!int
 Stream.Write(&self, io: Io, data: []u8): net.Error!int
@@ -12106,10 +12186,24 @@ Addr.Format(&self, w: mut Writer): WriteError!void
 net.Bind(io: Io, addr: str): net.Error!Datagram
 Datagram.Send(&self, io: Io, data: []u8, to: Addr): net.Error!void
 Datagram.Recv(&self, io: Io, buf: mut []u8): net.Error!(n: int, peer: Addr)
+Datagram.Connect(&self, io: Io, to: Addr): net.Error!void
+Datagram.LocalAddr(&self): Addr
+Datagram.SetBuffers(&self, recv: int, send: int): net.Error!void
+Datagram.SetDontFragment(&self): net.Error!void
+Datagram.DontFragment(&self): net.Error!bool
+Datagram.Share(self): SharedDatagram
 Datagram.Port(&self): int
 Datagram.Close(self)
+SharedDatagram.Send(&self, io: Io, data: []u8, to: ?Addr): net.Error!void
+SharedDatagram.SendBatch(&self, io: Io, buf: []u8, seg: int, to: ?Addr): net.Error!void
+SharedDatagram.Recv(&self, io: Io, buf: mut []u8): net.Error!(n: int, peer: Addr)
+SharedDatagram.TryRecv(&self, io: Io, buf: mut []u8): net.Error!?(n: int, peer: Addr)
+SharedDatagram.Port(&self): int
+SharedDatagram.LocalAddr(&self): Addr
+SharedDatagram.Close(self)
 Stream.SetNoDelay(&self, on: bool): net.Error!void
 Stream.SetKeepAlive(&self, idle: ?time.Duration): net.Error!void
+Stream.SetBuffers(&self, recv: int, send: int): net.Error!void
 Stream.Shutdown(&self, io: Io, how: Shutdown): net.Error!void
 Stream.LocalAddr(&self): Addr
 Stream.PeerAddr(&self): Addr
@@ -12145,9 +12239,68 @@ interface Transport {
     Abandon(self)
 }
 
-// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall, so only std calls it, and std.http and std.websocket call Connect
+// net.Secure is made by std.tls and passed on, never built by a program; Of takes a core.ErasedCall and OfAlpn (provisional) two core.TypedCalls, so only std calls them, and std.http and std.websocket call Connect and Negotiate (provisional)
 Secure.Of[T: Share](c: core.ErasedCall): Secure from c
+Secure.OfAlpn[T: Share](c: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn], n: core.TypedCall[fn(&T, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn]): Secure from c, n
 Secure.Connect(&self, h: &Heap into conn, io: Io, conn: Conn, host: str): net.Error!Conn from h, conn
+Secure.Negotiate(&self, h: &Heap into conn, io: Io, conn: Conn, host: str, offer: []str): net.Error!(conn: Conn, chosen: int) from h, conn
+
+// Provisional multiplexed transport interface shared by std.http and std.quic.
+MuxStream.Id(&self): i64
+Mux.Open(&self, io: Io, uni: bool, wait: bool): net.Error!?MuxStream
+Mux.Accept(&self, io: Io, uni: bool, wait: bool): net.Error!?MuxStream
+Mux.Read(&self, io: Io, s: &MuxStream, buf: mut []u8, wait: bool): net.Error!?int
+Mux.Write(&self, io: Io, s: &MuxStream, data: []u8, fin: bool): net.Error!void
+Mux.Credit(&self, s: &MuxStream, total: i64)
+Mux.Wait(&self, io: Io, ids: []i64, incoming: bool): net.Error!MuxReady
+Mux.Reset(&self, s: &MuxStream, code: u64)
+Mux.Stop(&self, s: &MuxStream, code: u64)
+Mux.Release(&self, s: MuxStream)
+Mux.Limits(&self): MuxLimits
+Mux.Usable(&self, io: Io): bool
+Mux.PeerAddr(&self): ?Addr
+Mux.Close(self, io: Io, code: u64): net.Error!void
+Mux.Abandon(self)
+MuxListener.Run(&self, io: Io): net.Error!void
+MuxListener.Accept(&self, io: Io): net.Error!Mux
+MuxListener.Port(&self): int
+MuxListener.Close(self)
+MuxDialer.Dial(&self, h: &Heap, io: Io, to: Addr, host: str, alpn: str): net.Error!Mux from h
+MuxServer.Listen(&self, h: &Heap, io: Io, addr: str, alpn: str): net.Error!MuxListener from h, self
+// Only std constructs the implementations and sealed callable values that Of takes.
+Mux.Of[T: MuxEngine + Send + Share](h: &Heap, b: core.SealedBox): Mux from h, b
+MuxListener.Of[T: MuxListening + Send + Share](h: &Heap, b: core.SealedBox): MuxListener from h, b
+MuxDialer.Of[T: Share](c: core.ErasedCall): MuxDialer from c
+MuxServer.Of[T: Share](c: core.ErasedCall): MuxServer from c
+
+enum MuxReady {
+    Readable(index: int)
+    Incoming(uni: bool)
+}
+
+struct MuxLimits {
+    export bidi: i64
+    export uni: i64
+    export idle: time.Duration
+}
+
+linear struct MuxStream {
+}
+
+linear view struct Mux {
+}
+
+linear view struct MuxListener {
+}
+
+plain view struct MuxDialer {
+}
+
+plain view struct MuxServer {
+}
+
+linear struct SharedDatagram {
+}
 
 struct ListenOptions {
     export backlog: int
@@ -12694,6 +12847,8 @@ type AllocTable = core.AllocTable
 mem.OffsetOf[T](field: str): int
 mem.Prefetch[T](p: &T, write: bool)
 mem.Zeroed[T](): T
+mem.AsBytes[T](p: &T): []u8 from p
+mem.SliceAsBytes[T](xs: []T): []u8 from xs
 mut view struct Fixed {
 }
 Fixed.New(buf: mut []u8): Fixed
@@ -12925,7 +13080,8 @@ error BodyNotReplayable
 error TooManyRedirects
 error BadUrl
 error ProxyRefused(code: int)
-type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused
+error Protocol(code: u64)
+type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused | Protocol
 http.ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): http.Error!Request from a
 http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void): http.Error!void
 http.Fetch(a: &Arena, io: Io, method: str, url: str, headers: []Header, body: []u8, limit: int): http.Error!Reply from a
@@ -12934,6 +13090,8 @@ Request.Param(&self, name: str): ?str from self
 Request.ParamInt(&self, name: str): ?i64
 Response.New(a: &Arena): Response
 Response.Status(mut self, code: int)
+Response.Version(&self): HttpVersion
+Response.Secure(&self): bool
 Response.Header(mut self, name: str, value: str): OutOfMemory!void
 Response.Body(mut self, data: []u8): OutOfMemory!void
 Response.Writer(mut self): Writer from self
@@ -12943,14 +13101,19 @@ Client.New(h: &Heap, l: ClientLimits): Client from h, l
 Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
 Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
 Client.DoStreaming(&self, a: &Arena, io: Io, req: &ClientRequest, body: mut Reader, len: ?i64): http.Error!Exchange from a, self
+Client.Drive(&self, io: Io): Canceled!void
+Client.WaitDriving(&self, io: Io): Canceled!bool
+Client.Stop(&self)
 Client.Close(self)
 Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
 Exchange.Close(self, io: Io): http.Error!void
 Exchange.Abandon(self)
+Exchange.Version(&self): HttpVersion
 http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
 http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
 http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
 Response.Flush(mut self, io: Io, link: &Link): http.Error!void
+Link.Version(&self): HttpVersion
 Link.Takeover(&self): ?Taken
 Taken.Abandon(self)
 
@@ -12979,6 +13142,14 @@ struct ClientLimits {
     export allow: ?fn(&net.Addr): bool
     export secure: ?net.Secure
     export proxy: ?&url.Url
+    export h2: bool
+    export h2c: bool
+    export h2_streams: int
+    export h2_window: int
+    export h3: ?net.MuxDialer
+    export h3_direct: bool
+    export h3_connect: time.Duration
+    export alt_svc: bool
 }
 
 struct ServerOptions {
@@ -12988,6 +13159,19 @@ struct ServerOptions {
     export request_header: time.Duration
     export keep_alive: time.Duration
     export secure: ?net.Secure
+    export h2: bool
+    export h2c: bool
+    export h2_streams: int
+    export h3: ?net.MuxServer
+    export alt_svc: bool
+}
+
+// HttpVersion may gain members.
+enum HttpVersion {
+    Http10
+    Http11
+    Http2
+    Http3
 }
 
 struct Header {
@@ -13052,6 +13236,7 @@ crypto.Random(io: Io, buf: mut []u8): Canceled!void
 crypto.Equal(a: []u8, b: []u8): bool
 ChaCha20Poly1305.Seal(key: &[32]u8, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!void
 ChaCha20Poly1305.Open(key: &[32]u8, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!void
+crypto.ChaCha20Block(key: &[32]u8, counter: u32, nonce: &[12]u8): [64]u8
 Ed25519.Keypair(io: Io): Canceled![64]u8
 Ed25519.FromSeed(seed: &[32]u8): [64]u8
 Ed25519.Sign(secret: &[64]u8, msg: []u8): [64]u8
@@ -13060,12 +13245,16 @@ crypto.Hmac384(key: []u8, data: []u8): [48]u8
 crypto.Hmac512(key: []u8, data: []u8): [64]u8
 crypto.HkdfExtract(salt: []u8, ikm: []u8, h: HashKind): Prk
 crypto.HkdfExpand(prk: &Prk, info: []u8, out: mut []u8): crypto.Error!void
+crypto.HkdfExpandLabel(prk: &Prk, label: str, context: []u8, out: mut []u8): crypto.BadKey|crypto.BadLength!void
 Prk.FromBytes(h: HashKind, key: []u8): crypto.Error!Prk
 Prk.Wipe(mut self)
 AesGcm.New(key: []u8): crypto.Error!AesGcm
 AesGcm.Seal(&self, nonce: &[12]u8, aad: []u8, plain: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Open(&self, nonce: &[12]u8, aad: []u8, sealed: []u8, out: mut []u8): crypto.Error!int
 AesGcm.Wipe(mut self)
+Aes.New(key: []u8): crypto.BadLength!Aes
+Aes.Encrypt(&self, block: &[16]u8): crypto.BadKey![16]u8
+Aes.Wipe(mut self)
 EcSecret.Generate(io: Io, curve: Curve): Canceled|crypto.Error!EcSecret
 EcSecret.FromBytes(curve: Curve, b: []u8): crypto.Error!EcSecret
 EcSecret.Public(&self, out: mut []u8): crypto.Error!int
@@ -13200,6 +13389,7 @@ Ref.Is[T](&self): bool
 Key[T](): u64
 
 // std.sim
+const DefaultNetFaults: NetFaults = NetFaults(drop: 0, duplicate: 0, latency_lo: core.DurationOf(LatLo), latency_hi: core.DurationOf(LatHi), rate: 0, stream_buffer: 0, sealed: 0)
 Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim from a
 Sim.Io(&self): Io
 Sim.Arena(&self): &Arena from self
@@ -13208,6 +13398,9 @@ Sim.Run(mut self)
 Sim.CrashAfterRandomOps(mut self)
 Sim.Restart(mut self): Io
 Sim.FailNext(mut self, op: Op, f: Fault)
+Sim.SetNetFaults(mut self, f: NetFaults)
+Sim.Blackhole(mut self, port: int, on: bool)
+Sim.Rebind(mut self, port: int)
 Sim.TermInput(mut self, data: []u8, after: time.Duration): OutOfMemory!void
 Sim.Free(self)
 Recorder.New(inner: Io): OutOfMemory!Recorder
@@ -13234,6 +13427,15 @@ enum Fault {
     Denied
     Reset
     Refused
+}
+
+struct NetFaults {
+    export drop: u32
+    export duplicate: u32
+    export latency_lo: time.Duration
+    export latency_hi: time.Duration
+    export rate: i64
+    export stream_buffer: int
 }
 
 // std.db.sqlite. Db, Stmt and Error below are sqlite.Db, sqlite.Stmt and sqlite.Error
@@ -13582,6 +13784,19 @@ enum Version {
     Tls13
 }
 
+// std.quic, Experimental. Config below is quic.Config.
+const Version1: u32 = 0x00000001
+quic.Connector(c: &Config): net.MuxDialer from c
+quic.Acceptor(c: &Config): net.MuxServer from c
+
+struct Config {
+    export tls: ?&tls.Config
+    export idle: time.Duration
+    export streams: int
+    export half_open: int
+    export retry_above: int
+}
+
 // std.csv. Records, Record, Options and Error below are csv.Records, csv.Record, csv.Options and csv.Error
 error Quote(line: i64, column: int)
 error TooLarge(line: i64)
@@ -13611,6 +13826,7 @@ error Os(code: i64)
 type Error = NotFound | Invalid | InitFailed | BadName | Unsupported | Os
 dl.Open(io: Io, name: str, search: Search): dl.Error!Library
 Library.Symbol(&self, name: str): ?*u8
+dl.Present[F](io: Io, f: F): bool
 Library.Close(self, io: Io)
 Library.Detach(self)
 
@@ -13715,6 +13931,96 @@ testing.FuzzSys(sys: &System, f: fn(sys: &System, data: []u8))
 testing.Bench(f: fn(n: int))
 testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))
 testing.ExpectPanic(want: str)
+
+// std.gpu
+gpu.Adapters(a: &Arena, io: Io, backend: Backend): Error!List[AdapterInfo] from a
+gpu.Open(heap: &Heap, io: Io, o: DeviceOptions): Error!Device from heap
+gpu.CheckShader(code: ShaderCode, stage: Stage, entry: str): Error!void
+gpu.ColorOf(format: TextureFormat): ColorTarget
+gpu.DepthOf(format: TextureFormat, compare: Compare): DepthStencil
+Device.Abandon(self, io: Io)
+Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from sc
+Device.Backend(&self): Backend
+Device.Close(self, io: Io): Leaks
+Device.Encoder(mut self, label: str): Error!Encoder from self
+Device.NewBindGroup(mut self, layout: &BindGroupLayout, entries: []BindEntry, label: str): Error!BindGroup
+Device.NewBindGroupLayout(mut self, entries: []LayoutEntry, label: str): Error!BindGroupLayout
+Device.NewBuffer(mut self, size: int, usage: BufferUsage, label: str): Error!Buffer
+Device.NewComputePipeline(mut self, io: Io, layout: &PipelineLayout, cs: &Shader, label: str): Error!ComputePipeline
+Device.NewPipelineLayout(mut self, groups: []&BindGroupLayout, immediates: int, label: str): Error!PipelineLayout
+Device.NewRenderPipeline(mut self, io: Io, layout: &PipelineLayout, vs: &Shader, fs: ?&Shader, d: RenderPipelineDesc): Error!RenderPipeline
+Device.NewSampler(mut self, d: SamplerDesc): Error!Sampler
+Device.NewShader(mut self, code: ShaderCode, stage: Stage, entry: str, label: str): Error!Shader
+Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOptions): Error!Swapchain
+Device.NewTexture(mut self, d: TextureDesc): Error!Texture
+Device.NewView(mut self, t: &Texture, d: ViewDesc): Error!TextureView
+Device.Present(mut self, io: Io, t: SurfaceTexture): Error!Presented
+Device.ReadTexture(mut self, a: &Arena, io: Io, src: TextureRegion, size: Extent): Error![]u8 from a
+Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: int): Error!void
+Device.SwapchainInfo(&self, sc: &Swapchain): SwapchainInfo
+Device.TakeMessages(mut self, a: &Arena): OutOfMemory!List[Message] from a
+Device.WriteBuffer(mut self, b: &Buffer, at: int, data: []u8): Error!void
+Device.WriteTexture(mut self, dst: TextureRegion, data: []u8, size: Extent): Error!void
+Encoder.Abandon(self)
+Encoder.ComputePass(mut self, label: str): ComputePass from self
+Encoder.CopyBufferToTexture(mut self, src: &Buffer, layout: DataLayout, dst: TextureRegion, size: Extent)
+Encoder.CopyTextureToBuffer(mut self, src: TextureRegion, dst: &Buffer, layout: DataLayout, size: Extent)
+Encoder.PopDebugGroup(mut self)
+Encoder.PushDebugGroup(mut self, label: str)
+Encoder.RenderPass(mut self, d: &PassDesc): RenderPass from self
+Encoder.Submit(self): Error!void
+RenderPass.Draw(mut self, vertices: int, instances: int, first_vertex: int, first_instance: int)
+RenderPass.DrawIndexed(mut self, indices: int, instances: int, first_index: int, base_vertex: int, first_instance: int)
+RenderPass.End(self)
+RenderPass.PopDebugGroup(mut self)
+RenderPass.PushDebugGroup(mut self, label: str)
+RenderPass.SetBindGroup(mut self, index: int, g: &BindGroup, dynamic: []u32)
+RenderPass.SetImmediates(mut self, offset: int, data: []u8)
+RenderPass.SetIndexBuffer(mut self, b: &Buffer, format: IndexFormat, offset: int)
+RenderPass.SetPipeline(mut self, p: &RenderPipeline)
+RenderPass.SetVertexBuffer(mut self, slot: int, b: &Buffer, offset: int)
+ComputePass.Dispatch(mut self, x: int, y: int, z: int)
+ComputePass.End(self)
+ComputePass.PopDebugGroup(mut self)
+ComputePass.PushDebugGroup(mut self, label: str)
+ComputePass.SetBindGroup(mut self, index: int, g: &BindGroup, dynamic: []u32)
+ComputePass.SetImmediates(mut self, offset: int, data: []u8)
+ComputePass.SetPipeline(mut self, p: &ComputePipeline)
+SurfaceTexture.Abandon(self)
+SurfaceTexture.View(&self): &TextureView from self
+Swapchain.Close(self, io: Io, dev: mut Device)
+BindGroup.Close(self, dev: mut Device)
+BindGroupLayout.Close(self, dev: mut Device)
+Buffer.Close(self, dev: mut Device)
+ComputePipeline.Close(self, dev: mut Device)
+PipelineLayout.Close(self, dev: mut Device)
+RenderPipeline.Close(self, dev: mut Device)
+Sampler.Close(self, dev: mut Device)
+Shader.Close(self, dev: mut Device)
+Texture.Close(self, dev: mut Device)
+TextureView.Close(self, dev: mut Device)
+
+// std.window
+window.Open(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap
+Window.Close(self)
+Window.Poll(&self): ?Event
+Window.SetFullscreen(&self, f: Fullscreen): Error!void
+Window.Size(&self): (width: int, height: int)
+Window.Wait(&self, io: Io): Error!void
+Window.Next(&self, io: Io): Error!Event
+Window.Held(&self): InputState
+Window.SetTitle(&self, title: str): Error!void
+Window.SetCursor(&self, c: Cursor): Error!void
+Window.SetCursorMode(&self, m: CursorMode): Error!void
+Window.Surface(&self): Error!Surface
+Surface.Native(&self): Native
+Surface.Close(self)
+InputState.IsButtonDown(&self, b: Button): bool
+
+// std.image
+image.Compare(a: &Image, b: &Image, tolerance: int): Error!Difference
+image.DecodePng(a: &Arena, bytes: []u8, limits: DecodeLimits): Error!Image from a
+image.EncodePng(a: &Arena, img: Image): Error![]u8 from a
 
 // std.build. ProfileKind below is build.ProfileKind; build.Profile is its constant, set by the driver
 build.File(path: str): []u8

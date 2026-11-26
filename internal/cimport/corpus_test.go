@@ -153,7 +153,8 @@ func pct(a, b int) string {
 }
 
 // TestCImport_WindowsHSteps (measurement, MK_CIMPORT_WINDOWS_SYSROOT names
-// mingw-w64's include directory): translates windows.h five times, clean
+// mingw-w64's include directory, or lists a Windows SDK's include
+// directories): translates windows.h five times, clean
 // each time, and logs each step's wall time against a 2 s budget.
 // It asserts no time: timings on a shared machine are not stable.
 func TestCImport_WindowsHSteps(t *testing.T) {
@@ -162,9 +163,15 @@ func TestCImport_WindowsHSteps(t *testing.T) {
 		t.Skip("MK_CIMPORT_WINDOWS_SYSROOT is not set")
 	}
 	tl, rd := clangFor(t)
+	// A list, as MK_SYSROOT_<target> is: a Windows SDK's um, shared and
+	// ucrt directories are read for the MSVC triple, with mk's headers.
+	st, err := SystemFor("x86_64-windows", filepath.SplitList(sys), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 5; i++ {
-		res, err := Translate(context.Background(), tl, rd, Request{Target: "x86_64-windows", Triple: ParseTriple("x86_64-windows"),
-			Imports: []Import{{Name: "win", Headers: []string{"windows.h"}}}, Include: []string{t.TempDir()}, Sysroot: []string{sys},
+		res, err := Translate(context.Background(), tl, rd, Request{Target: "x86_64-windows", Triple: st.Triple,
+			Imports: []Import{{Name: "win", Headers: []string{"windows.h"}}}, Include: []string{t.TempDir()}, Sysroot: st.Dirs,
 			WorkDir: filepath.Join(t.TempDir(), "w")})
 		if err != nil {
 			t.Fatal(err)

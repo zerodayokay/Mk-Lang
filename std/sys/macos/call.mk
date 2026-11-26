@@ -39,6 +39,10 @@ const FsSoReuseAddr: i32 = 0x4
 const FsSoKeepAlive: i32 = 0x8
 const FsSoSndBuf: i32 = 0x1001
 const FsSoRcvBuf: i32 = 0x1002
+const FsIpProtoIp: i32 = 0
+const FsIpDontFrag: i32 = 28
+const FsIpProtoIpv6: i32 = 41
+const FsIpv6DontFrag: i32 = 62
 // FsSoLingerSec is SO_LINGER_SEC: struct linger with l_linger in seconds
 // (plain SO_LINGER counts it in clock ticks).
 const FsSoLingerSec: i32 = 0x1080
@@ -506,6 +510,12 @@ FsSockOpt(opt: i64): (level: i32, name: i32) {
     }
     if opt == core.IoSockLinger {
         return (level: FsSolSocket, name: FsSoLingerSec)
+    }
+    if opt == core.IoSockDontFrag {
+        return (level: FsIpProtoIp, name: FsIpDontFrag)
+    }
+    if opt == core.IoSockDontFragV6 {
+        return (level: FsIpProtoIpv6, name: FsIpv6DontFrag)
     }
     return (level: 0, name: 0)
 }

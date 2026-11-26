@@ -1,0 +1,7 @@
+render
+$CASES/scenes/msaa.scene
+$WORK/msaa.png
+--warp
+--validate
+--compare
+$CASES/golden/msaa.png

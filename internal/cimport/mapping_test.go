@@ -63,8 +63,9 @@ func TestCImport_Mapping(t *testing.T) {
 		"export const Kf: f64 = 1.5",
 		"export const Kn: i64 = -7",
 		"export const Ku: u32 = 4294967295",
+		"export const Kp: uint = 18446744073709551615",
 		"export extern FM(x: i32): i32")
-	for _, bad := range []string{"Kp", "Kt", "gv"} {
+	for _, bad := range []string{"Kt", "gv"} {
 		if strings.Contains(text, "export const "+bad+":") {
 			t.Errorf("%s should not be bound", bad)
 		}
@@ -320,12 +321,13 @@ func TestCImport_EditedHeaderCached(t *testing.T) {
 			t.Errorf("miss, want %q", want)
 		}
 	}
+	sf := []ShimFunc{{Name: "f"}}
 	edit("1")
-	Save(st, key, &Result{Shim: "one", Deps: []string{dep}})
+	Save(st, key, &Result{Shim: "one", ShimFuncs: sf, Deps: []string{dep}})
 	load("one")
 	edit("9")
 	load("")
-	Save(st, key, &Result{Shim: "nine", Deps: []string{dep}})
+	Save(st, key, &Result{Shim: "nine", ShimFuncs: sf, Deps: []string{dep}})
 	load("nine")
 	edit("1")
 	load("one")

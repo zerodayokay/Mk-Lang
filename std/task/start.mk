@@ -306,6 +306,9 @@ StartOn(p: *u8) {
     unsafe "p is Start's Boot, in a frame that is never popped" {
         TaskInit(raw.PtrCast[u8, Boot](p))
     }
+    if Target.os == Os.Macos {
+        MainServiceEnabled.Store(1)
+    }
     // Calls from C (lib.mk) run as tasks from here on.
     // Edge: after TaskInit published the TaskState page; a thunk's
     // FromCNeeded loads the state before it reads the page.

@@ -113,6 +113,10 @@ type Config struct {
 	// call (trapform.go): the driver sets it for x86_64-windows optimized
 	// executables.
 	TrapForm bool
+	// Lazy holds the extern symbols the build binds lazily (the driver's
+	// lazylink.go): dl.Present of one calls the resolver, of any other
+	// is true (present.go). PackFacts hashes what a pack's calls read of it.
+	Lazy map[string]bool
 }
 
 // triple is the LLVM triple printed into every module of the build.

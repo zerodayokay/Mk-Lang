@@ -1,0 +1,3 @@
+usage: relay load|slow|goaway|sim-loss FRONT BACK STREAMS BODY_BYTES CANCEL_PERCENT [TLS_DIR]
+       relay serve FRONT BACK LISTEN_PORT ORIGIN_PORT [TLS_DIR]
+       relay origin PROTOCOL LISTEN_PORT [TLS_DIR]

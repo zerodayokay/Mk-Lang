@@ -19,14 +19,12 @@
 package driver
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"mk/internal/cache"
-	"mk/internal/source"
+	"mk/internal/cimport"
 	"mk/internal/types"
 )
 
@@ -236,12 +234,6 @@ func (w *world) writeLibcHeaders(st *cache.Store, work string) (string, error) {
 		return "", nil
 	}
 	files := libcHeaders(protos, targetOS(w.cfg.Target))
-	h := source.NewHasher("mk.driver.libch.v1")
-	for _, n := range libcHeaderNames {
-		h.String(n)
-		h.String(files[n])
-	}
-	sum := h.Sum()
 	base := filepath.Join(work, "libc-h")
 	if st != nil {
 		d, err := st.Dir("libch")
@@ -250,16 +242,5 @@ func (w *world) writeLibcHeaders(st *cache.Store, work string) (string, error) {
 		}
 		base = d
 	}
-	dir := filepath.Join(base, fmt.Sprintf("%x", sum[:8]))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	for _, n := range libcHeaderNames {
-		// Builds in this process and in others write the same header at
-		// once (writeSameFile).
-		if _, err := writeSameFile(filepath.Join(dir, n), []byte(files[n])); err != nil {
-			return "", err
-		}
-	}
-	return dir, nil
+	return cimport.WriteHeaderDir(base, "mk.driver.libch.v1", libcHeaderNames, files)
 }

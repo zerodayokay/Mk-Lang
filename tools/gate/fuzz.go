@@ -2,8 +2,8 @@
 // fuzzes only what a change can affect, each target alone, and remembers
 // what last passed.
 //
-// What: fuzzSteps, fuzzTargets (Go targets by go test -list), fuzzPool and
-// fuzzOne, changedFiles, affected, packageDigests and inputDigest, and the
+// What: fuzzSteps, fuzzTargets (Go targets by go test -list), fuzzPool,
+// fuzzOne and its command fuzzArgv, changedFiles, affected, packageDigests and inputDigest, and the
 // fuzz-state.json record (fuzzState) behind -since last-fuzz.
 //
 // How: a package's inputs digest is the SHA-256 of its own files combined
@@ -517,6 +517,21 @@ func (g *gate) fuzzPool(chosen []fuzzTarget, record func(fuzzTarget, bool)) {
 	wg.Wait()
 }
 
+// fuzzArgv is the go test command that fuzzes t for the tier's time: -timeout
+// covers the whole binary, seed corpus and fuzzing alike; par above 0 sets
+// -parallel; a target of fuzzMinimizeTime gets -fuzzminimizetime.
+func (g *gate) fuzzArgv(t fuzzTarget, par int) []string {
+	argv := []string{g.goExe, "test", "-run=^$", "-fuzz=^" + t.name + "$", "-fuzztime=" + g.fuzzTime.String(),
+		"-timeout=" + (g.fuzzTime + 30*time.Minute).String(), t.pkg}
+	if d, ok := fuzzMinimizeTime[t.pkg+" "+t.name]; ok {
+		argv = slices.Insert(argv, 4, "-fuzzminimizetime="+d)
+	}
+	if par > 0 {
+		argv = slices.Insert(argv, 4, "-parallel="+strconv.Itoa(par))
+	}
+	return argv
+}
+
 // fuzzOne fuzzes t for the tier's time; par above 0 sets go test's
 // -parallel and trip the step's own tripwire log (targets run at once).
 func (g *gate) fuzzOne(t fuzzTarget, par int, trip string) bool {
@@ -536,12 +551,9 @@ func (g *gate) fuzzOne(t fuzzTarget, par int, trip string) bool {
 	if lock {
 		set = append(set, "MK_LINUX=1")
 	}
-	// -timeout covers the whole binary, seed corpus and fuzzing alike.
-	argv := []string{g.goExe, "test", "-run=^$", "-fuzz=^" + t.name + "$", "-fuzztime=" + g.fuzzTime.String(),
-		"-timeout=" + (g.fuzzTime + 30*time.Minute).String(), t.pkg}
+	argv := g.fuzzArgv(t, par)
 	prefix := "   "
 	if par > 0 {
-		argv = slices.Insert(argv, 4, "-parallel="+strconv.Itoa(par))
 		prefix = "   [" + t.name + "] "
 	}
 	var all []string

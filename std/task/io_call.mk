@@ -67,6 +67,19 @@ NativeCall(io: Io, a: *core.IoCallArgs): core.IoResult {
             return OnPoller(io, mut l)
         }
         if route == core.IoRouteReady {
+            if (*a).op == core.IoOpObjectWait {
+                if Target.os != Os.Windows {
+                    return ErrOf(core.SysErr.Unsupported)
+                }
+                var w := sys.NewOp(sys.OpReady, (*a).os)
+                w.pos = (*a).w.a
+                r := OnPoller(io, mut w)
+                sys.PollRelease(raw.OfMut(mut w))
+                if w.len != 0 {
+                    (*a).w.b = 1
+                }
+                return r
+            }
             // A readiness wait on the poller (sys.OpReady): it holds no
             // thread, and a cancel ends it through PollCancel.
             var w := sys.NewOp(sys.OpReady, (*a).os)

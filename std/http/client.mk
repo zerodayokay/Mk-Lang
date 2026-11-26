@@ -22,6 +22,7 @@ import std.compress
 import std.net
 import std.raw
 import std.rt
+import std.sync
 import std.task
 import std.time
 import std.url
@@ -37,9 +38,11 @@ struct Origin {
     n: int
 }
 
-/// An HTTP/1.1 client with a pool of kept-alive connections. One client
-/// serves every task of a program: it is linear, Send and Share, and its
-/// pool is behind a lock of its own. End it with Close.
+/// An HTTP/1.1 client with a pool of kept-alive connections, and HTTP/2
+/// when its limits turn h2 or h2c on, with a second pool of multiplexed
+/// connections. One client serves every task of a program: it is linear,
+/// Send and Share, and its pools are behind locks of their own. End it with
+/// Close.
 ///
 /// It keeps h and its limits, with what they borrow, such as the
 /// tls.Config behind secure, so it cannot outlive them. Its connections,
@@ -49,12 +52,19 @@ export linear mut view struct Client {
     heap: &Heap
     limits: ClientLimits
     slots: Pair[Pair[Pair[Pair[Slot]]]]
+    mux: Pair[Pair[Pair[Pair[MuxSlot]]]]
+    mux_dial: Mutex[int]
+    drive_wake: sync.Notify
+    drive_stop: raw.Atomic[u32]
+    drive_active: raw.Atomic[u32]
+    drive_ready: sync.Notify
+    h3_state: raw.Atomic[*H3ClientState]
 }
 
 /// A client with the limits l and an empty pool. O(16): the pool has 16 slots;
 /// allocates nothing: the pool's table is inside the client.
 export Client.New(h: &Heap, l: ClientLimits): Client from h, l {
-    return Client(heap: h, limits: l, slots: NewSlots())
+    return Client(heap: h, limits: l, slots: NewSlots(), mux: NewMuxSlots(), mux_dial: Mutex[int].New(0), drive_wake: sync.Notify.New(), drive_stop: raw.Atomic[u32].New(0), drive_active: raw.Atomic[u32].New(0), drive_ready: sync.Notify.New(), h3_state: raw.Atomic[*H3ClientState].New(raw.Null[H3ClientState]()))
 }
 
 /// Releases the client: every idle connection is closed without speaking
@@ -62,8 +72,13 @@ export Client.New(h: &Heap, l: ClientLimits): Client from h, l {
 /// Exchange borrows the client, so none can be open here. Never blocks or
 /// fails. O(idle connections); allocates nothing.
 export Client.Close(self) {
-    Client(heap: _, limits: _, slots) := self
+    Client(heap, limits: _, slots, mux, mux_dial: _, drive_wake: _, drive_stop: _, drive_active: _, drive_ready: _, h3_state) := self
     FreeSlots(slots)
+    FreeMuxSlots(heap.Alloc(), mux)
+    h3 := h3_state.Load()
+    if !raw.IsNull(h3) {
+        FreeH3ClientState(heap.Alloc(), h3)
+    }
 }
 
 /// Sends req and reads the reply's head, following redirects, and returns
@@ -168,7 +183,7 @@ export Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): Error!Reply 
     defer sub.Free()
     var ex := try self.Do(&sub, io, req)
     onerr ex.Abandon()
-    if LineOver(ex.line, io, self.limits.body_bytes) {
+    if ExchangeOver(&ex, io, self.limits.body_bytes) {
         fail TooLarge
     }
     status := ex.status
@@ -278,9 +293,6 @@ Client.Send(&self, a: &Arena, io: Io, method: str, u: &url.Url, headers: []Heade
     if !https && scheme != "http" {
         fail BadUrl
     }
-    if https && self.limits.secure.IsNone() {
-        fail NoSecureTransport
-    }
     if !IsToken(method) {
         fail BadUrl
     }
@@ -295,11 +307,48 @@ Client.Send(&self, a: &Arena, io: Io, method: str, u: &url.Url, headers: []Heade
     }
     port := if p := u.Port() { int(p) } else if https { 443 } else { 80 }
     key := OriginOf(scheme, host, port)
-    head := try RequestHead(a, method, u, headers, body, strip, proxied, self.limits.decoders, st.r.IsSome(), st.len)
-    lm := try NewLineIn(a)
+    use_h2 := (https && self.limits.h2) || (!https && self.limits.h2c && !proxied)
+    if https && !proxied && self.H3Running() && self.limits.h3.IsSome() {
+        if h3 := try self.SendH3(a, io, method, u, headers, body, strip, st, key, host, port) {
+            self.RememberAltSvc(io, host, key, &h3)
+            return h3
+        }
+    }
+    if https && self.limits.secure.IsNone() {
+        fail NoSecureTransport
+    }
+    ex := if use_h2 {
+        try self.SendH2(a, io, method, u, headers, body, strip, st, key, host, port, https)
+    } else {
+        try self.SendH1(a, io, method, u, headers, body, strip, st, key, host, port, https, -1)
+    }
+    if https && !proxied {
+        self.RememberAltSvc(io, host, key, &ex)
+    }
+    return ex
+}
+
+// SendH1 is Send over HTTP/1.1. pre is a slot ClaimIdle took for key's
+// origin, used for the first attempt, or -1 to claim one here.
+Client.SendH1(&self, a: &Arena, io: Io, method: str, u: &url.Url, headers: []Header, body: []u8, strip: bool, st: mut Stream, key: Origin, host: str, port: int, https: bool, pre: int): Error!Exchange from a, self {
+    proxied := self.limits.proxy.IsSome()
+    head := RequestHead(a, method, u, headers, body, strip, proxied, self.limits.decoders, st.r.IsSome(), st.len) else e {
+        if pre >= 0 {
+            SlotAt(&self.slots, pre).busy.Store(0)
+        }
+        fail e
+    }
+    lm := NewLineIn(a) else e {
+        if pre >= 0 {
+            SlotAt(&self.slots, pre).busy.Store(0)
+        }
+        fail e
+    }
     var attempt := 0
+    var first := pre
     for {
-        cl := self.Claim(io, key, attempt == 0)
+        cl := if first >= 0 { Claim(slot: first, reused: true) } else { self.Claim(io, key, attempt == 0) }
+        first = -1
         if cl.slot >= 0 {
             sl := SlotAt(&self.slots, cl.slot)
             if !cl.reused {
@@ -340,6 +389,34 @@ Client.Send(&self, a: &Arena, io: Io, method: str, u: &url.Url, headers: []Heade
         }
         return got
     }
+}
+
+// AttachH1ToSlot installs an ALPN "http/1.1" fallback net.Conn into a claimed
+// HTTP/1.1 pool slot and links lm to it.
+Client.AttachH1ToSlot(&self, io: Io, lm: &Mutex[Line], slot_idx: int, key: Origin, c: net.Conn into self) {
+    sl := SlotAt(&self.slots, slot_idx)
+    var sg := sl.st.Lock(io.NoCancel()) else {
+        Panic("http.Client: a NoCancel lock was cancelled")
+    }
+    DropConn(Replace(mut sg.Mut().conn, some(c)))
+    sg.Mut().key = key
+    sg.Unlock()
+    var pg := lm.Lock(io.NoCancel()) else {
+        Panic("http.Client: a NoCancel lock was cancelled")
+    }
+    pg.Mut().slot.Store(raw.Of(sl))
+    ResetLine(pg.Mut())
+    pg.Unlock()
+}
+
+// AttachH1ToLine installs an unpooled ALPN "http/1.1" fallback net.Conn into lm.
+AttachH1ToLine(io: Io, lm: &Mutex[Line], c: net.Conn into lm) {
+    var pg := lm.Lock(io.NoCancel()) else {
+        Panic("http.Client: a NoCancel lock was cancelled")
+    }
+    DropConn(Replace(mut pg.Mut().conn, some(c)))
+    ResetLine(pg.Mut())
+    pg.Unlock()
 }
 
 // Exchange writes the request on the Line's connection and reads the
@@ -420,8 +497,9 @@ Client.Exchange(&self, a: &Arena into lm, io: Io, lm: &Mutex[Line] into a, key: 
     l.coded = dec.IsSome()
     g.Unlock()
     hs := if dec.IsSome() { try WithoutFraming(a, h.headers) } else { h.headers }
+    ver := if h.minor == 0 { HttpVersion.Http10 } else { HttpVersion.Http11 }
     rd := try BodyReader(a, io, lm, dec)
-    return Exchange(status: h.status, headers: hs, client: self, line: lm, reader: rd, io: io, key: key)
+    return Exchange(status: h.status, headers: hs, client: self, carrier: Carrier.H1(m: lm), version: ver, reader: rd, io: io, key: key)
 }
 
 // NewLineIn puts an empty Line under its Mutex in a.

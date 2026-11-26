@@ -544,7 +544,7 @@ func TestStdTls_SimShutdownWakes(t *testing.T) {
 			if strings.Contains(out, "no usable LLVM") {
 				t.Skipf("needs the LLVM toolchain: %s", out)
 			}
-			if status != 0 || strings.Count(out, "PASS std.tls") != 2 {
+			if status != 0 || strings.Count(out, "PASS std.tls") != 2+tlsDiskBlocks(t) {
 				t.Fatalf("status %d\n%s", status, out)
 			}
 		})

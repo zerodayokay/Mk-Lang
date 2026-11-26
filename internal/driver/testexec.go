@@ -406,7 +406,7 @@ func (s *Session) testModules() []*modNode {
 	}
 	var out []*modNode
 	for _, m := range s.stdB.mods {
-		if m.path == s.cfg.StdTests || s.cfg.StdTests == "std" || strings.HasPrefix(m.path, s.cfg.StdTests+".") {
+		if m.std && stdSelects(s.cfg.StdTests, m.path) {
 			out = append(out, m)
 		}
 	}

@@ -198,6 +198,9 @@ func (fc *frontCache) stdContext(w *world, builds []*build) source.Hash {
 			continue
 		}
 		for _, m := range b.mods {
+			if m.sysview {
+				continue // a view's text is its own module's key, not std's
+			}
 			for _, f := range m.files {
 				if f.src == nil {
 					continue

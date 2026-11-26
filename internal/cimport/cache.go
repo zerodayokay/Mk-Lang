@@ -15,10 +15,11 @@
 // held a file when it was saved. A candidate holds while every hash matches
 // and no negative holds a file; the first that holds names the immutable
 // entry (KindCImport) keyed by Key and its dependencies' hashes, which holds
-// the bindings and the shim. So a header edit adds a candidate, and the old
-// content stays a hit too. A directory is no file here: Clang's search
-// passes over a directory named like the header, so it shadows nothing
-// until a file takes its place.
+// the bindings, the shim and its functions one by one (a build defines only
+// those it uses), and the metadata. So a header edit adds a candidate, and
+// the old content stays a hit too. A directory is no file here: Clang's
+// search passes over a directory named like the header, so it shadows
+// nothing until a file takes its place.
 
 package cimport
 
@@ -37,7 +38,7 @@ import (
 
 // formatVersion changes whenever the mapping changes what it writes or what
 // a candidate's negatives cover.
-const formatVersion = "mk.cimport.v7"
+const formatVersion = "mk.cimport.v8"
 
 // Key is the cache key of r translated by the Clang of identity: every
 // input but the header contents, which the entry checks itself.
@@ -68,9 +69,13 @@ func Key(identity source.Hash, resourceDir string, r Request) source.Hash {
 
 // entry is what the store holds for a key and one candidate.
 type entry struct {
-	Modules []string
-	Shim    string
-	Stats   []Stats
+	Modules           []string
+	Shim              string
+	ShimFuncs         []ShimFunc
+	Stats             []Stats
+	FuncLike          [][]string
+	Merged            []map[string]string
+	FunctionRedirects map[string]string
 }
 
 // Cand is one candidate of a C cache's list: the files the unit read
@@ -449,7 +454,10 @@ func Load(st *cache.Store, key source.Hash) (*Result, bool) {
 		if err != nil || !ok || json.Unmarshal(data, &e) != nil {
 			continue // collected, or unreadable: an older candidate may hold
 		}
-		res := &Result{Modules: e.Modules, Shim: e.Shim, Stats: e.Stats}
+		if e.Shim != "" && len(e.ShimFuncs) == 0 {
+			continue // written without the shim's functions: a build could not prune it
+		}
+		res := &Result{Modules: e.Modules, Shim: e.Shim, ShimFuncs: e.ShimFuncs, Stats: e.Stats, FuncLike: e.FuncLike, Merged: e.Merged, FunctionRedirects: e.FunctionRedirects}
 		for _, d := range c.Deps {
 			res.Deps = append(res.Deps, d.Path)
 		}
@@ -479,7 +487,15 @@ func Save(st *cache.Store, key source.Hash, res *Result) {
 		}
 		c.Deps = append(c.Deps, Dep{Path: d, Hash: h})
 	}
-	data, err := json.Marshal(entry{Modules: res.Modules, Shim: res.Shim, Stats: res.Stats})
+	data, err := json.Marshal(entry{
+		Modules:           res.Modules,
+		Shim:              res.Shim,
+		ShimFuncs:         res.ShimFuncs,
+		Stats:             res.Stats,
+		FuncLike:          res.FuncLike,
+		Merged:            res.Merged,
+		FunctionRedirects: res.FunctionRedirects,
+	})
 	if err != nil {
 		return
 	}

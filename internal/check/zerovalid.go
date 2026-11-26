@@ -196,6 +196,7 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 	c := u.c
 	var t types.TypeID
 	var bound string
+	param := "T"
 	switch {
 	case c.poolFree(item):
 		if len(g) == 0 || g[0].IsConst {
@@ -264,6 +265,22 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 		u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` is not zero-valid: "+why).
 			Text("param", "T").Text("bound", boundZeroValid).Text("type", ts))
 		return
+	case c.memAsBytes(item):
+		if len(g) != 1 || g[0].IsConst {
+			return
+		}
+		t = g[0].Type
+		if t == types.Poison {
+			return
+		}
+		if ok, why := c.byteViewArg(u.env, t, u.x.rec, map[types.TypeID]bool{}); ok {
+			return
+		} else {
+			ts := u.str(t)
+			u.b.Diags = append(u.b.Diags, diag.New(diag.E0701, at, "`"+ts+"` cannot be viewed as bytes: "+why).
+				Text("param", "T").Text("bound", boundByteView).Text("type", ts))
+			return
+		}
 	case c.rawUnaligned(item):
 		if len(g) != 1 || g[0].IsConst {
 			return
@@ -284,7 +301,7 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 		if len(g) != 1 || g[0].IsConst {
 			return
 		}
-		t, bound = g[0].Type, boundFnType
+		param, t, bound = "F", g[0].Type, boundFnType
 		if t == types.Poison || c.fnTypeArg(u.env, t) {
 			return
 		}
@@ -307,15 +324,15 @@ func (u *unit) implicitBounds(item types.ItemID, at source.Span, inst uint32, ow
 	default:
 		return
 	}
-	u.b.Diags = append(u.b.Diags, c.implicitFailure(at, t, bound, u.x.gens))
+	u.b.Diags = append(u.b.Diags, c.implicitFailure(at, param, t, bound, u.x.gens))
 }
 
 // implicitFailure is the E0701 of an implicit bound: facts param, bound,
 // type, as boundFailure's.
-func (c *Checker) implicitFailure(at source.Span, t types.TypeID, bound string, gens []types.GenericParam) *diag.Diagnostic {
+func (c *Checker) implicitFailure(at source.Span, param string, t types.TypeID, bound string, gens []types.GenericParam) *diag.Diagnostic {
 	ts := c.cfg.Types.TypeString(t, gens)
-	return diag.New(diag.E0701, at, "`"+ts+"` does not satisfy `T`'s implicit bound: an "+bound).
-		Text("param", "T").Text("bound", bound).Text("type", ts)
+	return diag.New(diag.E0701, at, "`"+ts+"` does not satisfy `"+param+"`'s implicit bound: an "+bound).
+		Text("param", param).Text("bound", bound).Text("type", ts)
 }
 
 // atomicTypeBound is the E0701 of the type expression `raw.Atomic[T]` or
@@ -332,7 +349,7 @@ func (m *Module) atomicTypeBound(env *Env, at source.Span, it *types.Item, args 
 	if t == types.Poison || c.integerArg(env, t, true) {
 		return nil
 	}
-	return c.implicitFailure(at, t, boundAtomicInt, gens)
+	return c.implicitFailure(at, "T", t, boundAtomicInt, gens)
 }
 
 // narrowed is t, or X when t is a type parameter narrowed by an enclosing

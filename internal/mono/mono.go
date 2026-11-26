@@ -125,6 +125,14 @@ type Options struct {
 	// instances, and for a build's collection, whose pack keys hash each
 	// pack's content in parallel, per pack.
 	SkipContent bool
+	// LazySyms are the extern symbols the build binds lazily (the
+	// driver's lazylink.go), and LazyRuntime the std functions their
+	// compiler-emitted stubs call by symbol: the first bodiless extern
+	// instance whose symbol LazySyms holds requests every LazyRuntime item,
+	// address taken, so a build that reaches no lazy function collects
+	// none of them. Nil binds nothing lazily.
+	LazySyms    map[string]bool
+	LazyRuntime []types.ItemID
 }
 
 func (o Options) withDefaults() Options {

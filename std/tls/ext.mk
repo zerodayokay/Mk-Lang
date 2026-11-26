@@ -24,6 +24,7 @@ const ExtCookie: u16 = 44
 const ExtPskModes: u16 = 45
 const ExtSignatureAlgorithmsCert: u16 = 50
 const ExtKeyShare: u16 = 51
+const ExtQuicParams: u16 = 57 // 0x39, RFC 9001 8.2
 const ExtRenegotiationInfo: u16 = 0xff01
 
 // The named groups std.tls builds (RFC 8446 4.2.7).
@@ -254,6 +255,23 @@ WriteAlpn(w: mut Out, names: []str) {
         w.Vec8(p.AsBytes())
     }
     w.Close(at, 2)
+}
+
+// AlpnFits reports whether names can be sent as a ProtocolNameList (RFC
+// 7301 3.1): each name 1 to 255 bytes, the list at most 2^16-1 bytes.
+// O(names); stops at the first name past the bound.
+AlpnFits(names: []str): bool {
+    var n := 0
+    for p in names {
+        if p.Len() == 0 || p.Len() > 255 {
+            return false
+        }
+        n += 1 + p.Len()
+        if n > 65535 {
+            return false
+        }
+    }
+    return true
 }
 
 // WriteAlpnList writes an ALPN extension's data from checked list

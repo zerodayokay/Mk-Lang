@@ -61,15 +61,15 @@ func (e *emitter) record(d *decl) {
 	st := &e.stats[d.imp]
 	st.Decls++
 	name, ok := e.mkName[d]
-	if !ok || name == "" {
-		e.skipped(d.imp, "unnamed record")
-		return
-	}
-	w := &e.mods[d.imp].items
 	kw := "struct"
 	if d.union {
 		kw = "union"
 	}
+	if !ok || name == "" {
+		e.skippedDecl(d.imp, kw, "(unnamed)", "unnamed record")
+		return
+	}
+	w := &e.mods[d.imp].items
 	cname := d.name
 	if cname == "" {
 		cname = "(unnamed)"
@@ -82,7 +82,7 @@ func (e *emitter) record(d *decl) {
 	l := e.lay[d.dumpKey]
 	if l == nil || len(l.fields) != len(d.fields) {
 		e.skip[d] = "no layout"
-		e.skipped(d.imp, "no layout")
+		e.skippedDecl(d.imp, kw, cname, "no layout")
 		fmt.Fprintf(w, "\n// C: %s %s: Clang gave no layout, so only pointers to it\nexport struct %s {\n}\n", kw, cname, name)
 		return
 	}
@@ -412,10 +412,113 @@ func (e *emitter) transparent(d *decl, name string, l *recLayout) bool {
 			glue = true
 		}
 	}
+	if len(accs) == 0 && flex == nil {
+		e.structFields[d] = fields
+	}
+	if e.emitComMethods(d, name, fields, sc) {
+		glue = true
+	}
 	if glue {
 		st.Generated++
 	} else {
 		st.Direct++
+	}
+	return true
+}
+
+// emitComMethods emits one Mk method per vtable entry when d's first field
+// points to a transparent vtable struct of function pointers that each take a
+// pointer to d as their first parameter. It reports whether any method was
+// emitted.
+func (e *emitter) emitComMethods(d *decl, name string, fields []mkField, sc *nameScope) bool {
+	if len(d.fields) == 0 || len(fields) == 0 || d.fields[0].bits >= 0 {
+		return false
+	}
+	f0t := e.resolve(d.fields[0].t)
+	if f0t == nil || f0t.kind != tPointer {
+		return false
+	}
+	vt := e.resolve(f0t.elem)
+	if vt == nil || vt.kind != tRecord || vt.union {
+		return false
+	}
+	vtd := e.tagDecl(vt)
+	if vtd == nil || !vtd.complete || vtd.union || len(vtd.fields) == 0 || e.ptrOnly[vtd] != "" {
+		return false
+	}
+	vl := e.lay[vtd.dumpKey]
+	if vl == nil || len(vl.fields) != len(vtd.fields) {
+		return false
+	}
+	type comSlot struct {
+		cName string
+		fn    *ctype
+	}
+	slots := make([]comSlot, len(vtd.fields))
+	for i := range vtd.fields {
+		vf := &vtd.fields[i]
+		if vf.bits >= 0 || vf.name == "" {
+			return false
+		}
+		ft := e.resolve(vf.t)
+		if ft == nil || ft.kind != tPointer {
+			return false
+		}
+		fn := e.resolve(ft.elem)
+		if fn == nil || fn.kind != tFunc || fn.variadic || len(fn.params) == 0 {
+			return false
+		}
+		p0 := e.resolve(fn.params[0])
+		if p0 == nil || p0.kind != tPointer {
+			return false
+		}
+		rec := e.resolve(p0.elem)
+		if rec == nil || rec.kind != tRecord || rec.union || e.tagDecl(rec) != d {
+			return false
+		}
+		if _, why := e.fnType(fn, vtd.imp); why != "" {
+			return false
+		}
+		if d.imp != vtd.imp {
+			if _, why := e.fnType(fn, d.imp); why != "" {
+				return false
+			}
+		}
+		slots[i] = comSlot{cName: vf.name, fn: fn}
+	}
+	vtSc := newScope()
+	vtField := fields[0].name
+	w := &e.mods[d.imp].items
+	e.mods[d.imp].needRaw = true
+	cname := d.name
+	if cname == "" {
+		cname = "(unnamed)"
+	}
+	for _, sl := range slots {
+		vfMkName := vtSc.fresh(snake(sl.cName), "_")
+		mname := sc.fresh(pascal(sl.cName), "Method")
+		var ps, args []string
+		args = append(args, "raw.Of(self)")
+		for k, pt := range sl.fn.params[1:] {
+			mkP, _ := e.paramType(pt, d.imp)
+			pn := "p" + strconv.Itoa(k)
+			ps = append(ps, pn+": "+mkP)
+			args = append(args, pn)
+		}
+		rt, _ := e.mkType(sl.fn.ret, d.imp)
+		sig := "&self"
+		if len(ps) > 0 {
+			sig += ", " + strings.Join(ps, ", ")
+		}
+		retSuffix := ""
+		callPrefix := ""
+		if rt != "void" {
+			retSuffix = ": " + rt
+			callPrefix = "return "
+		}
+		fmt.Fprintf(w, "\n// C: %s::%s\n", cname, sl.cName)
+		fmt.Fprintf(w, "export %s.%s(%s)%s {\n    unsafe \"the C vtable pointer and slot match %s\" {\n        %s(*self.%s).%s.Must()(%s)\n    }\n}\n",
+			name, mname, sig, retSuffix, name, callPrefix, vtField, vfMkName, strings.Join(args, ", "))
 	}
 	return true
 }
@@ -488,7 +591,7 @@ func (e *emitter) opaque(d *decl, name string, l *recLayout) {
 	ut := uintOf(l.align)
 	if ut == "" || l.size%l.align != 0 {
 		e.skip[d] = "alignment"
-		e.skipped(d.imp, "alignment")
+		e.skippedDecl(d.imp, kw, cname, "alignment")
 		fmt.Fprintf(w, "\n// C: %s %s: alignment %d is not expressible, so only pointers to it\nexport struct %s {\n}\n", kw, cname, l.align, name)
 		return
 	}
@@ -519,7 +622,7 @@ func (e *emitter) opaque(d *decl, name string, l *recLayout) {
 			typ, why = e.mkType(f.t, d.imp)
 		}
 		if why != "" {
-			e.skipped(d.imp, "member: "+why)
+			e.skippedDecl(d.imp, "member", cname+"."+f.name, "member: "+why)
 			continue
 		}
 		sz, al, ok := e.sizeAlign(f.t)
@@ -529,7 +632,7 @@ func (e *emitter) opaque(d *decl, name string, l *recLayout) {
 			}
 		}
 		if !ok {
-			e.skipped(d.imp, "member size")
+			e.skippedDecl(d.imp, "member", cname+"."+f.name, "member size")
 			continue
 		}
 		off := l.fields[i].bit / 8
@@ -759,7 +862,7 @@ func (e *emitter) opaqueSpanBits(d *decl, name string, l *recLayout, i int, sc *
 	off, end := lo/8, (hi+7)/8
 	n := end - off
 	if n > 8 || end > l.size {
-		e.skipped(d.imp, "bitfield of an opaque record")
+		e.skippedDecl(d.imp, "member", d.name+"."+f.name, "bitfield of an opaque record")
 		return
 	}
 	size := int64(1)

@@ -46,6 +46,9 @@ import (
 const (
 	linkDynamic = "dynamic"
 	linkStatic  = "static"
+	// linkLazy is a DLL loaded on the first call of one of its functions,
+	// never named in the import table (lazylink.go); x86_64-windows only.
+	linkLazy = "lazy"
 )
 
 // linkTargets are the targets a pkg.Link may name: one per link, never
@@ -68,13 +71,17 @@ func validateLinks(m *Manifest, t *srcTree) []*diag.Diagnostic {
 		switch {
 		case l.Name == "":
 			fail(f+".name", "link name is empty")
-		case l.Kind == linkDynamic && strings.ContainsAny(l.Name, `/\`):
-			fail(f+".name", "dynamic link name %q holds a path separator; name the file the loader looks up, and put its location in path", l.Name)
-		case l.Kind == linkDynamic && l.Target == types.X86_64Windows.Name && !validDLLName(l.Name):
-			fail(f+".name", "dynamic link name %q is not a DLL file name an import table can hold (letters, digits, _, - and .)", l.Name)
+		case (l.Kind == linkDynamic || l.Kind == linkLazy) && strings.ContainsAny(l.Name, `/\`):
+			fail(f+".name", "%s link name %q holds a path separator; name the file the loader looks up, and put its location in path", l.Kind, l.Name)
+		case (l.Kind == linkDynamic || l.Kind == linkLazy) && l.Target == types.X86_64Windows.Name && !validDLLName(l.Name):
+			fail(f+".name", "%s link name %q is not a DLL file name an import table can hold (letters, digits, _, - and .)", l.Kind, l.Name)
 		}
-		if l.Kind != linkDynamic && l.Kind != linkStatic {
-			fail(f+".kind", "link %s: kind %q is not \"dynamic\" or \"static\"", l.Name, l.Kind)
+		if l.Kind != linkDynamic && l.Kind != linkStatic && l.Kind != linkLazy {
+			fail(f+".kind", "link %s: kind %q is not \"dynamic\", \"lazy\" or \"static\"", l.Name, l.Kind)
+			continue
+		}
+		if l.Kind == linkLazy && l.Target != types.X86_64Windows.Name {
+			fail(f+".kind", "link %s: lazy binding is built for Windows targets only (x86_64-windows), not %q; link the library \"dynamic\" for this target", l.Name, l.Target)
 			continue
 		}
 		if !slices.Contains(linkTargets, l.Target) {
@@ -312,6 +319,7 @@ type dynLib struct {
 	data   map[string]bool // data exports, never resolved; named in an extern var's E0001
 	copy   string
 	labels []string
+	lazy   bool // a lazy link's (lazylink.go): its names get no import library
 }
 
 // linkPlan is what the links add to one bin's link: the archives, in the
@@ -340,6 +348,9 @@ type linkPlan struct {
 	// soDefFaults can tell a member's definition from the compiler's
 	// weak 128-bit routines (compilerWeak), which p.defs also holds.
 	memberDefs map[string]bool
+	// lazyNames are the candidates that bind lazily (neededImportLibs,
+	// lazylink.go): no import library takes them.
+	lazyNames map[string]bool
 	// sos are the shared objects of a Linux bin in system-libc mode,
 	// libc.so.6 first (links_libc.go); triple is the target's, and libc
 	// and arch the mode's facts for it (set with sos[0]).
@@ -354,14 +365,23 @@ func (p *linkPlan) empty() bool {
 	return p == nil || len(p.archives) == 0 && len(p.dlls) == 0 && len(p.sos) == 0
 }
 
+// otherKind is the Windows DLL kind that is not k.
+func otherKind(k string) string {
+	if k == linkLazy {
+		return linkDynamic
+	}
+	return linkLazy
+}
+
 // linkPlanFor reads the links of the bin's graph for the build's target.
 // insts are the bin's instances, globals its var globals and cobjs its C
 // objects. Faults: E0202 reason link at a link this host or build cannot
 // take; E0001 for an extern var a named DLL would supply; a file
 // that cannot be read, E0001 tool fs.
-func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cobjs []string) (*linkPlan, []*diag.Diagnostic) {
+func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cobjs []string, mode posixMode) (*linkPlan, []*diag.Diagnostic) {
 	links := linksFor(append(append([]pkgLink(nil), w.links...), testPkgLinks()...), w.cfg.Target.Name)
-	if len(links) == 0 {
+	posix := w.posixNames(insts)
+	if len(links) == 0 && len(posix) == 0 && mode != posixSelected {
 		return nil, nil
 	}
 	p := &linkPlan{labels: map[string]string{}, windows: w.cfg.Target.OS == types.OSWindows, triple: w.cfg.Target.LLVMTriple}
@@ -398,9 +418,14 @@ func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cob
 		key := strings.ToLower(l.Name)
 		dl := byFile[key]
 		if dl == nil {
-			dl = &dynLib{file: l.Name, names: map[string]bool{}, data: map[string]bool{}}
+			dl = &dynLib{file: l.Name, names: map[string]bool{}, data: map[string]bool{}, lazy: l.Kind == linkLazy}
 			byFile[key] = dl
 			p.dlls = append(p.dlls, dl)
+		} else if dl.lazy != (l.Kind == linkLazy) {
+			// One DLL is in the import table or not: a name of it would bind
+			// by whichever link came first.
+			ds = append(ds, linkFail(l, ".kind", "link %s: %s is also linked %q by %s; link one DLL with one kind", l.Name, l.Name, otherKind(l.Kind), dl.labels[0]))
+			continue
 		}
 		for _, n := range names {
 			dl.names[n] = true
@@ -425,13 +450,14 @@ func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cob
 		defs[n] = true
 	}
 	for i := range insts.List {
-		fd, ok := w.items.Get(insts.List[i].Item).Decl.(*types.FuncDecl)
+		it := w.items.Get(insts.List[i].Item)
+		fd, ok := it.Decl.(*types.FuncDecl)
 		if !ok || !fd.Sig.Extern {
 			continue
 		}
 		if insts.List[i].Body == nil {
 			refs[insts.List[i].Symbol] = true
-		} else {
+		} else if mode != posixDiscover || w.items.Module(it.Module).Path != libcModule {
 			defs[insts.List[i].Symbol] = true
 		}
 	}
@@ -452,6 +478,14 @@ func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cob
 			defs[n] = true
 		}
 	}
+	if len(posix) != 0 {
+		for _, o := range w.cfg.ExtraObjects {
+			d, _ := objectSymbols(o)
+			for _, n := range d {
+				defs[n] = true
+			}
+		}
+	}
 	pulled := archivePull(p.archives, refs, defs)
 	for n := range refs {
 		if !defs[n] && !isVar[n] {
@@ -466,6 +500,12 @@ func (w *world) linkPlanFor(insts *mono.Instances, globals []codegen.Global, cob
 		for _, n := range d {
 			p.memberDefs[n] = true
 		}
+	}
+	if d := p.addPosix(w, posix, mode); d != nil {
+		return nil, []*diag.Diagnostic{d}
+	}
+	if mode == posixDiscover {
+		return p, nil
 	}
 	if len(p.sos) > 0 {
 		ds = append(ds, p.soVarFaults(w, w.externVars(globals))...)
@@ -571,11 +611,11 @@ func (p *linkPlan) namedImportLibs(libs []importLib, sysCand []string) ([]import
 	used := map[*dynLib][]string{}
 	taken := map[string]bool{}
 	for _, n := range p.cand {
-		if have[n] {
+		if have[n] || p.lazyNames[n] {
 			continue
 		}
 		for _, dl := range p.dlls {
-			if dl.names[n] {
+			if dl.names[n] && !dl.lazy {
 				used[dl] = append(used[dl], n)
 				taken[n] = true
 				break
@@ -987,10 +1027,16 @@ func arMembers(b []byte) ([]arMember, error) {
 	}
 	var out []arMember
 	var longNames []byte
-	for off := len(magic); off+60 <= len(b); {
+	for off := len(magic); off < len(b); {
+		if off+60 > len(b) {
+			return nil, errors.New("bad member header")
+		}
 		hdr := b[off : off+60]
+		if hdr[58] != '`' || hdr[59] != '\n' {
+			return nil, errors.New("bad member header")
+		}
 		size, err := strconv.ParseUint(strings.TrimSpace(string(hdr[48:58])), 10, 64)
-		if err != nil || uint64(off+60)+size > uint64(len(b)) {
+		if err != nil || size > uint64(len(b)-(off+60)) {
 			return nil, errors.New("bad member header")
 		}
 		name := strings.TrimRight(string(hdr[0:16]), " ")
@@ -1007,13 +1053,13 @@ func arMembers(b []byte) ([]arMember, error) {
 			continue
 		case strings.HasPrefix(name, "#1/"):
 			n, err := strconv.Atoi(name[3:])
-			if err != nil || n > len(data) {
+			if err != nil || n < 0 || n > len(data) {
 				return nil, errors.New("bad BSD member name")
 			}
 			name, data = strings.TrimRight(string(data[:n]), "\x00"), data[n:]
 		case strings.HasPrefix(name, "/"):
 			n, err := strconv.Atoi(name[1:])
-			if err != nil || n >= len(longNames) {
+			if err != nil || n < 0 || n >= len(longNames) {
 				return nil, errors.New("bad long member name")
 			}
 			// A GNU entry ends "/\n"; a COFF entry ends in NUL. Either may

@@ -10,6 +10,7 @@
 
 import std.http
 import std.net
+import std.proc
 import std.time
 import std.url
 import std.websocket
@@ -31,6 +32,13 @@ export const MaxScriptClients: int = 16
 enum Wire {
     Tcp(s: net.Stream)
     Ws(c: websocket.Conn)
+    Events(r: proc.PipeReader)
+}
+
+/// Replay's web address and, for HTTPS, its TLS connector.
+export struct WebTarget {
+    export addr: str
+    export secure: ?net.Secure
 }
 
 /// One scripted client: its name, its connection and what it has read.
@@ -51,6 +59,7 @@ Wire.Hangup(self, io: Io) {
                 c.Abandon()
             }
         }
+        .Events(r) { r.Close() }
     }
 }
 
@@ -61,145 +70,158 @@ Wire.Hangup(self, io: Io) {
 /// line, and what other clients were sent meanwhile shows when they next
 /// act, so the transcript is the same in every run. Fails with `BadScript`
 /// at the first malformed line.
-export Replay(h: &Heap, io: Io, addr: str, web: str, script: str, out: mut Writer): ScriptError!void {
+export Replay(h: &Heap, io: Io, addr: str, web: &WebTarget, script: str, out: mut Writer): ScriptError!void {
     var arena := try Arena.New(h)
     defer arena.Free()
-    a := h.Alloc()
-    var clients := HeapList[Scripted].New(a)
-    defer clients.FreeEach(a, fn(c: Scripted) {
-        Scripted(wire, ..) := c
-        wire.Hangup(io)
-    })
-    web_client := http.Client.New(h, http.DefaultClientLimits)
+    var limits := http.DefaultClientLimits
+    limits.secure = web.secure
+    limits.h2 = web.secure.IsSome()
+    web_client := http.Client.New(h, limits)
     defer web_client.Close()
-    var n := 0
-    for raw in script.Lines() {
-        n += 1
-        line := raw.Trim()
-        if line.Len() == 0 || line.StartsWith("#") {
-            continue
-        }
-        at := line.Find(": ") else {
-            fail BadScript(line: n)
-        }
-        name := line[..at]
-        cmd := line[at + 2..].Trim()
-        if !proto.ValidNick(name) || cmd.Len() == 0 {
-            fail BadScript(line: n)
-        }
-        if cmd.StartsWith("!get ") {
-            try Get(&arena, io, &web_client, web, name, "GET", cmd[5..], out)
-            continue
-        }
-        if cmd.StartsWith("!post ") {
-            try Get(&arena, io, &web_client, web, name, "POST", cmd[6..], out)
-            continue
-        }
-        var k := Find(&clients, name) else {
-            -1
-        }
-        if k < 0 {
-            if clients.Len() == MaxScriptClients {
-                fail TooManyClients(line: n)
+    scope events := io.Scope() {
+        defer events.Cancel()
+        a := h.Alloc()
+        var clients := HeapList[Scripted].New(a)
+        defer clients.FreeEach(a, fn(c: Scripted) {
+            Scripted(wire, ..) := c
+            wire.Hangup(io)
+        })
+        var n := 0
+        for raw in script.Lines() {
+            n += 1
+            line := raw.Trim()
+            if line.Len() == 0 || line.StartsWith("#") {
+                continue
             }
-            if cmd.StartsWith("!ws ") || cmd.StartsWith("!events ") {
-                try Print(out, "{name}> {cmd}\n", (name, cmd))
+            at := line.Find(": ") else {
+                fail BadScript(line: n)
             }
-            wire := Connect(h, &arena, io, addr, web, cmd) else e {
-                match e {
-                    NoWeb {
-                        try Print(out, "{name}! connect failed: no web front end; start it with --web\n", (name))
-                    }
-                    _ {
+            name := line[..at]
+            cmd := line[at + 2..].Trim()
+            if !proto.ValidNick(name) || cmd.Len() == 0 {
+                fail BadScript(line: n)
+            }
+            if cmd.StartsWith("!get ") {
+                try Get(&arena, io, &web_client, web, name, "GET", cmd[5..], out)
+                continue
+            }
+            if cmd.StartsWith("!post ") {
+                try Get(&arena, io, &web_client, web, name, "POST", cmd[6..], out)
+                continue
+            }
+            var k := Find(&clients, name) else {
+                -1
+            }
+            if k < 0 {
+                if clients.Len() == MaxScriptClients {
+                    fail TooManyClients(line: n)
+                }
+                if cmd.StartsWith("!ws ") || cmd.StartsWith("!events ") {
+                    try Print(out, "{name}> {cmd}\n", (name, cmd))
+                }
+                wire := if web.secure.IsSome() && cmd.StartsWith("!events ") {
+                    (r, w) := proc.Pipe(io) else e {
                         try Print(out, "{name}! connect failed: {e}\n", (name, e))
+                        continue
                     }
-                }
-                continue
-            }
-            sc := Scripted(name: proto.Name.Of(name), wire: wire, lb: proto.LineBuf.New())
-            clients.Push(a, sc) else {
-                Scripted(wire: lost, ..) := sc
-                lost.Hangup(io)
-                fail OutOfMemory
-            }
-            k = clients.Len() - 1
-            try Print(out, "{name}! connected\n", (name))
-            if p := Protocol(&clients[k].wire) {
-                try Print(out, "{name}! speaks {p}\n", (name, p))
-            }
-            if cmd.StartsWith("!events ") {
-                try Head(h, io, mut clients[k], out)
-                continue
-            }
-            try Upto(h, io, mut clients[k], out)
-            if cmd.StartsWith("!ws ") {
-                // the replies to the NICK and JOIN the URL asked for
-                for _ in 0..Asked(cmd) {
-                    try Upto(h, io, mut clients[k], out)
-                }
-                continue
-            }
-        }
-        match cmd {
-            "!eof" {
-                for {
-                    got := Next(h, io, mut clients[k]) else e {
-                        try Print(out, "{name}! read failed: {e}\n", (name, e))
-                        break
+                    events.go ReadEvents(h, io, &web_client, web.addr, cmd[8..].Trim(), w)
+                    Wire.Events(r: r)
+                } else { Connect(h, &arena, io, addr, web, cmd) else e {
+                    match e {
+                        NoWeb {
+                            try Print(out, "{name}! connect failed: no web front end; start it with --web\n", (name))
+                        }
+                        _ {
+                            try Print(out, "{name}! connect failed: {e}\n", (name, e))
+                        }
                     }
-                    l := got else {
-                        try Print(out, "{name}! closed by the server\n", (name))
-                        break
-                    }
-                    try Print(out, "{name}< {l}\n", (name, l))
+                    continue
+                } }
+                sc := Scripted(name: proto.Name.Of(name), wire: wire, lb: proto.LineBuf.New())
+                clients.Push(a, sc) else {
+                    Scripted(wire: lost, ..) := sc
+                    lost.Hangup(io)
+                    fail OutOfMemory
                 }
-                Drop(mut clients, k, io)
-            }
-            "!close" {
-                try Print(out, "{name}! hangs up\n", (name))
-                Drop(mut clients, k, io)
-            }
-            "!shutdown" {
-                try Print(out, "{name}! shuts down its side\n", (name))
-                try Polite(h, io, mut clients[k], out)
-                Drop(mut clients, k, io)
-            }
-            "!read" {
-                got := Next(h, io, mut clients[k]) else {
-                    none
+                k = clients.Len() - 1
+                try Print(out, "{name}! connected\n", (name))
+                if p := Protocol(&clients[k].wire) {
+                    try Print(out, "{name}! speaks {p}\n", (name, p))
                 }
-                if l := got {
-                    try Print(out, "{name}< {l}\n", (name, l))
-                }
-            }
-            _ {
-                var bytes: [520]u8 = [0; 520]
-                len := if cmd.StartsWith("!hex ") {
-                    m := Unhex(cmd[5..], mut bytes[..512]) else {
-                        fail BadScript(line: n)
-                    }
-                    bytes[m] = b'\n'
-                    m + 1
-                } else {
-                    Frame(cmd, mut bytes[..])
-                }
-                try Print(out, "{name}> {cmd}\n", (name, cmd))
-                Transmit(io, &clients[k].wire, bytes[..len]) else e {
-                    try Print(out, "{name}! write failed: {e}\n", (name, e))
+                if cmd.StartsWith("!events ") {
+                    try Head(h, io, mut clients[k], out)
                     continue
                 }
                 try Upto(h, io, mut clients[k], out)
+                if cmd.StartsWith("!ws ") {
+                    // the replies to the NICK and JOIN the URL asked for
+                    for _ in 0..Asked(cmd) {
+                        try Upto(h, io, mut clients[k], out)
+                    }
+                    continue
+                }
+            }
+            match cmd {
+                "!eof" {
+                    for {
+                        got := Next(h, io, mut clients[k]) else e {
+                            try Print(out, "{name}! read failed: {e}\n", (name, e))
+                            break
+                        }
+                        l := got else {
+                            try Print(out, "{name}! closed by the server\n", (name))
+                            break
+                        }
+                        try Print(out, "{name}< {l}\n", (name, l))
+                    }
+                    Drop(mut clients, k, io)
+                }
+                "!close" {
+                    try Print(out, "{name}! hangs up\n", (name))
+                    Drop(mut clients, k, io)
+                }
+                "!shutdown" {
+                    try Print(out, "{name}! shuts down its side\n", (name))
+                    try Polite(h, io, mut clients[k], out)
+                    Drop(mut clients, k, io)
+                }
+                "!read" {
+                    got := Next(h, io, mut clients[k]) else {
+                        none
+                    }
+                    if l := got {
+                        try Print(out, "{name}< {l}\n", (name, l))
+                    }
+                }
+                _ {
+                    var bytes: [520]u8 = [0; 520]
+                    len := if cmd.StartsWith("!hex ") {
+                        m := Unhex(cmd[5..], mut bytes[..512]) else {
+                            fail BadScript(line: n)
+                        }
+                        bytes[m] = b'\n'
+                        m + 1
+                    } else {
+                        Frame(cmd, mut bytes[..])
+                    }
+                    try Print(out, "{name}> {cmd}\n", (name, cmd))
+                    Transmit(io, &clients[k].wire, bytes[..len]) else e {
+                        try Print(out, "{name}! write failed: {e}\n", (name, e))
+                        continue
+                    }
+                    try Upto(h, io, mut clients[k], out)
+                }
             }
         }
-    }
-    // everyone still connected says goodbye, in the order they joined
-    for i in 0..clients.Len() {
-        name := clients[i].name
-        try Print(out, "{n}> QUIT\n", (n: name.Str()))
-        Transmit(io, &clients[i].wire, b"QUIT\n") else {
-            continue
+        // everyone still connected says goodbye, in the order they joined
+        for i in 0..clients.Len() {
+            name := clients[i].name
+            try Print(out, "{n}> QUIT\n", (n: name.Str()))
+            Transmit(io, &clients[i].wire, b"QUIT\n") else {
+                continue
+            }
+            try Upto(h, io, mut clients[i], out)
         }
-        try Upto(h, io, mut clients[i], out)
     }
 }
 
@@ -212,17 +234,17 @@ type ConnectError = websocket.Error | url.Error | NoWeb
 /// Connects a new client the way its first command says: `!ws PATH [ORIGIN]`
 /// opens a WebSocket to the web front end, `!events PATH` asks it for an
 /// event stream over plain HTTP, and anything else is a chat connection.
-Connect(h: &Heap, a: &Arena into a, io: Io, addr: str, web: str, cmd: str): ConnectError!Wire from h {
+Connect(h: &Heap, a: &Arena into a, io: Io, addr: str, web: &WebTarget, cmd: str): ConnectError!Wire from h {
     if !cmd.StartsWith("!ws ") && !cmd.StartsWith("!events ") {
         return Wire.Tcp(s: try net.Dial(io, addr))
     }
-    if web.Len() == 0 {
+    if web.addr.Len() == 0 {
         fail NoWeb
     }
     if cmd.StartsWith("!events ") {
         path := cmd[8..].Trim()
-        s := try Dial(io, web)
-        if !Request(&s, io, path, web) {
+        s := try Dial(io, web.addr)
+        if !Request(&s, io, path, web.addr) {
             s.Close()
             fail net.Reset
         }
@@ -235,10 +257,12 @@ Connect(h: &Heap, a: &Arena into a, io: Io, addr: str, web: str, cmd: str): Conn
         path = args[..sp]
         origin = args[sp + 1..].Trim()
     }
-    u := try url.Parse(a, try a.Fmt("ws://{web}{path}", (web, path)), none)
+    scheme := if web.secure.IsSome() { "wss" } else { "ws" }
+    u := try url.Parse(a, try a.Fmt("{scheme}://{web.addr}{path}", (scheme, web, path)), none)
     headers := [http.Header(name: "Origin", value: origin)]
     protocols := ["chat.v1"]
     var o := websocket.DefaultOptions
+    o.secure = web.secure
     o.protocols = protocols[..]
     if origin.Len() > 0 {
         o.headers = headers[..]
@@ -298,7 +322,7 @@ Dial(io: Io, web: str): net.Error!net.Stream {
 
 /// Sends `data`, a line and its newline, on a chat connection, or as one
 /// text message without the newline on a WebSocket.
-Transmit(io: Io, w: &Wire, data: []u8): websocket.Error!void {
+Transmit(io: Io, w: &Wire, data: []u8): websocket.Error|WriteError!void {
     match w {
         .Tcp(s) {
             try s.WriteAll(io, data)
@@ -307,18 +331,20 @@ Transmit(io: Io, w: &Wire, data: []u8): websocket.Error!void {
             kind := if IsText(data) { websocket.Kind.Text } else { websocket.Kind.Binary }
             try c.Send(io, kind, data[..data.Len() - 1])
         }
+        .Events { fail WriteError }
     }
 }
 
 /// Sends one request for `path` to the web front end and prints the status
 /// and the body's lines. The client keeps the connection for the next GET.
-Get(a: &Arena into a, io: Io, client: &http.Client, web: str, name: str, method: str, path: str, out: mut Writer): ScriptError!void {
+Get(a: &Arena into a, io: Io, client: &http.Client, web: &WebTarget, name: str, method: str, path: str, out: mut Writer): ScriptError!void {
     try Print(out, "{name}> {method} {path}\n", (name, method, path))
-    if web.Len() == 0 {
+    if web.addr.Len() == 0 {
         try Print(out, "{name}! GET failed: no web front end; start it with --web\n", (name))
         return
     }
-    text := try a.Fmt("http://{web}{path}", (web, path))
+    scheme := if web.secure.IsSome() { "https" } else { "http" }
+    text := try a.Fmt("{scheme}://{web.addr}{path}", (scheme, web, path))
     u := url.Parse(a, text, none) else e {
         try Print(out, "{name}! bad URL: {e}\n", (name, e))
         return
@@ -369,7 +395,7 @@ Polite(h: &Heap, io: Io, c: mut Scripted, out: mut Writer): WriteError!void {
                 return
             }
         }
-        .Ws {
+        .Ws | .Events {
             return
         }
     }
@@ -424,7 +450,7 @@ Upto(h: &Heap, io: Io, c: mut Scripted, out: mut Writer): WriteError!void {
 
 /// The next line client `c` reads, or `none` at the end of its stream. A
 /// WebSocket message is one line, and a close from the server is the end.
-Next(h: &Heap, io: Io, c: mut Scripted): websocket.Error!?str from c {
+Next(h: &Heap, io: Io, c: mut Scripted): websocket.Error|proc.Error!?str from c {
     for {
         match c.lb.Next() {
             .Line(len) {
@@ -448,7 +474,7 @@ Next(h: &Heap, io: Io, c: mut Scripted): websocket.Error!?str from c {
 
 /// Reads what the connection has into `buf`: bytes from a stream, or one
 /// message and a newline from a WebSocket, cut to fit. Returns 0 at the end.
-Fill(h: &Heap, io: Io, w: &Wire, buf: mut []u8): websocket.Error!int {
+Fill(h: &Heap, io: Io, w: &Wire, buf: mut []u8): websocket.Error|proc.Error!int {
     match w {
         .Tcp(s) {
             return try s.Read(io, buf)
@@ -474,6 +500,7 @@ Fill(h: &Heap, io: Io, w: &Wire, buf: mut []u8): websocket.Error!int {
             buf[n] = b'\n'
             return n + 1
         }
+        .Events(r) { return try r.Read(io, buf) }
     }
 }
 
@@ -526,6 +553,6 @@ Request(s: &net.Stream, io: Io, path: str, host: str): bool {
 Protocol(w: &Wire): ?str from w {
     return match w {
         .Ws(c) { c.Protocol() }
-        .Tcp { none }
+        .Tcp | .Events { none }
     }
 }

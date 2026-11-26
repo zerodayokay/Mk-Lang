@@ -31,7 +31,7 @@ import (
 var intrinsicKeys = []string{
 	"std.core.Io:Scope", "std.core.Io:ScopeOf", "std.core.Io:ScopeWith", "std.core.Scope:Cancel",
 	"std.core.Scope:CancelAfter", "std.core.Scope:Expired", "std.core.Scope:Remaining", "std.core.Slice:Len",
-	"std.core.str:AsBytes", "std.core.str:Len", "std.dyn.erased.Key",
+	"std.core.str:AsBytes", "std.core.str:Len", "std.dl.Present", "std.dyn.erased.Key",
 	"std.raw.Addr", "std.raw.Atomic:Add", "std.raw.Atomic:AddOrd", "std.raw.Atomic:AndOrd", "std.raw.Atomic:Cas",
 	"std.raw.Atomic:CasOrd", "std.raw.Atomic:Load", "std.raw.Atomic:LoadOrd", "std.raw.Atomic:New",
 	"std.raw.Atomic:OrOrd", "std.raw.Atomic:Store", "std.raw.Atomic:StoreOrd", "std.raw.Atomic:SubOrd",
@@ -43,7 +43,7 @@ var intrinsicKeys = []string{
 	"std.raw.ReadUnaligned", "std.raw.Release", "std.raw.RotL64", "std.raw.Same", "std.raw.Select", "std.raw.Slice", "std.raw.SliceMut",
 	"std.raw.SqrtF64", "std.raw.Str", "std.raw.StrData", "std.raw.Write", "std.raw.WriteUnaligned",
 	"std.rt.CallMain", "std.rt.ErrorName", "std.rt.FramePointer", "std.rt.FramePointers", "std.rt.FuncTable", "std.rt.ProfileTable", "std.rt.StackPointer", "std.rt.UsesTasks",
-	"std.sys.Clone", "std.sys.LibcBuild", "std.sys.Restorer", "std.sys.Syscall", "std.sys.Teb", "std.sys.TrapEntry",
+	"std.sys.Clone", "std.sys.LazyPresent", "std.sys.LibcBuild", "std.sys.Restorer", "std.sys.Syscall", "std.sys.Teb", "std.sys.TrapEntry",
 	"std.task.InitContext", "std.task.Switch",
 }
 
@@ -60,8 +60,8 @@ var intrinsicSigs = map[string]string{
 	"std.core.Scope:CancelAfter": "(&self, Duration)", "std.core.Scope:Expired": "(&self): bool",
 	"std.core.Scope:Remaining": "(&self): ?Duration", "std.core.Slice:Len": "[T](&self): int",
 	"std.core.str:AsBytes": "(self): []u8", "std.core.str:Len": "(self): int",
-	"std.dyn.erased.Key": "[T](): u64",
-	"std.raw.Addr":       "[T](*T): uint", "std.raw.Atomic:Add": "[T](&self, T): T", "std.raw.Atomic:Cas": "[T](&self, T, T): bool",
+	"std.dyn.erased.Key": "[T](): u64", "std.dl.Present": "[F](Io, F): bool", "std.sys.LazyPresent": "[F](F): bool",
+	"std.raw.Addr": "[T](*T): uint", "std.raw.Atomic:Add": "[T](&self, T): T", "std.raw.Atomic:Cas": "[T](&self, T, T): bool",
 	"std.raw.Atomic:Load": "[T](&self): T", "std.raw.Atomic:New": "[T](T): Atomic[T]", "std.raw.Atomic:Store": "[T](&self, T)",
 	"std.raw.Atomic:Swap": "[T](&self, T): T", "std.raw.Clz64": "(u64): int",
 	"std.raw.Atomic:LoadOrd": "[T](&self, u8): T", "std.raw.Atomic:StoreOrd": "[T](&self, T, u8)",
@@ -149,6 +149,9 @@ func (fg *fnGen) intrinsicCall(item types.ItemID, t *mir.Terminator, args []valu
 		return
 	}
 	if fg.targetCall(key, t, args) { // the crypto intrinsics
+		return
+	}
+	if fg.presentCall(key, t) { // dl.Present (present.go)
 		return
 	}
 	destT := fg.b.PlaceType(t.Dest)

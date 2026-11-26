@@ -1,6 +1,6 @@
 // Why: the Mk stable sorts are checked against models that count every less
 // call and move, so the models must be right themselves.
-// What: the Go model of StableSort (core_sort.mk), SortStableInPlace's body
+// What: the Go model of StableSort (core_sort_stable.mk), SortStableInPlace's body
 // sort, TestStdColl_BlockMergeModel* and TestStdColl_BlockMergeCounts, which
 // also run the model of the sort through scratch (bufSort,
 // std-coll_drift_model_test.go).
@@ -20,7 +20,7 @@ import (
 	"testing"
 )
 
-// blkRun is core_sort.mk's BlkRun: below 2 * blkRun elements both sorts are
+// blkRun is core_sort_stable.mk's BlkRun: below 2 * blkRun elements both sorts are
 // one insertion sort, above it the base runs are blkRun to 2 * blkRun
 // long.
 const blkRun = 16
@@ -58,7 +58,7 @@ type blkModel[T any] struct {
 	slive []bool
 }
 
-// blkCacheCap is core_sort.mk's BlkCacheCap for an element of size bytes
+// blkCacheCap is core_sort_stable.mk's BlkCacheCap for an element of size bytes
 // aligned to align.
 func blkCacheCap(size, align int) int {
 	if align > 8 || size == 0 || size > 4096 {

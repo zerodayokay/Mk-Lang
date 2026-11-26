@@ -45,6 +45,10 @@ export view struct Response {
     old: bool
     // fl: what Flush sent (flush.mk).
     fl: Flushed
+    // version and secure: request transport facts set by the server before
+    // the handler runs; Http11 and false for Response.New.
+    version: HttpVersion
+    secure: bool
 }
 
 // MaxChunk is the largest chunk Send writes under Transfer-Encoding: chunked.
@@ -53,7 +57,20 @@ const MaxChunk = 16384
 /// A 200 response with no fields and an empty body, in a. O(1); allocates
 /// nothing until a field or body bytes are added.
 export Response.New(a: &Arena): Response {
-    return Response(arena: a, code: 200, headers: List[Header].New(a), data: BodyBytes(arena: a, buf: "".AsBytes()), text: Text.New(a), head: false, close: false, old: false, fl: NotFlushed())
+    return Response(arena: a, code: 200, headers: List[Header].New(a), data: BodyBytes(arena: a, buf: "".AsBytes()), text: Text.New(a), head: false, close: false, old: false, fl: NotFlushed(), version: HttpVersion.Http11, secure: false)
+}
+
+/// The version of the request this response answers, as the server set it
+/// before the handler ran; Http11 for a Response made with Response.New.
+/// O(1); allocates nothing.
+export Response.Version(&self): HttpVersion {
+    return self.version
+}
+
+/// Whether the connection the request came on is TLS or QUIC; false for a
+/// Response made with Response.New. O(1); allocates nothing.
+export Response.Secure(&self): bool {
+    return self.secure
 }
 
 /// Sets the status code. O(1); allocates nothing.

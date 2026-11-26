@@ -575,6 +575,19 @@ Fields:
   returns false.
 - `free: fn(*u8, *u8, int, int)`: free(ctx, p, size, align) gives the block back.
 
+### `AsBytes`
+
+```
+export AsBytes[T](p: &T): []u8 from p
+```
+
+- Flows: The result borrows from p.
+
+A read-only byte view of p. T must be bool, char, a number, void, an
+array of such types, or an unpadded plain struct (or record) with no
+references, raw pointers or interior mutability (E0701 otherwise).
+O(1); allocates nothing.
+
 ### `Counting`
 
 ```
@@ -1099,6 +1112,18 @@ export Prefetch[T](p: &T, write: bool)
 
 A hint that p's memory will soon be read, or written when write is
 true; it changes nothing a program can observe. O(1); allocates
+nothing.
+
+### `SliceAsBytes`
+
+```
+export SliceAsBytes[T](xs: []T): []u8 from xs
+```
+
+- Flows: The result borrows from xs.
+
+A read-only byte view of xs's elements in order. T must satisfy the same
+layout and plainness rules as AsBytes (E0701 otherwise). O(1); allocates
 nothing.
 
 ### `Zeroed`

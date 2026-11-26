@@ -56,14 +56,14 @@ export const DefaultListenOptions: ListenOptions = ListenOptions(backlog: 0, reu
 export ListenWith(io: Io, addr: str, o: ListenOptions): Error!Listener {
     try CancelPoint(io)
     if l := Inherit(io, PortOf(addr)) {
-        Listener(h, bound, kind, no_delay: _) := l
-        return Listener(h: h, bound: bound, kind: kind, no_delay: o.no_delay)
+        Listener(h, bound, local, kind, no_delay: _) := l
+        return Listener(h: h, bound: bound, local: local, kind: kind, no_delay: o.no_delay)
     }
     // DefaultListenOptions stays on Listen's op, which every Io answers;
     // only a choice Listen does not make takes the call op.
     r := if o.backlog <= 0 && o.reuse_addr { core.IoListen(io, addr) } else { rt.ListenWith(io, addr, o.backlog, o.reuse_addr) }
     h := try Check(r)
-    return Listener(h: Trunc[uint](h), bound: Trunc[int](r.os), kind: StreamTcp, no_delay: o.no_delay)
+    return NewListener(Trunc[uint](h), Trunc[int](r.os), addr, o.no_delay)
 }
 
 /// Sends small writes at once (on true: TCP_NODELAY, Nagle's algorithm
@@ -112,12 +112,26 @@ KeepAliveSeconds(nanos: i64): i64 {
     return if nanos % 1_000_000_000 == 0 { s } else { s + 1 }
 }
 
+/// Asks the OS for receive and send buffer sizes of `recv` and `send`
+/// bytes (0 keeps the current size). Errors: Unsupported for another Io's
+/// stream; Os for the OS's refusal. O(1): at most two system calls;
+/// allocates nothing.
+export Stream.SetBuffers(&self, recv: int, send: int): Error!void {
+    if self.kind == StreamForeign {
+        fail Unsupported
+    }
+    if recv != 0 {
+        _ = try Check(rt.SockOption(rt.NativeIo(), self.h, core.IoSockRecvBuffer, i64(recv), 0))
+    }
+    if send != 0 {
+        _ = try Check(rt.SockOption(rt.NativeIo(), self.h, core.IoSockSendBuffer, i64(send), 0))
+    }
+}
+
 /// Which directions Stream.Shutdown and Conn.Shutdown end.
 export open enum Shutdown {
     /// No more reads: later reads return 0, and a read waiting in another
-    /// task returns 0. On Windows a later read of a stream fails with Reset,
-    /// and a read already waiting stays until its deadline or cancel.
-    // The Windows gaps need a runtime shutdown wake not yet made.
+    /// task returns 0.
     Read
     /// No more writes: the peer reads the end of the stream after what was
     /// sent.

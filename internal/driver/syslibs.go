@@ -22,7 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -176,19 +176,66 @@ func addSystemLibs(libs []importLib, used []string) []importLib {
 	if len(extra) == 0 {
 		return libs
 	}
+	byDLL := make(map[string][]string, len(extra))
+	for dll, names := range extra {
+		byDLL[dll+".dll"] = names
+	}
+	return mergeImportLibs(libs, byDLL)
+}
+
+// addSysViewLibs extends libs with eager link entries from the program's
+// system views for any symbol in used not already supplied.
+func addSysViewLibs(libs []importLib, used []string, sv *sysViews) []importLib {
+	if sv == nil || len(sv.links) == 0 {
+		return libs
+	}
+	have := map[string]bool{}
+	for _, l := range libs {
+		for _, n := range l.names {
+			have[n] = true
+		}
+	}
+	extra := map[string][]string{}
+	for _, n := range used {
+		if have[n] {
+			continue
+		}
+		if lk := sv.links[n]; lk.Lib != "" && !lk.Lazy {
+			have[n] = true
+			dll := strings.ToLower(lk.Lib)
+			extra[dll] = append(extra[dll], n)
+		}
+	}
+	return mergeImportLibs(libs, extra)
+}
+
+// mergeImportLibs merges extra (lowercased DLL filename -> symbols) into
+// libs, reusing any matching existing importLib by fileName and adding new
+// entries sorted by base DLL name.
+func mergeImportLibs(libs []importLib, extra map[string][]string) []importLib {
+	if len(extra) == 0 {
+		return libs
+	}
 	for i := range libs {
-		if more := extra[libs[i].dll]; len(more) > 0 {
+		key := strings.ToLower(libs[i].fileName())
+		if more := extra[key]; len(more) > 0 {
 			names := append(append([]string(nil), libs[i].names...), more...)
-			sort.Strings(names)
-			libs[i].names = names
-			delete(extra, libs[i].dll)
+			slices.Sort(names)
+			libs[i].names = slices.Compact(names)
+			delete(extra, key)
 		}
 	}
 	for dll, names := range extra {
-		sort.Strings(names)
-		libs = append(libs, importLib{dll: dll, names: names})
+		slices.Sort(names)
+		names = slices.Compact(names)
+		base := strings.TrimSuffix(dll, ".dll")
+		file := ""
+		if base == dll {
+			file = dll
+		}
+		libs = append(libs, importLib{dll: base, file: file, names: names})
 	}
-	sort.SliceStable(libs, func(i, j int) bool { return libs[i].dll < libs[j].dll })
+	slices.SortStableFunc(libs, func(a, b importLib) int { return strings.Compare(a.dll, b.dll) })
 	return libs
 }
 

@@ -1,7 +1,15 @@
-// Why: stable sorting without an allocator must preserve equal elements' order.
-// What: Slice[T].SortStableInPlace and its block merge sort.
-// How: small runs are insertion sorted and merged using a fixed stack cache
-// and buffers pulled from the runs themselves.
+// Why: sorting must be fast on every input shape; layer 0 gives an
+// in-place stable block merge sort with no allocator, usable at compile
+// time and in freestanding builds.
+//
+// What: Slice[T].SortStableInPlace and StableSort, with WikiSort's block
+// merge helpers (Blk*, Sym*). Unstable Slice[T].Sort and Slice[T].Search
+// are in core_sort.mk; allocator-backed Slice[T].SortStable is in
+// coll_sort.mk.
+//
+// How: StableSort runs WikiSort's in-place block merge sort using a fixed
+// 4,096-byte stack cache (BlkCacheCap) and PdqInsertion (core_sort.mk)
+// for base runs.
 
 import std.raw
 

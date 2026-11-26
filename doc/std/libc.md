@@ -41,14 +41,44 @@ Outside system-libc mode, C sources and static archives link against `std.libc` 
 
 ## System-libc mode on Linux
 
-A bin for `x86_64-linux` or `aarch64-linux` whose package graph holds a dynamic link for that target (a `pkg.Link` with `kind: "dynamic"`) is built in system-libc mode. It loads the system's dynamic loader (`/lib64/ld-linux-x86-64.so.2` or `/lib/ld-linux-aarch64.so.1`) and links `libc.so.6` and the named `.so` files. Every other Linux bin is static and loads no C library. [std.dl](dl.md#linux) shows the manifest of a program that needs only `std.dl`.
+An executable for `x86_64-linux` or `aarch64-linux` enters system-libc mode when its package graph declares a dynamic link for that target, or when its compiled code needs a glibc function from `c.posix`. The POSIX view supplies a pinned ELF symbol version after the program's explicit links and definitions have had their turn. Type references and calls outside the executable's reachable code leave its linkage unchanged.
+
+In this mode the executable loads the system's dynamic loader (`/lib64/ld-linux-x86-64.so.2` or `/lib/ld-linux-aarch64.so.1`) and links `libc.so.6` and the named `.so` files. A Linux executable with neither trigger is static. [std.dl](dl.md#linux) shows the manifest of a program that needs only `std.dl`.
+
+This Linux package prints its parent process ID. Its `pkg.mk` grants `app`
+permission to use `unsafe`.
+
+```mk
+// verdict: parse
+const Package = pkg.Package(
+    name: "posix-demo",
+    bins: [pkg.Bin(name: "posix-demo", root: "app", subsystem: "console")],
+    unsafe_modules: ["app"],
+)
+```
+
+Save this as `app/main.mk`.
+
+```mk
+// verdict: parse
+import c.posix
+
+export Main(sys: &System): WriteError!void {
+    var parent: i32 = 0
+    unsafe "getppid takes no arguments and returns the parent process ID" {
+        parent = posix.getppid()
+    }
+    try sys.Print("{parent}\n", (parent))
+}
+```
 
 In system-libc mode:
 
 - `std.libc` is not linked, and a bin that reaches it is E0001. C sources and archives use the system's C library, so all C code shares one allocator.
-- A C function that std's list of `libc.so.6` names does not include needs a link whose `.def` file names it: `fabs`, for one, is in `libm.so.6`.
+- The system stub includes std's `libc.so.6` list and the reached glibc functions of `c.posix`. For additional functions, supply a link whose `.def` names them. For example, `fabs` belongs to `libm.so.6`.
+- The view records default symbol versions through `GLIBC_2.34`. The generator omits function declarations redirected to a different ABI symbol, such as `strerror_r` and `scanf`.
 - mk links against a stub made from each link's list of names, so it builds from any host. A `.def` name with `@VERSION` binds that version. A name without one binds whichever version the loader picks, which for glibc is the oldest, so a list should give a version for every name. Versions differ by architecture: glibc's oldest is `GLIBC_2.2.5` on x86_64 and `GLIBC_2.17` on aarch64, so each target takes its own link and list. The oldest supported glibc is 2.34.
-- The program starts through `__libc_start_main`, and its threads are made with `pthread_create`. std keeps its own system calls for I/O, signals (never signals 32 and 33), processes and exit. So C `atexit` handlers do not run, and C stdio buffers are not flushed, at exit.
+- The program starts through `__libc_start_main`, and its threads are made with `pthread_create`. Joining a `std.runtime.Thread` uses `pthread_join` before releasing its stack. std keeps its own system calls for I/O, signals (never signals 32 and 33), processes and exit. So C `atexit` handlers do not run, and C stdio buffers are not flushed, at exit.
 - The executable exports nothing. A name that a link's list supplies and the executable also defines is E0001. Such names are the compiler's `memcpy`, `memmove`, `memset`, `memcmp` and `bcmp`, an `export extern` function, or a function of a C source.
 - A list cannot say whether a name is a function or data. So C built without `-fPIC` may only call a listed name, and taking its address there is E0001. Position-independent C, Clang's default, reaches a listed data object through the GOT.
 - Read `errno` before anything that may wait, since the task may then move to another thread. If a library needs to be called from one thread, pin the code that calls it yourself ([std.runtime](runtime.md#threads-of-their-own)).

@@ -1,0 +1,15 @@
+--origin
+$CASES/data/site.origin
+--tls-chain
+$CASES/data/tls/server.pem
+--tls-key
+$CASES/data/tls/server.key
+--cacert
+$CASES/data/tls/root.pem
+--origin-h2
+--origin-h3
+--http2
+--drive
+-v
+https://{tls}/hello
+https://{tls}/hello

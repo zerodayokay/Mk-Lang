@@ -69,23 +69,66 @@ var stdErrorCodes = []struct {
 	{"std.fs.NotFound", 363192304},
 	{"std.fs.Os", 875537413},
 	{"std.fs.Unsupported", 956715957},
+	{"std.gpu.DeviceLost", 1961494741},
+	{"std.gpu.Driver", 1059893016},
+	{"std.gpu.Invalid", 1727707434},
+	{"std.gpu.Missing", 1902189030},
+	{"std.gpu.NoAdapter", 421350488},
+	{"std.gpu.OutOfDeviceMemory", 1601703050},
+	{"std.gpu.SurfaceLost", 451601330},
+	{"std.gpu.Unsupported", 1437986487},
+	{"std.gpu.dx.DxFail", 1072418869},
+	{"std.gpu.dx.Unsupported", 2090660711},
+	{"std.gpu.vk.DeviceLost", 209628066},
+	{"std.gpu.vk.Driver", 12530534},
+	{"std.gpu.vk.Missing", 1165374240},
+	{"std.gpu.vk.NoAdapter", 1914984538},
+	{"std.gpu.vk.OutOfDeviceMemory", 1447469870},
+	{"std.gpu.vk.SurfaceLost", 2073396787},
+	{"std.gpu.vk.Unsupported", 1705523985},
 	{"std.http.BadRequest", 782613169},
 	{"std.http.BadUrl", 2004359864},
 	{"std.http.BodyNotReplayable", 870456459},
 	{"std.http.NoSecureTransport", 536417299},
+	{"std.http.Protocol", 747255426},
 	{"std.http.ProxyRefused", 862385251},
 	{"std.http.Status", 23996673},
 	{"std.http.TooLarge", 474579670},
 	{"std.http.TooManyRedirects", 352195647},
+	{"std.http.fields.BadBase", 808398844},
+	{"std.http.fields.BadHuffman", 188230450},
+	{"std.http.fields.BadIndex", 561684964},
+	{"std.http.fields.BadInstruction", 1611840938},
+	{"std.http.fields.BadInteger", 380287713},
+	{"std.http.fields.BadRequiredInsertCount", 224751550},
+	{"std.http.fields.BadSizeUpdate", 861656982},
+	{"std.http.fields.BlockedLimit", 1269906445},
+	{"std.http.fields.CapacityExceeded", 1532491433},
+	{"std.http.fields.MalformedField", 147075999},
+	{"std.http.fields.MissingSizeUpdate", 28316873},
+	{"std.http.fields.TooSmall", 667087857},
+	{"std.http.fields.Truncated", 497700772},
+	{"std.http.fields.Unusable", 828422955},
+	{"std.http.h2.BadField", 1625016166},
+	{"std.http.h2.TooLarge", 783803993},
+	{"std.http.h2.Violation", 250376542},
+	{"std.http.h3.SendTooLarge", 845373960},
+	{"std.http.h3.TooLarge", 373640710},
+	{"std.http.h3.Violation", 196786666},
+	{"std.image.Invalid", 1812470315},
+	{"std.image.TooLarge", 1774872296},
+	{"std.image.Unsupported", 984748343},
 	{"std.json.Depth", 1715825482},
 	{"std.json.Mismatch", 490261723},
 	{"std.json.Syntax", 567111721},
 	{"std.net.AddrInUse", 1806112950},
 	{"std.net.InvalidAddress", 1309140575},
+	{"std.net.MuxClosed", 715208150},
 	{"std.net.Os", 1628941661},
 	{"std.net.Refused", 665067335},
 	{"std.net.Reset", 1132664580},
 	{"std.net.SecureFailed", 841924286},
+	{"std.net.StreamReset", 2036820253},
 	{"std.net.Unreachable", 133943711},
 	{"std.net.Unsupported", 376793228},
 	{"std.proc.Denied", 668687245},
@@ -121,6 +164,8 @@ var stdErrorCodes = []struct {
 	{"std.websocket.PeerClosed", 1421078369},
 	{"std.websocket.Protocol", 2089393314},
 	{"std.websocket.TooLarge", 1217455577},
+	{"std.window.Os", 463735808},
+	{"std.window.Unsupported", 517637753},
 	{"std.x509.BadSignature", 2015478602},
 	{"std.x509.BadUsage", 1352315121},
 	{"std.x509.Expired", 388630855},
@@ -249,13 +294,14 @@ func TestStdErrorCodesStable(t *testing.T) {
 	var b strings.Builder
 	// std.db.sqlite is left out of the native half: a program importing it
 	// builds the sqlite amalgamation, which is kept outside the
-	// repository. Its codes are still pinned and checked against the
+	// repository. Internal modules are also outside a program's imports.
+	// Their codes are still pinned and checked against the
 	// formula above, as is an error whose payload no literal fills ("-").
 	var native []string
 	imports := map[string]bool{"std.sync": true}
 	for _, k := range keys {
 		mod := k[:strings.LastIndex(k, ".")]
-		if mod == "std.db.sqlite" || payload[k] == "-" {
+		if mod == "std.db.sqlite" || payload[k] == "-" || mod != PreludeModule && slices.Contains(Internal[:], mod) {
 			continue
 		}
 		native = append(native, k)

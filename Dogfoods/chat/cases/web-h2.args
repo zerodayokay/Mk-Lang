@@ -1,0 +1,12 @@
+--web
+127.0.0.1:0
+--web-tls-chain
+$CASES/../../fetch/cases/data/tls/server.pem
+--web-tls-key
+$CASES/../../fetch/cases/data/tls/server.key
+--web-cacert
+$CASES/../../fetch/cases/data/tls/root.pem
+--bots
+0
+replay
+$CASES/data/web-h2.chat

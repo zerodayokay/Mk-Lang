@@ -100,3 +100,31 @@ func TestQualifiedExternNamedAsValue(t *testing.T) {
 		})
 	}
 }
+
+func TestUnixVulkanSurfaceRequiresUnsafe(t *testing.T) {
+	const windowStub = `export error Unsupported
+
+export CreateUnixVulkanSurface(io: Io, handle: uint, instance: uint, loader: uint): Unsupported!(code: i32, surface: uint) {
+	fail Unsupported
+}
+`
+	const head = "import std.window\n\nF(io: Io, handle: uint, instance: uint, loader: uint) {\n"
+	const call = "_ = window.CreateUnixVulkanSurface(io, handle, instance, loader) else {}\n"
+	for _, tc := range []bodyCase{
+		{"direct call", "\t" + call, "E1101@4:6"},
+		{"function value", "\t_ = window.CreateUnixVulkanSurface\n", "E1101@4:6"},
+		{"unsafe call and name", "\tunsafe \"the caller keeps the window and instance live\" {\n\t\t" + call +
+			"\t\t_ = window.CreateUnixVulkanSurface\n\t}\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t, true)
+			w.add("std.window", opt{std: true}, windowStub).wantClean(t)
+			b := checkBody(t, w, tc.want, head+tc.src+"}\n")
+			for _, d := range b.bodyDiags(t) {
+				if got := fact(d, "operation"); got != "window.CreateUnixVulkanSurface" {
+					t.Errorf("operation %q, want window.CreateUnixVulkanSurface", got)
+				}
+			}
+		})
+	}
+}

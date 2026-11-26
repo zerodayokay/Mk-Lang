@@ -16,6 +16,7 @@ import std.tls
 - [Configuration](#configuration)
 - [Connections](#connections)
 - [Connectors for HTTP and WebSockets](#connectors-for-http-and-websockets)
+- [QUIC handshakes](#quic-handshakes)
 - [Errors](#errors)
 - [Time limits and cancellation](#time-limits-and-cancellation)
 - [Examples](#examples): [a TLS echo](#a-tls-echo), [talk to a server](#talk-to-a-server), [serve https](#serve-https)
@@ -34,6 +35,7 @@ import std.tls
 | End a connection | `Conn.Close`, or `Conn.Abandon` on an error path |
 | `https` and `wss` clients | `Connector(&cfg)` in `http.ClientLimits.secure` or `websocket.Options.secure` |
 | An `https` server | `Acceptor(&cfg)` in `http.ServerOptions.secure` |
+| QUIC TLS 1.3 handshake | `QuicClient` and `QuicServer` over a `QuicTransport` |
 
 ## What it speaks
 
@@ -59,7 +61,7 @@ A `Config` is a plain record of settings: references and slices into your memory
 
 With `roots` set to `none`, a client verifies against the system's roots: `x509.SystemPool`, or `x509.SystemRoots` under a `Sim`'s, `Recorder`'s or `Replayer`'s `Io`. See [the system's roots](x509.md#the-systems-roots).
 
-A client checks the server's chain with `x509.Verify` for the `host` it was given, at the wall clock. `Client` refuses an empty `host` with `Unsupported` before it sends anything, since an empty name would match any certificate.
+A client checks the server's chain with `x509.Verify` for the `host` it was given, at the wall clock. `Client` refuses an empty `host` with `Unsupported` before it sends anything, since an empty name would match any certificate. It refuses the same way an `alpn` list it cannot send: a name that is empty or longer than 255 bytes, or names of more than 65,535 bytes in all (RFC 7301).
 
 ## Connections
 
@@ -93,7 +95,18 @@ Secure(h: &Heap, io: Io, conn: net.Conn, host: str): tls.Error!tls.Conn from h, 
 - `Connector(&cfg)` makes `https` and `wss` connections through `Client` with `cfg`, for the URL's host. Put it in `http.ClientLimits.secure` or `websocket.Options.secure`.
 - `Acceptor(&cfg)` makes each accepted connection go through `Server` with `cfg`. Put it in `http.ServerOptions.secure`.
 
-Both borrow `cfg`, so whatever holds them cannot outlive the `Config`. A failed handshake through them is `net.SecureFailed(why)`: `Handshake` for an alert or a protocol fault, and, from a client, `BadCertificate`, `UnknownAuthority`, `Expired` or `NameMismatch` for the chain. One past the handshake limit is `time.TimedOut`. Past the handshake, an alert or protocol fault on the connection is `net.SecureFailed(why: Protocol)`. See [Make an HTTPS request](../cookbook.md#make-an-https-request).
+Both borrow `cfg`, so whatever holds them cannot outlive the `Config`. Through `net.Secure.Negotiate` (provisional) a caller offers, or accepts, its own protocols in place of `cfg.alpn` for one handshake, with the same checks, and learns the one chosen as an index into its list. A failed handshake through them is `net.SecureFailed(why)`: `Handshake` for an alert or a protocol fault, and, from a client, `BadCertificate`, `UnknownAuthority`, `Expired` or `NameMismatch` for the chain. One past the handshake limit is `time.TimedOut`. Past the handshake, an alert or protocol fault on the connection is `net.SecureFailed(why: Protocol)`. See [Make an HTTPS request](../cookbook.md#make-an-https-request).
+
+## QUIC handshakes
+
+`QuicClient` and `QuicServer` run the TLS 1.3 handshake over a caller's [`QuicTransport`](#quictransport) (RFC 9001), exchanging CRYPTO bytes by [`QuicLevel`](#quiclevel) (`Initial`, `Handshake`, `Application`), delivering level traffic secrets with their [`QuicSuite`](#quicsuite) (`Aes128Gcm`, `Aes256Gcm`, `Chacha20Poly1305`), passing the peer's `quic_transport_parameters` (0x39), and returning [`QuicDone`](#quicdone) with the agreed `Alpn()`.
+
+QUIC handshakes enforce RFC 9001's restrictions regardless of `Config`:
+
+- TLS 1.3 only (`min_version` is ignored; `TLS_AES_128_CCM_8_SHA256` is never selected).
+- Empty `legacy_session_id` and no `ChangeCipherSpec`; a server that receives a non-empty `legacy_session_id` fails with `Protocol` without calling `Alert`.
+- ALPN (`alpn`) and `quic_transport_parameters` (0x39) are mandatory on both sides (missing or mismatched ALPN sends `no_application_protocol`, 0x0178; missing 0x39 sends `missing_extension`, 0x016d). Over TCP, receiving 0x39 sends a fatal `unsupported_extension` alert.
+- Every TLS alert is fatal (`QuicTransport.Alert`), while unconsumed CRYPTO bytes at an encryption level change fail with `Protocol` without calling `Alert`.
 
 ## Errors
 
@@ -336,8 +349,9 @@ export Acceptor(c: &Config): net.Secure from c
 A server connector over c, to put in http.ServerOptions.secure: each
 connection the server accepts goes through tls.Server with c. A failed
 handshake is net.SecureFailed(why: Handshake), and one past c.handshake
-is time.TimedOut. It is a plain value that borrows c; copy it freely.
-O(1); allocates nothing until it accepts.
+is time.TimedOut. Its Negotiate accepts the caller's protocols, in
+their order, in place of c.alpn. It is a plain value that borrows c;
+copy it freely. O(1); allocates nothing until it accepts.
 
 ### `Alert`
 
@@ -356,7 +370,7 @@ export Client(h: &Heap, io: Io, conn: net.Conn, c: &Config, host: str): Error!Co
 ```
 
 - Flows: The result borrows from h and conn.
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Runs the client side of a TLS handshake over conn with the server
 named host, and returns the TLS connection. On success the Conn holds
@@ -382,7 +396,9 @@ through that Io at each handshake.
 
 Errors: the peer's Alert; Protocol and Unsupported, after the matching
 alert was sent; Unsupported also, before any I/O, for an empty host,
-which names nothing to check; x509.Error's members for the chain; the
+which names nothing to check, and for a c.alpn that cannot be sent (a
+name that is empty or over 255 bytes, or names of more than 65,535
+bytes in all, RFC 7301 3.1); x509.Error's members for the chain; the
 connection's net.Error, and time.TimedOut past c.handshake;
 OutOfMemory. A cancel leaves conn with the caller mid-handshake, with
 an unknown part of the handshake sent: close it.
@@ -411,7 +427,9 @@ Fields:
 - `identities: []Identity`: A server's chains and keys. The server presents the first whose key
   the client's signature schemes allow.
 - `alpn: []str`: The application protocols offered (a client) or accepted (a
-  server), in preference order (RFC 7301); empty offers none.
+  server), in preference order (RFC 7301); empty offers none. Each
+  is 1 to 255 bytes, at most 65,535 bytes in all: a client refuses
+  another list before any I/O, and a server never matches such a name.
 - `min_version: Version`: The lowest version a client accepts. Tls12 turns on the TLS 1.2
   client; the default, Tls13, offers TLS 1.3 only.
 - `handshake: time.Duration`: The longest a handshake may take before it fails with
@@ -462,7 +480,7 @@ when none was offered or the peer chose none. O(1); allocates nothing.
 export Conn.Close(self, io: Io): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Sends close_notify to the peer, then releases the connection and its
 state, every key wiped. Frees the state; allocates nothing.
@@ -479,7 +497,7 @@ to Abandon: write `onerr c.Abandon()` with `try c.Close(io)`.
 export Conn.Read(&self, io: Io, buf: mut []u8): Error!int
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Reads at most buf.Len() bytes of application data and returns their
 count, 0 once the peer sent close_notify. Reads of this Conn run one at
@@ -511,7 +529,7 @@ dropped. O(1); allocates nothing.
 export Conn.WriteAll(&self, io: Io, data: []u8): Error!void
 ```
 
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Sends every byte of data, as records of at most 16 KiB, before any
 other WriteAll of this Conn sends one. It first sends the KeyUpdate the
@@ -550,8 +568,9 @@ connects.
 
 A failed handshake is net.SecureFailed(why): Handshake for an alert or
 a protocol fault, and BadCertificate, UnknownAuthority, Expired or
-NameMismatch for the chain. One past c.handshake is time.TimedOut. It
-is a plain value that borrows c; copy it freely.
+NameMismatch for the chain. One past c.handshake is time.TimedOut.
+Its Negotiate offers the caller's protocols in place of c.alpn, with the
+same checks. It is a plain value that borrows c; copy it freely.
 
 ### `DefaultConfig`
 
@@ -598,6 +617,118 @@ The peer broke the protocol: a malformed or unexpected message or
 record, a bad Finished or signature, or a value RFC 8446 forbids. The
 connection sent the matching alert before it failed.
 
+### `QuicClient`
+
+```
+export QuicClient[T: QuicTransport](h: &Heap, io: Io, t: mut T, c: &Config, host: str, alpn: []str, params: []u8): Error!QuicDone
+```
+
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+
+Runs the client's TLS 1.3 handshake over t for host, offering alpn
+(mandatory) and sending params as quic_transport_parameters, under
+c.handshake. Always TLS 1.3 with an empty legacy_session_id and no
+ChangeCipherSpec (RFC 9001 4, 8). Errors: the peer's Alert or t's
+errors, Protocol and Unsupported (after t.Alert for TLS alerts;
+without t.Alert for connection-level violations such as unconsumed
+bytes at a level change), x509.Error, Canceled, time.TimedOut past
+c.handshake, OutOfMemory. O(handshake); allocates the handshake arena
+on h, freed before returning.
+
+### `QuicDone`
+
+```
+export struct QuicDone
+```
+
+What a finished QUIC handshake chose.
+
+### `QuicDone.Alpn`
+
+```
+export QuicDone.Alpn(&self): str from self
+```
+
+- Flows: The result borrows from self.
+
+The protocol both sides agreed on (never empty in QUIC). O(1);
+allocates nothing.
+
+### `QuicLevel`
+
+```
+export enum QuicLevel
+```
+
+The levels QUIC carries TLS messages at (RFC 9001 4.1.4); 0-RTT is not built.
+
+Variants:
+
+- `Initial`
+- `Handshake`
+- `Application`
+
+### `QuicPostMessage`
+
+```
+export QuicPostMessage(server: bool, buf: []u8): Alert|Protocol!int
+```
+
+- Errors: Alert(code: u8), Protocol
+
+Checks one 1-RTT post-handshake CRYPTO message in `buf` (RFC 9001 4.4,
+4.6.1, 6): returns 0 when `buf` does not yet hold a whole message, or the
+bytes consumed for a dropped NewSessionTicket on a client. Fails with
+Protocol (connection PROTOCOL_VIOLATION) on a CertificateRequest (4.4) or a
+NewSessionTicket whose early_data extension is not 0xffffffff (4.6.1), with
+Alert(decode_error) on a malformed NewSessionTicket, and with
+Alert(unexpected_message) (CRYPTO_ERROR 0x010a) on KeyUpdate (6) or any
+other message. O(buf.Len()); allocates nothing.
+
+### `QuicServer`
+
+```
+export QuicServer[T: QuicTransport](h: &Heap, io: Io, t: mut T, c: &Config, alpn: []str, params: []u8): Error!QuicDone
+```
+
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+
+Runs the server's TLS 1.3 handshake over t, requiring a protocol from
+alpn (mandatory) and sending params as quic_transport_parameters,
+under c.handshake. Errors: as QuicClient, plus Protocol without
+t.Alert when the client sent a non-empty legacy_session_id (RFC 9001
+8.4). O(handshake); allocates the handshake arena on h, freed before
+returning.
+
+### `QuicSuite`
+
+```
+export enum QuicSuite
+```
+
+The cipher suite a level's secrets are for (RFC 9001 5.3).
+
+Variants:
+
+- `Aes128Gcm`
+- `Aes256Gcm`
+- `Chacha20Poly1305`
+
+### `QuicTransport`
+
+```
+export interface QuicTransport {
+    Recv(mut self, io: Io, level: QuicLevel, buf: mut []u8): Error!int
+    Send(mut self, io: Io, level: QuicLevel, data: []u8): Error!void
+    Secret(mut self, level: QuicLevel, write: bool, suite: QuicSuite, secret: []u8): Error!void
+    PeerParams(mut self, params: []u8): Error!void
+    Alert(mut self, io: Io, code: u8)
+}
+```
+
+What std.tls asks of the QUIC connection that runs its handshake. An
+error from any method fails the handshake with it.
+
 ### `Server`
 
 ```
@@ -605,7 +736,7 @@ export Server(h: &Heap, io: Io, conn: net.Conn, c: &Config): Error!Conn from h, 
 ```
 
 - Flows: The result borrows from h and conn.
-- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
+- Errors: Error (Canceled, Closed, OutOfMemory, net.AddrInUse, net.InvalidAddress, net.MuxClosed(code: u64, app: bool, peer: bool), net.Os(code: i64), net.Refused, net.Reset, net.SecureFailed(why: SecureFailure), net.StreamReset(code: u64), net.Unreachable, net.Unsupported, time.TimedOut, Alert(code: u8), Protocol, Unsupported, x509.BadSignature, x509.BadUsage, x509.Expired, x509.Malformed(offset: int), x509.NameMismatch, x509.TooComplex, x509.UnknownAuthority, x509.Unsupported)
 
 Runs the server side of a TLS 1.3 handshake (RFC 8446) over conn, and
 returns the TLS connection. On success the Conn holds conn; on failure

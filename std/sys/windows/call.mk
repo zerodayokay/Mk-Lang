@@ -39,6 +39,10 @@ const SoKeepAliveWin: i32 = 8
 const SoLingerWin: i32 = 0x80
 const SoSndBufWin: i32 = 0x1001
 const SoRcvBufWin: i32 = 0x1002
+const IpProtoIpWin: i32 = 0
+const IpDontFragmentWin: i32 = 14
+const IpProtoIpv6Win: i32 = 41
+const Ipv6DontFragWin: i32 = 14
 const DynamicZoneBytes: int = 432
 const ZoneBytes: int = 172
 
@@ -935,6 +939,12 @@ export SocketOption(h: uint, opt: i64, b: i64, c: i64): OsResult {
         }
         name = SoLingerWin
         v[0] = (Trunc[u32](c) << 16) | (Trunc[u32](b) & 0xFFFF)
+    } else if opt == core.IoSockDontFrag {
+        level = IpProtoIpWin
+        name = IpDontFragmentWin
+    } else if opt == core.IoSockDontFragV6 {
+        level = IpProtoIpv6Win
+        name = Ipv6DontFragWin
     } else {
         return FailWith(core.SysErr.Other)
     }
@@ -975,6 +985,12 @@ export SocketOptionGet(h: uint, opt: i64): OsResult {
         name = SoSndBufWin
     } else if opt == core.IoSockLinger {
         name = SoLingerWin
+    } else if opt == core.IoSockDontFrag {
+        level = IpProtoIpWin
+        name = IpDontFragmentWin
+    } else if opt == core.IoSockDontFragV6 {
+        level = IpProtoIpv6Win
+        name = Ipv6DontFragWin
     } else {
         return FailWith(core.SysErr.Other)
     }

@@ -2,7 +2,8 @@
 // guarded by one range check each, so every length, size and threshold must
 // keep the slice whole, even under an order that is none.
 // What: boundary tests of core_sort.mk's raw moves (PdqSmall, PdqInsertion,
-// PdqPartitionLomuto, SymSwapRange, BlkMergeInternal), of mem_drift.mk's
+// PdqPartitionLomuto), of core_sort_stable.mk's (SymSwapRange,
+// BlkMergeInternal), of mem_drift.mk's
 // (DriftSort's partition, merges and small sort) and of coll_sort.mk's
 // SortStable: lengths 0 to 70 and past each threshold (8, 9, 12, 13, 16, 17,
 // 20, 32, 64 and the block merge's buffer sizes), elements of 1, 2, 4, 8, 9,

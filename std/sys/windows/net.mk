@@ -103,6 +103,13 @@ export SocketOpenUdp(family: u16): OsResult {
             _ = CloseSocketRaw(s)
             return r
         }
+        var one: u32 = 1
+        if f(s, FionBio, raw.PtrCast[u32, u8](raw.OfMut(mut one)), 4, raw.Null[u8](), 0,
+            raw.OfMut(mut got), raw.Null[u8](), raw.Null[u8]()) != 0 {
+            r := WsaFail()
+            _ = CloseSocketRaw(s)
+            return r
+        }
     }
     if !AttachSocket(s) {
         r := LastError()
@@ -114,6 +121,77 @@ export SocketOpenUdp(family: u16): OsResult {
 
 // SioUdpConnReset is SIO_UDP_CONNRESET (_WSAIOW(IOC_VENDOR, 12)).
 const SioUdpConnReset: u32 = 0x9800_000C
+// FionBio is FIONBIO (_IOW('f', 126, u_long)) for non-blocking TryRecvFrom.
+const FionBio: u32 = 0x8004_667E
+const WsaeWouldBlock: u32 = 10035
+const WsaeMsgSizeNow: u32 = 10040
+
+/// SocketConnectUdp connects the UDP socket h to a (no wait).
+/// O(1) system calls; allocates nothing.
+export SocketConnectUdp(h: uint, a: &SockAddr): OsResult {
+    if !WinsockReady() {
+        return FailWith(core.SysErr.Other)
+    }
+    var sa: [4]u64 = [0; 4]
+    var n := 0
+    unsafe "sa holds 32 bytes" {
+        n = EncodeAddr(a, raw.PtrCast[u64, u8](raw.DataMut(mut sa[..])))
+    }
+    if n == 0 {
+        return FailWith(core.SysErr.InvalidAddress)
+    }
+    unsafe "sa is the encoded address" {
+        if ConnectRaw(h, raw.PtrCast[u64, u8](raw.Data(sa[..])), Trunc[i32](n)) != 0 {
+            return WsaFail()
+        }
+    }
+    return Ok(0)
+}
+
+/// SocketRecvFromNow performs a non-blocking non-overlapped WSARecvFrom on h:
+/// returns the count (os 1 when truncated), or -1 with err None when nothing
+/// is queued. O(1) system calls; allocates nothing.
+export SocketRecvFromNow(h: uint, buf: *u8, len: int, from: mut SockAddr): OsResult {
+    if !WinsockReady() {
+        return FailWith(core.SysErr.Other)
+    }
+    var n := len
+    if n > 0x7FFF_FFFF {
+        n = 0x7FFF_FFFF
+    }
+    if n < 0 {
+        n = 0
+    }
+    var sa: [4]u64 = [0; 4]
+    var sa_len: i32 = 32
+    var count: u32 = 0
+    var flags: u32 = 0
+    unsafe "buf holds n bytes; sa holds 32 bytes; non-overlapped WSARecvFrom on FIONBIO socket" {
+        var wb: [2]u64 = [Trunc[u64](n), u64(raw.Addr(buf))]
+        bufs := raw.PtrCast[u64, u8](raw.Data(wb[..]))
+        f := raw.Read(raw.PtrCast[u64, fn(uint, *u8, u32, *u32, *u32, *u8, *i32, *u8, *u8): i32](WsFn(WsRecvFrom)))
+        r := f(h, bufs, 1, raw.OfMut(mut count), raw.OfMut(mut flags),
+            raw.PtrCast[u64, u8](raw.DataMut(mut sa[..])), raw.OfMut(mut sa_len),
+            raw.Null[u8](), raw.Null[u8]())
+        if r == 0 {
+            if !DecodeAddr(raw.PtrCast[u64, u8](raw.Data(sa[..])), from) {
+                *from = SockAddr(family: 0, port: 0, addr: [0; 16], scope_id: 0)
+            }
+            return Ok(i64(count))
+        }
+        e := WsaError()
+        if e == WsaeWouldBlock {
+            return Ok(-1)
+        }
+        if e == WsaeMsgSizeNow {
+            if !DecodeAddr(raw.PtrCast[u64, u8](raw.Data(sa[..])), from) {
+                *from = SockAddr(family: 0, port: 0, addr: [0; 16], scope_id: 0)
+            }
+            return OsResult(value: i64(count), err: core.SysErr.None, os: 1)
+        }
+        return Fail(e)
+    }
+}
 
 /// SocketBind binds h to a (no SO_REUSEADDR: on Windows it lets another
 /// socket take the port).

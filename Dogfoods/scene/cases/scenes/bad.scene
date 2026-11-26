@@ -1,0 +1,4 @@
+size 128 128
+camera 1.6 1.4 2.4 0 0 0 50
+mesh cube ../assets/cube.obj
+object box cube checker 0 0 0 30 1 1 1 1

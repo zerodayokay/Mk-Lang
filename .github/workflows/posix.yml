@@ -1,0 +1,62 @@
+name: Native POSIX smoke
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/posix.yml'
+      - 'internal/driver/*posix*.go'
+      - 'internal/driver/links*.go'
+      - 'internal/sysview/**'
+
+permissions:
+  contents: read
+
+jobs:
+  glibc:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      LLVM_VERSION: 21.1.8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: LLVM (x86-64)
+        if: runner.arch == 'X64'
+        run: |
+          . /etc/os-release
+          major=${LLVM_VERSION%%.*}
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/llvm.asc" https://apt.llvm.org/llvm-snapshot.gpg.key
+          fpr=$(gpg --show-keys --with-colons "$RUNNER_TEMP/llvm.asc" | awk -F: '$1 == "fpr" { print $10; exit }')
+          test "$fpr" = 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+          gpg --dearmor < "$RUNNER_TEMP/llvm.asc" | sudo tee /usr/share/keyrings/mk-posix-llvm.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/mk-posix-llvm.gpg] https://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-$major main" |
+            sudo tee /etc/apt/sources.list.d/mk-posix-llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "clang-$major" "lld-$major" "llvm-$major"
+          echo "MK_LLVM=/usr/lib/llvm-$major/bin" >> "$GITHUB_ENV"
+
+      - name: LLVM (ARM64)
+        if: runner.arch == 'ARM64'
+        run: |
+          cd "$RUNNER_TEMP"
+          name="LLVM-$LLVM_VERSION-Linux-ARM64"
+          curl -fsSL --retry 3 -o llvm.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.xz"
+          echo '65ce0b329514e5643407db2d02a5bd34bf33d159055dafa82825c8385bd01993  llvm.tar.xz' | sha256sum -c -
+          tar -xJf llvm.tar.xz
+          echo "MK_LLVM=$RUNNER_TEMP/$name/bin" >> "$GITHUB_ENV"
+
+      - name: Build both ELF targets and run on the native host
+        run: |
+          set -o pipefail
+          go test -p 1 -timeout 5m -v ./internal/driver -run '^TestSysView_EmbeddedPOSIX$' | tee "$RUNNER_TEMP/posix.log"
+          test "$(grep -c 'ran against host glibc' "$RUNNER_TEMP/posix.log")" = 2

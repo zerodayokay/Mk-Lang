@@ -82,7 +82,10 @@ type packGen struct {
 	nthunk int
 	// adapters are the pack's system-stack adapters (sysstack.go).
 	adapters map[adapterKey]*llvm.Function
-	nadapter map[string]int
+	// lazyDescs are the lazy descriptors dl.Present calls name, by symbol
+	// (present.go).
+	lazyDescs map[string]*llvm.Global
+	nadapter  map[string]int
 	// wrappers are the pack's intrinsic wrappers by argsKey (wrapper.go),
 	// nwrap the ordinal of the generic ones.
 	wrappers map[string]wrapperFn

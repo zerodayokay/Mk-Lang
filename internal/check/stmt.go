@@ -369,7 +369,8 @@ func (u *unit) dropped(s ast.Stmt, e ast.Expr, t types.TypeID, discard bool) {
 
 // assign is `p = e` and `p op= e`: e against the place's type; the
 // target must be a place (E0301 otherwise); a compound operator needs a
-// numeric place (E0308).
+// numeric place (E0308). An extern var, also another module's (`m.Var`,
+// no place either), is E0404 alone, which says how to write it.
 func (u *unit) assign(s *ast.AssignStmt) {
 	// A plain store into a C struct's function-pointer field reads
 	// nothing out of C (cfnptr.go).
@@ -378,7 +379,7 @@ func (u *unit) assign(s *ast.AssignStmt) {
 	}
 	t := u.operand(s.Target, types.NoType)
 	u.cFnStore = 0
-	if t != types.Poison {
+	if _, extern := u.externVarPlace(s.Target); t != types.Poison && !extern {
 		if u.isPlace(s.Target) {
 			u.constMutation(s.Target, "assigned")
 		} else {
@@ -479,9 +480,9 @@ func (u *unit) isBinding(e ast.Expr) bool {
 }
 
 // isPlace reports whether e, already typed, is a place: a local
-// or a global (Use, not syntax: a const, a function, a universe name such
-// as `true` and an item named through a module or type are not), a
-// field, an element or a dereference (parentheses allowed).
+// or a global, including a module-qualified global, a field, an element
+// or a dereference (parentheses allowed). The resolved use distinguishes
+// a place from a constant, function, or other item.
 func (u *unit) isPlace(e ast.Expr) bool {
 	switch e := e.(type) {
 	case *ast.Ident:
@@ -491,7 +492,8 @@ func (u *unit) isPlace(e ast.Expr) bool {
 		}
 		return false
 	case *ast.FieldExpr:
-		return u.b.use(e.ID()).Kind == UseField
+		kind := u.b.use(e.ID()).Kind
+		return kind == UseField || kind == UseGlobal
 	case *ast.IndexExpr:
 		return u.b.use(e.ID()).Kind == UseNone // an element; `F[int]` is UseItem
 	case *ast.ParenExpr:

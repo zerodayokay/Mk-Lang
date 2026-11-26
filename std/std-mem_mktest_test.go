@@ -1,4 +1,5 @@
-// Why: the arena and heap test blocks in std.core must judge leaks and
+// Why: the arena and heap test blocks in std.core (core/tests_arena.mk,
+// core/tests_arena_fuzz.mk, core/tests_heap.mk) must judge leaks and
 // panics, and be seen to.
 // What: runs those blocks with mk test --std=std.core, and planted bugs
 // (a leak, a Reset that frees nothing, an OwnerCheck that never panics).
@@ -189,9 +190,8 @@ func judgeMemBlock(t *testing.T, name string, r stdTestResult, ok bool) {
 }
 
 // TestStdMem_MkTestBlocks: every block in memTestFiles ends as its name asks,
-// at dev and at release; a block
-// with an [env] tag runs again alone with that environment (MK_CARRIERS=1:
-// the same tasks on one carrier).
+// at dev and at release; a block with an [env] tag runs again alone with
+// that environment (MK_CARRIERS=1: the same tasks on one carrier).
 func TestStdMem_MkTestBlocks(t *testing.T) {
 	t.Parallel()
 	var names []string

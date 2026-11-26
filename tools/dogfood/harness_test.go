@@ -609,3 +609,41 @@ func TestPackageDirs(t *testing.T) {
 		t.Errorf("packageDirs: %q, want %q", got, want)
 	}
 }
+
+// TestHardwareBoundCoverage: a hardware-bound module's function executed
+// on one target by a .targets-restricted case counts as executed across
+// hosted targets; an unrestricted execution on one target, or a
+// non-hardware module, still reports the missing target.
+func TestHardwareBoundCoverage(t *testing.T) {
+	items := []Item{
+		{Mod: "std.gpu", Text: "gpu.Open(h: &Heap, io: Io): Error!Device", InSect: "std.gpu"},
+		{Mod: "std.window", Text: "window.Open(h: &Heap, io: Io): Error!Window", InSect: "std.window"},
+		{Mod: "std.core", Text: "str.Trim(self): str", InSect: ""},
+	}
+	c := newCoverage(items)
+	c.refsOK = true
+	c.hosted = []string{targetWindows, targetLinux}
+	for _, lc := range c.lines {
+		lc.Refs = []string{"d"}
+		lc.CodeRefs = []string{"d"}
+		lc.Present = true
+		lc.Exec = []string{"d/case (windows)"}
+		lc.ExecOn = []string{targetWindows}
+	}
+	// std.gpu has ExecRestricted = true -> covered (executed).
+	c.lines[0].ExecRestricted = true
+	// std.window has ExecRestricted = false -> gap on x86_64-linux.
+	// std.core has ExecRestricted = true -> still gap on x86_64-linux.
+	c.lines[2].ExecRestricted = true
+
+	(&harness{}).judgeLines(c, &CoverSummary{})
+	if got := c.lines[0].Verdict; got != "covered (executed)" {
+		t.Errorf("std.gpu restricted: %q, want covered (executed)", got)
+	}
+	if got := c.lines[1].Verdict; got != "gap: not executed on x86_64-linux" {
+		t.Errorf("std.window unrestricted: %q, want gap on linux", got)
+	}
+	if got := c.lines[2].Verdict; got != "gap: not executed on x86_64-linux" {
+		t.Errorf("std.core restricted: %q, want gap on linux", got)
+	}
+}

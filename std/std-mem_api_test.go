@@ -134,7 +134,7 @@ func blockName(header string) string {
 		return ""
 	}
 	k := 0
-	for k < len(f)-1 && (f[k] == "linear" || f[k] == "mut" || f[k] == "view" || f[k] == "packed" || f[k] == "export") {
+	for k < len(f)-1 && (f[k] == "linear" || f[k] == "mut" || f[k] == "view" || f[k] == "plain" || f[k] == "packed" || f[k] == "export") {
 		k++
 	}
 	if k+1 >= len(f) {
@@ -456,7 +456,7 @@ func blockKind(s string) bool {
 		switch f {
 		case "struct", "enum", "interface":
 			return true
-		case "linear", "mut", "view", "packed":
+		case "linear", "mut", "view", "plain", "packed":
 			continue
 		}
 		return false

@@ -25,6 +25,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -547,22 +548,16 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	if j.gro {
 		opt.GeneralRegsOnly, opt.Bin = true, j.name
 	}
-	var insts *mono.Instances
-	var ds []*diag.Diagnostic
-	var ie *source.InternalError
-	j.timed("instances", func() {
-		// Decode cached non-std bodies reachable from this bin's modules in
-		// parallel before mono.Collect runs single-threaded; otherwise edit
-		// builds decode every unchanged module's bodies sequentially on one
-		// goroutine.
-		w.prefetchBinBodies(j)
-		ie = source.Guard("instances of "+j.mainMod, source.Span{}, func() {
-			insts, ds = mono.Collect(env, w.fromCRoots(w.buildRoots(j.mainMod, j.pkg, j.allFuncs, j.gro), j.lib != nil), opt)
-		})
-	})
-	if ie != nil {
-		return "", []*diag.Diagnostic{diag.FromInternal(ie)}
+	var cobjs []string
+	var ckeys []source.Hash
+	cBuilt := false
+	buildC := func() ([]string, []*diag.Diagnostic) {
+		var ds []*diag.Diagnostic
+		cobjs, ckeys, ds = w.cObjects(ctx, tools, st, triple, w.cfg.Profile.Optimized(), work, cTargetFlags(w.cfg.Target, cpu, j.gro))
+		cBuilt = true
+		return cobjs, ds
 	}
+	insts, posix, ds := w.nativeInstances(&j, env, &opt, buildC)
 	if len(ds) > 0 {
 		return "", ds
 	}
@@ -594,6 +589,7 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 		TestNoOverflowChecks: w.cfg.TestHooks.NoOverflowChecks, TestNoBoundsChecks: w.cfg.TestHooks.NoBoundsChecks}
 	cfg.FramePointers, cfg.Size, cfg.Cover = w.cfg.FramePointers, w.cfg.Size, w.cfg.Cover
 	cfg.TrapForm = trapForm(w.cfg, j.lib != nil, j.gro)
+	cfg.Lazy = w.lazyBinds().syms() // dl.Present's fold (lazylink.go)
 	if id := w.mainEntry(j.mainMod); id != types.NoItem {
 		cfg.Main = w.items.Get(id).Key
 	}
@@ -616,13 +612,14 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	// The package's C import shim, c_sources and asm_sources (cimport.go)
 	// follow the packs' objects, by their own content keys. They come
 	// first here because their undefined names choose import libraries.
-	cobjs, ckeys, cds := w.cObjects(ctx, tools, st, triple, w.cfg.Profile.Optimized(), work, cTargetFlags(w.cfg.Target, cpu, j.gro))
-	if len(cds) > 0 {
-		return "", cds
+	if !cBuilt {
+		if _, ds := buildC(); len(ds) > 0 {
+			return "", ds
+		}
 	}
 	// The package graph's links (links.go): nil when none applies to the
 	// target, so the link is exactly the one a package without links gets.
-	plan, ds := w.linkPlanFor(insts, unit.Globals, cobjs)
+	plan, ds := w.linkPlanFor(insts, unit.Globals, cobjs, posix)
 	if len(ds) > 0 {
 		return "", ds
 	}
@@ -634,16 +631,12 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 			What: fmt.Sprintf("driver: the link plan's system-libc mode is %v, mono folded LibcBuild to %v", libc, opt.LibcMode)})}
 	}
 	var specs []importLib
+	// The lazy-binding object (lazylink.go), when a name binds lazily: it
+	// follows the C objects in the link, and its key the C objects' keys.
+	var lazyObjs []string
+	var lazyKeys []source.Hash
 	if w.cfg.Target.OS == types.OSWindows {
-		// Only the shim's undefined names reach the system DLLs: it is the
-		// C import's own code (a static inline calling Win32). A C source
-		// links against std.libc alone, so its other calls fail at link
-		// (E0001); a named link may supply them.
-		specs, ds = w.neededImportLibs(insts, cObjectUndefined(shimObjects(cobjs)), plan)
-		if len(ds) == 0 {
-			ds = w.externVarFaults(unit.Globals, cobjs, plan, specs)
-		}
-		if len(ds) > 0 {
+		if specs, lazyObjs, lazyKeys, ds = w.windowsLibs(ctx, tools, st, cfg, work, insts, unit.Globals, cobjs, plan); len(ds) > 0 {
 			return "", ds
 		}
 	}
@@ -679,6 +672,7 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 		return "", []*diag.Diagnostic{d}
 	}
 	xkeys = append(xkeys, ckeys...)
+	xkeys = append(xkeys, lazyKeys...)
 	xkeys = append(xkeys, plan.keys()...)
 	if stub != "" {
 		xkeys = append(xkeys, stubKey)
@@ -751,6 +745,7 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	if len(ds) > 0 {
 		return "", ds
 	}
+	cobjs = append(slices.Clip(cobjs), lazyObjs...)
 	if !linked {
 		return "", nil
 	}
@@ -777,7 +772,7 @@ func (w *world) native(j nativeJob) (string, []*diag.Diagnostic) {
 	var lerr error
 	j.timed("link", func() { lerr = tools.Link(ctx, job) })
 	if lerr != nil {
-		return "", plan.linkErrWith(lerr, work)
+		return "", w.sysViewLinkHints(plan.linkErrWith(lerr, work), lerr, work)
 	}
 	w.packs.noteLink()
 	pdb := pdbOf(job)

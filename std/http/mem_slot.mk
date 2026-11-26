@@ -5,7 +5,8 @@
 // are sound.
 //
 // What: SlotOf, the Slot a Line's raw.Atomic[*Slot] names; PutLine, the
-// Line's place in the caller's arena.
+// Line's place in the caller's arena; PutH3Body, the H3Body's place in
+// the caller's arena.
 //
 // How: the pointer is set by Client.Send and cleared by TakeConn on every
 // way out of the Line's use, both under the Line's lock, and in between the
@@ -78,6 +79,23 @@ PutLine(a: &Arena, m: Mutex[Line] into a): OutOfMemory!&Mutex[Line] from a {
     }
     unsafe "b is fresh arena memory of one Mutex[Line]'s size and alignment, alive while a is; m's connection is taken out by TakeConn before the arena ends (see above)" {
         p := raw.PtrCast[u8, Mutex[Line]](b)
+        raw.Write(p, m)
+        return &*p
+    }
+}
+
+// PutH3Body moves m into fresh memory of a, as Arena.Put does, and returns
+// a shared reference to it. H3Body is linear only through its stream,
+// which SendH3 sets after PutH3Body succeeds and Exchange.Close /
+// Exchange.Abandon clear through ReleaseH3 before the arena ends. OutOfMemory
+// when the arena cannot grow, and then the caller still owns m.
+PutH3Body(a: &Arena, m: Mutex[H3Body] into a): OutOfMemory!&Mutex[H3Body] from a {
+    b := core.AllocBytes(a.Alloc(), SizeOf[Mutex[H3Body]](), AlignOf[Mutex[H3Body]]())
+    if raw.IsNull(b) {
+        fail OutOfMemory
+    }
+    unsafe "b is fresh arena memory of one Mutex[H3Body]'s size and alignment, alive while a is; m's stream is taken out by ReleaseH3 before the arena ends" {
+        p := raw.PtrCast[u8, Mutex[H3Body]](b)
         raw.Write(p, m)
         return &*p
     }

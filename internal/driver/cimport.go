@@ -146,6 +146,9 @@ type cImports struct {
 	man    *Manifest
 	hit    bool
 	sysdir []string
+	// sysFlags are the Clang flags the headers' triple fixes
+	// (cimport.TripleFlags), for the shim and the C sources.
+	sysFlags []string
 	// names, full and trees: each import's name, its whole binding, and
 	// the memory tree its module reads, which prune fills before the read step.
 	names []string
@@ -163,6 +166,13 @@ type cImports struct {
 	// vendoredShim are the externs (c.<name>.<item>) only a shim defines
 	// in vendored views read in place of a translation.
 	vendoredShim []string
+	// imports and shimFuncs are the translation's imports and the
+	// functions of its whole shim; prune sets shim to those of them the
+	// program names.
+	imports   []cimport.Import
+	shimFuncs []cimport.ShimFunc
+	funcLike  [][]string
+	merged    []map[string]string
 }
 
 // otherBinding is a package's C bindings for another target.
@@ -228,7 +238,11 @@ func (s *Session) cImportsOf(stdB *build, man *Manifest, osRoot, dep, treePrefix
 	ci := &cImports{root: osRoot, man: man, dep: dep, treePrefix: treePrefix}
 	// The C and assembly sources see the target's system headers
 	// whether or not the package also imports C.
-	ci.sysdir = sysrootFor(target, os.Getenv)
+	sys, d := s.cSystem(target, man)
+	if d != nil {
+		return nil, []*diag.Diagnostic{d}
+	}
+	ci.sysdir, ci.sysFlags = sys.Dirs, cimport.TripleFlags(sys.Triple)
 	if len(man.CImports) == 0 {
 		// Only c_sources or asm_sources: nothing to translate, objects to
 		// compile (cObjects).
@@ -250,7 +264,7 @@ func (s *Session) cImportsOf(stdB *build, man *Manifest, osRoot, dep, treePrefix
 			if t.Name == target {
 				continue
 			}
-			if len(sysrootFor(t.Name, os.Getenv)) == 0 && !allVendored(man) {
+			if dirs, _ := s.sysrootOf(t.Name, man); len(dirs) == 0 && !allVendored(man) {
 				return nil, []*diag.Diagnostic{cimport.NoSysroot(at, t.Name)}
 			}
 			mods, _, ds := s.translateC(imports, man, osRoot, t.Name, at, &cImports{dep: dep})
@@ -299,10 +313,11 @@ func prefixOfDep(dep string) string {
 func cModPath(dep, name string) string { return prefixOfDep(dep) + "c." + name }
 
 // prune gives each binding module only the items the other builds'
-// files use, transitively (lazy items); the views on disk stay whole, and
-// every kept line keeps its line there. It runs in the read step
-// just before the C build is read: the builds before it are read, and the
-// package's files, read after it, are read here too.
+// files use, transitively (lazy items), and the shim only their functions;
+// the views on disk stay whole, and every kept line keeps its line there.
+// It runs in the read step just before the C build is read: the builds
+// before it are read, and the package's files, read after it, are read
+// here too.
 func (ci *cImports) prune(w *world, builds []*build) {
 	if w.cfg.TestHooks.CImportWhole {
 		return
@@ -324,11 +339,19 @@ func (ci *cImports) prune(w *world, builds []*build) {
 			}
 		}
 	}
+	if d := ci.shareViews(w, builds); d != nil { // sdkimport.go
+		ci.mismatch = append(ci.mismatch, d)
+	}
 	used := cloneWant(want)
 	pruned := cimport.PruneAll(ci.names, ci.full, want)
 	for i, text := range pruned {
 		ci.trees[i].mem[ci.names[i]+".mk"] = text
 	}
+	// The shim defines only the functions the files name (used, before
+	// PruneAll adds what kept items mention): an unused static inline
+	// function may call what nothing links. Its text, and so its object's
+	// key, follows the functions used.
+	ci.shim = cimport.KeptShim(ci.imports, ci.shimFuncs, used)
 	target := w.cfg.Target.Name
 	for _, o := range ci.others {
 		theirs := cimport.PruneAll(ci.names, o.full, cloneWant(used))
@@ -395,8 +418,10 @@ func (s *Session) translateC(imports []cimport.Import, man *Manifest, osRoot, ta
 	if err != nil {
 		return nil, "", []*diag.Diagnostic{toolErr(err, "clang did not report its resource directory")}
 	}
-	req := cimport.Request{Target: target, Triple: cimport.ParseTriple(target), Imports: imports,
-		Include: cIncludeDirs(man, osRoot), Sysroot: sysrootFor(target, os.Getenv)}
+	req, d := s.cRequest(imports, man, osRoot, target)
+	if d != nil {
+		return nil, "", []*diag.Diagnostic{d}
+	}
 	ci.sysdir = req.Sysroot
 	st := w.openStore(s.cacheDir())
 	// The build ID is in the key: the mapping is code inside the mk binary.
@@ -429,7 +454,8 @@ func (s *Session) translateC(imports []cimport.Import, man *Manifest, osRoot, ta
 		}
 		cimport.Save(st, key, res)
 	}
-	ci.hit, ci.stats = hit, res.Stats
+	ci.hit, ci.stats, ci.funcLike, ci.merged = hit, res.Stats, res.FuncLike, res.Merged
+	ci.imports, ci.shimFuncs = imports, res.ShimFuncs
 	for i := range imports {
 		if ci.dep == "" {
 			writeCView(views[i], res.Modules[i], target)
@@ -640,8 +666,9 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 		cj := toolchain.CJob{Triple: triple, Input: j.in, Output: out, Opt: opt, ResourceDir: rd,
 			Include: include, System: system, Sysroot: sysroot, Flags: j.flags, Hosted: j.shim}
 		if !j.asm {
-			// The bin's target flags come before the manifest's own (cTargetFlags).
-			cj.Flags = append(append([]string{}, cflags...), j.flags...)
+			// The bin's target flags (cTargetFlags), then those the headers'
+			// triple fixes, come before the manifest's own.
+			cj.Flags = append(append(append([]string{}, cflags...), ci.sysFlags...), j.flags...)
 		}
 		src, err := os.ReadFile(j.in)
 		if err != nil {
@@ -979,6 +1006,9 @@ func (b *build) cImportNames() []string {
 	return out
 }
 
+// SkippedCDecl is one C declaration, macro or member skipped during translation.
+type SkippedCDecl = cimport.SkippedDecl
+
 // CImportInfo is one C import of the package after Check, as mk cimport
 // prints it: the view written for the session's target and how much of
 // the headers it binds.
@@ -989,6 +1019,7 @@ type CImportInfo struct {
 	Direct       int    // bound as plain Mk items
 	Generated    int    // bound through accessors or shims
 	Skipped      map[string]int
+	SkippedDecls []SkippedCDecl
 	CacheHit     bool // the translation came from the cache
 }
 
@@ -1005,7 +1036,39 @@ func (s *Session) CImports() []CImportInfo {
 		out[i] = CImportInfo{Name: n, Target: target, View: filepath.Join(ci.root, "gen", target, "c", n+".mk"), CacheHit: ci.hit}
 		if i < len(ci.stats) {
 			st := ci.stats[i]
-			out[i].Decls, out[i].Direct, out[i].Generated, out[i].Skipped = st.Decls, st.Direct, st.Generated, st.Skipped
+			out[i].Decls, out[i].Direct, out[i].Generated, out[i].Skipped, out[i].SkippedDecls = st.Decls, st.Direct, st.Generated, st.Skipped, st.SkippedDecls
+		}
+	}
+	return out
+}
+
+// CImportWhy explains what happened to C name cname across the package's
+// translated C imports, returning one line per import that mentions it.
+func (s *Session) CImportWhy(cname string) []string {
+	ci := s.w.cimports
+	if ci == nil {
+		return nil
+	}
+	var out []string
+	for i, n := range ci.names {
+		var text string
+		if i < len(ci.full) {
+			text = ci.full[i]
+		}
+		var skipped []cimport.SkippedDecl
+		if i < len(ci.stats) {
+			skipped = ci.stats[i].SkippedDecls
+		}
+		var fl []string
+		if i < len(ci.funcLike) {
+			fl = ci.funcLike[i]
+		}
+		var merged map[string]string
+		if i < len(ci.merged) {
+			merged = ci.merged[i]
+		}
+		if exp, ok := cimport.ExplainWhy(n, text, skipped, fl, merged, cname); ok {
+			out = append(out, exp)
 		}
 	}
 	return out

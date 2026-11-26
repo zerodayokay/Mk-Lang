@@ -2,8 +2,8 @@
 // unusual alignment, bitfields, SSE unions, missing headers) that must fail
 // cleanly or map correctly.
 // What: TestParseProto, TestCImport_Enum, _PointerOnly, _FuncPtrNullable,
-// _Bitfield, _OpaqueUnaligned, _OpaqueSSE, _HeaderMissing, TestDepHasher
-// and _Exists.
+// _Bitfield, _OpaqueUnaligned, _OpaqueSSE, _HeaderMissing, _RedeclaredVar,
+// TestDepHasher and _Exists.
 // How: small headers through translate, and the cache's dependency hasher.
 
 package cimport
@@ -54,6 +54,43 @@ func TestCImport_Enum(t *testing.T) {
 		Import{Name: "e", Headers: []string{"e.h"}})
 	wantLines(t, res.Modules[0], "export const A: E = 16", "export const B: E = 17", "export const C: E = 4",
 		"export const D: E = 120", "export const F: E = 3", "export const G: E = 4")
+}
+
+// TestCImport_RedeclaredVar: an extern variable C declares twice binds
+// once, also when the two spell its type through different typedefs, in
+// the module of its first declaration. Declarations whose types differ
+// (an array without and with its length, a function pointer without and
+// with a prototype) bind once with the type C composes from them, which
+// Clang gives the last, in the last's module. A variable two imports
+// declare alike binds in the first only.
+func TestCImport_RedeclaredVar(t *testing.T) {
+	res := translate(t, "x86_64-windows", map[string]string{
+		"a.h": "typedef struct G { int d; } G;\ntypedef G I;\nextern int x;\nextern int x;\nextern const I iid;\nextern const G iid;\n" +
+			"extern int z[];\nextern int z[3];\nextern int q[3];\nextern int q[];\nextern int (*fp)();\nextern int (*fp)(int);\n" +
+			"extern int w;\nextern int u[];\n",
+		"b.h": "extern int w;\nextern int x;\nint b_f(void);\nextern int u[2];\n",
+	}, Import{Name: "a", Headers: []string{"a.h"}}, Import{Name: "b", Headers: []string{"b.h"}})
+	a, b := res.Modules[0], res.Modules[1]
+	for name, want := range map[string]int{"x": 1, "iid": 1, "z": 1, "q": 1, "fp": 1, "w": 1, "u": 0} {
+		if n := strings.Count(a, "export extern var "+name+":"); n != want {
+			t.Errorf("c.a binds %s %d times, want %d:\n%s", name, n, want, a)
+		}
+	}
+	for _, want := range []string{"export extern var z: [3]i32\n", "export extern var q: [3]i32\n", "export extern var fp: ?fn(i32): i32\n"} {
+		if !strings.Contains(a, want) {
+			t.Errorf("c.a lacks %q:\n%s", want, a)
+		}
+	}
+	if n := strings.Count(b, "export extern var"); n != 1 || !strings.Contains(b, "export extern var u: [2]i32\n") {
+		t.Errorf("c.b binds %d variables, want u alone:\n%s", n, b)
+	}
+	// G, I, x, iid, z, q, fp and w: one declaration each, each bound.
+	if st := res.Stats[0]; st.Decls != 8 || st.Direct != 8 || len(st.Skipped) != 0 {
+		t.Errorf("stats %+v, want 8 declarations, 8 direct", st)
+	}
+	if st := res.Stats[1]; st.Decls != 2 || st.Direct != 2 {
+		t.Errorf("c.b stats %+v, want b_f and u", st)
+	}
 }
 
 // TestCImport_PointerOnly: a record whose alignment no Mk integer

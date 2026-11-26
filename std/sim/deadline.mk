@@ -250,6 +250,26 @@ SimCall(io: Io, a: *core.IoCallArgs): core.IoResult {
         if (*a).op == core.IoOpShutdown {
             return SimShutdown(io, (*a).h, (*a).w.a)
         }
+        if (*a).op == core.IoOpUdpConnect {
+            if (*a).pn < SizeOf[core.IoAddr]() {
+                if Halted(io) {
+                    return Fail(core.SysErr.Canceled)
+                }
+                return Fail(core.SysErr.InvalidAddress)
+            }
+            to := raw.Read(raw.PtrCast[u8, core.IoAddr]((*a).p))
+            return SimUdpConnect(io, (*a).h, to)
+        }
+        if (*a).op == core.IoOpTryRecvFrom {
+            var empty: [0]u8 = [0; 0]
+            var from := core.IoAddr(ip: [0; 16], port: 0, v6: false, zone: 0)
+            buf := if (*a).outn > 0 { raw.SliceMut((*a).out, (*a).outn) } else { mut empty[..] }
+            r := SimTryRecvFrom(io, (*a).h, buf, mut from)
+            if r.err == core.SysErr.None && r.value >= 0 && (*a).qn >= SizeOf[core.IoAddr]() {
+                raw.Write(raw.PtrCast[u8, core.IoAddr]((*a).q), from)
+            }
+            return r
+        }
     }
     if r := FsCall(io, a) {
         return r

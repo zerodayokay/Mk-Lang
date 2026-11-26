@@ -86,12 +86,13 @@ func edit(path string, f func(string) string) map[string]func(string) string {
 	return map[string]func(string) string{path: f}
 }
 
-// pkgItems are the item keys of package modules (not std), as text.
+// pkgItems are the item keys of package modules, excluding std and system views.
 func pkgItems(ks []types.Key) []string {
 	var out []string
 	for _, k := range ks {
-		if !strings.HasPrefix(k.String(), "std.") {
-			out = append(out, k.String())
+		name := k.String()
+		if !strings.HasPrefix(name, "std.") && !strings.HasPrefix(name, sysViewPrefix) {
+			out = append(out, name)
 		}
 	}
 	return out
@@ -125,7 +126,7 @@ func runInvRow(t *testing.T, row invRow) {
 	}
 	// The parse step parses only the edited files (their parse
 	// summaries miss); stage 3 parses the other files of the missed
-	// modules. No std file is parsed unless the build ID changed.
+	// modules. Std or system view files only need parsing on a build ID change.
 	var parsed, stdParsed []string
 	for path := range files {
 		_, edited := row.edits[path]
@@ -137,7 +138,7 @@ func runInvRow(t *testing.T, row invRow) {
 	slices.Sort(parsed)
 	var gotParsed []string
 	for _, f := range warm.Trace.FilesParsed {
-		if strings.HasPrefix(f, "std/") {
+		if isStdOrViewSource(f) {
 			stdParsed = append(stdParsed, f)
 		} else {
 			gotParsed = append(gotParsed, f)

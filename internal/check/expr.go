@@ -86,6 +86,9 @@ type unit struct {
 	// enclosing scope bindings.
 	unsafeDepth int
 	scopes      []scopeCtx
+	// presentArg is the function argument of the dl.Present call being
+	// checked (present.go), which names an extern without unsafe.
+	presentArg ast.Expr
 	// inContract is set while a requires, ensures or invariant predicate is
 	// checked.
 	inContract bool

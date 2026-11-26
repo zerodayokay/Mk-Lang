@@ -27,6 +27,9 @@ export struct Job {
     export resume: bool
     export include: bool
     export head: bool
+    export versioned: bool
+    export h3_only: bool
+    export fetch_limit: int
     export fail_status: bool
     export verbose: bool
     export silent: bool

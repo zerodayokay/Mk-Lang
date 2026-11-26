@@ -363,6 +363,8 @@ func (u *unit) unsafeCall(e ast.Node, it types.ItemID, d *types.FuncDecl) {
 		op = "call of a bodiless extern"
 	case op == "" && d.Naked:
 		op = "naked-call"
+	case op == "" && u.cComMethod(it):
+		op = "c-vtable-method"
 	}
 	if op != "" {
 		u.err(diag.E1101, e.Span(), unsafeCallText(op)+" needs an `unsafe \"reason\" { }` block").Text("operation", op)
@@ -378,6 +380,8 @@ func unsafeCallText(op string) string {
 		return "the call of a bodiless extern"
 	case "naked-call":
 		return "calling a naked function"
+	case "c-vtable-method":
+		return "calling a C vtable method"
 	case "mmio":
 		return "calling a std.mmio function"
 	}
@@ -477,7 +481,7 @@ func (u *unit) unsafeOnly(it types.ItemID) string {
 // unsafeDoors names the runtime doors only unsafe code may call or name:
 // every exported function and method of std.vm and
 // std.linux, runtime.AddFaultFilter, runtime.ForeignIo and
-// runtime.ForeignContext, mem.Custom, and
+// runtime.ForeignContext, mem.Custom, window.CreateUnixVulkanSurface, and
 // std.core's Alloc.Bytes and Alloc.FreeBytes; else "". A call from the
 // item's own module is not caught: std.vm's code and test blocks are std's,
 // in unsafe_modules, and audited there.
@@ -509,6 +513,8 @@ func (u *unit) unsafeDoors(it types.ItemID) string {
 		return "runtime." + name
 	case mod.Path == "std.mem" && owner == "" && name == "Custom":
 		return "mem.Custom"
+	case mod.Path == "std.window" && owner == "" && name == "CreateUnixVulkanSurface":
+		return "window.CreateUnixVulkanSurface"
 	case mod.Path == "std.core" && owner == "Alloc" && (name == "Bytes" || name == "FreeBytes"):
 		return "Alloc." + name
 	}
@@ -520,9 +526,16 @@ func (u *unit) unsafeDoors(it types.ItemID) string {
 // unsafeCall never sees, so the name carries the obligation, as a cpu
 // function's and a naked function's do. A bodiless extern
 // is one too: calling it needs unsafe, and a call
-// through its value would run C code outside any unsafe block.
+// through its value would run C code outside any unsafe block. The
+// argument of a dl.Present call names an extern without unsafe: the
+// intrinsic never calls it (present.go), and Present itself is never a
+// value, unsafe or not.
 func (u *unit) unsafeValue(at ast.Node, it types.ItemID) {
-	if u.unsafeDepth > 0 {
+	if u.presentItem(it) {
+		u.presentValue(at) // present.go
+		return
+	}
+	if u.unsafeDepth > 0 || u.presentArg != nil && at == ast.Node(u.presentArg) {
 		return
 	}
 	if op := u.unsafeOnly(it); op != "" {
@@ -534,6 +547,10 @@ func (u *unit) unsafeValue(at ast.Node, it types.ItemID) {
 	}
 	if d, ok := u.c.cfg.Items.Get(it).Decl.(*types.FuncDecl); ok && d.Sig.Extern && d.Bodiless {
 		u.err(diag.E1101, at.Span(), "naming a bodiless extern as a value needs an `unsafe \"reason\" { }` block").Text("operation", "extern-value")
+		return
+	}
+	if u.cComMethod(it) {
+		u.err(diag.E1101, at.Span(), "naming a C vtable method as a value needs an `unsafe \"reason\" { }` block").Text("operation", "c-vtable-method")
 	}
 }
 

@@ -1,0 +1,8 @@
+render
+$CASES/scenes/cube.scene
+$WORK/cube.png
+--backend
+vulkan
+--validate
+--compare
+$CASES/golden/cube.png
