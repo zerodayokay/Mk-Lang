@@ -1,8 +1,8 @@
 // Why: the probe's Transport (core8Conn, core_erasure_test.go) must keep the
 // shape of net.Transport in doc/reference.md, so ERASE-5 tests what std.net builds.
 // What: TestCore_TransportMatchesReference.
-// How: compares receivers: Close(&self, io) fallible and in place, Abandon(self)
-// the one release, which never fails or blocks.
+// How: compares receivers in the reference and checks the networking guide's
+// example: Close(&self, io) is fallible and in place, Abandon(self) the one release.
 
 package std
 
@@ -73,8 +73,11 @@ func TestCore_TransportMatchesReference(t *testing.T) {
 			t.Errorf("reference net.Transport.%s takes %q; only Abandon may consume", name, recv)
 		}
 	}
-	// The Lent block implements the same Close.
-	if !regexp.MustCompile(`impl net\.Transport for Lent \{[\s\S]*?Close\(&self, io: Io\): net\.Error!void`).Match(ref) {
-		t.Errorf("reference.md: the Lent block's impl does not have Close(&self, io: Io): net.Error!void")
+	// The networking guide's Lent block implements the same Close.
+	guide := readText(t, "../doc/std/net.md")
+	_, impl, _ := strings.Cut(guide, "impl net.Transport for Lent {\n")
+	body, _, _ := strings.Cut(impl, "\n}")
+	if !regexp.MustCompile(`(?m)^    Close\(&self, io: Io\): net\.Error!void \{`).MatchString(body) {
+		t.Errorf("doc/std/net.md: the Lent block's impl does not have Close(&self, io: Io): net.Error!void")
 	}
 }

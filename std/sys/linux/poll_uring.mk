@@ -654,6 +654,7 @@ SharedStep(op: *Op, res: i32): u32 {
         if res >= 0 || e == 11 {
             // The kernel took step 1's flag; step 2 after an EINVAL of step 1
             // (DontWait still 0) shows the flag was what it refused.
+            // Edge: none; these operations share only the cached kernel answer.
             if st == 1 {
                 DontWait.v.Store(1)
             } else if DontWait.v.Load() == 0 {
@@ -677,6 +678,7 @@ SharedStep(op: *Op, res: i32): u32 {
             Put32(o, OsStage, 0)
             return 2
         }
+        // Edge: none; the cached answer only selects the next kernel operation.
         if e == 22 && st == 1 && DontWait.v.Load() == 0 {
             // A kernel before 6.10 refuses the flag with EINVAL; so does a
             // listener that is not listening. Step 2 tells them apart.
