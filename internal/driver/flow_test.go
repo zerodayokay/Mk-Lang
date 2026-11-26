@@ -107,3 +107,65 @@ func TestQualifiedGlobalWritesAreE0507(t *testing.T) {
 		t.Fatalf("got %v, want %v\n%s", got, want, r.Report.Text(r.Sources))
 	}
 }
+
+func TestQualifiedGlobalPlaces(t *testing.T) {
+	target, _, ok := TargetNamed("x86_64-windows")
+	if !ok {
+		t.Fatal("no x86_64-windows target")
+	}
+	for _, tc := range []struct {
+		name, body string
+		want       []string
+		hint       string
+	}{
+		{
+			name: "asm outputs use the shared global place",
+			body: `    unsafe "register operands only" {
+        asm("mov {x}, 1", x: out(reg) data.Count)
+        asm("add {x}, 1", x: inout(reg) (data.Count))
+    }`,
+			want: []string{"E0507", "E0507"},
+		},
+		{
+			name: "imported constant is not a place",
+			body: `    data.Limit = 1
+    unsafe "register operand only" {
+        asm("mov {x}, 1", x: out(reg) data.Limit)
+    }`,
+			want: []string{"E0301", "E0301"},
+		},
+		{
+			name: "extern writes need the raw address",
+			body: `    unsafe "the program defines Ticks" {
+        data.Ticks = 1
+        asm("mov {x}, 1", x: out(reg) data.Ticks)
+    }`,
+			want: []string{"E0404", "E0404"},
+			hint: "*(&data.Ticks)",
+		},
+		{
+			name: "unsafe extern address permits both writes",
+			body: `    unsafe "the program defines Ticks" {
+        *(&data.Ticks) = 1
+        asm("mov {x}, 1", x: out(reg) *(&data.Ticks))
+    }`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{
+				"pkg.mk":            manifest(map[string]string{"unsafe_modules": `[".", "globals"]`}),
+				"globals/values.mk": "export var Count: int = 0\nexport const Limit: int = 1\nexport extern var Ticks: int\n",
+				"main.mk":           "import data = globals\n\nexport Main() {\n" + tc.body + "\n}\n",
+			}
+			r := check(t, Config{Root: writeTree(t, files), StdDir: fakeStd(t), Target: target})
+			if got := codes(r); !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v\n%s", got, tc.want, r.Report.Text(r.Sources))
+			}
+			for _, e := range r.Report.Diags {
+				if tc.hint != "" && !strings.Contains(e.Diag.Message, tc.hint) {
+					t.Errorf("got %q, want it to mention %q", e.Diag.Message, tc.hint)
+				}
+			}
+		})
+	}
+}
