@@ -184,23 +184,19 @@ var cr2CtAllow = map[string]int{
 	// The AES and GHASH kernels: each guard's simd.Cpu() cache test and
 	// feature bit (two for GhashKey and GhashBlocks: pclmul and aes), the
 	// round count's dispatch (rk's length: 0xb, 0xd); the bodies' block
-	// loops and lengths (eight in flight, then one) and CtrNi's partial
-	// last block, a byte loop unrolled to 16 compares of its public length,
-	// twice under PGO, with its bounds checks laid out past the classifier's
-	// five instructions. CtrNi with loop versioning: 40 for CtrNi[12] under
-	// kernel-pgo (37 without loop versions), where 33 are those bounds
-	// checks (i + j against src's and dst's lengths), and 24 in the kernel
-	// build (19 without); the added jumps are the versioning guard of the partial
-	// block's byte loop (i < 0, then one cmpb of the combined index and
-	// length tests, or four branches in two of the PGO instances),
-	// n - i <= 0, and the fast copy's width and tail tests (n - i against
-	// 3 and 0x20, its low bit; 0x10 is the guard's n - i - 1 < 16 and the
-	// unrolled exit's, older); the keystream block is only XORed and
-	// stored.
+	// loops and lengths (eight in flight, then one). CtrNi: the eight-block
+	// loop's entry (i + 128 <= n), the one-block loop's (i + 16 <= n), the
+	// partial block's i < n, and the versioned byte loop of the partial
+	// block: its guard (one test of two setcc in the kernel build; under
+	// kernel-pgo i + j < 0, n - i - 1 against 15, the index against dst's
+	// length and n - i zero) and the fast copy's width and tail tests (n - i
+	// against 3 and 0x20, n - i - 1 against 0x1f; under kernel-pgo the low
+	// bit): 7 in the kernel build, 8 under kernel-pgo, all on n, i and the
+	// lengths; the keystream block is only XORed and stored.
 	"mk.std.simd.kernel.AesCtr":           4,
 	"mk.std.simd.kernel.AesEncryptBlocks": 4,
 	"mk.std.simd.kernel.BlocksNi":         2,
-	"mk.std.simd.kernel.CtrNi":            24, // no build reads more than 24
+	"mk.std.simd.kernel.CtrNi":            8,
 	"mk.std.simd.kernel.Encrypt":          0,
 	"mk.std.simd.kernel.Encrypt8":         0,
 	"mk.std.simd.kernel.GhashBlocks":      0, // no build reads more than 0
@@ -230,7 +226,7 @@ var cr2CtAllow = map[string]int{
 // whose four builds read different counts, at the count each build has (from
 // the test's -v log; Ctr under masked-pgo includes the (n & 63) - 1 == 0
 // tail test, read), every one at or below the reading above. CtrNi's three instances
-// differ under PGO (12, 10 and 5); the name without its hash
+// differ under kernel-pgo (8, 8 and 4); the name without its hash
 // takes the most. A build not named keeps the table's count.
 var cr2CtByBuild = ctByBuild{
 	"mk.main.Main":                {"kernel": 36, "masked": 35},
@@ -239,7 +235,7 @@ var cr2CtByBuild = ctByBuild{
 	"mk.std.crypto.AesGcm:Tag":    {"kernel": 6, "masked": 2, "masked-pgo": 9},
 	"mk.std.crypto.Wipe":          {"kernel-pgo": 0, "masked-pgo": 0},
 	"mk.std.simd.kernel.Wipe":     {"kernel": 0, "masked": 0},
-	"mk.std.simd.kernel.CtrNi":    {"kernel-pgo": 12},
+	"mk.std.simd.kernel.CtrNi":    {"kernel": 7},
 	"mk.std.simd.kernel.GhashKey": {"masked-pgo": 0},
 	// kernel-pgo 2 with frame pointers on (the default; read on the
 	// release disassembly): cmpq $0x40, %rcx (the block count

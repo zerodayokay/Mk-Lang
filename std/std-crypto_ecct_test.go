@@ -142,10 +142,10 @@ var cr2EcCtAllow = map[string]int{
 	// inlines KeyBits. The PGO layout of KeyEc has more branches for
 	// public OID lengths and bytes, DER tags and public-key encoding.
 	// The scalar is copied after checking its encoded length and padding.
-	// ParsePrivateKey under PGO: 39, among them a test of a parsed
+	// ParsePrivateKey under PGO: 38, among them a test of a parsed
 	// element's constructed byte (cmpb $0x0 after its tag against 0x10),
 	// public, which the classifier does not take for a check.
-	"mk.std.crypto.ParsePrivateKey": 39,
+	"mk.std.crypto.ParsePrivateKey": 38,
 	"mk.std.crypto.KeyAlgorithm":    51,
 	"mk.std.crypto.KeyEc":           55,
 	"mk.std.crypto.KeyUint":         11, // DER INTEGER type, length, sign and leading zero encoding
@@ -260,10 +260,10 @@ var cr2EcCtAllow = map[string]int{
 var cr2EcCtByBuild = ctByBuild{
 	"mk.main.Main":                    {"release": 32},
 	"mk.main.ParseSign":               {"release-pgo": 3},
-	"mk.std.crypto.Drbg:New":          {"release-pgo": 6},
-	"mk.std.crypto.Drbg:Next":         {"release-pgo": 6},
+	"mk.std.crypto.Drbg:New":          {"release-pgo": 4},
+	"mk.std.crypto.Drbg:Next":         {"release-pgo": 4},
 	"mk.std.crypto.EcSecret:Generate": {"release-pgo": 2},
-	"mk.std.crypto.EcSecret:Wipe":     {"release-pgo": 6},
+	"mk.std.crypto.EcSecret:Wipe":     {"release-pgo": 4},
 	"mk.std.crypto.EcdhShared":        {"release-pgo": 6},
 	"mk.std.crypto.EcdsaSign":         {"release-pgo": 21},
 	"mk.std.crypto.KeyAlgorithm":      {"release-pgo": 23},
@@ -271,7 +271,7 @@ var cr2EcCtByBuild = ctByBuild{
 	"mk.std.crypto.P256PtFromBytes":   {"release-pgo": 5},
 	"mk.std.crypto.P256PtXBytes":      {"release": 0},
 	"mk.std.crypto.KeyUint":           {"release-pgo": 8},
-	"mk.std.crypto.ParsePrivateKey":   {"release": 14},
+	"mk.std.crypto.ParsePrivateKey":   {"release": 12},
 	"mk.std.crypto.SigEncode":         {"release-pgo": 0},
 	"mk.std.simd.kernel.Wipe":         {"release": 12},
 }
