@@ -12,7 +12,8 @@
 // undefined symbol lld reports that is one of them gets its own E0001
 // naming the view and its targets. A view generated for one target reads
 // the same archive on every target, so its API cannot differ and nothing is
-// compared; a view generated per target (vulkan) is extracted again from
+// compared, nor is a FallbackToFirst view (vulkan) for a target whose own
+// archive mk lacks; a view mk carries per target is extracted again from
 // each other target's archive with the same names, and the items' APIs are
 // compared as a C import's are (cimport.API).
 

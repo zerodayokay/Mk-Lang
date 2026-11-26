@@ -12,8 +12,9 @@
 // E0213 no-sysroot unless every import is vendored. Without it the
 // directories are sysrootFor's, as before. shareViews runs in prune, before
 // the bindings are pruned, only for a package with sdk: true whose program
-// imports a system view: it opens those views and their required ones and
-// rewrites each binding with cimport.ShareWithViews.
+// imports a system view: it opens those views and their required ones that
+// are generated for the build's target (never another target's, whose C
+// types may differ) and rewrites each binding with cimport.ShareWithViews.
 
 package driver
 
@@ -115,7 +116,14 @@ func (ci *cImports) shareViews(w *world, builds []*build) *diag.Diagnostic {
 			return
 		}
 		row, _ := sysview.Named(n)
-		data, ok := w.sysViewBytes(w.sysViewArchive(row, target), n)
+		at := w.sysViewArchive(row, target)
+		if at != target {
+			// Another target's declarations (c.windows, or c.vulkan with
+			// no archive of its own, in a build for Linux): a C long or
+			// wchar_t there is not this target's, so nothing is shared.
+			return
+		}
+		data, ok := w.sysViewBytes(at, n)
 		if !ok {
 			return
 		}
