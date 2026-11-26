@@ -817,6 +817,13 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dir
 func cobjSearchDirs(cj toolchain.CJob) ([]string, bool) {
 	var quote, inc, sys, after []string
 	cwd := filepath.Dir(cj.Output)
+	for _, f := range cj.Flags {
+		// A response file, which Clang expands wherever it stands, an
+		// option's operand too (-D @f, -I @f).
+		if strings.HasPrefix(f, "@") {
+			return nil, false
+		}
+	}
 	for i := 0; i < len(cj.Flags); i++ {
 		f := cj.Flags[i]
 		if f == "-D" || f == "-U" { // the separate form: the next flag is the macro

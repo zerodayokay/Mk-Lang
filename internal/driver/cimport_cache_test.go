@@ -190,7 +190,7 @@ func TestCObj_SearchDirsFlags(t *testing.T) {
 		t.Errorf("dirs %q %v, want %q", got, ok, want)
 	}
 	unmodelled := [][]string{{"-include", "x.h"}, {"-isystem-after", abs("s")}, {"-I"}, {"-I", ""}, {"-I-"}, {"-I=" + abs("s")}, {"-imultilib", "m"},
-		{"-index-header-map"}, {"--include-directory=" + abs("a")}, {"-working-directory", abs("w")}, {"-Xclang", "-I" + abs("a")}, {"@flags.rsp"},
+		{"-index-header-map"}, {"--include-directory=" + abs("a")}, {"-working-directory", abs("w")}, {"-Xclang", "-I" + abs("a")}, {"@flags.rsp"}, {"-D", "@d.rsp"}, {"-I", "@i.rsp"},
 		{"--config=x.cfg"}, {"-MMD"}, {"--write-user-dependencies"}, {"-D"}, {"-mllvm", "-x"}, {"-mllvm=-x"}, {"-fmodules"}, {"-fprofile-use"},
 		{"-fprofile-use=p.profdata"}, {"-fvisibility=hidden"}, {"-Wp,-Ia"}, {"-Wa,-Ia"}, {"extra.c"}}
 	if runtime.GOOS == "windows" {
