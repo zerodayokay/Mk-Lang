@@ -2480,7 +2480,7 @@ export Main(sys: &System): WriteError!void {
 
 - The value is computed once, by the compiler, and stored in the program. It may call ordinary functions. What a compile-time evaluation may do is in [section 11](#11-compile-time).
 - The type must be plain (E0408). `&Limit` is a valid reference that lives as long as the program ([globals](memory.md#r16-globals)).
-- A constant cannot be assigned (E0301).
+- A constant and its fields and elements cannot be assigned or borrowed `mut` (E0301). To change the value, copy it into a `var` local.
 - A literal that does not fit the type is E0303. An evaluation that panics, and constants in a cycle, are compile errors ([evaluating constants](#evaluating-constants), [the stage rule](#the-stage-rule)).
 - A constant of an integer, `bool`, `char` or `str` type is a pattern, matched by its value ([literal patterns](#literal-patterns)).
 

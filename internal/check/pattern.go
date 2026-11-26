@@ -42,6 +42,9 @@ func (u *unit) matchStmtV(s *ast.MatchStmt, v *valueCtx) bool {
 		x = un.X
 	}
 	t := u.expr(x, types.NoType)
+	if t != types.Poison && mode == ast.ByMutRef {
+		u.constMutation(x, "borrowed mut")
+	}
 	if x != s.X {
 		u.setType(s.X, types.Poison)
 	}

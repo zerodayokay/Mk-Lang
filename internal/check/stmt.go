@@ -378,9 +378,13 @@ func (u *unit) assign(s *ast.AssignStmt) {
 	}
 	t := u.operand(s.Target, types.NoType)
 	u.cFnStore = 0
-	if t != types.Poison && !u.isPlace(s.Target) {
-		u.err(diag.E0301, s.Target.Span(), "only a local, a field, an element or a dereference can be assigned").
-			Text("reason", "not a place").Text("expected", "a place").Text("found", "an expression")
+	if t != types.Poison {
+		if u.isPlace(s.Target) {
+			u.constMutation(s.Target, "assigned")
+		} else {
+			u.err(diag.E0301, s.Target.Span(), "only a local, a field, an element or a dereference can be assigned").
+				Text("reason", "not a place").Text("expected", "a place").Text("found", "an expression")
+		}
 	}
 	u.externVarWrite(s.Target, "write") // an extern var is written through a pointer
 	if s.Op == ast.TokAssign {
@@ -407,6 +411,32 @@ func (u *unit) assign(s *ast.AssignStmt) {
 		return
 	}
 	u.expr(s.Value, numericWant(u, t))
+}
+
+// constMutation checks a write or an exclusive borrow of a constant or
+// its projection. A dereference reaches the pointee of a value, so it
+// ends the search for the constant that holds that value.
+func (u *unit) constMutation(e ast.Expr, action string) bool {
+	for root := e; ; {
+		if use := u.useOf(root.ID()); use.Kind == UseConst {
+			name := u.c.cfg.Interner.Str(u.c.cfg.Items.Get(use.Item).Name)
+			u.err(diag.E0301, e.Span(), "constant `"+name+"` and its parts cannot be "+action).
+				Text("reason", "constant").Text("constant", name)
+			return true
+		}
+		switch x := root.(type) {
+		case *ast.ParenExpr:
+			root = x.X
+		case *ast.FieldExpr:
+			root = x.X
+		case *ast.IndexExpr:
+			root = x.X
+		case *ast.SliceExpr:
+			root = x.X
+		default:
+			return false
+		}
+	}
 }
 
 // compoundKind says whether a compound assignment's operator is defined on
@@ -512,6 +542,7 @@ func (u *unit) bindCond(c *ast.BindCond) {
 		case ast.TokAmp:
 			elem = u.tab.Ref(elem)
 		case ast.TokMut:
+			u.constMutation(v, "borrowed mut")
 			elem = u.tab.Mut(elem)
 		}
 	default:
@@ -579,6 +610,7 @@ func (u *unit) inHead(h *ast.InHead) {
 			case ast.ByRef:
 				elem = u.tab.Ref(elem)
 			case ast.ByMutRef:
+				u.constMutation(src.X, "borrowed mut")
 				elem = u.tab.Mut(elem)
 			}
 		}
