@@ -58,12 +58,14 @@ Partial(sys: &System, data: []u8) {
         var out := sys.Stdout()
         out.Str("flushed") else {}
         out.Flush() else {}
+        testing.ExpectPanic("after seeds")
     }
 }
 
 test "partial" (sys: &System) {
     sys.Print("before") else {}
     testing.FuzzSys(sys, Partial)
+    Panic("after seeds")
 }
 `
 

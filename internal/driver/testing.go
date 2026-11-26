@@ -140,7 +140,6 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 		s.benchRun(out, argv, env, i, opt)
 		return
 	}
-	defer judgeExpectedPanic(out, opt.expectToken) // after runChild: testing.ExpectPanic's flip
 	env = childEnv(env, via, TestingExpectEnv+"="+opt.expectToken)
 	dir := s.fuzzCorpusDir(tc, opt)
 	note := s.fuzzCorpusNote(tc, opt)
@@ -155,6 +154,9 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 		defer fuzzInputLines(out, opt.expectToken)
 		env = childEnv(env, via, TestingFuzzEnv+"=run", TestingInputEnv+"="+hostPath(argv, in))
 	}
+	// Remove ExpectPanic's record before finding line breaks in the displayed
+	// output. Its own newline may follow the last partial line the test wrote.
+	defer judgeExpectedPanic(out, opt.expectToken)
 	if opt.coverDir != "" { // cover.go: this child's counts file
 		counts := filepath.Join(opt.coverDir, strconv.Itoa(i))
 		env = childEnv(env, via, opt.cover.coverEnv(hostPath(argv, counts)))
