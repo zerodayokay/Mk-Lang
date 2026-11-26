@@ -487,6 +487,34 @@ func TestSubSliceMutAlt(t *testing.T) {
 	if r2 := checkText(t, "Head(x: []u8): [4]u8 {\n    var b: [4]u8 = [0; 4]\n    (mut b[..2]).CopyFrom(x[..2])\n    return b\n}\n"); len(r2.Report.Diags) != 0 {
 		t.Errorf("the named form does not check:\n%s", diagLines(r2))
 	}
+	for _, tc := range []struct {
+		name, src string
+		hint      bool
+	}{
+		{"mutable slice", "Attempt(xs: mut []u64) { xs[0..1].Fill(3) }\n", true},
+		{"shared slice", "Attempt(xs: []u64) { xs[0..1].Fill(3) }\n", false},
+		{"immutable array", "Attempt(xs: [2]u64) { xs[0..1].Fill(3) }\n", false},
+		{"shared array reference", "Attempt(xs: &[2]u64) { xs[0..1].Fill(3) }\n", false},
+		{"shared result", "const Seeds: []u64 = [1, 2]\n\nValues(): []u64 { return Seeds }\n\nAttempt() { Values()[0..1].Fill(3) }\n", false},
+		{"live loan", "Attempt() {\n    var xs: [2]u64 = [1, 2]\n    p := &xs\n    xs[0..1].Fill(3)\n    Assert(p[0] == 1)\n}\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := checkText(t, tc.src)
+			if len(r.Report.Diags) != 1 || r.Report.Diags[0].Diag.Code.String() != "E0507" {
+				t.Fatalf("want one E0507:\n%s", diagLines(r))
+			}
+			hint := strings.Contains(strings.Join(r.Report.Diags[0].Diag.Alternatives, "\n"), "borrow the sub-slice exclusively")
+			if hint != tc.hint {
+				t.Errorf("exclusive sub-slice hint = %t, want %t:\n%s", hint, tc.hint, diagLines(r))
+			}
+			if hint {
+				good := strings.Replace(tc.src, "xs[0..1].Fill", "(mut xs[0..1]).Fill", 1)
+				if r := checkText(t, good); len(r.Report.Diags) != 0 {
+					t.Errorf("suggested form does not check:\n%s", diagLines(r))
+				}
+			}
+		})
+	}
 }
 
 // TestLinearElseValue: a value `else` (and a statement

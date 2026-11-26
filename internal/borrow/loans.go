@@ -111,7 +111,7 @@ func (c *checker) e0507Mut(st *state, ctx *stmtCtx, p pathID) {
 		}
 		d := c.errAt(diag.E0507, ctx.span, "%s is reached through a shared reference and cannot be borrowed mut", place).
 			Text("place", place)
-		c.subSliceAlt(d, p)
+		c.subSliceAlt(st, ctx, d, p)
 	}
 }
 
@@ -119,20 +119,64 @@ func (c *checker) e0507Mut(st *state, ctx *stmtCtx, p pathID) {
 // holding a sub-slice, `b[..2].CopyFrom(x)`: `xs[a..b]` is the
 // shared view and `(mut xs[a..b])` the exclusive one, which a mut method
 // takes; `mut` binds below the call, so the parentheses are needed.
-func (c *checker) subSliceAlt(d *diag.Diagnostic, p pathID) {
+func (c *checker) subSliceAlt(st *state, ctx *stmtCtx, d *diag.Diagnostic, p pathID) {
 	pi := c.paths.get(p)
-	if d == nil || c.roots[pi.root].kind != rkTemp || c.env.File == nil {
+	if d == nil || c.roots[pi.root].kind != rkTemp || len(pi.steps) != 1 {
 		return
 	}
-	sp := c.body.Span(c.body.Locals[c.roots[pi.root].local].Span)
-	f := c.env.File(sp.File)
-	if f == nil || sp.End > f.Len() || sp.End <= sp.Start {
+	root := pi.root
+	text := c.tempText(root)
+	if !strings.HasSuffix(text, "]") || !strings.Contains(text, "[") || !strings.Contains(text, "..") || strings.HasPrefix(text, "mut ") {
 		return
 	}
-	text := f.Slice(sp)
-	if strings.HasSuffix(text, "]") && strings.Contains(text, "[") && strings.Contains(text, "..") && !strings.HasPrefix(text, "mut ") {
+	base := c.subSliceBase(c.roots[root].local)
+	if base == noPath {
+		return
+	}
+	// The shared view being replaced cannot itself conflict. A live loan
+	// held somewhere else might preclude the exclusive view.
+	conflict := false
+	c.eachLiveCandidate(st, base, colMut, func(l loanID) bool {
+		conflict = c.liveHolder(st, ctx, l, false, root) != noRoot
+		return !conflict
+	})
+	if !conflict {
 		d.Alt("borrow the sub-slice exclusively: `(mut " + text + ")`, since `" + text + "` is the shared view")
 	}
+}
+
+// subSliceBase finds the MIR source of the sub-slice temporary. Its
+// spelling alone cannot distinguish a mutable array from a shared slice.
+func (c *checker) subSliceBase(local mir.LocalID) pathID {
+	for _, b := range c.body.Blocks {
+		for i := range b.Stmts {
+			s := &b.Stmts[i]
+			rv := &s.Rvalue
+			if s.Kind != mir.StAssign || s.Place.Local != local || s.Place.Proj.Len != 0 ||
+				rv.Kind != mir.RvSlice || rv.Borrow != mir.Shared {
+				continue
+			}
+			p := c.paths.ofPlace(c.body, c.tab, rv.Place)
+			pi := c.paths.get(p)
+			for _, sp := range pi.steps {
+				if sp.kind == stDeref && sp.mode != dmExcl {
+					return noPath
+				}
+			}
+			switch c.tab.Kind(pi.typ()) {
+			case types.KArray:
+				ri := &c.roots[pi.root]
+				if pi.derefs == 0 && (ri.kind == rkUser || ri.kind == rkParam && ri.byValueParam) && !ri.isVar {
+					return noPath
+				}
+				return p
+			case types.KMutSlice:
+				return c.paths.extend(p, step{kind: stDeref, mode: dmExcl}, pi.typ())
+			}
+			return noPath
+		}
+	}
+	return noPath
 }
 
 // pathHeld is H(root) ∪ B(H(root)) ∪ … with one more B per deref after the
