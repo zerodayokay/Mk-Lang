@@ -368,3 +368,62 @@ func TestMkTestStdModules(t *testing.T) {
 		}
 	})
 }
+
+// TestMkTestStdUnixScratch: on Windows a std test declared in one of
+// stdUnixScratchFiles runs in a working directory of its own, gone after
+// the test, and any other std test runs in the caller's. Each block below
+// writes a marker in its working directory and prints that directory.
+func TestMkTestStdUnixScratch(t *testing.T) {
+	for _, p := range stdUnixScratchFiles {
+		if _, err := fs.Stat(std.FS, strings.TrimPrefix(p, "std/")); err != nil {
+			t.Errorf("stdUnixScratchFiles names %s: %v", p, err)
+		}
+	}
+	if HostTarget().OS != types.OSWindows {
+		t.Skip("the Unix socket fixtures bind relative names on Windows only")
+	}
+	block := func(name, marker string) string {
+		return "\ntest \"" + name + "\" (sys: &System) {\n" +
+			"    fs.WriteAll(sys.io, \"" + marker + "\", \"x\".AsBytes()).Must()\n" +
+			"    cwd := fs.Cwd(sys.arena, sys.io).Must()\n" +
+			"    sys.Print(\"cwd {cwd}\\n\", (cwd)).Must()\n}\n"
+	}
+	const unixName, otherName = "cwd marker in a Unix fixture file", "cwd marker in another file"
+	dir := copyStd(t, map[string]string{"net/tests_zcwd.mk": "import std.fs\n" + block(otherName, "mk-cwd-other")},
+		func(p string, b []byte) []byte {
+			if p == "net/tests_unix.mk" {
+				return append(b, block(unixName, "mk-cwd-unix")...)
+			}
+			return b
+		})
+	caller := t.TempDir()
+	t.Chdir(caller)
+	rep := mkTest(t, Config{StdTests: "std.net", StdDir: dir}, TestOptions{Run: "cwd marker"})
+	cwds := map[string]string{}
+	for _, tc := range rep.Tests {
+		_, after, ok := strings.Cut(tc.Output, "cwd ")
+		if tc.Result != "pass" || !ok {
+			t.Fatalf("%s %q: %s\n%s", tc.Module, tc.Name, tc.Result, tc.Output)
+		}
+		cwds[tc.Name] = strings.TrimSpace(after)
+	}
+	if len(cwds) != 2 || cwds[unixName] == "" || cwds[otherName] == "" {
+		t.Fatalf("want the two marker tests, got %q", cwds)
+	}
+	callerInfo, err := os.Stat(caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(cwds[otherName]); err != nil || !os.SameFile(info, callerInfo) {
+		t.Errorf("the other file's test ran in %q, want the caller's %q (%v)", cwds[otherName], caller, err)
+	}
+	if _, err := os.Stat(cwds[unixName]); err == nil {
+		t.Errorf("the Unix fixture file's test ran in %q, which is still there", cwds[unixName])
+	}
+	if _, err := os.Stat(filepath.Join(caller, "mk-cwd-unix")); err == nil {
+		t.Errorf("the Unix fixture file's test wrote its marker in the caller's directory")
+	}
+	if _, err := os.Stat(filepath.Join(caller, "mk-cwd-other")); err != nil {
+		t.Errorf("the other file's marker: %v", err)
+	}
+}
