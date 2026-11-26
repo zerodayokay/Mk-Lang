@@ -34,7 +34,7 @@ import (
 
 // formatVersion changes whenever the mapping changes what it writes or what
 // a candidate's negatives cover.
-const formatVersion = "mk.cimport.v5"
+const formatVersion = "mk.cimport.v6"
 
 // Key is the cache key of r translated by the Clang of identity: every
 // input but the header contents, which the entry checks itself.

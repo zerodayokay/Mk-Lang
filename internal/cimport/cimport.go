@@ -102,12 +102,16 @@ type Error struct {
 func (e *Error) Error() string { return e.Msg }
 
 // ParseTriple is the Clang triple the headers of a Mk target are read
-// for: mingw-w64's on Windows (the Windows header set, whose ABI is
-// the MSVC one for C records), musl's on Linux.
+// for. On Windows it is the triple the C sources and the shim compile for
+// (types.Target.LLVMTriple), so the binding's record layouts, predefined
+// macros and enum types are the objects' own: mingw-w64's triple lays out
+// a packed record with a bitfield and a long double otherwise. A mingw-w64
+// header tree as the sysroot is read under it as the shim reads it. Linux
+// reads musl's, whose SysV layouts are glibc's.
 func ParseTriple(target string) string {
 	switch target {
 	case "x86_64-windows":
-		return "x86_64-w64-windows-gnu"
+		return "x86_64-pc-windows-msvc"
 	case "x86_64-linux":
 		return "x86_64-linux-musl"
 	case "aarch64-linux":
