@@ -171,8 +171,9 @@ func (c *checker) globalPlace(st *state, p pathID) (name, place string, ok bool)
 		return "", "", false
 	}
 	// The deref reaches the global itself, not memory a reference read out
-	// of it or returned from its method points to.
-	if g, global := c.tab.Items().Get(item).Decl.(*types.GlobalDecl); !global || pi.types[0] != g.Type {
+	// of it or returned from its method points to. An extern var is no Mk
+	// var: it is written through its address in unsafe, not its methods.
+	if g, global := c.tab.Items().Get(item).Decl.(*types.GlobalDecl); !global || g.Extern || pi.types[0] != g.Type {
 		return "", "", false
 	}
 	name = c.symbol(c.tab.Items().Get(item).Name)

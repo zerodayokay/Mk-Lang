@@ -3,7 +3,8 @@
 // temporary, and say what changes a global instead.
 // What: TestGlobalWriteNamesGlobal.
 // How: each write or mut borrow of a global, through an index, a field, a
-// whole assignment and a mut method, checked as a package; its E0507 text
+// whole assignment, a mut method, a mut argument and a mut borrow of a
+// field, and through an alias type, checked as a package; its E0507 text
 // names the global and offers an atomic or a Mutex. A write through a
 // reference the global holds is spelled from the global with the shared
 // reference's text, and one through a local reference keeps the local's name.
@@ -21,6 +22,7 @@ import (
 func TestGlobalWriteNamesGlobal(t *testing.T) {
 	t.Parallel()
 	const decls = "import std.atomic\n\nstruct Pair {\n    a: atomic.AtomicInt\n    n: int\n}\n\nPair.Bump(mut self) {\n    self.n += 1\n}\n\n" +
+		"Fill(t: mut [8]u64) {\n    t[0] = 1\n}\n\ntype Row = [4]u64\n\nvar R: Row = [0; 4]\n" +
 		"var Table: [8]u64 = [0; 8]\nvar P: Pair = Pair(a: atomic.AtomicInt.New(0), n: 0)\nvar Total: atomic.AtomicInt = atomic.AtomicInt.New(0)\n\n"
 	const alt = "try: a global changes only through its methods: make it, or the part that changes, an atomic or a Mutex"
 	for _, c := range []struct{ name, stmt, want string }{
@@ -28,6 +30,9 @@ func TestGlobalWriteNamesGlobal(t *testing.T) {
 		{"field", "P.n = 3", "E0507 mut-through-shared: P.n is part of the global P, which is never assigned"},
 		{"whole", "Total = atomic.AtomicInt.New(1)", "E0507 mut-through-shared: Total is a global, which is never assigned"},
 		{"mut method", "P.Bump()", "E0507 mut-through-shared: P is a global, which is never borrowed mut"},
+		{"mut argument", "Fill(mut Table)", "E0507 mut-through-shared: Table is a global, which is never borrowed mut"},
+		{"mut field", "var q := mut P.n\n    *q = 1", "E0507 mut-through-shared: P.n is part of the global P, which is never borrowed mut"},
+		{"alias type", "R[1] = 2", "E0507 mut-through-shared: R[_] is part of the global R, which is never assigned"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
