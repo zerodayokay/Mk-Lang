@@ -47,7 +47,8 @@ Clients send one command a line: `NICK`, `JOIN`, `PART`, `MSG`, `WHO`, `ROOMS`, 
 
 ### The web front end
 
-With `--web ADDR` the server also serves HTTP/1.1 with keep-alive:
+With `--web ADDR` the server also serves HTTP/1.1 with keep-alive. To serve HTTPS, add `--web-tls-chain CHAIN.pem` and `--web-tls-key KEY.pem`. The TLS listener offers HTTP/2 and HTTP/1.1. Server-sent events use HTTP/2 DATA frames when the client negotiates HTTP/2. WebSocket upgrades use HTTP/1.1.
+
 
 | Request | Does |
 |---|---|
@@ -56,7 +57,7 @@ With `--web ADDR` the server also serves HTTP/1.1 with keep-alive:
 | `GET /rooms/NAME/ws?nick=NICK` | The same, joining `#NAME` as `NICK` |
 | `GET /rooms/NAME/events?count=N&nick=NICK` | Streams the room's traffic as server-sent events, `N` of them or until the client or the server goes |
 
-A WebSocket may come from a client that sends no `Origin` or from a page on this machine (`http://127.0.0.1`, `http://localhost`, `http://[::1]`, any port); others are refused with 403.
+A WebSocket may come from a client that sends no `Origin` or from an HTTP or HTTPS page on this machine (`127.0.0.1`, `localhost`, or `[::1]`, any port). Other origins receive status 403.
 
 `--idle-ms N` drops a connection that has nothing read or queued for `N` ms (a scope deadline). `--record` logs every byte each TCP connection reads and writes. `--log LEVEL` sets what goes to stderr (`warn` by default; `info` adds each connection and its end).
 
@@ -71,9 +72,11 @@ A script is lines `name: COMMAND`; a client connects on its first line. Special 
 | `name: !close` | Hang up |
 | `name: !hex 4d5347...` | Send the bytes the hex digits spell and a newline |
 | `name: !ws PATH [ORIGIN]` | As a first line, with `--web`: a WebSocket client of the front end |
-| `name: !events PATH` | As a first line, with `--web`: read an event stream over plain HTTP, chunk sizes included |
+| `name: !events PATH` | As a first line, with `--web`: read an event stream. Cleartext reports HTTP/1.1 chunk sizes. HTTPS reports the negotiated version and decoded events. |
 | `name: !get PATH` | Fetch a page and print its status and body |
 | `name: !shutdown` | Close a TCP client's sending side and print what the server still sends |
+
+For HTTPS replay against a private CA, give `--web-cacert ROOTS.pem`. The `web-h2` case reads one event before sending the next room message to verify that `Response.Flush` sends it immediately.
 
 ## Design
 
@@ -138,11 +141,36 @@ ConnSlot[T].Free(self, a: &Alloc)
 interface Transport {
 // std.http
 http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+Client.New(h: &Heap, l: ClientLimits): Client from h, l
+Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
+Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
+Client.Close(self)
+Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
+Exchange.Close(self, io: Io): http.Error!void
+Exchange.Abandon(self)
+Exchange.Version(&self): HttpVersion
 Response.Flush(mut self, io: Io, link: &Link): http.Error!void
+Link.Version(&self): HttpVersion
 Link.Takeover(&self): ?Taken
 Taken.Abandon(self)
 struct ServerOptions {
 linear struct Taken {
+// std.proc
+proc.Pipe(io: Io): proc.Error!(r: PipeReader, w: PipeWriter)
+PipeReader.Read(&self, io: Io, buf: mut []u8): proc.Error!int
+PipeReader.Close(self)
+PipeWriter.Writer(&self, io: Io, buf: mut []u8): Writer from self, buf
+PipeWriter.Close(self)
+// std.crypto
+crypto.ParsePrivateKey(der: []u8): crypto.Error!PrivateKey
+// std.encoding
+encoding.ParsePem(a: &Arena, text: str into a): encoding.Error|OutOfMemory!List[PemBlock] from a, text
+// std.x509
+x509.ParsePem(a: &Arena, pem: str): x509.Error!List[Certificate] from a
+Pool.New(certs: []Certificate): Pool from certs
+// std.tls
+tls.Connector(c: &Config): net.Secure from c
+tls.Acceptor(c: &Config): net.Secure from c
 // std.websocket
 websocket.Accept(h: &Heap, io: Io, req: &http.Request, t: http.Taken, protocols: []str, const allow: fn(origin: str): bool): websocket.Error!Conn from h, t
 websocket.Dial(h: &Heap, a: &Arena, io: Io, u: &url.Url, o: &Options): websocket.Error!Conn from h
