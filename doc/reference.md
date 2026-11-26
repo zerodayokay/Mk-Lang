@@ -9578,7 +9578,7 @@ std's system layer for macOS calls libSystem. Arguments, the environment, memory
 - A child that holds a `Pty` as its controlling terminal does not end until its output has been read, so read a `Pty` while you wait for its children. Output that a child without one leaves unread is discarded shortly after it exits. A child's terminal mode starts from the defaults each time a new child first opens the `Pty`; its size is kept.
 - A child inherits the raised descriptor limit: `posix_spawn` runs nothing in the child that could restore the original one.
 - A Unix-socket dial to a listener whose backlog is full is `SysErr.Refused`, not a wait. A send buffer (`SocketOption`) must be at least 1 byte.
-- `runtime.WriteDump` and the platform certificate verifier answer `SysErr.Unsupported`, as on Linux; `std.x509` checks chains itself.
+- As on Linux, `runtime.WriteDump` returns `runtime.Unsupported` and the platform certificate verifier answers `SysErr.Unsupported`. `std.x509` checks chains itself.
 
 All of it is checked and linked here, and none of it has run on a Mac yet.
 
@@ -11281,6 +11281,7 @@ Move `Area` into `impl Shape for Tile { Area(&self): int { ... } }`, in place of
 | `mod util;` | Nothing: a module is a directory, and every file in it sees all of it | E0101 |
 | `pat => expr` in a `match` | `pat { expr }` | E1214 |
 | `if let Some(x) = e` | `if x := e` | E1217 |
+| `.Or(x)` on an optional or fallible value `e` | `e else { x }` | E0207 |
 | `Some`, `None`, `Ok`, `Err` | `some`, `none`, `ok`, `err` | E0207 |
 | `Result<T, E>` | `E!T` | E0101 |
 | `?` after a call | `try` before it | E1208 |
@@ -12797,6 +12798,7 @@ Bitset.Count(&self): int
 Bitset.Len(&self): int
 
 // std.text. Category, Script and Property below are text's, generated from the UCD
+// Script and Property may gain members
 text.Graphemes(s: str): Clusters
 Clusters.Next(mut self): ?str from self.text
 text.Normalize(a: &Arena, s: str, form: Form): OutOfMemory!str from a
@@ -13754,6 +13756,13 @@ The examples in this reference use these names without declaring them. They are 
 
 ```mk
 // verdict: parse
+// Why: the examples in the documentation are short and call helpers they do
+// not declare; they still have to compile as tests.
+// What: the corpus test prelude: Point, the linear Res with Close and
+// Acquire, and the stubs MakePoint, Cond, Use, UseMut and Take.
+// How: the corpus runner and mk doc --check give it to each example block;
+// the bodiless declarations are signatures only, enough for the checker.
+
 struct Point {
     x: i32
     y: i32

@@ -236,7 +236,7 @@ export Main(sys: &System) {
 // A Sim beside another reference parameter could supply the result, so the
 // signature names its source with `from` (E0601); a result whose only
 // reference parameter is a Sim holds the Sim's loan (E0503); an exported
-// type with a private Sim field is declared view (E0410). The controls are
+// type with a private Sim field is declared mut view (E0410). The controls are
 // the fixed forms.
 func TestSimIsAView(t *testing.T) {
 	dfPack05Check(t, []dfPack05Case{
@@ -306,9 +306,15 @@ export Main(sys: &System) {
     h.Free()
 }
 `, "main.mk:3:22: E0410"},
-		{"control: the struct declared view", `import std.sim
+		{"a shared view cannot wrap the mutable Sim view", `import std.sim
 
 export linear view struct Harness {
+    s: sim.Sim
+}
+`, "main.mk:3:27: E0410"},
+		{"control: the struct declared mut view", `import std.sim
+
+export linear mut view struct Harness {
     s: sim.Sim
     n: int
 }

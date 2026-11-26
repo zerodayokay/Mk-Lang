@@ -373,6 +373,7 @@ export Main(sys: &System): fs.Error|WriteError!void {
             match e {
                 runtime.Unsupported { try sys.Print("no dumps on this target\n") }
                 runtime.OsError(code) { try sys.Print("the OS refused: {code}\n", (code)) }
+                _ { try sys.Print("could not write app.dmp\n") }
             }
         }
     }
@@ -521,7 +522,7 @@ carrier's record.
 ### `Error`
 
 ```
-export type Error = Unsupported | OsError
+export open type Error = Unsupported | OsError
 ```
 
 Every way a std.runtime operation fails.

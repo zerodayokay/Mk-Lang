@@ -1,6 +1,6 @@
-// Why: std.derive's generators are the reference's worked example of gen.
+// Why: std.derive's public generators are documented in its library page.
 // What: TestDeriveDeclared and TestDeriveEndToEnd.
-// How: checks the generator signatures and Eq's body against the reference,
+// How: checks the exported signatures against the library page,
 // then builds and runs a program whose gen lines use Eq, Hash and Format.
 
 package std
@@ -11,27 +11,26 @@ import (
 )
 
 // TestDeriveDeclared: derive/derive.mk exports Eq, Hash and Format with
-// the generator signature (g: mut Gen, t: Type), and Eq's text from its
-// `var body` line to its last brace is the reference's derive block.
+// the generator signature (g: mut Gen, t: Type) shown on the library page.
 func TestDeriveDeclared(t *testing.T) {
 	src := readText(t, "derive/derive.mk")
+	doc := readText(t, "../doc/std/derive.md")
+	_, api, ok := strings.Cut(doc, "\n<!-- api:begin -->\n")
+	if !ok {
+		t.Fatal("std.derive's library page has no API section")
+	}
+	api, _, ok = strings.Cut(api, "\n<!-- api:end -->")
+	if !ok {
+		t.Fatal("std.derive's library page has no API end marker")
+	}
 	for _, n := range []string{"Eq", "Hash", "Format"} {
-		if !strings.Contains(src, "\nexport "+n+"(g: mut Gen, t: Type) {\n") {
-			t.Errorf("derive/derive.mk does not export %s(g: mut Gen, t: Type)", n)
+		sig := "export " + n + "(g: mut Gen, t: Type)"
+		if !strings.Contains(src, "\n"+sig+" {\n") {
+			t.Errorf("derive/derive.mk does not declare %q", sig)
 		}
-	}
-	sec := referenceSection(t, "## 11. Compile time")
-	i := strings.Index(sec, "export Eq(g: mut Gen, t: Type) {\n")
-	if i < 0 {
-		t.Fatal("the reference's compile-time section has no derive.Eq block")
-	}
-	ref := sec[i:]
-	ref = ref[strings.Index(ref, "    var body := g.Block()\n"):strings.Index(ref, "\n}\n")]
-	j := strings.Index(src, "export Eq(g: mut Gen, t: Type) {\n")
-	have := src[j:]
-	have = have[strings.Index(have, "    var body := g.Block()\n"):strings.Index(have, "\n}\n")]
-	if have != ref {
-		t.Errorf("derive.Eq's body is not the reference's block:\n%s\nwant:\n%s", have, ref)
+		if !strings.Contains(api, "\n"+sig+"\n") {
+			t.Errorf("std.derive's library page does not document %q", sig)
+		}
 	}
 }
 

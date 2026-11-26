@@ -78,7 +78,7 @@ A reservation or a code mapping belongs to the process, not to a thread, on ever
 
 ## Errors
 
-`vm.Error` has four members:
+`vm.Error` is open. A `match` on it outside std needs a fallback arm. It currently has four members:
 
 | Member | Meaning |
 |---|---|
@@ -492,7 +492,7 @@ O(1) on x86_64; allocates nothing.
 ### `Error`
 
 ```
-export type Error = OutOfMemory | Misaligned | Unsupported | Os
+export open type Error = OutOfMemory | Misaligned | Unsupported | Os
 ```
 
 Every way a std.vm operation fails.

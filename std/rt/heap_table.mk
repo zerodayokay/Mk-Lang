@@ -70,6 +70,7 @@ export HeapInit() {
     // is limited (HugeSpareBudget).
     if !sys.AddressLimited() {
         unsafe "the RtState page, before any task exists" {
+            // Edge: initialize the shared budget before tasks can debit it.
             (*HS()).spare.Store(HugeSpareBudget)
         }
     }

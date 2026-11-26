@@ -105,7 +105,7 @@ func declares(text, owner, name string) bool {
 	if owner != "" {
 		re = regexp.MustCompile(`(?m)^export ` + regexp.QuoteMeta(owner) + `(\[[^\]]*\])?\.` + regexp.QuoteMeta(name) + `[\[(]`)
 	} else {
-		re = regexp.MustCompile(`(?m)^export ((linear |view |open )*(struct|enum|interface|error|type|const) ` + regexp.QuoteMeta(name) + `\b|` + regexp.QuoteMeta(name) + `[\[(])`)
+		re = regexp.MustCompile(`(?m)^export (` + declarationKind + `(struct|enum|interface|error|type|const) ` + regexp.QuoteMeta(name) + `\b|` + regexp.QuoteMeta(name) + `[\[(])`)
 	}
 	return re.MatchString(text)
 }
@@ -168,7 +168,7 @@ func TestStdKnownItemsResolve(t *testing.T) {
 // TestStdKnownItemsResolve_SeesMissing: the scan finds a planted absence.
 func TestStdKnownItemsResolve_SeesMissing(t *testing.T) {
 	core := moduleText(t, "core")
-	for _, c := range []struct{ owner, name string }{{"", "Arena"}, {"Arena", "Fmt"}, {"str", "FromC"}, {"", "OutOfMemory"}, {"", "Print"}, {"", "Slice"}} {
+	for _, c := range []struct{ owner, name string }{{"", "Arena"}, {"", "Scope"}, {"Arena", "Fmt"}, {"str", "FromC"}, {"", "OutOfMemory"}, {"", "Print"}, {"", "Slice"}} {
 		if !declares(core, c.owner, c.name) {
 			t.Errorf("declares(%q, %q) is false on std.core", c.owner, c.name)
 		}
@@ -176,6 +176,16 @@ func TestStdKnownItemsResolve_SeesMissing(t *testing.T) {
 	planted := strings.Replace(core, "export Arena.Fmt[", "Arena.Fmt[", 1)
 	if declares(planted, "Arena", "Fmt") {
 		t.Error("an unexported Arena.Fmt still counts")
+	}
+	for _, head := range []string{"export plain view struct Arena", "export view struct Arena", "export linear view struct Arena"} {
+		if !declares(head+" {\n", "", "Arena") {
+			t.Errorf("%q does not count as an exported Arena", head)
+		}
+	}
+	for _, head := range []string{"linear mut view struct Arena", "export mut linear view struct Arena", "export linear plain view struct Arena", "export linear mut view struct Arenas"} {
+		if declares(head+" {\n", "", "Arena") {
+			t.Errorf("%q counts as an exported Arena", head)
+		}
 	}
 	if declares(core, "", "NoSuchKnownItem") {
 		t.Error("a missing name counts")

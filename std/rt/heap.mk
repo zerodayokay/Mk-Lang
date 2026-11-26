@@ -689,12 +689,13 @@ HugeAlloc(size: int, align: int): *u8 {
     if total < HugeSpareMax / (HugeSpare - 1) {
         extra = total *% (HugeSpare - 1)
     }
-    // The spare comes out of the heap's budget (HeapState.spare), or the
-    // block gets none; HeapFree gives it back. The Add's old value says
-    // whether the budget held it; when not, the Add is undone.
+    // Edge: the atomic debit tests the shared spare budget's old balance.
+    // An insufficient balance leaves the allocation with no spare and
+    // restores the debit.
     hs := HS()
     unsafe "the RtState page" {
         if (*hs).spare.Add(0 -% extra) < extra {
+            // Edge: refund the failed debit without losing other updates.
             _ = (*hs).spare.Add(extra)
             extra = 0
         }
@@ -702,6 +703,7 @@ HugeAlloc(size: int, align: int): *u8 {
     var base := sys.Reserve(total +% extra, res_align)
     if raw.IsNull(base) && extra != 0 {
         unsafe "the RtState page" {
+            // Edge: refund the spare debit before retrying without spare.
             _ = (*hs).spare.Add(extra)
         }
         extra = 0
@@ -713,6 +715,7 @@ HugeAlloc(size: int, align: int): *u8 {
     if !sys.Commit(base, total) {
         sys.Release(base, total +% extra)
         unsafe "the RtState page" {
+            // Edge: return the spare charge after releasing the reservation.
             _ = (*hs).spare.Add(extra)
         }
         return raw.Null[u8]()
@@ -916,6 +919,7 @@ export HeapFree(p: *u8, size: int, align: int) {
         if (*h).kind == KindHuge {
             extra := Trunc[int]((*h).free_pages)
             sys.Release(raw.FromAddr[u8]((*h).base), (*h).bytes)
+            // Edge: other allocators can claim this spare after the release.
             _ = (*HS()).spare.Add(extra)
             return
         }

@@ -101,6 +101,11 @@ NewSlot(class: u8, need: int): *rt.SlotHeader {
                         if (*c).slot_count > 0 {
                             FlushSlots(c, int((*c).slot_count))
                         }
+                        // Edge on the refill below: it caches a batch only
+                        // while no spawn waits and trim is off, with no
+                        // recheck after; a spawn that raises slot_waiters
+                        // later is woken by this carrier's next due flush
+                        // in FindRunnable or the TrimSpare of its Idle.
                     } else if (*TS()).slot_cache && (*TS()).slot_waiters.Load() == 0 && rt.TrimGateGet() == 0 {
                         var got := 0
                         h = rt.TakeSlotBatch(class, 64, mut got)
@@ -149,6 +154,7 @@ NewSlot(class: u8, need: int): *rt.SlotHeader {
                 rt.FreeSlot(h2)
             }
             _ = WaitWord(raw.PtrCast[raw.Atomic[u32], u32](word), g, false)
+            // Edge: withdraw this attempt's demand after the generation wait.
             _ = (*waiters).Add(0xFFFF_FFFF)
             // Edge: none; a test counter.
             _ = (*TS()).slot_waits.Add(1)

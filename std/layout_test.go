@@ -10,6 +10,7 @@
 package std
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path"
@@ -83,7 +84,11 @@ func TestTestPreludeMatchesReference(t *testing.T) {
 		t.Fatalf("the reference's test prelude block does not start with a verdict line: %q", body)
 	}
 	want := body[nl+1:]
-	got := readText(t, TestPreludePath)
+	disk, err := os.ReadFile(TestPreludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.ReplaceAll(string(disk), "\r\n", "\n")
 	if got != want {
 		t.Errorf("%s differs from the reference's test prelude:\n--- got\n%s--- want\n%s", TestPreludePath, got, want)
 	}
@@ -92,7 +97,7 @@ func TestTestPreludeMatchesReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.ReplaceAll(string(emb), "\r\n", "\n") != want {
+	if !bytes.Equal(emb, disk) {
 		t.Error("the embedded test prelude differs from the file on disk")
 	}
 }
@@ -367,6 +372,11 @@ func TestManifestListsUnsafeModules(t *testing.T) {
 	}
 }
 
+// declarationKind matches an optional declaration modifier in its written
+// order: linear, view, plain view or mut view, linear before a view, or
+// open.
+const declarationKind = `(?:(?:linear (?:mut view |view )?|mut view |plain view |view |open ))?`
+
 // TestPreludeDeclared: every prelude name is exported by a file of std/core
 // (the module map's prelude list); Path is not reserved. A text
 // scan; the driver's own count (StdMissing) is the semantic check.
@@ -387,7 +397,7 @@ func TestPreludeDeclared(t *testing.T) {
 	}
 	text := all.String()
 	for _, n := range PreludeNames {
-		decl := regexp.MustCompile(`(?m)^export (linear |view |linear view |open )?(struct|enum|error|interface|type) ` + n + `\b|^export ` + n + `[\[(]`)
+		decl := regexp.MustCompile(`(?m)^export ` + declarationKind + `(struct|enum|error|interface|type) ` + n + `\b|^export ` + n + `[\[(]`)
 		found := decl.MatchString(text)
 		if !found {
 			t.Errorf("std.core does not export the prelude name %s", n)
@@ -510,8 +520,8 @@ func TestGeneratorAPIDeclared(t *testing.T) {
 		if !slices.Contains(PreludeNames[:], e[1]) {
 			t.Errorf("PreludeNames lacks the generator API enum %s", e[1])
 		}
-		if want := "\nexport enum " + e[1] + " {\n" + e[2] + "}\n"; !strings.Contains(have, want) {
-			t.Errorf("core_gen.mk does not declare %q", want)
+		if !declaresEnum(have, e[1], e[2]) {
+			t.Errorf("core_gen.mk does not declare `export enum %s` with the variants, in order:\n%s", e[1], e[2])
 		}
 	}
 	methods := 0
@@ -526,6 +536,36 @@ func TestGeneratorAPIDeclared(t *testing.T) {
 	}
 	if methods < 30 {
 		t.Errorf("genSurface lists %d methods; the scan is broken", methods)
+	}
+}
+
+// declaresEnum reports whether src declares `export enum name` with
+// exactly the variant lines of variants, in that order, once its comment
+// lines (a variant's `///` documentation) are left out.
+func declaresEnum(src, name, variants string) bool {
+	code := regexp.MustCompile(`(?m)^[ \t]*//[^\n]*\n`).ReplaceAllString(src, "")
+	return strings.Contains(code, "\nexport enum "+name+" {\n"+variants+"}\n")
+}
+
+// TestGeneratorAPIDeclared_SeesDrift: the enum check passes documented
+// variants and fails a reordered, a missing, an extra or a commented-out
+// one.
+func TestGeneratorAPIDeclared_SeesDrift(t *testing.T) {
+	const want = "    Struct\n    Enum\n    Error\n"
+	for _, c := range []struct {
+		name, src string
+		ok        bool
+	}{
+		{"documented", "\nexport enum TypeKind {\n    /// A named struct.\n    Struct\n    /// A named enum.\n    Enum\n    Error\n}\n", true},
+		{"reordered", "\nexport enum TypeKind {\n    /// A named enum.\n    Enum\n    Struct\n    Error\n}\n", false},
+		{"missing", "\nexport enum TypeKind {\n    Struct\n    Enum\n}\n", false},
+		{"extra", "\nexport enum TypeKind {\n    Struct\n    Enum\n    Error\n    Record\n}\n", false},
+		{"commented out", "\nexport enum TypeKind {\n    Struct\n    Enum\n    // Error\n}\n", false},
+		{"not exported", "\nenum TypeKind {\n    Struct\n    Enum\n    Error\n}\n", false},
+	} {
+		if got := declaresEnum(c.src, "TypeKind", want); got != c.ok {
+			t.Errorf("%s: declaresEnum = %v, want %v", c.name, got, c.ok)
+		}
 	}
 }
 
