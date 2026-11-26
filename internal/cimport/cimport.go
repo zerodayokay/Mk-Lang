@@ -75,6 +75,8 @@ type Result struct {
 	Stats     []Stats             // one per Import
 	FuncLike  [][]string          // sorted un-prototyped function-like macro names per Import
 	Merged    []map[string]string // C typedef name -> Mk name it merged into, per Import
+	// FunctionRedirects names functions whose headers assign another linker symbol.
+	FunctionRedirects map[string]string
 	// Deps are every file the translation unit read (-MD), absolute, in
 	// Clang's order; SearchDirs the ordered header search path.
 	Deps       []string
@@ -376,7 +378,7 @@ func Translate(ctx context.Context, cl Clang, resourceDir string, r Request) (*R
 	for i := range flByImp {
 		slices.Sort(flByImp[i])
 	}
-	return &Result{Modules: mods, Shim: ShimText(r.Imports, fs), ShimFuncs: fs, Stats: e.stats, FuncLike: flByImp, Merged: e.merged, Deps: deps,
+	return &Result{Modules: mods, Shim: ShimText(r.Imports, fs), ShimFuncs: fs, Stats: e.stats, FuncLike: flByImp, Merged: e.merged, FunctionRedirects: u.redirects, Deps: deps,
 		SearchDirs: SearchDirs(r, resourceDir), Steps: steps}, nil
 }
 

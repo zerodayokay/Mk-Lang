@@ -4,10 +4,9 @@
 //
 // What: SysGenOptions, SysGenView, SysGenResult and GenerateSystemViews,
 // which runs the importer once per target over sysview.Table's rows (one
-// translation unit, one import per row, the Microsoft flavour with mk's
-// toolset headers), cuts the bindings into items, drops what only a shim
-// defines and what does not check, populates Link entries from the SDK's
-// import libraries, and encodes one archive per view.
+// translation unit, one import per row), cuts the bindings into items,
+// drops what only a shim defines and what does not check, populates Link
+// entries from the platform's libraries, and encodes one archive per view.
 //
 // How: the whole extracted text of every view is checked as the vendored C
 // imports of a scratch package (pruning off), each a C-import module exactly
@@ -38,7 +37,7 @@ type SysGenOptions struct {
 	WindowsSDK string
 	// Vulkan is Vulkan-Headers' include directory; "" skips the vulkan row.
 	Vulkan string
-	// Glibc are a Linux target's glibc include directories, by target.
+	// Glibc maps Linux targets to extracted Debian glibc sysroots.
 	Glibc map[string]string
 	// Tools is the toolchain; nil discovers it.
 	Tools *toolchain.Tools
@@ -97,6 +96,7 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 		var sysroot, inputs []string
 		version := map[string]string{}
 		var implibs *implibIndex
+		var glibc *glibcInput
 		for _, r := range sysview.ForTarget(target) {
 			why := ""
 			switch r.Input {
@@ -127,11 +127,6 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 					why = "no Vulkan-Headers include directory given (-vulkan)"
 					break
 				}
-				if d := o.Glibc[target]; d != "" && !slices.Contains(inputs, string(sysview.InputGlibc)) {
-					sysroot = append(sysroot, d)
-					inputs = append(inputs, string(sysview.InputGlibc))
-					version[string(sysview.InputGlibc)] = "unversioned"
-				}
 				defs := r.DefinesFor(target)
 				if (slices.Contains(defs, "VK_USE_PLATFORM_XLIB_KHR") && !hasSysrootHeader(sysroot, "X11/Xlib.h")) ||
 					(slices.Contains(defs, "VK_USE_PLATFORM_WAYLAND_KHR") && !hasSysrootHeader(sysroot, "wayland-client.h")) {
@@ -144,16 +139,18 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 				}
 				version[string(r.Input)] = "unversioned"
 			case sysview.InputGlibc:
-				d := o.Glibc[target]
-				if d == "" {
-					why = "no glibc headers given for " + target
+				root := o.Glibc[target]
+				if root == "" {
+					why = "no glibc sysroot given for " + target
 					break
 				}
-				if !slices.Contains(inputs, string(r.Input)) {
-					sysroot = append(sysroot, d)
-					inputs = append(inputs, string(r.Input))
+				var err error
+				glibc, err = readGlibcInput(target, root)
+				if err != nil {
+					return nil, err
 				}
-				version[string(r.Input)] = "unversioned"
+				sysroot = append(sysroot, glibc.dirs...)
+				version[string(r.Input)] = glibc.version
 			}
 			for _, q := range r.RequiresFor(target) {
 				if !slices.ContainsFunc(rows, func(x sysview.Row) bool { return x.Name == q }) && why == "" {
@@ -170,7 +167,7 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 		if len(rows) == 0 {
 			continue
 		}
-		views, err := generateTarget(tools, target, rows, sysroot, version, implibs, logf)
+		views, err := generateTarget(tools, target, rows, sysroot, version, implibs, glibc, logf)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +178,7 @@ func GenerateSystemViews(o SysGenOptions) (*SysGenResult, error) {
 
 // generateTarget translates rows (one target's, in table order) as one
 // unit and returns their checked views.
-func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, sysroot []string, version map[string]string, implibs *implibIndex, logf func(string, ...any)) ([]SysGenView, error) {
+func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, sysroot []string, version map[string]string, implibs *implibIndex, glibc *glibcInput, logf func(string, ...any)) ([]SysGenView, error) {
 	ctx := context.Background()
 	rd, err := tools.ResourceDir(ctx)
 	if err != nil {
@@ -195,6 +192,9 @@ func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, s
 	sys, err := cimport.SystemFor(target, sysroot, filepath.Join(work, "msvch"))
 	if err != nil {
 		return nil, err
+	}
+	if glibc != nil {
+		sys.Triple = target + "-gnu"
 	}
 	var imports []cimport.Import
 	names := make([]string, len(rows))
@@ -214,6 +214,16 @@ func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, s
 		for _, q := range v.Meta.Requires {
 			if !slices.Contains(want, q) {
 				return nil, fmt.Errorf("sysview: c.%s for %s refers to c.%s, which its row does not require: add it to the table's Requires", v.Meta.Name, target, q)
+			}
+		}
+		if rows[i].Input == sysview.InputGlibc {
+			for k, item := range v.Items {
+				if symbol := tr.FunctionRedirects[item.Name]; item.Kind == "func" && symbol != "" {
+					if drop[v.Meta.Name] == nil {
+						drop[v.Meta.Name] = map[int]string{}
+					}
+					drop[v.Meta.Name][k] = "the headers redirect the C symbol to " + symbol
+				}
 			}
 		}
 	}
@@ -250,7 +260,14 @@ func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, s
 		r := rows[i]
 		var ambig []sysview.Ambiguous
 		linked := 0
-		if implibs != nil {
+		if r.Input == sysview.InputGlibc {
+			for k, item := range v.Items {
+				if ver := glibc.exports[item.Name]; item.Kind == "func" && ver != "" {
+					v.Items[k].Link = sysview.Link{Lib: glibcSONAME, Version: ver}
+					linked++
+				}
+			}
+		} else if implibs != nil {
 			for k := range v.Items {
 				if v.Items[k].Kind != "func" {
 					continue
@@ -270,6 +287,11 @@ func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, s
 		if sys.Flavour == cimport.FlavourMicrosoft {
 			in["toolset-headers"] = cimport.ToolsetHeadersHash()
 		}
+		if r.Input == sysview.InputGlibc {
+			in["glibc-abi"] = glibcABI
+			in["glibc-libc-sha256"] = glibc.libHash
+			in["linux-uapi"] = glibc.uapi
+		}
 		st := tr.Stats[i]
 		var mine []sysview.Dropped
 		for _, d := range dropped {
@@ -279,7 +301,7 @@ func generateTarget(tools *toolchain.Tools, target string, rows []sysview.Row, s
 		}
 		v.Meta.Target, v.Meta.Headers, v.Meta.Defines, v.Meta.Inputs = target, r.Headers, r.DefinesFor(target), in
 		v.Meta.Counts = map[string]int{"declarations": st.Decls, "bound": st.Bound(), "items": len(v.Items), "dropped": len(mine)}
-		if implibs != nil {
+		if implibs != nil || r.Input == sysview.InputGlibc {
 			v.Meta.Counts["linked"] = linked
 			v.Meta.Counts["ambiguous"] = len(ambig)
 		}

@@ -2,7 +2,7 @@
 // they were generated from; its output and exit codes are its interface.
 // What: TestMkSdkCommand.
 // How: mk sdk views, mk sdk, a bad argument and mk version, run in
-// process; the Windows views are embedded in this mk.
+// process; the Windows and Linux views are embedded in this mk.
 
 package main
 
@@ -17,7 +17,8 @@ func TestMkSdkCommand(t *testing.T) {
 		t.Fatalf("mk sdk views: status %d", st)
 	}
 	for _, want := range []string{"system views", "c.windows", "x86_64-windows", "windows-sdk 10.0.28000.0", "headers  windows.h windowsx.h",
-		"c.dxgi", "requires windows", "c.vulkan", "not carried: generate it with go run ./tools/sysview -vulkan"} {
+		"c.dxgi", "requires windows", "c.vulkan", "not carried: generate it with go run ./tools/sysview -vulkan",
+		"c.posix        x86_64-linux", "c.posix        aarch64-linux", "glibc 2.36, glibc-abi 2.34"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("mk sdk views lacks %q:\n%s", want, out)
 		}
@@ -33,7 +34,7 @@ func TestMkSdkCommand(t *testing.T) {
 	if st, _, errOut := mk("sdk", "bogus"); st != 2 || !strings.Contains(errOut, "usage: mk sdk") {
 		t.Errorf("mk sdk bogus: status %d, stderr %q", st, errOut)
 	}
-	if st, v, _ := mk("version"); st != 0 || !strings.Contains(v, "\nsystem views: 5 carried, from vulkan-headers unversioned, windows-sdk 10.0.28000.0 (mk sdk") {
+	if st, v, _ := mk("version"); st != 0 || !strings.Contains(v, "\nsystem views: 7 carried, from glibc 2.36, vulkan-headers unversioned, windows-sdk 10.0.28000.0 (mk sdk") {
 		t.Errorf("mk version: status %d\n%s", st, v)
 	}
 }
