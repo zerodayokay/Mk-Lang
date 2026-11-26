@@ -107,7 +107,7 @@ MemHashOf[T: Hash](x: &T): u64 {
     return HashFinish(mut h)
 }
 
-Pair(a: str, b: str): u64 {
+HashPairFixture(a: str, b: str): u64 {
     var h := NewHasher()
     a.Hash(mut h)
     b.Hash(mut h)
@@ -143,7 +143,7 @@ HashChecks(): int {
     if MemHashOf(&c) != HashU64(233) {
         bad += 1
     }
-    if Pair("ab", "c") == Pair("a", "bc") {
+    if HashPairFixture("ab", "c") == HashPairFixture("a", "bc") {
         bad += 1
     }
     s := "key"

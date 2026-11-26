@@ -53,8 +53,8 @@ CollKeyedProbes[K: Hash + Eq, V](t: &Table[K, V]): int {
             var pos := H1(hash) & mask
             var stride := 0
             var n := 1
-            for ((i - pos) & mask) >= 8 {
-                stride += 8
+            for ((i - pos) & mask) >= TableGroupWidth {
+                stride += TableGroupWidth
                 pos = (pos + stride) & mask
                 n += 1
             }
@@ -323,7 +323,7 @@ Run(out: mut Writer, m: mut Map[int, int], hm: mut HeapMap[int, int], s: mut Set
             acc = acc *% 31 +% Trunc[u64](g3)
             acc = acc *% 31 +% Trunc[u64](g4)
         }
-        if op % 97 == 0 || op == ops - 1 {
+        if op < 16 || op % 97 == 0 || op == ops - 1 {
             var o1: u64 = 14695981039346656037
             var i1 := m.Iter()
             for e := i1.Next() {
@@ -342,7 +342,9 @@ Run(out: mut Writer, m: mut Map[int, int], hm: mut HeapMap[int, int], s: mut Set
             n1 := m.Len()
             n2 := hm.Len()
             n4 := tm.Len()
-            try Print(out, "{op} {n1} {o1} {n2} {o2} {n4} {o4} {acc}\n", (op, n1, o1, n2, o2, n4, o4, acc))
+            p1 := collkeyed.MapProbes(&*m)
+            p2 := collkeyed.HeapProbes(&*hm)
+            try Print(out, "{op} {n1} {o1} {n2} {o2} {n4} {o4} {acc} {p1} {p2}\n", (op, n1, o1, n2, o2, n4, o4, acc, p1, p2))
         }
     }
 }
@@ -415,7 +417,7 @@ func keyedModelRun(k *keyedKey, keys []int, strs []string, ops int, seed uint64)
 			acc = acc*31 + uint64(g3)
 			acc = acc*31 + uint64(g4)
 		}
-		if op%97 == 0 || op == ops-1 {
+		if op < 16 || op%97 == 0 || op == ops-1 {
 			o1 := uint64(14695981039346656037)
 			for i := 0; i < im.cap; i++ {
 				if im.ctrl[i] < mDeleted {
@@ -428,7 +430,8 @@ func keyedModelRun(k *keyedKey, keys []int, strs []string, ops int, seed uint64)
 					o4 = fnv(fnv(o4, fnvStr(strs[sm.key[i]])), uint64(sm.val[i]))
 				}
 			}
-			fmt.Fprintf(&out, "%d %d %d %d %d %d %d %d\n", op, im.used, o1, im.used, o1, sm.used, o4, acc)
+			probes := modelProbes(im)
+			fmt.Fprintf(&out, "%d %d %d %d %d %d %d %d %d %d\n", op, im.used, o1, im.used, o1, sm.used, o4, acc, probes, probes)
 		}
 	}
 	return out.String()
@@ -503,8 +506,8 @@ func modelProbes(m *swissModel) int {
 		if m.ctrl[i] < mDeleted {
 			pos := int(m.hash(m.key[i])>>7) & mask
 			n := 1
-			for stride := 0; (i-pos)&mask >= 8; n++ {
-				stride += 8
+			for stride := 0; (i-pos)&mask >= mGroupWidth; n++ {
+				stride += mGroupWidth
 				pos = (pos + stride) & mask
 			}
 			sum += n

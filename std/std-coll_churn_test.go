@@ -233,8 +233,8 @@ export Churn(w: mut Writer, a: &Alloc, n: int, window: int, klen: int): OutOfMem
 // 24 lines runs at both key lengths. The bounds: capacity stays below max(8, 32 L / 7) for a largest
 // length L; at a window of 1 the capacity is 8 and every peak is under 64 KiB;
 // a heap table's peak is its arrays plus the half-size arrays it grew from; an
-// arena's peak is at most 4 times its arrays (abandoned arrays total less than
-// the current ones, and chunks double); nothing is live after Free; and the
+// arena's peak budgets for doubled ordinary and aligned chunks plus their
+// minimum initial chunks. Nothing is live after Free, and the
 // peaks at n = 100,000 and n = 1,000,000 are equal.
 func TestStdColl_ChurnBounded(t *testing.T) {
 	t.Parallel()
@@ -258,8 +258,15 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
 	if len(lines) != 48 {
 		t.Fatalf("%d lines, want 48:\n%s", len(lines), got)
 	}
-	arrays := func(c int) int { return c*17 + 8 }     // ctrl (cap + 8) and 16-byte slots of Table[int, int]
-	textArrays := func(c int) int { return c*25 + 8 } // ctrl and 24-byte slots of Table[TextKey, int]
+	// A control array holds cap plus a mirrored group. Slots are 16 bytes
+	// in Table[int, int] and 24 in Table[TextKey, int].
+	arrays := func(c, slotBytes int) int {
+		if c < 8 {
+			return 0
+		}
+		return c*(1+slotBytes) + mGroupWidth
+	}
+	const firstChunk = 4096
 	for i, l := range lines {
 		window := []int{1, 50, 1000}[i/4%3]
 		klen := []int{8, 16}[i/24]
@@ -279,14 +286,17 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
 			if window == 1 && (maxCap != 8 || peak >= 64<<10) {
 				t.Errorf("%q: window 1 needs capacity 8 and a peak under 64 KiB", l)
 			}
-			if kind == "heapmap" && peak > arrays(maxCap)+arrays(maxCap/2) {
-				t.Errorf("%q: heap peak %d above arrays %d plus the half-size arrays %d", l, peak, arrays(maxCap), arrays(maxCap/2))
+			if bound := arrays(maxCap, 16) + arrays(maxCap/2, 16); kind == "heapmap" && peak > bound {
+				t.Errorf("%q: heap peak above %d bytes for the current and previous arrays", l, bound)
 			}
-			if kind == "map" && peak > 4*arrays(maxCap)+4096 {
-				t.Errorf("%q: arena peak %d above 4 times the arrays (%d) plus a first chunk", l, peak, arrays(maxCap))
+			// Controls are 16-aligned and the slots use ordinary chunks.
+			// Each stream has a 4 KiB minimum. Its abandoned arrays total
+			// less than the current ones, and its chunks double.
+			if bound := 4*arrays(maxCap, 16) + 2*firstChunk; kind == "map" && peak > bound {
+				t.Errorf("%q: arena peak above %d bytes for arrays and initial chunks", l, bound)
 			}
-			if kind == "textmap" && peak > textArrays(maxCap)+textArrays(maxCap/2)+klen*maxLen {
-				t.Errorf("%q: heap peak %d above arrays %d plus the half-size arrays %d plus %d key bytes", l, peak, textArrays(maxCap), textArrays(maxCap/2), klen*maxLen)
+			if bound := arrays(maxCap, 24) + arrays(maxCap/2, 24) + klen*maxLen; kind == "textmap" && peak > bound {
+				t.Errorf("%q: heap peak above %d bytes for the current and previous arrays and live keys", l, bound)
 			}
 		case 2:
 			if _, err := fmt.Sscanf(l, "lru hits %d peak %d after %d", &hits, &peak, &after); err != nil {

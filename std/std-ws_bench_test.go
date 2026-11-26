@@ -146,7 +146,7 @@ func TestStdWs_BenchRowsMeetTheirTable(t *testing.T) {
 			t.Errorf("ws-mask %s: not in its language's SIMD layer", lang)
 		}
 	}
-	if !strings.Contains(strings.Join(mask.Notes, " "), "Go: scalar, labelled as such") || !strings.Contains(mt["mk"], "labelled exception") {
+	if !strings.Contains(strings.Join(mask.Notes, " "), "Go: scalar, labelled as such") || !strings.Contains(mt["mk"], "labelled alignment exception") {
 		t.Error("ws-mask: the Go cell is not labelled scalar, or the Mk cell's alignment exception is not labelled")
 	}
 	ext, et := wsLoadRow(t, "extend")

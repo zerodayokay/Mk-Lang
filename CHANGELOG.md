@@ -68,6 +68,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 
 ### Tools
 
+- The Windows installer extracts verified ZIP entries with extended paths in its staging directory, so a deep install root or archive entry can exceed the legacy path limit there. If extraction fails, PowerShell returns a failing exit status.
 - In plain `mk test`, each saved fuzz input's marker starts a line even when the target's preceding output has no final newline.
 - `mk test --sim SEED`'s help and documentation say what it does: it puts the seed in each test's environment as `MK_SIM_SEED`, prints it in the report and seeds `--prop`, for a test that builds a `std.sim` world from it (`sys.Env("MK_SIM_SEED")`). They said it ran every test under a simulated `Io`, but a test block's `System` is the real one. With `--show-output`, a fuzz target's output is documented too: a passing plain run shows each `fuzz input` line followed by what the target printed for that input, a passing `--fuzz` run only the loop's summary ([`mk test`](doc/tools.md#mk-test), [section 9](doc/tools.md#9-simulation-record-and-replay)).
 - On `x86_64-windows`, Mk targets MSVC compatibility version 19.33 by default when it runs Clang. The C import, shim and C sources agree on `_MSC_VER` (1933) even after an installed Visual Studio changes. Clang previously chose its compatibility version from the host, so a warm cache could keep bindings and objects from an older version.
