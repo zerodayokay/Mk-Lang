@@ -60,7 +60,7 @@ var untrusted = []untrustedEntry{
 	{"the HPACK decoder and Huffman decoding", "std.http.fields", []string{"FuzzStdHttpFields_Hpack", "FuzzStdHttpFields_Huffman"}},
 	{"the QPACK decoder and encoder-stream instructions", "std.http.fields", []string{"FuzzStdHttpFields_Qpack"}},
 	{"HTTP field validation", "std.http.fields", []string{"FuzzStdHttpFields_Check"}},
-	{"the HTTP/2 frame and SETTINGS parsers", "std.http.h2", []string{"FuzzStdHttpH2_Frames"}},
+	{"the HTTP/2 frame and SETTINGS parsers", "std.http.h2", []string{"FuzzStdHttpH2_Frames", "FuzzStdHttpH2_Server", "FuzzStdHttpH2_Client"}},
 	{"QUIC ACK range and recovery state", "std.quic", []string{"FuzzStdQuic_Ack"}},
 	{"the HTTP/3 frame, SETTINGS and stream parsers", "std.http.h3", []string{"FuzzStdHttpH3_Frames"}},
 	// Further entry points held to the same bar (their fuzz files say so).

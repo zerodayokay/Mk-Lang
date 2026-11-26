@@ -24,6 +24,11 @@ test "RFC 9113 10.5: WINDOW_UPDATEs that follow DATA are not charged" {
     g.SentData()
     Assert(g.Charge(1023) == true)
     Assert(g.Charge(4096) == true)
+    // Multiple legitimate updates within cumulative DATA bytes are not charged.
+    g.SentBytes(65536)
+    Assert(g.Charge(32768) == false)
+    Assert(g.Charge(32768) == false)
+    Assert(g.Charge(1024) == true)
 }
 
 test "RFC 9113 10.5: one-byte window updates neither make one-byte DATA nor hold a stream forever" (sys: &System) {

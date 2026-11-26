@@ -7,6 +7,15 @@
 // How: every str and slice in a Request or Reply is a view of the arena it
 // was read into, so the records own nothing.
 
+/// The HTTP version a request came over or a reply was read over. Open:
+/// later versions are added.
+export open enum HttpVersion {
+    Http10
+    Http11
+    Http2
+    Http3
+}
+
 /// One header field: its name and value, as they were read or as they are
 /// to be written.
 export struct Header {

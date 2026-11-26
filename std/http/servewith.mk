@@ -163,26 +163,56 @@ ServeConn[C: Share](conn: net.Conn, heap: &Heap into conn, io: Io, o: &ServerOpt
 ServeRelayConn[C: Share, T: Send](conn: net.Conn, heap: &Heap into conn, io: Io, o: &ServerOptions, sem: &sync.Semaphore, c: &C, rh: &Heap into ch, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T]) {
     defer sem.Release(1)
     if sec := o.secure {
+        if o.h2 {
+            var offer: [2]str = ["h2", "http/1.1"]
+            (conn: sc, chosen) := sec.Negotiate(heap, io, conn, "", offer[..]) else {
+                conn.Abandon()
+                return
+            }
+            if chosen == 0 {
+                var empty_pre: [0]u8 = []
+                ServeH2(sc, heap, io, o, c, rh, ch, plain, relay, empty_pre[..], true)
+                return
+            }
+            ServeRelayOwned(sc, heap, io, o, c, rh, ch, plain, relay, true)
+            return
+        }
         sc := sec.Connect(heap, io, conn, "") else {
             conn.Abandon()
             return
         }
-        ServeRelayOwned(sc, heap, io, o, c, rh, ch, plain, relay)
+        ServeRelayOwned(sc, heap, io, o, c, rh, ch, plain, relay, true)
         return
     }
-    ServeRelayOwned(conn, heap, io, o, c, rh, ch, plain, relay)
+    if o.h2c {
+        cell := Mutex[?net.Conn].New(some(conn))
+        var pre: [24]u8 = [0; 24]
+        (is_h2, n: pn) := SniffH2c(&cell, io, o, mut pre)
+        if is_h2 {
+            if raw_conn := CellTake(&cell, io) {
+                ServeH2(raw_conn, heap, io, o, c, rh, ch, plain, relay, pre[0..pn], false)
+            }
+            CloseCell(cell.Into(), io)
+            return
+        }
+        ServeConnLoop(&cell, heap, io, o, c, rh, ch, plain, relay, pre[0..pn], false)
+        CloseCell(cell.Into(), io)
+        return
+    }
+    ServeRelayOwned(conn, heap, io, o, c, rh, ch, plain, relay, false)
 }
 
 // ServeOwned serves conn through a cell (link.mk) and closes it, unless a
 // handler took it.
 ServeOwned[C: Share](conn: net.Conn, heap: &Heap, io: Io, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): Error!void) {
-    ServeRelayOwned[C, u8](conn, heap, io, o, c, heap, none, some(handle), none)
+    ServeRelayOwned[C, u8](conn, heap, io, o, c, heap, none, some(handle), none, false)
 }
 
 // ServeRelayOwned is ServeOwned with either handler.
-ServeRelayOwned[C: Share, T: Send](conn: net.Conn, heap: &Heap, io: Io, o: &ServerOptions, c: &C, rh: &Heap into ch, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T]) {
+ServeRelayOwned[C: Share, T: Send](conn: net.Conn, heap: &Heap, io: Io, o: &ServerOptions, c: &C, rh: &Heap into ch, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T], secure: bool) {
     cell := Mutex[?net.Conn].New(some(conn))
-    ServeConnLoop(&cell, heap, io, o, c, rh, ch, plain, relay)
+    var empty_pre: [0]u8 = []
+    ServeConnLoop(&cell, heap, io, o, c, rh, ch, plain, relay, empty_pre[..], secure)
     CloseCell(cell.Into(), io)
 }
 
@@ -315,7 +345,7 @@ LingerConn(conn: &net.Conn, io: Io) {
 // closes, a request asks to close, an error ends it or the scope is
 // cancelled; a response write that fails ends it, so a connection whose
 // write was cut off is never reused.
-ServeConnLoop[C: Share, T: Send](conn: &Mutex[?net.Conn], heap: &Heap, io: Io, o: &ServerOptions, c: &C, rh: &Heap into ch, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T]) {
+ServeConnLoop[C: Share, T: Send](conn: &Mutex[?net.Conn], heap: &Heap, io: Io, o: &ServerOptions, c: &C, rh: &Heap into ch, ch: ?&Chan[T], plain: ?DirectFn[C], relay: ?RelayFn[C, T], pre: []u8, secure: bool) {
     limit := o.header_bytes
     var arena := Arena.New(heap) else {
         return
@@ -324,7 +354,10 @@ ServeConnLoop[C: Share, T: Send](conn: &Mutex[?net.Conn], heap: &Heap, io: Io, o
     var rb: [8192]u8 = [0; 8192]
     var wb: [4096]u8 = [0; 4096]
     var s := 0
-    var e := 0
+    var e := pre.Len()
+    if e > 0 {
+        (mut rb[0..e]).CopyFrom(pre)
+    }
     for {
         // The request's first byte: none until a read brings it, or now
         // when the last read brought bytes of this request already
@@ -615,10 +648,13 @@ ServeConnLoop[C: Share, T: Send](conn: &Mutex[?net.Conn], heap: &Heap, io: Io, o
             }
         }
         req := Request(method: h.method, path: h.path, query: h.query, headers: h.headers, params: List[Header].New(&arena).Done()[..], body: body[0..bn])
+        req_ver := if h.minor == 0 { HttpVersion.Http10 } else { HttpVersion.Http11 }
         var res := Response.New(&arena)
         res.head = h.method == "HEAD"
         res.close = h.close
-        link := Link(cell: conn, io: io, rest: rb[s..e], pace: o.request_header)
+        res.version = req_ver
+        res.secure = secure
+        link := Link(version: req_ver, cell: some(conn), h2: none, io: io, rest: rb[s..e], pace: o.request_header)
         if h.minor == 0 && !h.close {
             // An HTTP/1.0 client keeps the connection only when the reply
             // says so (RFC 9112 9.3, appendix C.2.2).
@@ -630,6 +666,8 @@ ServeConnLoop[C: Share, T: Send](conn: &Mutex[?net.Conn], heap: &Heap, io: Io, o
         // handler's own Response.New cannot clear it: an HTTP/1.0 client
         // gets no chunked framing (RFC 9112 6.1).
         res.old = h.minor == 0
+        res.version = req_ver
+        res.secure = secure
         var failed := false
         CallHandler(c, rh, ch, plain, relay, &arena, io, &req, mut res, &link) else err {
             match err {

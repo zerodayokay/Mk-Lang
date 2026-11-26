@@ -175,29 +175,43 @@ export Progress.Starved(&self, now: time.Instant, window: time.Duration, floor: 
     return i64(self.moved) < need
 }
 
-/// Tracks whether DATA was sent on a stream or connection since the previous
-/// WINDOW_UPDATE, to classify unsolicited WINDOW_UPDATEs (RFC 9113 10.5).
+/// Tracks DATA octets sent on a stream or connection since previous
+/// WINDOW_UPDATEs, to classify unsolicited or dribble updates (RFC 9113 10.5).
 export struct UpdateGate {
-    sent: bool
+    unacked: int
 }
 
 /// An UpdateGate with no DATA sent yet. O(1); allocates nothing.
 export UpdateGate.New(): UpdateGate {
-    return UpdateGate(sent: false)
+    return UpdateGate(unacked: 0)
 }
 
-/// Records that non-empty DATA was sent on this stream or connection. O(1);
-/// allocates nothing.
+/// Records that at least MinWindowGrant bytes of DATA were sent. O(1); allocates nothing.
 export UpdateGate.SentData(mut self) {
-    self.sent = true
+    self.SentBytes(MinWindowGrant)
+}
+
+/// Records that n bytes of non-empty DATA were sent. O(1); allocates nothing.
+export UpdateGate.SentBytes(mut self, n: int) {
+    if n > 0 {
+        cap := 0x7fff_ffff
+        if n >= cap - self.unacked {
+            self.unacked = cap
+        } else {
+            self.unacked += n
+        }
+    }
 }
 
 /// Classifies a received WINDOW_UPDATE of increment octets: returns true when
-/// it should be charged to ControlBudget (no DATA went out since the previous
-/// WINDOW_UPDATE, or increment < MinWindowGrant), and clears sent so each DATA
-/// burst authorizes at most one large update. O(1); allocates nothing.
+/// it should be charged to ControlBudget (exceeds unacked DATA octets, or
+/// increment < MinWindowGrant), consuming increment from unacked when valid.
+/// O(1); allocates nothing.
 export UpdateGate.Charge(mut self, increment: int): bool {
-    ok := self.sent && increment >= MinWindowGrant
-    self.sent = false
-    return !ok
+    if increment >= MinWindowGrant && self.unacked >= increment {
+        self.unacked -= increment
+        return false
+    }
+    self.unacked = 0
+    return true
 }

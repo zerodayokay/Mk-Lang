@@ -78,6 +78,23 @@ export struct ClientLimits {
     /// origin's name. none connects directly. std reads no proxy variable
     /// from the environment.
     export proxy: ?&url.Url
+    /// Offer h2 and http/1.1 by ALPN on https; use h2 when the server picks it.
+    export h2: bool
+    /// Send every http:// request as HTTP/2 with prior knowledge (RFC 9113 3.3).
+    export h2c: bool
+    /// Streams this client opens at once on one h2 or h3 connection (also
+    /// obeying the peer's limit).
+    export h2_streams: int
+    /// The receive window of each stream (h2 SETTINGS_INITIAL_WINDOW_SIZE).
+    export h2_window: int
+    /// Made by quic.Connector; https origins may then use HTTP/3.
+    export h3: ?net.MuxDialer
+    /// Use h3 for every https origin without waiting for Alt-Svc.
+    export h3_direct: bool
+    /// Time limit for a QUIC handshake before falling back to TCP.
+    export h3_connect: time.Duration
+    /// Read Alt-Svc: h3=":port" from https replies when h3 is enabled.
+    export alt_svc: bool
     sealed: u8
 }
 
@@ -87,7 +104,9 @@ export struct ClientLimits {
 /// address allowed, no https and no proxy.
 export const DefaultClientLimits: ClientLimits = ClientLimits(connect: time.Seconds(30), response_header: time.Seconds(30),
     idle: time.Seconds(90), close: time.Seconds(5), header_bytes: 1048576, body_bytes: 67108864, redirects: 10,
-    idle_connections: 16, decoders: [], allow: none, secure: none, proxy: none, sealed: 0)
+    idle_connections: 16, decoders: [], allow: none, secure: none, proxy: none, h2: false, h2c: false,
+    h2_streams: 100, h2_window: 1048576, h3: none, h3_direct: false, h3_connect: time.Seconds(3), alt_svc: true,
+    sealed: 0)
 
 /// The settings of ServeWith, ServeOn and ServeChan: the connections served
 /// at once, the bytes of a request's head and body, the time a request may
@@ -114,6 +133,16 @@ export struct ServerOptions {
     /// The acceptor each connection goes through, made by tls.Acceptor.
     /// With none, the server speaks plain TCP.
     export secure: ?net.Secure
+    /// With secure, accept h2 by ALPN.
+    export h2: bool
+    /// Without secure, serve a connection starting with the HTTP/2 preface as HTTP/2.
+    export h2c: bool
+    /// SETTINGS_MAX_CONCURRENT_STREAMS for h2 (and QUIC max streams for h3).
+    export h2_streams: int
+    /// Made by quic.Acceptor; ServeWith and ServeOn also bind UDP when set.
+    export h3: ?net.MuxServer
+    /// With h3, add Alt-Svc header to h1 and h2 replies that set none.
+    export alt_svc: bool
     sealed: u8
 }
 
@@ -121,4 +150,5 @@ export struct ServerOptions {
 /// 8 MiB body, 30 s for a request's head and 75 s between requests, and
 /// plain TCP.
 export const DefaultServerOptions: ServerOptions = ServerOptions(connections: 10000, header_bytes: 32768, body_bytes: 8388608,
-    request_header: time.Seconds(30), keep_alive: time.Seconds(75), secure: none, sealed: 0)
+    request_header: time.Seconds(30), keep_alive: time.Seconds(75), secure: none, h2: false, h2c: false,
+    h2_streams: 100, h3: none, alt_svc: true, sealed: 0)
