@@ -45,7 +45,7 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/mk-graphics-llvm.gpg] https://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-$major main" |
             sudo tee /etc/apt/sources.list.d/mk-graphics-llvm.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "clang-$major" "lld-$major" "llvm-$major" libglfw3 libvulkan1 mesa-vulkan-drivers xvfb xauth
+          sudo apt-get install -y --no-install-recommends "clang-$major" "lld-$major" "llvm-$major" gdb libglfw3 libvulkan1 mesa-vulkan-drivers xvfb xauth
           echo "MK_LLVM=/usr/lib/llvm-$major/bin" >> "$GITHUB_ENV"
           icd=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
           test -n "$icd"
@@ -82,8 +82,30 @@ jobs:
       - name: Render and present on Linux
         if: runner.os == 'Linux'
         run: |
+          run_native() {
+            local rc=0
+            "$RUNNER_TEMP/scene" "$@" || rc=$?
+            if (( rc == 0 )); then
+              return 0
+            fi
+            echo "::group::Linux Vulkan native backtrace"
+            local debugger=(
+              timeout 90s gdb -nx -batch
+              -ex 'set print thread-events off'
+              -ex 'handle SIGURG nostop noprint pass'
+              -ex 'handle SIGPIPE nostop noprint pass'
+              -ex run -ex bt -ex 'x/8i $pc' -ex 'info sharedlibrary'
+            )
+            "${debugger[@]}" --args "$RUNNER_TEMP/scene" "$@" || true
+            if "$RUNNER_TEMP/mk" build --debug Dogfoods/scene -o "$RUNNER_TEMP/scene-debug"; then
+              "${debugger[@]}" --args "$RUNNER_TEMP/scene-debug" "$@" || true
+            fi
+            echo "::endgroup::"
+            return "$rc"
+          }
           scene=Dogfoods/scene/cases/scenes/shadow.scene
-          "$RUNNER_TEMP/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
+          run_native probe --backend vulkan --list
+          run_native render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
           test -s "$RUNNER_TEMP/shadow.png"
           output=$(xvfb-run -a "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3)
           printf '%s\n' "$output"
