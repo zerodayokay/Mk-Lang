@@ -53,14 +53,14 @@ test "device goldens: 9 scenes verified against WARP baselines" (sys: &System) {
     _ = sys.Print("adapter {k}: {n}\n", (k: kind, n: dev.Info().name)) else {}
 
     // WARP renders compare byte for byte with the goldens when the
-    // d3d10warp.dll version is the one that made them. Another version is
-    // measured and printed but does not fail: its bound is not yet accepted.
+    // d3d10warp.dll version is the one that made them, and within the
+    // hardware tolerance on another version.
     is_warp := kind.Eq(&"warp")
     host_ver := if is_warp { dx.WarpDllVersion(sys.arena, sys.io) } else { "" }
     exact := is_warp && host_ver.Eq(&GoldenWarpVersion)
     if is_warp {
         Assert(host_ver.Len() >= 7)
-        _ = sys.Print("d3d10warp.dll golden={g} host={h} mode={m}\n", (g: GoldenWarpVersion, h: host_ver, m: if exact { "exact" } else { "measure-only" })) else {}
+        _ = sys.Print("d3d10warp.dll golden={g} host={h} mode={m}\n", (g: GoldenWarpVersion, h: host_ver, m: if exact { "exact" } else { "tolerance" })) else {}
     }
 
     // Hardware renders compare with WARP rendering the same scene in this run.
@@ -97,7 +97,9 @@ test "device goldens: 9 scenes verified against WARP baselines" (sys: &System) {
                         failed += 1
                     }
                 } else {
-                    _ = try CompareScene(sys, GoldenSceneName(i), "warp-measured", &want, &got, 2, SceneBudget(i))
+                    if !(try CompareScene(sys, GoldenSceneName(i), "warp-tolerance", &want, &got, 2, SceneBudget(i))) {
+                        failed += 1
+                    }
                 }
             }
         }

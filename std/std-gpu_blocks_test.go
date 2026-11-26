@@ -25,15 +25,17 @@ func gpuBlocks(t *testing.T, carriers string, flags ...string) {
 	gpuBlocksOn(t, "", carriers, flags...)
 }
 
-// gpuBlocksOn runs the std.gpu blocks with MK_GPU_ADAPTER set to adapter
-// (unset when empty).
+// gpuBlocksOn runs the std.gpu blocks with MK_GPU_ADAPTER set to adapter,
+// or as the caller's environment has it when adapter is empty.
 func gpuBlocksOn(t *testing.T, adapter, carriers string, flags ...string) {
 	t.Helper()
 	root := t.TempDir()
 	stdDir := copyStd(t, root, nil)
 	t.Setenv("MK_CARRIERS", carriers)
 	t.Setenv("MK_CACHE", filepath.Join(root, "cache"))
-	t.Setenv("MK_GPU_ADAPTER", adapter)
+	if adapter != "" {
+		t.Setenv("MK_GPU_ADAPTER", adapter)
+	}
 	args := append([]string{"test", "--std=std.gpu"}, flags...)
 	out, status := mkCmd(t, root, stdDir, args...)
 	if strings.Contains(out, "no usable LLVM") {

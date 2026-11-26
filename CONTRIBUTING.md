@@ -224,7 +224,7 @@ mk test --std std.gpu --run device
 
 What the comparisons check:
 
-- On WARP each of the nine golden scenes must equal its committed PNG byte for byte when the host's `d3d10warp.dll` has the version the goldens were made with (`GoldenWarpVersion` in `std/gpu/tests_goldens.mk`). On another version the block prints the measured difference and does not fail, until a bound for that version is accepted.
+- On WARP each of the nine golden scenes must equal its committed PNG byte for byte when the host's `d3d10warp.dll` has the version the goldens were made with (`GoldenWarpVersion` in `std/gpu/tests_goldens.mk`). On another version they are held to the hardware tolerance below and the block prints both versions; regenerate the goldens once that version is accepted.
 - On hardware each scene is compared with WARP rendering it in the same run, and D3D12 with Vulkan on the same GPU: no channel more than 2 apart except on at most 0.1 % of the pixels (0.5 % for the MSAA scene), each of them next to a pixel within 2.
 - Device blocks open D3D12 in `DebugMode.Strict`, which needs the D3D12 debug layer (Windows' optional Graphics Tools feature), and fail on any debug-layer error or warning. Vulkan blocks use `DebugMode.Validate`: without `VK_LAYER_KHRONOS_validation` installed, that is the portable layer's own checks and the layout tracker, not the driver's synchronization validation.
 

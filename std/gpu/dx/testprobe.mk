@@ -18,12 +18,11 @@ import std.dl
 /// exception masks a driver call must leave as it found them. Zero on other
 /// architectures. No errors. O(1); allocates nothing.
 export ReadMxcsr(): u32 {
-    if Target.arch != Arch.X64 {
-        return 0
-    }
     var mx: u32 = 0
-    unsafe "stmxcsr stores exactly 4 bytes at its operand, which is the address of the live stack word mx" {
-        asm("stmxcsr dword ptr [{p}]", p: in(reg) raw.OfMut(mut mx))
+    if Target.arch == Arch.X64 {
+        unsafe "stmxcsr stores exactly 4 bytes at its operand, which is the address of the live stack word mx" {
+            asm("stmxcsr dword ptr [{p}]", p: in(reg) raw.OfMut(mut mx))
+        }
     }
     return mx
 }
@@ -117,9 +116,12 @@ export NewCountingHeapState(inner: &core.Alloc): CountingHeapState {
 }
 
 /// A heap that counts each call in st and passes it to st's inner
-/// allocator. The heap borrows st. No errors. O(1); allocates nothing.
+/// allocator. The heap borrows st, so it lives no longer than st, unlike
+/// the process heap: a caller must not keep the &Alloc of Heap.Alloc past
+/// the heap, nor give the heap to anything that outlives it. No errors.
+/// O(1); allocates nothing.
 export MakeCountingHeap(st: &CountingHeapState): core.Heap from st {
-    unsafe "the heap's context is st, which the result borrows, so st outlives every call through the table; the entries change st only through its atomics, so a shared loan suffices; CountingHeapTable is a constant" {
+    unsafe "the heap's context is st, which the result borrows, so st outlives every call through the table as long as no &Alloc taken from the heap outlives it, which the caller keeps to; the entries change st only through its atomics, so a shared loan suffices; CountingHeapTable is a constant" {
         return core.MakeHeap(raw.PtrCast[CountingHeapState, u8](raw.Of(st)), raw.Of(&CountingHeapTable))
     }
 }

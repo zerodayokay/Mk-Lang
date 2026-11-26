@@ -178,8 +178,10 @@ test "device MXCSR: unchanged across Open, pipeline creation, submit and present
         some(k) { k }
         none { return }
     }
+    // The environment matters on the path programs ship, so the device runs
+    // without debug layers, which add their own code to every call.
     m0 := MxcsrControl()
-    var dev := try OpenDeviceForKind(sys.heap, sys.io, kind, DebugMode.Strict)
+    var dev := try OpenDeviceForKind(sys.heap, sys.io, kind, DebugMode.Off)
     defer AssertCleanLeaks(sys, dev)
     Assert(MxcsrControl() == m0)
 
@@ -191,12 +193,7 @@ test "device MXCSR: unchanged across Open, pipeline creation, submit and present
     Assert(img.width == 64)
     Assert(MxcsrControl() == m0)
 
-    // On D3D12, closing a swapchain after it has presented frames ends the
-    // process (exit 2173), so the present step runs on Vulkan only until
-    // that is fixed.
-    if dev.Backend() == Backend.D3d12 {
-        _ = sys.Print("present step skipped on D3D12: Swapchain.Close after Present crashes\n") else {}
-    } else if !(try PresentFrames(sys, mut dev, 3)) {
+    if !(try PresentFrames(sys, mut dev, 3)) {
         _ = sys.Print("present step skipped: this session cannot present\n") else {}
     }
     Assert(MxcsrControl() == m0)
