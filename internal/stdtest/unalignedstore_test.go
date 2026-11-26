@@ -7,7 +7,8 @@
 // store of each Store function to be align 1 in codegen's IR, and runs it:
 // a u16, u32 and u64 stored at every offset 0 to 7 of a buffer reads back,
 // little-endian, with every other byte untouched, natively and in the
-// compile-time evaluator (a const of the same check).
+// compile-time evaluator (a const of the same check), and so does a u32
+// stored through raw.WriteUnaligned named as a fn value.
 
 package stdtest
 
@@ -25,8 +26,8 @@ import (
 )
 
 // unalignedStoreProgram exits with 0 when every store round-trips, else
-// with 1 + 16 * width + the failing offset, twice over when the
-// compile-time run fails too.
+// with 1 + 16 * width + the failing offset (200 + the offset for the store
+// through a fn value), twice over when the compile-time run fails too.
 const unalignedStoreProgram = `import std.raw
 
 export Store16(b: mut [16]u8, at: int, x: u16) {
@@ -77,8 +78,23 @@ Check(n: int, x: u64): int {
     return 0
 }
 
+// ViaValue stores through raw.WriteUnaligned named as a fn value.
+ViaValue(): int {
+    for at in 0..8 {
+        var b: [16]u8 = [0xAA; 16]
+        unsafe "at + 4 <= 16" {
+            g: fn(p: *u32, x: u32) = raw.WriteUnaligned[u32]
+            g(raw.PtrCast[u8, u32](raw.Offset(raw.DataMut(mut b[..]), at)), 0x0102_0304)
+        }
+        if b[at] != 4 || b[at + 3] != 1 || b[at + 4] != 0xAA || (at > 0 && b[at - 1] != 0xAA) {
+            return 200 + at
+        }
+    }
+    return 0
+}
+
 All(): int {
-    return Check(2, 0x0102) + Check(4, 0x0102_0304) + Check(8, 0x0102_0304_0506_0708)
+    return Check(2, 0x0102) + Check(4, 0x0102_0304) + Check(8, 0x0102_0304_0506_0708) + ViaValue()
 }
 
 const AtCompileTime: int = All()

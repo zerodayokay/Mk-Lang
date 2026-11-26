@@ -77,7 +77,10 @@ func (c *Checker) readUnaligned(it types.ItemID) bool {
 		return false
 	}
 	item := c.cfg.Items.Get(it)
-	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType || c.cfg.Interner.Str(item.Name) != "ReadUnaligned" && c.cfg.Interner.Str(item.Name) != "WriteUnaligned" {
+	if item.Kind != types.KindFunc || item.Owner != types.NoItem || item.OwnerPrim != types.NoType {
+		return false
+	}
+	if name := c.cfg.Interner.Str(item.Name); name != "ReadUnaligned" && name != "WriteUnaligned" {
 		return false
 	}
 	mod := c.cfg.Items.Module(item.Module)
