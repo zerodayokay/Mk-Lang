@@ -184,9 +184,9 @@ type xmlExtensions struct {
 }
 
 type xmlExtension struct {
-	Name    string       `xml:"name,attr"`
-	Supported string     `xml:"supported,attr"`
-	Require []xmlRequire `xml:"require"`
+	Name      string       `xml:"name,attr"`
+	Supported string       `xml:"supported,attr"`
+	Require   []xmlRequire `xml:"require"`
 }
 
 type xmlRequire struct {
@@ -269,12 +269,12 @@ func snake(name string) string {
 }
 
 type cmdInfo struct {
-	name       string
-	field      string
-	pfnType    string
-	level      string // "global", "instance", or "device"
-	source     string // e.g. "Vulkan 1.0" or "VK_KHR_swapchain"
-	optional   bool
+	name     string
+	field    string
+	pfnType  string
+	level    string // "global", "instance", or "device"
+	source   string // e.g. "Vulkan 1.0" or "VK_KHR_swapchain"
+	optional bool
 }
 
 func classifyCommand(name, firstParam string) string {
