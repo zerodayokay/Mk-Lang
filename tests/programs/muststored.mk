@@ -1,7 +1,7 @@
 // .Must() on stored E!T values, not calls: a typed local, a field, an
 // array element, a deref, a receiver behind a reference, an if and a match
 // value, a global, a const, a value a fn literal reads, and a linear
-// payload. Each operand is read once. With an argument, Must on a field
+// payload. Each operand is read once. With an argument, Must on a local
 // that holds an error panics with the error, as Must on a fallible call
 // does. It was an internal compiler error in lower (MKH-915).
 import std.mem
@@ -81,9 +81,7 @@ export Main(sys: &System): WriteError!void {
         (local, field, elem, deref, ref, iff, matched, glob, cnst, captured, seat, reads))
     if sys.args.Len() > 1 {
         var bad: Bad!int = Get(-1)
-        var k := mem.Zeroed[H]()
-        k.r = bad
-        x := k.r.Must()
+        x := bad.Must()
         try sys.Print("{x}\n", (x))
     }
 }

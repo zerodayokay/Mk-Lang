@@ -5536,7 +5536,7 @@ export Main(sys: &System): WriteError!void {
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
 - An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
-- A stored `E!T`, such as that binding, a parameter, a field or element holding one, a global, a const, or one behind a reference, is handled as a call's is: `try`, `else`, `match` and `.Must()` read it once and take its payload or its error.
+- A stored `E!T` is handled as a call's is: `try`, `else`, `match` and `.Must()` read it once and take its payload or its error. It is such a binding, a global or a const, or a field or element of a value that holds one, which `mem.Zeroed` or a generic's `T` can make. `.Must()` also reads one through a reference (`p.Must()` for a `p: &(Negative!int)`); the others take `*p`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
 ```mk

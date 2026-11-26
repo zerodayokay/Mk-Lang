@@ -21,10 +21,10 @@ import (
 )
 
 // TestStoredUnionForms: every E!T operand form (a typed local, a
-// parameter, a field, an array, slice or record element, a deref, a
-// receiver behind a reference, an if or match value, a global, a const, the
-// E!T a `?(E!T).Must()` gives, a value a fn literal captures) under every
-// error operation: Must, try, else (value and named) and match lower;
+// parameter, a field, an array, slice or record element, a deref, an if
+// or match value, a global, a const, the E!T a `?(E!T).Must()` gives, a
+// value a fn literal captures) under every error operation: Must, try,
+// else (value and named), match, and Must and else in a defer lower;
 // return and `_ =` of the value are check's E0802.
 func TestStoredUnionForms(t *testing.T) {
 	const pre = `error Bad
@@ -79,6 +79,8 @@ F(c: bool, r: Bad!int, h: H, a: [2]H, sl: []H, t: (a: Bad!int, b: int), o: ?(Bad
 		{"elsenamed", "x = {E} else e {\n\t\t_ = e\n\t\treturn 0\n\t}", true},
 		{"match", "match {E} {\n\tok(n) {\n\t\tx = n\n\t}\n\terr(_) {\n\t}\n\t}", true},
 		{"matchnamed", "match {E} {\n\tok(n) {\n\t\tx = n\n\t}\n\terr(e) {\n\t\t_ = e\n\t}\n\t}", true},
+		{"defermust", "defer {\n\t\t_ = {E}.Must()\n\t}", true},
+		{"deferelse", "defer {\n\t\t_ = {E} else { 0 }\n\t}", true},
 		{"return", "return {E}", false},
 		{"drop", "_ = {E}", false},
 	}
