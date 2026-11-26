@@ -150,25 +150,27 @@ SyncDxMessages(a: &Alloc, st: mut DeviceState) {
             (errors: errs, warnings: warns) := d.MessageCounts()
             st.err_count = errs
             st.warn_count = warns
-            var ar := Arena.NewIn(a) else { return }
-            defer ar.Free()
-            ms := d.TakeMessages(&ar) else { return }
-            for i in 0..ms.Len() {
-                if st.messages.Len() >= 256 {
-                    break
+            if d.HasMessages() {
+                var ar := Arena.NewIn(a) else { return }
+                defer ar.Free()
+                ms := d.TakeMessages(&ar) else { return }
+                for i in 0..ms.Len() {
+                    if st.messages.Len() >= 256 {
+                        break
+                    }
+                    m := &ms[i]
+                    sev := if m.severity == 2 {
+                        Severity.Error
+                    } else if m.severity == 1 {
+                        Severity.Warning
+                    } else {
+                        Severity.Info
+                    }
+                    off := st.msg_bytes.Len()
+                    st.msg_bytes.Extend(a, m.text.AsBytes()) else { break }
+                    tlen := st.msg_bytes.Len() - off
+                    st.messages.Push(a, StoredMessage(severity: sev, id: m.id, text_off: off, text_len: tlen)) else { break }
                 }
-                m := &ms[i]
-                sev := if m.severity == 2 {
-                    Severity.Error
-                } else if m.severity == 1 {
-                    Severity.Warning
-                } else {
-                    Severity.Info
-                }
-                off := st.msg_bytes.Len()
-                st.msg_bytes.Extend(a, m.text.AsBytes()) else { break }
-                tlen := st.msg_bytes.Len() - off
-                st.messages.Push(a, StoredMessage(severity: sev, id: m.id, text_off: off, text_len: tlen)) else { break }
             }
             if errs > 0 || (st.debug_mode == 2 && warns > 0) {
                 RecordDxFailure(st, Invalid(misuse: Misuse.DebugLayer, at: -1))
@@ -273,6 +275,7 @@ OpenVkDevice(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
         lost: false,
         depth_bias_clamp_ok: vad.depth_bias_clamp_ok,
         draw_params_ok: vad.draw_params_ok,
+        standard_sample_locations: vad.standard_sample_locations,
         serials: SerialTracker.New(),
         deferred: DeferredQueue.New(a),
         chunk_pool: ChunkPool.New(a),
@@ -299,6 +302,7 @@ OpenVkDevice(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
         dx_chunks: HeapList[dx.ChunkSpan].New(a),
         dx_barriers: HeapList[dx.BarrierSpec].New(a),
         dx_passes: HeapList[dx.PassReplaySpec].New(a),
+        vk_bcmds: HeapList[vk.BarrierCmd].New(a),
     )
     box := Box[DeviceState].New(a, st) else e {
         vk.FreeOpenAdapterName(heap, info.name)
@@ -334,6 +338,7 @@ struct DeviceState {
     lost: bool
     depth_bias_clamp_ok: bool
     draw_params_ok: bool
+    standard_sample_locations: bool
     serials: SerialTracker
     deferred: DeferredQueue
     chunk_pool: ChunkPool
@@ -360,6 +365,7 @@ struct DeviceState {
     dx_chunks: HeapList[dx.ChunkSpan]
     dx_barriers: HeapList[dx.BarrierSpec]
     dx_passes: HeapList[dx.PassReplaySpec]
+    vk_bcmds: HeapList[vk.BarrierCmd]
 }
 
 /// A device and its one queue. Linear: end it with Close. Send, not Share.
@@ -492,6 +498,7 @@ OpenD3d12(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
         lost: false,
         depth_bias_clamp_ok: true,
         draw_params_ok: true,
+        standard_sample_locations: true,
         serials: SerialTracker.New(),
         deferred: DeferredQueue.New(a),
         chunk_pool: ChunkPool.New(a),
@@ -518,6 +525,7 @@ OpenD3d12(heap: &Heap, io: Io, o: &DeviceOptions): Error!Device from heap {
         dx_chunks: HeapList[dx.ChunkSpan].New(a),
         dx_barriers: HeapList[dx.BarrierSpec].New(a),
         dx_passes: HeapList[dx.PassReplaySpec].New(a),
+        vk_bcmds: HeapList[vk.BarrierCmd].New(a),
     )
     // Serial 1 was used during Open to zero the device zero-buffer; align SerialTracker.
     st.serials.next = 2
@@ -690,6 +698,7 @@ DeviceState.FreeAll(self, a: &Alloc): int {
         lost: _,
         depth_bias_clamp_ok: _,
         draw_params_ok: _,
+        standard_sample_locations: _,
         serials: _,
         deferred,
         chunk_pool,
@@ -716,6 +725,7 @@ DeviceState.FreeAll(self, a: &Alloc): int {
         dx_chunks,
         dx_barriers,
         dx_passes,
+        vk_bcmds,
     ) := self
 
     stream.FreeAll(a)
@@ -729,6 +739,7 @@ DeviceState.FreeAll(self, a: &Alloc): int {
     dx_chunks.Free(a)
     dx_barriers.Free(a)
     dx_passes.Free(a)
+    vk_bcmds.Free(a)
 
     var nat := native
     var swapchains := swapchains0
@@ -1082,6 +1093,14 @@ Device.SetPlantedBug(mut self, bug: PlantedBug) {
     }
     match mut st.native {
         .Vk(v) { v.SetPlantedBug(vbug) }
+        _ {}
+    }
+}
+
+Device.TriggerLossForTest(mut self) {
+    match mut self.state.Mut().native {
+        .Dx(d) { d.SimulateDeviceLoss() }
+        .Vk(v) { v.SetFaultNextSubmit() }
         _ {}
     }
 }

@@ -199,6 +199,7 @@ export struct AdapterDesc {
     export caps: [44]VkFormatCaps
     export depth_bias_clamp_ok: bool
     export draw_params_ok: bool
+    export standard_sample_locations: bool
 }
 
 export struct OpenOptions {

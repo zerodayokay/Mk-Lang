@@ -193,6 +193,11 @@ export Device.MessageCounts(&self): (errors: int, warnings: int) {
     return (errors: self.total_err_count, warnings: self.total_warn_count)
 }
 
+/// Reports whether stored debug messages await draining into std.gpu. O(1).
+export Device.HasMessages(&self): bool {
+    return self.msgs.Len() > 0
+}
+
 SetResourceName(res: *d3d12.ID3D12Resource, label: str) {
     if Target.os != Os.Windows || raw.IsNull(res) || label.Len() == 0 {
         return

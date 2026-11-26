@@ -213,6 +213,7 @@ OpenStubWith(heap: &Heap, o: DeviceOptions, cfg: StubConfig): Error!Device from 
         lost: false,
         depth_bias_clamp_ok: cfg.depth_bias_clamp_ok,
         draw_params_ok: cfg.draw_params_ok,
+        standard_sample_locations: true,
         serials: SerialTracker.New(),
         deferred: DeferredQueue.New(a),
         chunk_pool: ChunkPool.New(a),
@@ -239,6 +240,7 @@ OpenStubWith(heap: &Heap, o: DeviceOptions, cfg: StubConfig): Error!Device from 
         dx_chunks: HeapList[dx.ChunkSpan].New(a),
         dx_barriers: HeapList[dx.BarrierSpec].New(a),
         dx_passes: HeapList[dx.PassReplaySpec].New(a),
+        vk_bcmds: HeapList[vk.BarrierCmd].New(a),
     )
     box := Box[DeviceState].New(a, st) else e {
         _ = st.FreeAll(a)

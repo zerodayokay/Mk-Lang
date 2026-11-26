@@ -14,6 +14,7 @@
 
 import c.vulkan
 import std.core
+import std.rt
 
 DefaultVkOpenOpts(dbg: int): OpenOptions {
     return OpenOptions(
@@ -67,11 +68,33 @@ SubmitClearSwapView(dev: mut Device, ser: u64, view_id: u64, w: int, h: int, r: 
     try dev.SubmitStream(ser, chunks[..], barriers[..], labels[..])
 }
 
+VkSkipReason(sys: &System): ?str {
+    match rt.Env("MK_GPU_ADAPTER") {
+        some(v) {
+            if v.Eq(&"warp") || v.Eq(&"d3d12") {
+                return some(sys.arena.Fmt("MK_GPU_ADAPTER={v}", (v)) else { "MK_GPU_ADAPTER" })
+            }
+        }
+        none {}
+    }
+    if !IsAvailable(sys.io) {
+        return some("no vulkan loader")
+    }
+    var a := Arena.New(sys.heap) else { return some("oom") }
+    defer a.Free()
+    ads := EnumAdapters(&a, sys.io) else { return some("no vulkan adapter") }
+    if ads.Len() == 0 {
+        return some("no vulkan adapter")
+    }
+    return none
+}
+
 test "vk IsAvailable and EnumAdapters report hardware caps" (sys: &System) {
-    io := sys.io
-    if !IsAvailable(io) {
+    if r := VkSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
+    io := sys.io
     var a := try Arena.New(sys.heap)
     defer a.Free()
 
@@ -85,10 +108,11 @@ test "vk IsAvailable and EnumAdapters report hardware caps" (sys: &System) {
 }
 
 test "vk Open, TLSF + dedicated memory, zeroing, and Close zero leaks" (sys: &System) {
-    io := sys.io
-    if !IsAvailable(io) {
+    if r := VkSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
+    io := sys.io
     VkOpenResult(dev: d0, adapter) := try Open(sys.heap, io, DefaultVkOpenOpts(DebugOff))
     var d := d0
     FreeOpenAdapterName(sys.heap, adapter.name)
@@ -188,10 +212,11 @@ test "vk Open, TLSF + dedicated memory, zeroing, and Close zero leaks" (sys: &Sy
 }
 
 test "vk waiter thread completion, retarget, and injected device loss" (sys: &System) {
-    io := sys.io
-    if !IsAvailable(io) {
+    if r := VkSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
+    io := sys.io
     VkOpenResult(dev: d0, adapter) := try Open(sys.heap, io, DefaultVkOpenOpts(DebugOff))
     var d := d0
     FreeOpenAdapterName(sys.heap, adapter.name)
@@ -225,10 +250,11 @@ test "vk waiter thread completion, retarget, and injected device loss" (sys: &Sy
 }
 
 test "vk Test-profile layout tracker clean pass and BugSkipGlobalBarrier" (sys: &System) {
-    io := sys.io
-    if !IsAvailable(io) {
+    if r := VkSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
         return
     }
+    io := sys.io
     VkOpenResult(dev: d0, adapter) := try Open(sys.heap, io, DefaultVkOpenOpts(DebugOff))
     var d := d0
     FreeOpenAdapterName(sys.heap, adapter.name)
@@ -334,8 +360,13 @@ test "vk Test-profile layout tracker clean pass and BugSkipGlobalBarrier" (sys: 
 }
 
 test "vk swapchain 10x frames, present-no-submit, resize, 0x0 hidden, and zero leaks" (sys: &System) {
+    if r := VkSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
+        return
+    }
     io := sys.io
-    if !IsAvailable(io) || Target.os != core.Os.Windows {
+    if Target.os != core.Os.Windows {
+        _ = sys.Print("skip: requires Windows HWND\n", ()) else {}
         return
     }
     VkOpenResult(dev: d0, adapter) := try Open(sys.heap, io, DefaultVkOpenOpts(DebugOff))
@@ -420,8 +451,13 @@ test "vk swapchain 10x frames, present-no-submit, resize, 0x0 hidden, and zero l
 }
 
 test "vk two concurrent swapchains presenting 10x frames" (sys: &System) {
+    if r := VkSkipReason(sys) {
+        _ = sys.Print("skip: {s}\n", (s: r)) else {}
+        return
+    }
     io := sys.io
-    if !IsAvailable(io) || Target.os != core.Os.Windows {
+    if Target.os != core.Os.Windows {
+        _ = sys.Print("skip: requires Windows HWND\n", ()) else {}
         return
     }
     VkOpenResult(dev: d0, adapter) := try Open(sys.heap, io, DefaultVkOpenOpts(DebugOff))

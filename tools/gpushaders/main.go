@@ -53,6 +53,10 @@ var shaderSpecs = []shaderSpec{
 	{"DoubleCs", "double.hlsl", "cs", "CsMain"},
 	{"PostInvertCs", "post_invert.hlsl", "cs", "CsMain"},
 	{"PrefixSumCs", "prefix_sum.hlsl", "cs", "CsMain"},
+	{"PinningIdsVs", "pinning_ids.hlsl", "vs", "VsMain"},
+	{"PinningIdsPs", "pinning_ids.hlsl", "ps", "PsMain"},
+	{"HistogramCs", "histogram.hlsl", "cs", "CsMain"},
+	{"BitonicSortCs", "bitonic_sort.hlsl", "cs", "CsMain"},
 }
 
 type compiledShader struct {

@@ -290,6 +290,7 @@ CreateDeviceStateFromRaw(heap: &Heap, ic: VkInstCreated, pr: PdProbe, rc: VkRawC
             caps: pr.desc.caps,
             depth_bias_clamp_ok: pr.desc.depth_bias_clamp_ok,
             draw_params_ok: pr.desc.draw_params_ok,
+            standard_sample_locations: pr.desc.standard_sample_locations,
         )
         return VkOpenResult(dev: Device(heap: heap, state: box), adapter: ad)
     }

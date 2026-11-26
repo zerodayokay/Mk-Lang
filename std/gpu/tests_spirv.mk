@@ -1,7 +1,7 @@
 // Why: spirv.mk parses untrusted shader bytecode and enforces binding,
 // push-constant, and capability rules before reaching GPU drivers.
 //
-// What: tests over all 17 compiled shaders in tests_shaders.mk, hand-
+// What: tests over all 21 compiled shaders in tests_shaders.mk, hand-
 // assembled valid/invalid SPIR-V modules, and hostile fuzz-style inputs.
 //
 // How: constructs little-endian SPIR-V word lists and asserts exact errors
@@ -68,7 +68,7 @@ PushHeader(a: &Arena, buf: mut List[u8], ver: u32, bound: u32) {
     PushWord(a, buf, 0)
 }
 
-test "all 17 compiled DXC SPIR-V shaders pass CheckShader" (sys: &System) {
+test "all 21 compiled DXC SPIR-V shaders pass CheckShader" (sys: &System) {
     a := sys.arena
     try CheckShader(ShaderCode(spirv: try DecodeShader(a, TriVsSpirvZ), dxil: try DecodeShader(a, TriVsDxilZ)), Stage.Vertex, "VsMain")
     try CheckShader(ShaderCode(spirv: try DecodeShader(a, TriPsSpirvZ), dxil: try DecodeShader(a, TriPsDxilZ)), Stage.Fragment, "PsMain")
@@ -87,6 +87,10 @@ test "all 17 compiled DXC SPIR-V shaders pass CheckShader" (sys: &System) {
     try CheckShader(ShaderCode(spirv: try DecodeShader(a, DoubleCsSpirvZ), dxil: try DecodeShader(a, DoubleCsDxilZ)), Stage.Compute, "CsMain")
     try CheckShader(ShaderCode(spirv: try DecodeShader(a, PostInvertCsSpirvZ), dxil: try DecodeShader(a, PostInvertCsDxilZ)), Stage.Compute, "CsMain")
     try CheckShader(ShaderCode(spirv: try DecodeShader(a, PrefixSumCsSpirvZ), dxil: try DecodeShader(a, PrefixSumCsDxilZ)), Stage.Compute, "CsMain")
+    try CheckShader(ShaderCode(spirv: try DecodeShader(a, PinningIdsVsSpirvZ), dxil: try DecodeShader(a, PinningIdsVsDxilZ)), Stage.Vertex, "VsMain")
+    try CheckShader(ShaderCode(spirv: try DecodeShader(a, PinningIdsPsSpirvZ), dxil: try DecodeShader(a, PinningIdsPsDxilZ)), Stage.Fragment, "PsMain")
+    try CheckShader(ShaderCode(spirv: try DecodeShader(a, HistogramCsSpirvZ), dxil: try DecodeShader(a, HistogramCsDxilZ)), Stage.Compute, "CsMain")
+    try CheckShader(ShaderCode(spirv: try DecodeShader(a, BitonicSortCsSpirvZ), dxil: try DecodeShader(a, BitonicSortCsDxilZ)), Stage.Compute, "CsMain")
 }
 
 test "spirv hostile header, word-count 0, bounds, unterminated string, and layout order" (sys: &System) {
