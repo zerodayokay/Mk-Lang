@@ -65,7 +65,8 @@ export SystemStackDone() {
     }
 }
 
-// OnMkStack is Linux's fault-ownership hook (sys.FaultOwnerHook): whether
+// OnMkStack is the fault-ownership hook (sys.FaultOwnerHook; on Windows,
+// which faults outside Mk's code still go to the fault filters): whether
 // sp lies on a task slot or a recorded carrier system stack, a pinned
 // carrier's included. It runs in the fault handler: two region compares
 // and rt.SysStackOf's 256 loads, no lock, no allocation.

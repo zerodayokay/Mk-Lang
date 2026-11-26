@@ -142,12 +142,22 @@ type task struct {
 	// pastModule are the spellings this task found exactly past the module
 	// scope (imports, prelude, universe), for Settle's re-resolution.
 	pastModule map[source.Symbol]bool
-	fixups     []fixup
+	// casePend are the E0207s of pattern bindings whose names a gen line
+	// may still declare: Settle reports them, or reruns the task when the
+	// name has appeared (patternCase).
+	casePend []casePend
+	fixups   []fixup
 	// habits are the task's habit diagnostics, merged per line.
 	habits []*diag.Diagnostic
 	// failed marks a task whose walk raised an ICE: its nodes are RefPoison
 	// and Settle retries none of its names.
 	failed bool
+}
+
+// casePend is one deferred E0207 of a pattern binding.
+type casePend struct {
+	sym source.Symbol
+	d   *diag.Diagnostic
 }
 
 // fixup completes a fix once every reference is resolved: every Ident whose

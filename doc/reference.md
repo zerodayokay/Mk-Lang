@@ -424,7 +424,7 @@ export Main(sys: &System): WriteError!void {
 - A name in the wrong case is E0207. The message gives the right spelling: `` `do_thing` should be PascalCase: `DoThing` ``.
 - A name cannot start with `_`: `_x` is E0207. `_` alone is the blank, as in `_ = F()`.
 - Lookup is exact. When nothing matches, the compiler ignores case and underscores to find what you meant: `.len()` and `userCount` are E0207, and the message names `Len` and `user_count`. `mk fix` applies the correction.
-- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A type's fields are one scope and its variants and methods another, so a field `cpu` and a method `Cpu` may stand side by side ([structs](#structs)). A local cannot shadow another local or a parameter ([bindings](#bindings)).
+- Two names in one scope cannot differ only in case and underscores: `max_len` and `maxlen` in one struct are E0206. A type's fields are one scope and its variants and methods another, so a field `cpu` and a method `Cpu` may stand side by side ([structs](#structs)). A local cannot shadow another local, a parameter or a const generic ([bindings](#bindings)).
 - An `extern` function's or var's name is its C symbol. It is used as written and is outside the case rule: `extern strlen(s: *u8): uint`.
 
 A local spelled differently from its declaration:
@@ -2678,8 +2678,9 @@ export Main(sys: &System): WriteError!void {
 - The prefix supplies the receiver's type, and `self`, `&self` or `mut self` its mode. This is the only way to write a receiver.
 - `c.M(a)` is `Type.M(&c, a)`, `Type.M(mut c, a)` or `Type.M(c, a)`, as the receiver's mode says, and borrows or moves `c` to match. A `mut T` `c` is reborrowed: `mut *c` or `&*c`.
 - A function without `self`, such as `Counter.New`, is called through the type's name. It is how a type offers constructors.
+- A struct, an enum and an [error](#declaring-errors) take methods. An error's `self` is its value, the set of that one error: a payload is plain, so `self` copies it, and `mut self` changes a `var` error in place.
 - A function in a type's namespace must be declared in that type's module. A method on `int` or on another module's type is E0704: write a free function that takes the value.
-- On a generic type, the prefix names the type parameters, `Stack2[T].Push`, and their bounds come from the type.
+- On a generic type, the prefix names the type parameters, `Stack2[T].Push`, and their bounds come from the type. A prefix with another number of parameters than its type or alias takes is E0304.
 - Mark a method `export`, `export Counter.Get(&self): int`, to make it part of the module's public API.
 - A method of an interface is declared inside its `impl` block ([section 10](#10-generics-and-interfaces)).
 
@@ -2906,7 +2907,7 @@ ada 1 -3 97 some
 - A literal binds as `int` or `f64` unless you give a type: `one: i32 = 1`. Every other value keeps the type it has. See [how a literal gets its type](#how-a-literal-gets-its-type).
 - `x: T` declares `x` with no value. You assign it before each use, on every path (E0403). Without `var`, it is assigned once.
 - Every local must be used (E0208). Drop a value with `_ = e`; `_ := e` is E0101. In a pattern or a loop header, `_` stands for a part you do not need: `for _ in 0..2`.
-- A local cannot shadow another local of the same function, even in an inner block (E0206). It may hide a name from outside the function, such as an imported module's. A module-level name may hide a prelude name: a `struct Arena` of your own replaces the prelude's `Arena` in its module.
+- A local cannot shadow another local of the same function, even in an inner block, nor a const generic of its declaration: `n := 0` under `[const n: int]` is E0206. The test for a const generic is exact, so a local `n` under `[const N: int]` is not one. A local may hide a name from outside the function, such as an imported module's. A module-level name may hide a prelude name: a `struct Arena` of your own replaces the prelude's `Arena` in its module.
 - Loop variables and `if x := e` bindings follow the same rules: they cannot be assigned.
 
 A binding without `var` is fixed once it has its value:
@@ -3811,10 +3812,10 @@ quit
 - Fields are named, never positional. `dx` alone binds the field `dx`, `dx: step` binds it to `step`, and `dx: 0` matches it against a pattern. A name that is not a field is E0309.
 - Fields may be left out, in any number. A left-out field matches anything. `..` is not written in a `match` (E0101).
 - `.Move` leaves out the enum, which the scrutinee's type gives. `Cmd.Move` names it.
-- A bare name with no dot is a [binding](#bindings-and-wildcards), not a variant. `Quit { ... }` matches every value and binds it to `Quit`. The compiler reports the unused binding (E0208), which catches the missing dot.
+- A bare name with no dot is a [binding](#bindings-and-wildcards), not a variant, and a binding is `snake_case`. So `Quit { ... }`, which would match every value, is E0207: the message offers `.Quit` for the variant.
 
 ```mk
-// verdict: reject E0208
+// verdict: reject E0207
 enum Cmd {
     Move(dx: int, dy: int)
     Quit
@@ -3822,7 +3823,7 @@ enum Cmd {
 
 Steps(c: Cmd): int {
     match c {
-        Quit { // <- E0208
+        Quit { // <- E0207
             return 0
         }
         .Move(dx) {
@@ -3940,7 +3941,7 @@ export Main(sys: &System): WriteError!void {
 - A negative integer is written with its `-`: `-1`.
 - A float is not a pattern (E0308). Compare floats with `if`.
 - A literal of a type other than the value's is E0301.
-- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does. Its value is needed before the module's own functions are ready, so a const that calls one of them is E0908 there ([the stage rule](#the-stage-rule)). Outside an alternative, a name that is no const in scope is a [binding](#bindings-and-wildcards): a misspelled const, or another module's const written without its module, matches every value, and is E0208 when its arm does not use it. In an alternative, where a name never binds, an unknown one is E0201.
+- A named const, `Limit` or `codes.Limit`, matches a value equal to its own, as the literal of that value would. Its type must be the value's (E0301, as for `==`) and one a literal takes: an integer, `bool`, `char` or `str`. A float const is E0308, and a const of any other type is E0301: match its shape instead. It covers its one value for [exhaustiveness](#exhaustiveness), as a literal does. Its value is needed before the module's own functions are ready, so a const that calls one of them is E0908 there ([the stage rule](#the-stage-rule)). Outside an alternative, a name that is no const in scope is a [binding](#bindings-and-wildcards), which must be `snake_case`: a misspelled const, or another module's const written without its module, would match every value, and is E0207. In an alternative, where a name never binds, an unknown one is E0201.
 
 ```mk
 // verdict: ok
@@ -4094,11 +4095,31 @@ Dx(c: Cmd): int {
 
 ### Bindings and wildcards
 
-A name in a pattern matches anything and binds the value there. `_` matches anything and binds nothing.
+A name in a pattern matches anything and binds the value there, unless it names a const, an error or `true` or `false` ([literals](#literal-patterns)). `_` matches anything and binds nothing.
 
 - A binding has the type of the value it stands for. At the top of an arm, `other` has the scrutinee's whole type.
 - A binding must be used (E0208). Write `_` for a part you do not need, as in `.Move(dx: _)`.
-- A binding cannot shadow a local or a parameter (E0206).
+- A binding is `snake_case`. A name in a `match` that is not, and names no const or error in scope, is E0207, with no fix applied for you: it is a variant without its dot, a misspelled const or error, or another module's written bare, and as a binding its arm would match every value. In a destructure or a loop head, which cannot fail, it is the plain case rule of a local, as for an `if x := e` binding, and `mk fix` recases it.
+- A binding cannot shadow a local, a parameter or a const generic (E0206). `N { ... }` in a function generic over `const N` would bind, not compare: compare with `if x == N`.
+
+```mk
+// verdict: reject E0208
+enum Cmd {
+    Move(dx: int, dy: int)
+    Quit
+}
+
+Steps(c: Cmd): int {
+    match c {
+        .Move(dx, dy) { // <- E0208
+            return dx
+        }
+        .Quit {
+            return 0
+        }
+    }
+}
+```
 
 ```mk
 // verdict: reject E0206
@@ -4458,8 +4479,9 @@ Name(b: Bag): str {
 |---|---|---|
 | E0101 | syntax | `..` in a `match` pattern; alternatives that bind names; a record as a pattern; type arguments in a pattern; a struct pattern in a `for` head; anything but a name in an array pattern |
 | E0204 | not-exported | A pattern or destructure that names private fields of another module's struct |
-| E0206 | duplicate-name | A binding that shadows a local ([bindings](#bindings-and-wildcards)) |
-| E0208 | unused | A binding that is never used, often a variant written without its dot ([variants](#variant-patterns)) |
+| E0206 | duplicate-name | A binding that shadows a local, a parameter or a const generic ([bindings](#bindings-and-wildcards)) |
+| E0207 | naming | A binding that is not `snake_case`, often a variant written without its dot or a const that is not in scope ([variants](#variant-patterns), [bindings](#bindings-and-wildcards)) |
+| E0208 | unused | A binding that is never used ([bindings](#bindings-and-wildcards)) |
 | E0301 | type-mismatch | A pattern whose type is not the value's, such as `.Move(dx: "x")`; a const of a type a literal cannot have ([literals](#literal-patterns)); an array pattern on a value that is not an array of known length, or a record pattern on an array ([destructuring](#destructuring)) |
 | E0305 | field-names | A destructure that neither names every field nor ends with `..`; an array pattern that does not name every element ([destructuring](#destructuring)) |
 | E0306 | non-exhaustive | A `match` that misses values; a destructure that can fail ([exhaustiveness](#exhaustiveness)) |
@@ -5364,7 +5386,44 @@ line 4
 - A `str` field holds only a static string: a literal, a `const`, a global, or a `str` a function returns that comes from none of its parameters. Building the error with any other `str`, such as a parameter or a view of a local buffer, is E0605, and so are assigning such a `str` to the field and a `mut` borrow of the field. An error never borrows from the function that failed, so it can always travel up the stack and into another task. To carry text made at run time, use a fixed array and a length, `error BadName(name: [16]u8, len: int)`, or a position or an id from which the caller formats the message.
 - Since an error's `str` is static, reading it gives a `str` that borrows nothing, even through a reference: for `e: &Bad`, `e.msg` outlives `e`. A `match` on a `mut` of the error would bind the field as a `mut str`, which is E0605: bind the error, as `err(e)`, and read `e.msg`.
 - Construction names every field, `BadByte(offset: 3, value: 200)`, as for a struct (E0305).
-- An error has no type parameters.
+- An error has no type parameters: a type `Bad[int]` and a method's prefix `Bad[T].M` are E0304.
+- An error takes methods and `Type.Name` functions, declared in its module as for a struct ([methods](#methods)). Its `Format` is the compiler's impl method, so a method named `Format` is E0206. An error set of more than one error has no methods but `Format`.
+
+```mk
+// verdict: ok
+error BadByte(offset: int, value: u8)
+
+BadByte.Line(&self, width: int): int { // a method of an error
+    return self.offset / width + 1
+}
+
+BadByte.Skip(mut self) { // changes a var error in place
+    self.offset += 1
+}
+
+Check(data: []u8): BadByte!void {
+    for i in 0..data.Len() {
+        if data[i] > 127 {
+            fail BadByte(offset: i, value: data[i])
+        }
+    }
+}
+
+export Main(sys: &System): WriteError!void {
+    var data: [20]u8 = [0; 20]
+    data[17] = 200
+    Check(data[..]) else e {
+        var at := e
+        at.Skip()
+        line := e.Line(16)
+        try sys.Print("line {line}, then {at}\n", (line, at))
+    }
+}
+```
+
+```text
+line 2, then BadByte(offset: 18, value: 200)
+```
 
 ```mk
 // verdict: reject E0408
@@ -6088,7 +6147,7 @@ Syntax(line: 3, ratio: 0.5, ok: true, c: x)
 - An error set's value prints the member it holds.
 - An error whose payload has a field with no `Format` has no `Format` either. Using one in a format string is E0706. When such an error leaves `Main`, only its name is printed.
 - Inside a program, an error prints without its module: `NotFound`. When it leaves `Main`, it prints with the module that declares it: `main.NotFound(id: 3)`, `fs.NotFound`.
-- You cannot write `impl Format` for an error (E0704). To print an error your own way, `match` on it.
+- You cannot write `impl Format` for an error (E0704), nor a method named `Format` (E0206). To print an error your own way, `match` on it or give it a method of another name.
 
 ```mk
 // verdict: reject E0704
@@ -7826,7 +7885,7 @@ Tile(row: 1, col: 2) false
 
 #### Writing a generator
 
-A generator lives in its own module, and the module with the `gen` line imports it. This one, in `src/show/show.mk`, writes a `Describe` method that prints each field as `name=value`:
+A generator lives in its own module, and the module with the `gen` line imports it: a `gen` line that names a function of its own module is E0908, by [the stage rule](#the-stage-rule). This one, in `src/show/show.mk`, writes a `Describe` method that prints each field as `name=value`:
 
 ```mk
 // verdict: ok
@@ -9520,7 +9579,7 @@ A module may write `unsafe` only if its package's manifest lists it in `unsafe_m
 | Operation | Outside `unsafe` |
 |---|---|
 | Reading or writing through a raw pointer, `*p` | E1103 |
-| Calling a bodiless `extern` function | E1101 |
+| Calling or naming a bodiless `extern` function | E1101 |
 | Calling or naming a `cpu` function whose features the caller lacks ([CPU features](#cpu-features)) | E1101 |
 | Calling or naming a `naked` function | E1101 |
 | `asm` | E1101 |
@@ -9833,7 +9892,7 @@ export Main(sys: &System): WriteError!void {
 
 **Unwinding.** Nothing in Mk unwinds, so nothing unwinds across C. A panic in a function C called aborts the process.
 
-**The C stack.** A call of a bodiless `extern` function runs on the operating system thread's own stack, 8 MiB, not the task's. A call through a `fn` value does not: a C function's address and a Mk function's look the same there, so C code reached that way (a symbol from [`std.dl`](std/dl.md), a function pointer in a C import's struct, a COM method) runs on the calling task's stack. Give that task the stack the C code needs, `StackSize.Large` through `io.ScopeWith` for a library such as Direct3D ([limits and stacks](#limits-and-stacks)), or reach the C function through an `extern`. While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks. A Mk callback that C may invoke on a foreign thread should only record state and wake a task through [`runtime.Waker`](std/runtime.md#wakers). Inside std itself, deep OS calls (such as lazy DLL loading) switch to the carrier's system stack through `std.task.MkSystemRun`.
+**The C stack.** A call of a bodiless `extern` function runs on the operating system thread's own stack, 8 MiB, not the task's. A call through a `fn` value does not: a C function's address and a Mk function's look the same there, so C code reached that way (a symbol from [`std.dl`](std/dl.md), a function pointer in a C import's struct, a COM method) runs on the calling task's stack. An `extern` passed to a `const` parameter of `fn` type is no such value: the body is compiled for that argument, and its call is a direct `extern` call. Give that task the stack the C code needs, `StackSize.Large` through `io.ScopeWith` for a library such as Direct3D ([limits and stacks](#limits-and-stacks)), or reach the C function through an `extern`. The same rule makes a `fn` value the way to call an assembly stub that uses no stack without the switch ([stubs that use no stack](#c-sources-and-assembly-files)). While C frames are live, the task stays on its thread. A C call that blocks also blocks the thread; [`runtime.Blocking`](std/runtime.md#blocking-foreign-calls) runs one off the threads that run tasks. A Mk callback that C may invoke on a foreign thread should only record state and wake a task through [`runtime.Waker`](std/runtime.md#wakers). Inside std itself, deep OS calls (such as lazy DLL loading) switch to the carrier's system stack through `std.task.MkSystemRun`.
 
 ### C imports
 
@@ -9961,10 +10020,10 @@ export Main(sys: &System): WriteError!void {
 | `c.dxgi` | `dxgi1_6.h`, `dxgidebug.h` | the same | `x86_64-windows` |
 | `c.d3d12` | `d3d12.h`, `d3d12sdklayers.h` | the same | `x86_64-windows` |
 | `c.d3dcompiler` | `d3dcompiler.h` | the same | `x86_64-windows` |
-| `c.vulkan` | `vulkan/vulkan.h` | Vulkan-Headers 1.4.363.0 | `x86_64-windows` (table also declares `x86_64-linux`, `aarch64-linux`) |
+| `c.vulkan` | `vulkan/vulkan.h` | Vulkan-Headers 1.4.363.0 | `x86_64-windows` |
 | `c.posix` | the POSIX headers | glibc | `x86_64-linux`, `aarch64-linux` |
 
-- The views of one target are generated together, as one translation unit, by `go run ./tools/sysview`, from the inputs `mk sdk views` prints: the SDK's version, mk's toolset headers, the importer's format and Clang's version. A declaration several views reach belongs to the first in the table, so `HWND` is `windows.Hwnd` in every view, and `c.dxgi`'s items name `c.windows`'s types. The whole of every view type-checks; what does not is left out and listed, and so is every `static inline` function, which only a shim compiled from the headers could define. This mk carries `c.windows`, `c.dxgi`, `c.d3d12`, `c.d3dcompiler` and `c.vulkan` for `x86_64-windows`; `c.posix` and Linux `c.vulkan` are not carried yet: importing one on such a target is E0202, `reason: no-sysview`, which says how to generate it.
+- The views of one target are generated together, as one translation unit, by `go run ./tools/sysview`, from the inputs `mk sdk views` prints: the SDK's version, mk's toolset headers, the importer's format and Clang's version. A declaration several views reach belongs to the first in the table, so `HWND` is `windows.Hwnd` in every view, and `c.dxgi`'s items name `c.windows`'s types. The whole of every view type-checks; what does not is left out and listed, and so is every `static inline` function, which only a shim compiled from the headers could define. This mk carries `c.windows`, `c.dxgi`, `c.d3d12`, `c.d3dcompiler` and `c.vulkan` for `x86_64-windows`; The Windows Vulkan declarations are also available on targets for which mk carries no native Vulkan declarations. Guard loader calls by the target OS. `c.posix` is also pending. Importing it is E0202, `reason: no-sysview`.
 - A view's names are a C import's: functions keep their C names, types and constants are PascalCase, fields snake_case. The view is a C import's binding for every rule: calling its functions or COM methods needs `unsafe`, reading a C function pointer is E1101, and its `extern var`s are C's, never defined by the build. Because the Windows views are generated with `INITGUID`, interface GUIDs (`dxgi.IidIdxgiFactory6`, `d3d12.IidID3D12Device`) are Mk `const` values needing no `dxguid.lib`.
 - A build takes only the items its files name and what those items need, from every view a view needs. The rest of `windows.h` costs nothing. The items a program uses are one module for the whole program, so a `windows.Hwnd` from a dependency or from the standard library is the package's.
 - `import c.<name>` is, first, the package's `pkg.CImport` of that name, which wins over a view of the same name. Else it is the system view of that name. Else it is E0202 `no-cimport`, whose message names the views. In a standard-library module it is always the system view.
@@ -9979,12 +10038,30 @@ The manifest builds C and assembly files with the package:
 | Field | Entry | Meaning |
 |---|---|---|
 | `c_sources` | `pkg.CSource(path: "c/sum.c", flags: ["-O2"])` | A C file compiled by Clang for the target, with these flags |
-| `asm_sources` | `pkg.AsmSource(path: "src/boot.s", target: "x86_64-freestanding")` | An assembly file, `.s`, or `.S` through the preprocessor, for one target or `""` for every target. Its symbols are `extern` |
+| `asm_sources` | `pkg.AsmSource(path: "src/boot.s", target: "x86_64-freestanding")` | An assembly file, `.s`, or `.S` through the preprocessor, for one target or `""` for every target. Its symbols are `extern`; one that uses no stack may be called through a `fn` value ([below](#c-sources-and-assembly-files)) |
 | `links` | `pkg.Link(...)` | A library ([below](#linking-libraries)) |
 
 - C sources link against `std.libc`, the C library written in Mk, and the bin's links. They get no other C runtime. Without a sysroot, only `std.libc`'s functions are declared in the headers they see: a call to anything else fails to compile, or to link, with E0001. [std.libc](std/libc.md) lists the functions, the include path and the system-libc mode of Linux.
 - A C source is compiled with the package root on its include path, so `#include "c/geom.h"` works, and then the C imports' `include_dirs`.
 - A relative `-I` in `flags` names a directory under the build's own directory, not the package's. Include headers by their path from the package root, or list their directory in a C import's `include_dirs`, instead.
+
+**Stubs that use no stack.** A direct call of an assembly symbol's `extern` from a task switches to the system stack, as any `extern` call does ([the C stack](#functions-c-can-call-export-extern)): three runtime calls and a stack switch around a stub of one instruction. A stub that uses no stack beyond its return address and calls nothing, such as a load, a store or a `lock`-prefixed instruction followed by `ret`, can be called through a `fn` value instead. The call is then an ordinary call on the task's stack. Pass the value to an ordinary parameter, never a `const` one, whose call of an `extern` is direct and switches. When the value is named in the calling function, as below, `--release` compiles it to a direct `call` or jump to the stub. A value loaded from a table, a field or a global may stay an indirect call, still on the task's stack. Naming the `extern` as a value needs `unsafe`, and its reason is your claim that the stub uses no stack, never calls back into Mk or C, faults only where a Mk load or store of the same address would, and has the C ABI of the `fn` type. For one instruction, inline [`asm`](#inline-assembly) needs no call at all.
+
+```mk
+// verdict: ok
+// load_u32 is an asm_sources stub: one 32-bit load through its argument, then ret.
+extern load_u32(p: *u32): u32
+
+// SharedLoad calls load_u32 on the task's stack.
+SharedLoad(p: *u32): u32 {
+    unsafe "load_u32 reads one u32 at p, uses no stack and calls nothing; p is live and aligned" {
+        f := load_u32
+        return f(p)
+    }
+}
+```
+
+There is no way to declare an `extern` itself stack-free: a stub has no Mk signature that says so, and the `fn` value already gives the call.
 
 ### Linking libraries
 
@@ -10699,7 +10776,7 @@ PASS main "prints"
 ```
 
 - Each line names the module and the test. A failing test shows its output, its panic or error, and its exit status.
-- A test passes when it returns. It fails on a panic (`Assert`, a broken contract, an index out of bounds), on an error that leaves it (exit 1), on a leak, or on a timeout.
+- A test passes when it returns. It fails on a panic (`Assert`, a broken contract, an index out of bounds), on an error that leaves it (exit 1), on a leak, or on a timeout. A test that calls `testing.ExpectPanic(want)` is the other way round: it passes only when it panics after the call, with a report that contains `want` ([expected panics](std/testing.md#expected-panics)).
 - A test may use `try`. An error that leaves the test fails it, and `mk test` prints the error with its trace ([errors in tests](#errors-in-tests-and-tasks)).
 - A test may declare one parameter of type `&System`, usually `(sys: &System)`, for memory, output, files and tasks. A parameter of another type is E0301, and a second parameter E0101.
 - In a test, the heap counts its allocations. Memory still allocated when the test ends fails it with `leak (exit 102)`.
@@ -10775,6 +10852,7 @@ These are library features that run inside `test` blocks:
 
 - `testing.Fuzz(f)` registers a fuzz target. `mk test` runs it over saved inputs, and `mk test --fuzz name` searches for new failing ones. See [fuzz targets](std/testing.md#fuzz-targets).
 - `testing.Bench(f)` registers a benchmark that `mk bench` runs, and `testing.BenchSys(sys, f)` one that takes the test's `System`, to allocate. See [benchmarks](std/testing.md#benchmarks).
+- `testing.ExpectPanic(want)` makes a test pass only when it panics after the call, so a test can check that an `Assert` or a contract refuses a bad input. See [expected panics](std/testing.md#expected-panics).
 - `std.sim` runs a test against a simulated disk, network and clock, from a seed that repeats the run exactly. `mk test --sim SEED` runs every test that way. See [`std.sim`](std/sim.md).
 
 See also: [write a test and a property](cookbook.md#write-a-test-and-a-property), [tests beside code](codebase.md#6-tests-beside-code), [`mk test`](tools.md#mk-test).
@@ -11496,7 +11574,7 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.runtime` | `Processors Carriers StackBounds StackRemaining Blocking Waker PanicInfo AddFaultFilter FaultContext FaultAction FaultKind FilterId RegCount ForeignIo Foreign ForeignContext IoTable IoResult SysErr IoStat IoAddr IoChild IoCallArgs IoWords InertTable Dedicated Thread Joined TaskIo Cycles Likely Unlikely Cold WriteDump Unsupported OsError Error`; `AddFaultFilter`, `ForeignIo` and `ForeignContext` only inside an unsafe block, and `ForeignIo` and the `Io` table Provisional |
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
-| `std.testing` | `Fuzz Bench BenchSys` |
+| `std.testing` | `Fuzz Bench BenchSys ExpectPanic` |
 | `std.build` | `File Profile ProfileKind`, read at compile time only |
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
@@ -13599,6 +13677,7 @@ linux.Syscall(nr: uint, a0: uint, a1: uint, a2: uint, a3: uint, a4: uint, a5: ui
 testing.Fuzz(f: fn([]u8))
 testing.Bench(f: fn(n: int))
 testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))
+testing.ExpectPanic(want: str)
 
 // std.build. ProfileKind below is build.ProfileKind; build.Profile is its constant, set by the driver
 build.File(path: str): []u8

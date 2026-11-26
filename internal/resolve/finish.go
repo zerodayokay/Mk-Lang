@@ -67,6 +67,7 @@ func (m *Module) newTasks(recs []*itemRec) []*task {
 // reset prepares a task for a (re)run.
 func (m *Module) reset(t *task) {
 	t.diags, t.pending, t.literals, t.fixups, t.habits, t.failed = nil, nil, nil, nil, nil, false
+	t.casePend = nil
 	t.used = make([]bool, len(m.files[t.file].fi.Imports))
 	t.pastModule = map[source.Symbol]bool{}
 	reset := func(r *itemRec) {

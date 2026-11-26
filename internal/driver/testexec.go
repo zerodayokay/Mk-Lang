@@ -15,6 +15,7 @@ package driver
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,6 +76,10 @@ type TestOptions struct {
 	// directory of the children's counts files.
 	cover    *coverImage
 	coverDir string
+	// expectToken is the run's random token, which a plain child gets in
+	// TestingExpectEnv and testing.ExpectPanic's line carries (testing.go's
+	// judgeExpectedPanic); made once per run by Test.
+	expectToken string
 }
 
 // SimSeedEnv is the environment variable a test child reads its --sim seed
@@ -87,16 +92,17 @@ type TestCase struct {
 	Module string `json:"module"`
 	Name   string `json:"name"`
 	// Result is pass, fail, panic, leak, error or timeout; under --prop
-	// pass, fail or skip.
+	// pass, fail or skip. After testing.ExpectPanic (testing.go's
+	// judgeExpectedPanic) a pass has Status 101 and a fail may have 0.
 	Result string `json:"result"`
 	// Detail is a --prop contract's reason: the finding's kind, or why it
-	// was skipped.
+	// was skipped; or why a test that called testing.ExpectPanic failed.
 	Detail string `json:"detail,omitempty"`
 	// Status is the child's exit status; -1 when it was killed or did not
 	// start.
 	Status int `json:"status"`
 	// Output is the child's standard output and standard error, in the
-	// order written.
+	// order written, less testing.ExpectPanic's lines (judgeExpectedPanic).
 	Output   string        `json:"output"`
 	Duration time.Duration `json:"-"`
 	// coverAcked is whether the child answered the driver's request for
@@ -287,6 +293,7 @@ func (s *Session) Test(opt TestOptions) (Result, *TestReport, error) {
 	var sel []testCase
 	all := s.w.packageTests(s.testModules())
 	opt.fuzzDirs = fuzzDirMap(all) // once per run: fuzzcorpus.go
+	opt.expectToken = rand.Text()  // once per run: testing.go
 	for _, tc := range all {
 		if s.selectTest(tc, opt) { // testing.go: --run, --fuzz, mk bench
 			sel = append(sel, tc)

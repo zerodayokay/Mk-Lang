@@ -73,15 +73,24 @@ func isSysViewPath(p string) bool {
 	return ok
 }
 
-// sysViewArchive is the target whose archive of row a build for target
-// reads: target itself when the row is generated for it, else the row's
-// first target (a Windows view checked in a build for Linux reads the
-// Windows view: its declarations are plain Mk).
-func sysViewArchive(row sysview.Row, target string) string {
-	if slices.Contains(row.Targets, target) {
-		return target
+// sysViewArchive selects the declaration archive for a build. Single-target
+// views can be checked anywhere. A view with FallbackToFirst can also use
+// its first target's declarations where a native archive is still absent.
+func (w *world) sysViewArchive(row sysview.Row, target string) string {
+	first := row.Targets[0]
+	if !slices.Contains(row.Targets, target) {
+		return first
 	}
-	return row.Targets[0]
+	if row.FallbackToFirst && target != first {
+		if h := w.cfg.TestHooks.SysViews; h != nil {
+			if _, ok := h(target, row.Name); !ok {
+				return first
+			}
+		} else if !sysview.HasEmbedded(target, row.Name) {
+			return first
+		}
+	}
+	return target
 }
 
 // sysViewBytes is the archive of view name for target: the test hook's,
@@ -150,7 +159,7 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 			return nil
 		}
 		row, _ := sysview.Named(name)
-		at := sysViewArchive(row, target)
+		at := w.sysViewArchive(row, target)
 		data, ok := w.sysViewBytes(at, name)
 		if !ok {
 			sv.missing[name] = "internal/sysview/data/" + at + "/" + sysview.ArchiveName(name)
@@ -211,7 +220,7 @@ func (p *pipeline) loadSysViews() []*diag.Diagnostic {
 	var added []*modNode
 	for _, em := range mods {
 		row, _ := sysview.Named(em.Name)
-		at := sysViewArchive(row, target)
+		at := w.sysViewArchive(row, target)
 		prefix := "sysview/" + at + "/"
 		file := em.Name + ".mk"
 		t := &srcTree{mem: map[string]string{file: em.Text}, prefix: prefix, sitePrefix: prefix}
@@ -346,7 +355,7 @@ func (w *world) sysViewMessage(p string) string {
 	}
 	row, _ := sysview.Named(name)
 	if where == "" {
-		where = "internal/sysview/data/" + sysViewArchive(row, w.cfg.Target.Name) + "/" + sysview.ArchiveName(name)
+		where = "internal/sysview/data/" + w.sysViewArchive(row, w.cfg.Target.Name) + "/" + sysview.ArchiveName(name)
 	}
 	return fmt.Sprintf("module %s: this mk was built without the system view's archive %s: generate it with `go run ./tools/sysview` (%s) and build mk again, or declare a pkg.CImport named %s",
 		p, where, sysViewInputHint(row.Input), name)

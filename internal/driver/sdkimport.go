@@ -115,7 +115,7 @@ func (ci *cImports) shareViews(w *world, builds []*build) *diag.Diagnostic {
 			return
 		}
 		row, _ := sysview.Named(n)
-		data, ok := w.sysViewBytes(sysViewArchive(row, target), n)
+		data, ok := w.sysViewBytes(w.sysViewArchive(row, target), n)
 		if !ok {
 			return
 		}

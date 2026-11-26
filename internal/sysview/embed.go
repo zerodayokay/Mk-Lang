@@ -13,6 +13,7 @@ package sysview
 
 import (
 	"embed"
+	"io/fs"
 	"path"
 )
 
@@ -30,6 +31,12 @@ const ManifestName = "views.txt"
 func Embedded(target, name string) ([]byte, bool) {
 	b, err := data.ReadFile(path.Join("data", target, ArchiveName(name)))
 	return b, err == nil
+}
+
+// HasEmbedded reports whether this mk carries the target view without copying the archive.
+func HasEmbedded(target, name string) bool {
+	_, err := fs.Stat(data, path.Join("data", target, ArchiveName(name)))
+	return err == nil
 }
 
 // EmbeddedManifest is the manifest of target's views this mk carries, ""

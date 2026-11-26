@@ -2,12 +2,15 @@
 // pool) and parks idle threads, which on Windows needs its own calls.
 //
 // What: ThreadStart, ThreadInit, ThreadYield, the semaphores SemInit,
-// SemWait and SemPost, and ThreadInterrupt.
+// SemWait and SemPost, ThreadInterrupt, and ThreadMade with the table of
+// the threads ThreadStart made.
 //
 // How: CreateThread with a stack reservation, a stack guarantee set per
 // thread for the overflow report, and kernel semaphores whose timed waits
 // wait again until a deadline by Now() has passed, since a millisecond
-// wait can end early. Tasks never block a thread here.
+// wait can end early. Tasks never block a thread here. Each thread
+// ThreadStart made holds its id in a table while its entry runs, for the
+// fault handler's test of whose thread faulted (ThreadMade).
 
 import std.raw
 
@@ -61,15 +64,82 @@ struct ThreadRec {
 }
 
 // MkThreadStart is the LPTHREAD_START_ROUTINE of every thread std starts.
+// The thread's id is in the table (MadeEnter) while its entry runs.
 MkThreadStart(p: *u8): u32 {
     unsafe "p is the ThreadRec ThreadStart wrote" {
         rec := raw.Read(raw.PtrCast[u8, ThreadRec](p))
         _ = VirtualFree(p, 0, MemRelease)
         _ = ThreadInit()
+        k := MadeEnter()
         f := rec.entry
         f(rec.arg)
+        MadeLeave(k)
     }
     return 0
+}
+
+// MadeSlots is how many live threads ThreadStart made the table holds:
+// more than std runs at once (256 carriers, the blocking pool's 1,024
+// threads and a few of its own).
+const MadeSlots: int = 2048
+
+// MadeTable holds the ids of the live threads ThreadStart made, one word
+// each, 0 for a free word (no thread's id is 0). Only a thread itself
+// stores its id, and it clears the word before it ends: std ends no thread
+// it made but by its entry's return.
+struct MadeTable {
+    ids: [2048]u32
+}
+
+var Made: MadeTable = MadeTable(ids: [0; 2048])
+
+// MadeWord is word k of the table, as an atomic.
+MadeWord(k: int): &raw.Atomic[u32] {
+    unsafe "Made is static; a u32 has raw.Atomic[u32]'s layout, and every access to these words is atomic" {
+        return &*raw.PtrCast[u32, raw.Atomic[u32]](raw.Of(&Made.ids[k]))
+    }
+}
+
+// MadeEnter stores the calling thread's id in a free word of the table and
+// gives its index, or -1 when every word is held (ThreadMade then answers
+// false for the thread). O(MadeSlots); allocates nothing.
+MadeEnter(): int {
+    me := Trunc[u32](ThreadId())
+    for k in 0..MadeSlots {
+        // Edge: seq_cst; the Cas from 0 gives the word to this thread.
+        if MadeWord(k).Load() == 0 && MadeWord(k).Cas(0, me) {
+            return k
+        }
+    }
+    return -1
+}
+
+// MadeLeave frees the word MadeEnter gave (nothing for -1).
+MadeLeave(k: int) {
+    if k >= 0 {
+        // Edge: seq_cst; the word is free for any thread after this store.
+        MadeWord(k).Store(0)
+    }
+}
+
+// ThreadMade is whether the calling thread is one ThreadStart made whose
+// entry is running: a carrier, a blocking-pool thread or another of std's
+// own. A foreign thread (the host's, a system DLL's or a C library's own)
+// answers false, and so does one started while the table was full. The
+// fault handler's stack test (MkStack). A thread's id is unique while it
+// runs, and only it stores its own, so a word holding it is this thread's
+// own write, read in program order. Loads and GetCurrentThreadId, which
+// leaves the thread's last error as it was; no lock, no allocation.
+// O(MadeSlots).
+ThreadMade(): bool {
+    me := Trunc[u32](ThreadId())
+    for k in 0..MadeSlots {
+        // Edge: as above; another thread's word never holds this id.
+        if MadeWord(k).Load() == me {
+            return true
+        }
+    }
+    return false
 }
 
 /// ThreadInit sets the stack guarantee the overflow report runs in, as a

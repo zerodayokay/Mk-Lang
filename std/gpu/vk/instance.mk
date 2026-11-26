@@ -5,7 +5,7 @@
 // What: IsAvailable, CreateVkInstance, DestroyVkInstance, VkDebugRing,
 // DrainDebugMessages, EnumAdapters, and QueryFormatCaps.
 //
-// How: uses dl.Present(io, vulkan.vkGetInstanceProcAddr) for detection, runs
+// How: opens the system Vulkan loader on Windows, runs
 // adapter enumeration through runtime.Blocking, checks Vulkan 1.3 + timeline
 // semaphore + dynamic rendering + sync2 + draw parameters, and maps
 // VkFormatProperties (including D24S8 -> D32S8 fallback) for all 44 formats.
@@ -20,14 +20,16 @@ import std.runtime
 var GVkGipaAddr: raw.Atomic[uint] = raw.Atomic[uint].New(0)
 
 LoadVkGetInstanceProcAddr(io: Io): vulkan.PfnVkGetInstanceProcAddr {
+    if Target.os != core.Os.Windows {
+        return none
+    }
     cached := GVkGipaAddr.Load()
     if cached != 0 {
         unsafe "cached is vkGetInstanceProcAddr address from detached vulkan loader library" {
             return raw.FnFromAddr[vulkan.PfnVkGetInstanceProcAddr](cached)
         }
     }
-    lib_name := if Target.os == core.Os.Windows { "vulkan-1.dll" } else { "libvulkan.so.1" }
-    lib := dl.Open(io, lib_name, dl.Search.System) else { return none }
+    lib := dl.Open(io, "vulkan-1.dll", dl.Search.System) else { return none }
     sym := lib.Symbol("vkGetInstanceProcAddr")
     match sym {
         none {
@@ -49,7 +51,7 @@ LoadVkGetInstanceProcAddr(io: Io): vulkan.PfnVkGetInstanceProcAddr {
     }
 }
 
-/// Reports whether Vulkan (vulkan-1.dll / libvulkan.so.1) is present and loadable on this host.
+/// Reports whether the Windows Vulkan loader is present and loadable.
 export IsAvailable(io: Io): bool {
     return LoadVkGetInstanceProcAddr(io).IsSome()
 }

@@ -283,35 +283,11 @@ export Main(sys: &System): WriteError!void {
 		t.Errorf("stdout %q", out)
 	}
 
-	// Cross-target check & compile on x86_64-windows and x86_64-linux using
-	// the embedded x86_64-windows view served for both targets (and verify
-	// that without a Linux archive, x86_64-linux reports E0202 no-sysview).
+	// Use the shipped Windows declarations even when checking or building
+	// for a different OS. No loader functions are reached by this program.
 	tools := needTools(t)
-	cfgNoLinux := Config{Root: root, Target: types.X86_64Linux, Tools: tools, CacheDir: t.TempDir()}
-	sNoLinux, err := NewSession(cfgNoLinux)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rNoLinux := sNoLinux.Check()
-	noSysview := false
-	for _, e := range rNoLinux.Report.Diags {
-		if e.Diag.Code.String() == "E0202" && fact(e.Diag, "reason") == "no-sysview" {
-			noSysview = true
-		}
-	}
-	if !noSysview {
-		t.Fatalf("expected E0202 no-sysview on x86_64-linux without archive, got:\n%s", rNoLinux.Report.Text(rNoLinux.Sources))
-	}
-
-	serveBoth := func(target, name string) ([]byte, bool) {
-		if target == "x86_64-linux" {
-			return sysview.Embedded("x86_64-windows", name)
-		}
-		return sysview.Embedded(target, name)
-	}
 	for _, tg := range []types.Target{types.X86_64Windows, types.X86_64Linux} {
 		cfg := Config{Root: root, Target: tg, Tools: tools, CacheDir: t.TempDir()}
-		cfg.TestHooks.SysViews = serveBoth
 		s, err := NewSession(cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -325,7 +301,6 @@ export Main(sys: &System): WriteError!void {
 		}
 	}
 	cfgAll := Config{Root: root, Target: types.X86_64Windows, AllTargets: true, Tools: tools, CacheDir: t.TempDir()}
-	cfgAll.TestHooks.SysViews = serveBoth
 	sAll, err := NewSession(cfgAll)
 	if err != nil {
 		t.Fatal(err)
