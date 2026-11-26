@@ -11,6 +11,8 @@
 // How: checks vertex layouts, target/depth capabilities, workgroup limits,
 // and SPIR-V shader bindings/blocks/inputs against the pipeline layout.
 
+import std.rt
+
 /// How a vertex buffer steps.
 export open enum StepMode {
     Vertex
@@ -453,13 +455,27 @@ ValidateRenderPipelineDesc(
     )
 }
 
+ResolveRenderPipeHandles(st: &DeviceState, lslot: u32, vs_slot: u32, fs_slot: u32): (pl_nh: u64, vs_nh: u64, fs_nh: u64, vs_ebuf: [128]u8, vs_elen: int, fs_ebuf: [128]u8, fs_elen: int) {
+    pl_nh := st.pipe_layouts.Get(lslot).native_handle
+    vse := st.shaders.Get(vs_slot)
+    var fs_nh: u64 = 0
+    var fs_ebuf: [128]u8 = [0; 128]
+    var fs_elen := 0
+    if fs_slot != 0 {
+        fse := st.shaders.Get(fs_slot)
+        fs_nh = fse.native_handle
+        fs_ebuf = fse.entry_buf
+        fs_elen = fse.entry_len
+    }
+    return (pl_nh: pl_nh, vs_nh: vse.native_handle, fs_nh: fs_nh, vs_ebuf: vse.entry_buf, vs_elen: vse.entry_len, fs_ebuf: fs_ebuf, fs_elen: fs_elen)
+}
+
 /// Makes a render pipeline; layout lives while it does. fs none: depth
 /// only. Checks the shaders' interfaces (from SPIR-V) against layout and
 /// d. Errors: Invalid (ShaderMismatch, BlockTooLarge, StageMismatch,
 /// FormatCapability, ...), OutOfDeviceMemory, DeviceLost, Canceled (only
 /// while queued). The driver compiles through runtime.Blocking.
 export Device.NewRenderPipeline(mut self, io: Io, layout: &PipelineLayout, vs: &Shader, fs: ?&Shader, d: RenderPipelineDesc): Error!RenderPipeline {
-    _ = io
     try self.CheckAlive()
     if layout.device != self.serial || vs.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
@@ -469,7 +485,10 @@ export Device.NewRenderPipeline(mut self, io: Io, layout: &PipelineLayout, vs: &
         none { u32(0) }
     }
     var entry := try ValidateRenderPipelineDesc(self.state.Ref(), self.serial, layout, vs, fs, fs_slot, &d)
-    nh := try self.NativeCreatePipeline()
+    var hs := ResolveRenderPipeHandles(self.state.Ref(), layout.slot, vs.slot, fs_slot)
+    vs_entry := rt.StrFrom(hs.vs_ebuf[0..hs.vs_elen]) else { "main" }
+    fs_entry := rt.StrFrom(hs.fs_ebuf[0..hs.fs_elen]) else { "" }
+    nh := try self.NativeCreateRenderPipeline(io, hs.pl_nh, hs.vs_nh, hs.fs_nh, vs_entry, fs_entry, &d)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().render_pipes.Alloc(a, entry) {
@@ -578,17 +597,22 @@ ValidateComputePipelineDesc(st: &DeviceState, layout: &PipelineLayout, cs: &Shad
     )
 }
 
+ResolveComputePipeHandles(st: &DeviceState, lslot: u32, cs_slot: u32): (pl_nh: u64, cs_nh: u64, cs_ebuf: [128]u8, cs_elen: int) {
+    cse := st.shaders.Get(cs_slot)
+    return (pl_nh: st.pipe_layouts.Get(lslot).native_handle, cs_nh: cse.native_handle, cs_ebuf: cse.entry_buf, cs_elen: cse.entry_len)
+}
+
 /// Makes a compute pipeline, as NewRenderPipeline. Also checks the
 /// workgroup size against the limits.
 export Device.NewComputePipeline(mut self, io: Io, layout: &PipelineLayout, cs: &Shader, label: str): Error!ComputePipeline {
-    _ = io
-    _ = label
     try self.CheckAlive()
     if layout.device != self.serial || cs.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     var entry := try ValidateComputePipelineDesc(self.state.Ref(), layout, cs)
-    nh := try self.NativeCreatePipeline()
+    var hs := ResolveComputePipeHandles(self.state.Ref(), layout.slot, cs.slot)
+    cs_entry := rt.StrFrom(hs.cs_ebuf[0..hs.cs_elen]) else { "main" }
+    nh := try self.NativeCreateComputePipeline(io, hs.pl_nh, hs.cs_nh, cs_entry, label)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().compute_pipes.Alloc(a, entry) {

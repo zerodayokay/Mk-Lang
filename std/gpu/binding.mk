@@ -128,7 +128,6 @@ ComputeBglFingerprint(entries: []LayoutEntry): u64 {
 /// Invalid(StorageWriteInRender). O(entries log entries); allocates the
 /// sorted entries from the device's heap.
 export Device.NewBindGroupLayout(mut self, entries: []LayoutEntry, label: str): Error!BindGroupLayout {
-    _ = label
     try self.CheckAlive()
     lim := self.Limits()
     if entries.Len() > lim.max_bindings_per_group {
@@ -201,7 +200,7 @@ export Device.NewBindGroupLayout(mut self, entries: []LayoutEntry, label: str): 
         sorted[j + 1] = key
     }
     fp := ComputeBglFingerprint(sorted.Items())
-    nh := try self.NativeCreateBindGroupLayout()
+    nh := try self.NativeCreateBindGroupLayout(sorted.Items(), label)
     bgl := BindGroupLayoutEntry(entries: sorted, dynamic_count: dyn_count, fingerprint: fp, native_handle: nh)
     match self.state.Mut().bg_layouts.Alloc(a, bgl) {
         .Ok(slot, gen_) { return BindGroupLayout(slot: slot, generation: gen_, device: self.serial) }
@@ -339,14 +338,22 @@ ValidatePipelineLayoutGroups(st: &DeviceState, serial: u32, groups: []&BindGroup
     )
 }
 
+ReadBgLayoutNhs(st: &DeviceState, groups: []&BindGroupLayout): [4]u64 {
+    var bg_nhs: [4]u64 = [0; 4]
+    for gi in 0..groups.Len() {
+        bg_nhs[gi] = st.bg_layouts.Get(groups[gi].slot).native_handle
+    }
+    return bg_nhs
+}
+
 /// Makes a pipeline layout; its group layouts live while it does. Errors:
 /// Invalid(LimitExceeded) (groups, per-stage counts, immediates). O(entries);
 /// one root signature or VkPipelineLayout.
 export Device.NewPipelineLayout(mut self, groups: []&BindGroupLayout, immediates: int, label: str): Error!PipelineLayout {
-    _ = label
     try self.CheckAlive()
     var entry := try ValidatePipelineLayoutGroups(self.state.Ref(), self.serial, groups, immediates)
-    nh := try self.NativeCreatePipelineLayout()
+    bg_nhs := ReadBgLayoutNhs(self.state.Ref(), groups)
+    nh := try self.NativeCreatePipelineLayout(bg_nhs[0..groups.Len()], immediates, label)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().pipe_layouts.Alloc(a, entry) {
@@ -640,14 +647,14 @@ BuildBindGroupEntry(
 /// entry, a missing usage, an unaligned offset or a range past the buffer.
 /// O(entries) descriptor writes; allocates descriptor space.
 export Device.NewBindGroup(mut self, layout: &BindGroupLayout, entries: []BindEntry, label: str): Error!BindGroup {
-    _ = label
     try self.CheckAlive()
     if layout.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     a := self.heap.Alloc()
     var entry := try BuildBindGroupEntry(a, self.state.Ref(), self.serial, layout, entries)
-    nh := self.NativeCreateBindGroup() else e {
+    layout_nh := self.state.Ref().bg_layouts.Get(layout.slot).native_handle
+    nh := self.NativeCreateBindGroup(layout_nh, entries, label) else e {
         entry.Free(a)
         fail e
     }

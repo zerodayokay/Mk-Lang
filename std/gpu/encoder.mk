@@ -8,6 +8,8 @@
 // the device's active CommandStream, records the first misuse for Submit to
 // report, and rolls back resource states via the undo log on Abandon.
 
+import std.gpu.vk
+
 /// A copy's size in texels and layers.
 export struct Extent {
     export width: int
@@ -167,13 +169,14 @@ export Encoder.CopyBufferToTexture(mut self, src: &Buffer, layout: DataLayout, d
     a := self.dev.heap.Alloc()
     st := self.dev.state.Mut()
     words := [
-        PackHdr(OpCopyBufferToTexture, 7, u16(pmask), Cast[u32](dst.mip)),
+        PackHdr(OpCopyBufferToTexture, 8, u16(pmask), Cast[u32](dst.mip)),
         src_nh,
         dst_nh,
         Cast[u64](layout.offset),
         PackU32Pair(Cast[u32](layout.bytes_per_row), Cast[u32](layout.rows_per_layer)),
         PackU32Pair(Cast[u32](dst.x), Cast[u32](dst.y)),
         PackU32Pair(Cast[u32](size.width), Cast[u32](size.height)),
+        PackU32Pair(Cast[u32](dst.layer), Cast[u32](size.layers)),
     ]
     _ = st.stream.WriteSlice(a, mut st.chunk_pool, words[..]) else {
         st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
@@ -211,13 +214,14 @@ export Encoder.CopyTextureToBuffer(mut self, src: TextureRegion, dst: &Buffer, l
     a := self.dev.heap.Alloc()
     st := self.dev.state.Mut()
     words := [
-        PackHdr(OpCopyTextureToBuffer, 7, u16(pmask), Cast[u32](src.mip)),
+        PackHdr(OpCopyTextureToBuffer, 8, u16(pmask), Cast[u32](src.mip)),
         src_nh,
         dst_nh,
         Cast[u64](layout.offset),
         PackU32Pair(Cast[u32](layout.bytes_per_row), Cast[u32](layout.rows_per_layer)),
         PackU32Pair(Cast[u32](src.x), Cast[u32](src.y)),
         PackU32Pair(Cast[u32](size.width), Cast[u32](size.height)),
+        PackU32Pair(Cast[u32](src.layer), Cast[u32](size.layers)),
     ]
     _ = st.stream.WriteSlice(a, mut st.chunk_pool, words[..]) else {
         st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
@@ -265,12 +269,14 @@ export Encoder.CopyTexture(mut self, src: TextureRegion, dst: TextureRegion, siz
     a := self.dev.heap.Alloc()
     st := self.dev.state.Mut()
     words := [
-        PackHdr(OpCopyTexture, 6, u16(pmask), Cast[u32](size.layers)),
+        PackHdr(OpCopyTexture, 8, u16(pmask), Cast[u32](size.layers)),
         src_nh,
         dst_nh,
         PackU32Pair(Cast[u32](src.mip), Cast[u32](dst.mip)),
         PackU32Pair(Cast[u32](src.x), Cast[u32](src.y)),
         PackU32Pair(Cast[u32](size.width), Cast[u32](size.height)),
+        PackU32Pair(Cast[u32](dst.x), Cast[u32](dst.y)),
+        PackU32Pair(Cast[u32](src.layer), Cast[u32](dst.layer)),
     ]
     _ = st.stream.WriteSlice(a, mut st.chunk_pool, words[..]) else {
         st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
@@ -310,8 +316,20 @@ export Encoder.WriteBuffer(mut self, dst: &Buffer, at: int, data: []u8): Error!v
             a := self.dev.heap.Alloc()
             try st.stream.Write3(a, mut st.chunk_pool, PackHdr(OpCopyBuffer, 3, 0, Cast[u32](data.Len())), nh, Cast[u64](at))
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             fail Unsupported
+        }
+        .Vk(v) {
+            stg := v.StageEncoderWrite(data) else e { fail MapVkErr(e) }
+            a := self.dev.heap.Alloc()
+            words := [
+                PackHdr(OpCopyBuffer, 5, 0, Cast[u32](data.Len())),
+                stg.buf_id,
+                nh,
+                stg.offset,
+                Cast[u64](at),
+            ]
+            _ = try st.stream.WriteSlice(a, mut st.chunk_pool, words[..])
         }
     }
 }
@@ -403,13 +421,17 @@ CheckStreamForSubmit(st: mut DeviceState): Error!void {
 export Encoder.Submit(self): Error!void {
     try self.dev.CheckAlive()
     try CheckStreamForSubmit(self.dev.state.Mut())
-    try self.dev.FlushPreSubmit()
-    var is_stub := false
+    var is_dx := false
+    var is_vk := false
     match &self.dev.state.Ref().native {
-        .Stub(s: _) { is_stub = true }
-        .Dx(d: _) | .Vk(v: _) {}
+        .Dx(d: _) { is_dx = true }
+        .Vk(v: _) { is_vk = true }
+        .Stub(s: _) {}
     }
-    if !is_stub {
+    if !is_vk {
+        try self.dev.FlushPreSubmit()
+    }
+    if is_dx {
         a := self.dev.heap.Alloc()
         st := self.dev.state.Mut()
         submit_serial := st.serials.Advance()
@@ -417,10 +439,10 @@ export Encoder.Submit(self): Error!void {
         st.encoder_active = false
         fail Unsupported
     }
-    Encoder(dev, stream: _) := self
-    a := dev.heap.Alloc()
-    st := dev.state.Mut()
+    a := self.dev.heap.Alloc()
+    st := self.dev.state.Mut()
     submit_serial := st.serials.Advance()
+    var vk_err: ?Error = none
     match mut st.native {
         .Stub(s) {
             s.RecordStreamOps(a, &st.stream, &st.chunk_pool)
@@ -429,10 +451,73 @@ export Encoder.Submit(self): Error!void {
                 st.sticky_err = some(e)
             }
         }
-        .Dx(d: _) | .Vk(v: _) {}
+        .Dx(d: _) {}
+        .Vk(v) {
+            cc := st.stream.chunk_ids.Len()
+            var chunks := HeapList[vk.StreamChunk].New(a)
+            var bcmds := HeapList[vk.BarrierCmd].New(a)
+            defer {
+                chunks.Free(a)
+                bcmds.Free(a)
+            }
+            for ci in 0..cc {
+                cid := st.stream.chunk_ids[ci]
+                ch := st.chunk_pool.chunks[cid].Ref()
+                used := st.stream.ChunkEndWord(ci)
+                try chunks.Push(a, vk.StreamChunk(words: ch.words[0..used]))
+            }
+            for bi in 0..st.stream.barriers.Len() {
+                it := &st.stream.barriers[bi]
+                if it.is_tex {
+                    tb := &it.tex
+                    try bcmds.Push(a, vk.BarrierCmd(
+                        is_tex: true,
+                        handle: st.textures.Get(tb.slot).native_handle,
+                        all_sub: tb.all_sub,
+                        first_mip: tb.first_mip,
+                        mip_count: tb.mip_count,
+                        first_layer: tb.first_layer,
+                        layer_count: tb.layer_count,
+                        plane_mask: tb.plane_mask,
+                        old_state: tb.old_state,
+                        new_state: tb.new_state,
+                        is_uav: false,
+                    ))
+                } else {
+                    bb := &it.buf
+                    try bcmds.Push(a, vk.BarrierCmd(
+                        is_tex: false,
+                        handle: st.buffers.Get(bb.slot).native_handle,
+                        all_sub: false,
+                        first_mip: 0,
+                        mip_count: 0,
+                        first_layer: 0,
+                        layer_count: 0,
+                        plane_mask: 0,
+                        old_state: bb.old_state,
+                        new_state: bb.new_state,
+                        is_uav: bb.is_uav,
+                    ))
+                }
+            }
+            v.SubmitStream(submit_serial, chunks.Items(), bcmds.Items(), st.stream.labels.Items()) else e {
+                gerr := MapVkErr(e)
+                st.lost = true
+                st.sticky_err = some(gerr)
+                vk_err = some(gerr)
+            }
+        }
     }
     st.stream.RecycleToPool(a, mut st.chunk_pool, submit_serial, false)
     st.encoder_active = false
+    match vk_err {
+        some(e) {
+            fail e
+        }
+        none {
+            Encoder(dev: _, stream: _) := self
+        }
+    }
 }
 
 /// Drops what was recorded and recycles the stream. Never fails. O(1).
@@ -472,8 +557,11 @@ export Device.WriteBuffer(mut self, b: &Buffer, at: int, data: []u8): Error!void
             }
             try st.pre_submit.Write3(a, mut st.chunk_pool, PackHdr(OpCopyBuffer, 3, 0, Cast[u32](data.Len())), nh, Cast[u64](at))
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             fail Unsupported
+        }
+        .Vk(v) {
+            v.WriteBufferPre(nh, at, data) else e { fail MapVkErr(e) }
         }
     }
 }
@@ -510,8 +598,11 @@ export Device.WriteTexture(mut self, dst: TextureRegion, data: []u8, size: Exten
         .Stub(s: _) {
             try st.pre_submit.Write3(a, mut st.chunk_pool, PackHdr(OpCopyBufferToTexture, 3, u16(pmask), Cast[u32](dst.mip)), nh, PackU32Pair(Cast[u32](size.width), Cast[u32](size.height)))
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             fail Unsupported
+        }
+        .Vk(v) {
+            v.WriteTexturePre(nh, dst.mip, dst.layer, dst.x, dst.y, size.width, size.height, size.layers, pmask, data) else e { fail MapVkErr(e) }
         }
     }
 }
@@ -540,7 +631,6 @@ PrepDeviceReadTex(st: &DeviceState, serial: u32, src: TextureRegion, size: Exten
 /// submission and a wait. For tests and screenshots. Errors: Invalid,
 /// DeviceLost, Canceled (repeatable). O(bytes); allocates the result in a.
 export Device.ReadTexture(mut self, a: &Arena, io: Io, src: TextureRegion, size: Extent): Error![]u8 from a {
-    _ = io
     try self.CheckAlive()
     (need, last_use) := try PrepDeviceReadTex(self.state.Ref(), self.serial, src, size)
     try self.FlushPreSubmit()
@@ -553,8 +643,26 @@ export Device.ReadTexture(mut self, a: &Arena, io: Io, src: TextureRegion, size:
             out := try a.Slice[u8](need)
             return out[..]
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             fail Unsupported
+        }
+        .Vk(v) {
+            src_nh := st.textures.Get(src.texture.slot).native_handle
+            pmask := AspectMaskFor(st.textures.Get(src.texture.slot).format, src.aspect) else { 1 }
+            r_ser := st.serials.Advance()
+            var out := try a.Slice[u8](need)
+            v.ReadTexture(io, r_ser, src_nh, src.mip, src.layer, src.x, src.y, size.width, size.height, size.layers, pmask, mut out[..]) else e {
+                match e {
+                    vk.DeviceLost(reason: r) {
+                        st.lost = true
+                        st.sticky_err = some(DeviceLost(reason: MapVkLossReason(r)))
+                    }
+                    _ {}
+                }
+                fail MapVkErr(e)
+            }
+            st.serials.Complete(r_ser)
+            return out[..]
         }
     }
 }

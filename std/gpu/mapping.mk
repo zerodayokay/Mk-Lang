@@ -7,6 +7,8 @@
 // work and clamping to LastSubmitted), validates usage and range, and yields a
 // slice borrowed from Mapped/MappedMut.
 
+import std.gpu.vk
+
 /// A readable mapped range. Linear: Unmap it.
 export linear view struct Mapped {
     dev: mut Device
@@ -34,7 +36,6 @@ PrepMapCheck(st: &DeviceState, serial: u32, b: &Buffer, want_write: bool, at: in
 /// Errors: Invalid(BadUsage) without map_read, Invalid(RangeOutOfBounds),
 /// DeviceLost, Canceled (repeatable). Suspends.
 export Device.MapRead(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Mapped from self, b {
-    _ = io
     try self.CheckAlive()
     last_use := try PrepMapCheck(self.state.Ref(), self.serial, b, false, at, n)
     try self.FlushPreSubmit()
@@ -45,8 +46,21 @@ export Device.MapRead(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Mapp
             try s.WaitSerial(wait_target)
             st.serials.Complete(wait_target)
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             fail Unsupported
+        }
+        .Vk(v) {
+            v.WaitSerial(io, wait_target) else e {
+                match e {
+                    vk.DeviceLost(reason: r) {
+                        st.lost = true
+                        st.sticky_err = some(DeviceLost(reason: MapVkLossReason(r)))
+                    }
+                    _ {}
+                }
+                fail MapVkErr(e)
+            }
+            st.serials.Complete(wait_target)
         }
     }
     self.DrainCompleted()
@@ -62,8 +76,11 @@ export Mapped.Bytes(&self): []u8 from self {
             idx := Cast[int](nh - 1)
             return s.buf_mems[idx].bytes.Items()[self.at..(self.at + self.n)]
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             Panic("gpu: mapped bytes on unimplemented backend")
+        }
+        .Vk(v) {
+            return v.MapBytes(nh, self.at, self.n)
         }
     }
 }
@@ -84,7 +101,6 @@ export linear view struct MappedMut {
 /// Waits until the GPU's last use of b is done and maps n bytes at at for
 /// writing. Errors: as MapRead, with map_write.
 export Device.MapWrite(mut self, io: Io, b: &Buffer, at: int, n: int): Error!MappedMut from self, b {
-    _ = io
     try self.CheckAlive()
     last_use := try PrepMapCheck(self.state.Ref(), self.serial, b, true, at, n)
     try self.FlushPreSubmit()
@@ -95,8 +111,21 @@ export Device.MapWrite(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Map
             try s.WaitSerial(wait_target)
             st.serials.Complete(wait_target)
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             fail Unsupported
+        }
+        .Vk(v) {
+            v.WaitSerial(io, wait_target) else e {
+                match e {
+                    vk.DeviceLost(reason: r) {
+                        st.lost = true
+                        st.sticky_err = some(DeviceLost(reason: MapVkLossReason(r)))
+                    }
+                    _ {}
+                }
+                fail MapVkErr(e)
+            }
+            st.serials.Complete(wait_target)
         }
     }
     self.DrainCompleted()
@@ -112,13 +141,22 @@ export MappedMut.Bytes(mut self): mut []u8 from self {
             idx := Cast[int](nh - 1)
             return mut s.buf_mems[idx].bytes.ItemsMut()[self.at..(self.at + self.n)]
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             Panic("gpu: mapped bytes on unimplemented backend")
+        }
+        .Vk(v) {
+            return v.MapBytesMut(nh, self.at, self.n)
         }
     }
 }
 
 /// Ends the mapping; the writes are visible to the next submission. O(1).
 export MappedMut.Unmap(self) {
-    MappedMut(dev: _, buf: _, at: _, n: _) := self
+    MappedMut(dev, buf, at: _, n: _) := self
+    st := dev.state.Mut()
+    nh := st.buffers.Get(buf.slot).native_handle
+    match mut st.native {
+        .Vk(v) { v.FlushMapped(nh) }
+        _ {}
+    }
 }

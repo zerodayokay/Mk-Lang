@@ -146,7 +146,7 @@ func TestUnsafeBudget(t *testing.T) {
 		// simd, free, mmio and libc are the boundary the language puts
 		// behind unsafe (a cpu call, the hardware, the C ABI), as rt and
 		// sys are the OS's.
-		for _, d := range []string{"rt/", "sys/", "task/", "simd/", "free/", "mmio/", "libc/"} {
+		for _, d := range []string{"rt/", "sys/", "task/", "simd/", "free/", "mmio/", "libc/", "gpu/vk/"} {
 			if strings.HasPrefix(p, d) {
 				return true
 			}

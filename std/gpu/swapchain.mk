@@ -8,6 +8,7 @@
 // acquired back-buffer views in SurfaceTexture holding mut Swapchain, and
 // dispatches Acquire/Present/Resize to the active backend.
 
+import std.gpu.vk
 import std.window
 
 /// When a presented frame reaches the screen.
@@ -48,12 +49,20 @@ struct SwapchainEntry {
     view_slot: u32
     view_gen: u32
     native_handle: u64
+    surf: ?window.Surface
 }
 
 IsSwapchainFormat(f: TextureFormat): bool {
     return match f {
         .Bgra8Unorm | .Bgra8UnormSrgb | .Rgba8Unorm | .Rgba8UnormSrgb { true }
         _ { false }
+    }
+}
+
+CloseOptSurface(s: ?window.Surface) {
+    match s {
+        some(sf) { sf.Close() }
+        none {}
     }
 }
 
@@ -69,14 +78,38 @@ export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOpti
     if o.buffers < 2 || o.buffers > 3 {
         fail Invalid(misuse: Misuse.LimitExceeded, at: -1)
     }
-    nh := try self.NativeCreateSwapchain()
-    a := self.heap.Alloc()
-    onerr self.state.Mut().native.DestroySwapchain(a, nh)
     (width: ww, height: wh) := w.Size()
     sw := if ww > 0 { ww } else { 800 }
     sh := if wh > 0 { wh } else { 600 }
+    var hwnd: uint = 0
+    var hinst: uint = 0
+    surf: ?window.Surface = match w.Surface() {
+        ok(sf) {
+            match sf.Native() {
+                .Win32(hwnd: hw, hinstance: hi) {
+                    hwnd = hw
+                    hinst = hi
+                }
+                _ {}
+            }
+            some(sf)
+        }
+        err(e) {
+            if self.Backend() == Backend.Vulkan {
+                match e {
+                    Closed { fail SurfaceLost }
+                    _ { fail Unsupported }
+                }
+            }
+            none
+        }
+    }
+    onerr CloseOptSurface(surf)
+    nh := try self.NativeCreateSwapchain(&o, sw, sh, hwnd, hinst)
+    a := self.heap.Alloc()
+    onerr self.state.Mut().native.DestroySwapchain(a, nh)
 
-    v_nh := try self.NativeCreateView()
+    v_nh := try self.NativeCreateSwapView()
     onerr self.state.Mut().native.DestroyView(v_nh)
     var usage := NoTextureUsage
     usage.render_target = true
@@ -112,11 +145,31 @@ export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOpti
         }
     }
 
-    info := SwapchainInfo(format: o.format, mode: o.mode, width: sw, height: sh, images: o.buffers)
-    entry := SwapchainEntry(info: info, view_slot: vslot, view_gen: vgen, native_handle: nh)
+    var actual_info := SwapchainInfo(format: o.format, mode: o.mode, width: sw, height: sh, images: o.buffers)
+    match &self.state.Ref().native {
+        .Vk(v) {
+            gi := v.GetSwapchainInfo(nh)
+            actual_info = SwapchainInfo(
+                format: o.format,
+                mode: if gi.mode == vk.ModeMailbox { PresentMode.Mailbox } else if gi.mode == vk.ModeImmediate { PresentMode.Immediate } else { PresentMode.Fifo },
+                width: gi.width,
+                height: gi.height,
+                images: gi.images,
+            )
+            self.state.Mut().views.GetMut(vslot).width = gi.width
+            self.state.Mut().views.GetMut(vslot).height = gi.height
+        }
+        _ {}
+    }
+    entry := SwapchainEntry(info: actual_info, view_slot: vslot, view_gen: vgen, native_handle: nh, surf: surf)
     match self.state.Mut().swapchains.Alloc(a, entry) {
         .Ok(slot, gen_) { return Swapchain(slot: slot, generation: gen_, device: self.serial) }
-        .Oom(val: _) {
+        .Oom(val) {
+            SwapchainEntry(info: _, view_slot: _, view_gen: _, native_handle: _, surf: s2) := val
+            match s2 {
+                some(sf2) { sf2.Close() }
+                none {}
+            }
             self.ReleaseSwapViewSlot(vslot)
             self.state.Mut().native.DestroyView(v_nh)
             self.state.Mut().native.DestroySwapchain(a, nh)
@@ -137,8 +190,13 @@ Device.ReleaseSwapchainSlot(mut self, slot: u32, gen_: u32): u32 {
     }
     match st.swapchains.Release(a, slot) {
         some(e) {
-            st.native.DestroySwapchain(a, e.native_handle)
-            return e.view_slot
+            SwapchainEntry(info: _, view_slot, view_gen: _, native_handle, surf) := e
+            match surf {
+                some(sf) { sf.Close() }
+                none {}
+            }
+            st.native.DestroySwapchain(a, native_handle)
+            return view_slot
         }
         none { return 0 }
     }
@@ -201,7 +259,6 @@ export enum Acquired {
 /// latency) and takes the next image. Errors: DeviceLost, SurfaceLost,
 /// Canceled (repeatable: nothing taken). Suspends. Allocates nothing.
 export Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from sc {
-    _ = io
     try self.CheckAlive()
     if sc.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
@@ -212,8 +269,19 @@ export Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from 
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     se := st.swapchains.Get(sc.slot)
+    sc_nh := se.native_handle
     vslot := se.view_slot
     vgen := se.view_gen
+    var win_w := se.info.width
+    var win_h := se.info.height
+    match &se.surf {
+        some(sf) {
+            sz := sf.Size()
+            win_w = sz.width
+            win_h = sz.height
+        }
+        none {}
+    }
     match mut st.native {
         .Stub(s) {
             if s.acquire_outdated {
@@ -233,8 +301,37 @@ export Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from 
                 image: 0,
             ))
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             fail Unsupported
+        }
+        .Vk(v) {
+            ar := v.SwapchainAcquire(io, sc_nh, win_w, win_h) else e {
+                match e {
+                    vk.DeviceLost(reason: r) {
+                        st.lost = true
+                        st.sticky_err = some(DeviceLost(reason: MapVkLossReason(r)))
+                    }
+                    _ {}
+                }
+                fail MapVkErr(e)
+            }
+            if ar.status == vk.AcqOutdated {
+                return Acquired.Outdated
+            }
+            if ar.status == vk.AcqHidden {
+                return Acquired.Hidden
+            }
+            gi := v.GetSwapchainInfo(sc_nh)
+            st.views.GetMut(vslot).native_handle = ar.view_id
+            st.views.GetMut(vslot).width = gi.width
+            st.views.GetMut(vslot).height = gi.height
+            st.swapchains.GetMut(sc.slot).info.width = gi.width
+            st.swapchains.GetMut(sc.slot).info.height = gi.height
+            return Acquired.Ready(frame: SurfaceTexture(
+                sc: sc,
+                target: TextureView(slot: vslot, generation: vgen, device: self.serial),
+                image: ar.image_idx,
+            ))
         }
     }
 }
@@ -257,10 +354,11 @@ export struct Presented {
     export suboptimal: bool
 }
 
-CheckAndPresentStub(st: mut DeviceState, sc: &Swapchain): Error!void {
+CheckAndPresentNative(st: mut DeviceState, sc: &Swapchain, img_idx: u32): Error!bool {
     if !st.swapchains.IsLive(sc.slot, sc.generation) {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
+    sc_nh := st.swapchains.Get(sc.slot).native_handle
     match mut st.native {
         .Stub(s) {
             match s.fail_next_submit {
@@ -272,9 +370,26 @@ CheckAndPresentStub(st: mut DeviceState, sc: &Swapchain): Error!void {
                 }
                 none {}
             }
+            return false
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d: _) {
             fail Unsupported
+        }
+        .Vk(v) {
+            s1 := st.serials.Advance()
+            s2 := st.serials.Advance()
+            sub := v.SwapchainPresent(sc_nh, img_idx, s1, s2) else e {
+                gerr := MapVkErr(e)
+                match e {
+                    vk.DeviceLost(reason: _) {
+                        st.lost = true
+                        st.sticky_err = some(gerr)
+                    }
+                    _ {}
+                }
+                fail gerr
+            }
+            return sub
         }
     }
 }
@@ -288,17 +403,16 @@ export Device.Present(mut self, io: Io, t: SurfaceTexture): Error!Presented {
     if t.sc.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
-    try CheckAndPresentStub(self.state.Mut(), &*t.sc)
+    sub := try CheckAndPresentNative(self.state.Mut(), &*t.sc, t.image)
     SurfaceTexture(sc: _, target, image: _) := t
     TextureView(slot: _, generation: _, device: _) := target
-    return Presented(suboptimal: false)
+    return Presented(suboptimal: sub)
 }
 
 /// Recreates the images at width by height once the GPU and presentation
 /// engine are done with them. Errors: DeviceLost, SurfaceLost, Canceled
 /// (repeatable). Suspends.
 export Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: int): Error!void {
-    _ = io
     try self.CheckAlive()
     if sc.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
@@ -312,13 +426,37 @@ export Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: in
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     se := st.swapchains.GetMut(sc.slot)
-    se.info.width = width
-    se.info.height = height
-    v := st.views.GetMut(se.view_slot)
-    v.width = width
-    v.height = height
+    sc_nh := se.native_handle
+    vslot := se.view_slot
     match mut st.native {
-        .Stub(s: _) {}
-        .Dx(d: _) | .Vk(v: _) { fail Unsupported }
+        .Stub(s: _) {
+            se.info.width = width
+            se.info.height = height
+            v := st.views.GetMut(vslot)
+            v.width = width
+            v.height = height
+        }
+        .Dx(d: _) { fail Unsupported }
+        .Vk(v) {
+            v.SwapchainResize(io, sc_nh, width, height) else e {
+                gerr := MapVkErr(e)
+                match e {
+                    vk.DeviceLost(reason: _) {
+                        st.lost = true
+                        st.sticky_err = some(gerr)
+                    }
+                    _ {}
+                }
+                fail gerr
+            }
+            gi := v.GetSwapchainInfo(sc_nh)
+            se2 := st.swapchains.GetMut(sc.slot)
+            se2.info.width = gi.width
+            se2.info.height = gi.height
+            se2.info.images = gi.images
+            v2 := st.views.GetMut(vslot)
+            v2.width = gi.width
+            v2.height = gi.height
+        }
     }
 }
