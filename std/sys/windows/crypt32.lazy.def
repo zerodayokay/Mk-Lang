@@ -1,0 +1,8 @@
+CertAddEncodedCertificateToStore
+CertCloseStore
+CertCreateCertificateContext
+CertFreeCertificateChain
+CertFreeCertificateContext
+CertGetCertificateChain
+CertOpenStore
+CertVerifyCertificateChainPolicy
