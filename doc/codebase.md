@@ -325,7 +325,7 @@ The rules:
 - `mk fix` adds the missing arm, `_ { Panic("fs.Kind gained a member this match does not handle") }`. Every current member has its own arm before it, so the panic runs only for a member a later release adds.
 - Adding a member to an open set is not breaking, and `mk apidiff` reports it as an addition. Marking an existing set `open` is breaking, since every exhaustive match outside its package then needs the arm.
 
-In std, every module's `Error` union and each set it names is open, as are the enums marked “may gain members” in the [library surface](reference.md#18-library-surface). For example, `text.Script` and `text.Property` can grow with new Unicode versions. The prelude's `Arch` and `Os` are open too, because they grow as targets are added. So a `match` on `Target.arch` or `Target.os` keeps a `_` arm. Every other std enum is closed.
+In std, every module's `Error` union and each set it names is open, as are the enums marked "may gain members" in the [library surface](reference.md#18-library-surface). For example, `text.Script` and `text.Property` can grow with new Unicode versions. The prelude's `Arch` and `Os` are open too, because they grow as targets are added. So a `match` on `Target.arch` or `Target.os` keeps a `_` arm. Every other std enum is closed.
 
 ### Deprecation
 
