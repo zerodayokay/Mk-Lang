@@ -498,7 +498,9 @@ func TestSubSliceMutAlt(t *testing.T) {
 		{"shared result", "const Seeds: []u64 = [1, 2]\n\nValues(): []u64 { return Seeds }\n\nAttempt() { Values()[0..1].Fill(3) }\n", false},
 		{"live loan", "Attempt() {\n    var xs: [2]u64 = [1, 2]\n    p := &xs\n    xs[0..1].Fill(3)\n    Assert(p[0] == 1)\n}\n", false},
 		{"argument reads array", "Attempt() {\n    var xs: [2]u64 = [1, 2]\n    xs[0..1].Fill(xs[0])\n}\n", true},
+		{"argument borrows disjoint array first", "Attempt(ys: [2]u64) {\n    var xs: [2]u64 = [1, 2]\n    xs[0..1].CopyFrom(ys[0..1])\n}\n", true},
 		{"argument captures array", "Attempt() {\n    var xs: [2]u64 = [1, 2]\n    xs[0..1].Sort(fn(a: &u64, b: &u64): bool { return *a < *b && xs[0] > 0 })\n}\n", false},
+		{"argument borrow's index reads array", "Attempt(pool: [2]&Alloc) {\n    var xs: [2]int = [0, 1]\n    xs[0..1].SortStable(&*pool[xs[0]], fn(a: &int, b: &int): bool { return *a < *b }) else {}\n}\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := checkText(t, tc.src)

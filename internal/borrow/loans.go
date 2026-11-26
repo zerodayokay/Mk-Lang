@@ -143,15 +143,21 @@ func (c *checker) subSliceAlt(st *state, ctx *stmtCtx, d *diag.Diagnostic, p pat
 	if conflict {
 		return
 	}
-	// Argument borrows and capture environments can be formed after the
-	// receiver, so their loans may be absent from the current state.
+	// A later argument borrow can form a conflicting loan or read the base
+	// while computing its own place. This includes capture environments.
 	call := c.body.Span(ctx.span)
 	recv := c.body.Span(c.body.Locals[c.roots[root].local].Span)
+	for site := range c.siteLoans {
+		if c.rpoNum[site.b] < c.rpoNum[ctx.b] || site.b == ctx.b && site.stmt <= uint32(ctx.i) {
+			continue
+		}
+		at := c.body.Span(c.body.Blocks[site.b].Stmts[site.stmt].Span)
+		if recv.End <= at.Start && call.Contains(at.StartPos()) && call.Contains(at.EndPos()) {
+			return
+		}
+	}
 	for _, l := range c.candidates(base, colMut) {
-		loan := c.loans[l]
-		site := c.body.Span(loan.site)
-		argument := recv.End <= site.Start && call.Contains(site.StartPos()) && call.Contains(site.EndPos())
-		if argument || loan.slot && site == call {
+		if loan := c.loans[l]; loan.slot && c.body.Span(loan.site) == call {
 			return
 		}
 	}
