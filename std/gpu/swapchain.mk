@@ -9,6 +9,7 @@
 // dispatches Acquire/Present/Resize to the active backend.
 
 import std.window
+import std.gpu.dx
 
 /// When a presented frame reaches the screen.
 export open enum PresentMode {
@@ -48,6 +49,8 @@ struct SwapchainEntry {
     view_slot: u32
     view_gen: u32
     native_handle: u64
+    surface: ?window.Surface
+    handed_out: bool
 }
 
 IsSwapchainFormat(f: TextureFormat): bool {
@@ -57,10 +60,80 @@ IsSwapchainFormat(f: TextureFormat): bool {
     }
 }
 
+SwapchainDxgiFormats(f: TextureFormat): (dxgi_res: u32, dxgi_rtv: u32) {
+    res := match f {
+        .Rgba8Unorm | .Rgba8UnormSrgb { u32(28) }
+        _ { u32(87) }
+    }
+    return (dxgi_res: res, dxgi_rtv: RowOf(f).dxgi_rtv_dsv)
+}
+
+MapWindowErr(e: window.Error): Error {
+    return match e {
+        window.Unsupported { Unsupported }
+        Closed { SurfaceLost }
+        Canceled { Canceled }
+        OutOfMemory { OutOfMemory }
+        window.Os(code: _) { SurfaceLost }
+    }
+}
+
+PresentModeU8(m: PresentMode): u8 {
+    return match m {
+        .Fifo { 0 }
+        .Mailbox { 1 }
+        .Immediate { 2 }
+    }
+}
+
+PresentModeFromU8(m: u8): PresentMode {
+    return if m == 2 { PresentMode.Immediate } else if m == 1 { PresentMode.Mailbox } else { PresentMode.Fifo }
+}
+
 /// Makes a swapchain on w's client area at its current size. Errors:
 /// Unsupported (format), SurfaceLost (the window is closed), DeviceLost.
 /// Runs on the system stack. Counts as a user of w's native window.
 export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOptions): Error!Swapchain {
+    try self.CheckAlive()
+    if !IsSwapchainFormat(o.format) {
+        fail Unsupported
+    }
+    if o.buffers < 2 || o.buffers > 3 {
+        fail Invalid(misuse: Misuse.LimitExceeded, at: -1)
+    }
+    is_dx := match &self.state.Ref().native {
+        .Dx(d: _) { true }
+        _ { false }
+    }
+    if !is_dx {
+        (width: ww, height: wh) := w.Size()
+        return try self.NewSwapchainFromHwnd(io, 0, ww, wh, o)
+    }
+    surf := w.Surface() else e {
+        fail MapWindowErr(e)
+    }
+    onerr surf.Close()
+    hwnd := match surf.Native() {
+        .Win32(hwnd: h, hinstance: _) { h }
+        _ {
+            fail Unsupported
+        }
+    }
+    (width: ww, height: wh) := surf.Size()
+    sc := try self.NewSwapchainFromHwnd(io, hwnd, ww, wh, o)
+    old_surf := Replace(mut self.state.Mut().swapchains.GetMut(sc.slot).surface, some(surf))
+    CloseOptSurface(old_surf)
+    return sc
+}
+
+CloseOptSurface(surf: ?window.Surface) {
+    match surf {
+        some(s) { s.Close() }
+        none {}
+    }
+}
+
+Device.NewSwapchainFromHwnd(mut self, io: Io, hwnd: uint, ww: int, wh: int, o: SwapchainOptions): Error!Swapchain {
     _ = io
     try self.CheckAlive()
     if !IsSwapchainFormat(o.format) {
@@ -69,19 +142,112 @@ export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOpti
     if o.buffers < 2 || o.buffers > 3 {
         fail Invalid(misuse: Misuse.LimitExceeded, at: -1)
     }
-    nh := try self.NativeCreateSwapchain()
     a := self.heap.Alloc()
-    onerr self.state.Mut().native.DestroySwapchain(a, nh)
-    (width: ww, height: wh) := w.Size()
     sw := if ww > 0 { ww } else { 800 }
     sh := if wh > 0 { wh } else { 600 }
+    var nh: u64 = 0
+    var actual_w := sw
+    var actual_h := sh
+    var actual_imgs := o.buffers
+    var actual_mode := o.mode
 
-    v_nh := try self.NativeCreateView()
-    onerr self.state.Mut().native.DestroyView(v_nh)
+    (stub: is_stub, dx: is_dx) := match &self.state.Ref().native {
+        .Stub(s: _) { (stub: true, dx: false) }
+        .Dx(d: _) { (stub: false, dx: true) }
+        .Vk(v: _) { (stub: false, dx: false) }
+    }
+    if is_stub {
+        nh = try self.NativeCreateSwapchain()
+    } else if is_dx {
+        (dxgi_res, dxgi_rtv) := SwapchainDxgiFormats(o.format)
+        spec := dx.SwapchainSpec(
+            hwnd: hwnd,
+            width: ww,
+            height: wh,
+            dxgi_res: dxgi_res,
+            dxgi_rtv: dxgi_rtv,
+            mode: PresentModeU8(o.mode),
+            buffers: o.buffers,
+            copy_src: o.copy_src,
+        )
+        st := self.state.Mut()
+        match mut st.native {
+            .Dx(d) {
+                res := d.CreateSwapchain(&spec) else e {
+                    SyncDxMessages(a, st)
+                    ge := MapDxError(e)
+                    RecordDxFailure(st, ge)
+                    fail ge
+                }
+                nh = res.sc_nh
+                actual_w = ww
+                actual_h = wh
+                actual_imgs = res.images
+                actual_mode = PresentModeFromU8(res.mode)
+                // CreateSwapchain also allocates a view handle inside dx.CreateSwapchain;
+                // store that DxView handle on ViewEntry instead of allocating a duplicate.
+                v_nh := res.view_nh
+                SyncDxMessages(a, st)
+                var usage := NoTextureUsage
+                usage.render_target = true
+                usage.copy_src = o.copy_src
+                v_entry := ViewEntry(
+                    tex_slot: 0,
+                    format: o.format,
+                    dim: ViewDimension.D2,
+                    aspect: Aspect.All,
+                    first_mip: 0,
+                    mip_count: 1,
+                    first_layer: 0,
+                    layer_count: 1,
+                    width: if actual_w > 0 { actual_w } else { 1 },
+                    height: if actual_h > 0 { actual_h } else { 1 },
+                    samples: 1,
+                    usage: usage,
+                    plane_mask: 1,
+                    is_swapchain: true,
+                    native_handle: v_nh,
+                )
+                var vslot: u32 = 0
+                var vgen: u32 = 0
+                match st.views.Alloc(a, v_entry) {
+                    .Ok(slot, gen_) {
+                        vslot = slot
+                        vgen = gen_
+                    }
+                    .Oom(val: _) {
+                        st.native.DestroyView(v_nh)
+                        st.native.DestroySwapchain(a, nh)
+                        fail OutOfMemory
+                    }
+                }
+                info := SwapchainInfo(format: o.format, mode: actual_mode, width: actual_w, height: actual_h, images: actual_imgs)
+                entry := SwapchainEntry(info: info, view_slot: vslot, view_gen: vgen, native_handle: nh, surface: none, handed_out: false)
+                match st.swapchains.Alloc(a, entry) {
+                    .Ok(slot, gen_) { return Swapchain(slot: slot, generation: gen_, device: self.serial) }
+                    .Oom(val) {
+                        SwapchainEntry(info: _, view_slot: _, view_gen: _, native_handle: _, surface, handed_out: _) := val
+                        CloseOptSurface(surface)
+                        st.native.DestroyView(v_nh)
+                        st.native.DestroySwapchain(a, nh)
+                        _ = st.views.Release(a, vslot)
+                        fail OutOfMemory
+                    }
+                }
+            }
+            _ {
+                fail Unsupported
+            }
+        }
+    } else {
+        fail Unsupported
+    }
+
+    onerr self.state.Mut().native.DestroySwapchain(a, nh)
     var usage := NoTextureUsage
     usage.render_target = true
     usage.copy_src = o.copy_src
-    v_entry := ViewEntry(
+    var v_entry := ViewEntry(
         tex_slot: 0,
         format: o.format,
         dim: ViewDimension.D2,
@@ -96,8 +262,11 @@ export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOpti
         usage: usage,
         plane_mask: 1,
         is_swapchain: true,
-        native_handle: v_nh,
+        native_handle: 0,
     )
+    v_nh := try self.NativeCreateView(&v_entry)
+    v_entry.native_handle = v_nh
+    onerr self.state.Mut().native.DestroyView(v_nh)
     var vslot: u32 = 0
     var vgen: u32 = 0
     match self.state.Mut().views.Alloc(a, v_entry) {
@@ -113,10 +282,12 @@ export Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOpti
     }
 
     info := SwapchainInfo(format: o.format, mode: o.mode, width: sw, height: sh, images: o.buffers)
-    entry := SwapchainEntry(info: info, view_slot: vslot, view_gen: vgen, native_handle: nh)
+    entry := SwapchainEntry(info: info, view_slot: vslot, view_gen: vgen, native_handle: nh, surface: none, handed_out: false)
     match self.state.Mut().swapchains.Alloc(a, entry) {
         .Ok(slot, gen_) { return Swapchain(slot: slot, generation: gen_, device: self.serial) }
-        .Oom(val: _) {
+        .Oom(val) {
+            SwapchainEntry(info: _, view_slot: _, view_gen: _, native_handle: _, surface, handed_out: _) := val
+            CloseOptSurface(surface)
             self.ReleaseSwapViewSlot(vslot)
             self.state.Mut().native.DestroyView(v_nh)
             self.state.Mut().native.DestroySwapchain(a, nh)
@@ -137,17 +308,31 @@ Device.ReleaseSwapchainSlot(mut self, slot: u32, gen_: u32): u32 {
     }
     match st.swapchains.Release(a, slot) {
         some(e) {
-            st.native.DestroySwapchain(a, e.native_handle)
-            return e.view_slot
+            SwapchainEntry(info: _, view_slot, view_gen: _, native_handle, surface, handed_out: _) := e
+            st.native.DestroySwapchain(a, native_handle)
+            CloseOptSurface(surface)
+            return view_slot
         }
         none { return 0 }
+    }
+}
+
+WaitSwapchainClose(io: Io, dev: mut Device) {
+    st := dev.state.Mut()
+    if !st.lost {
+        last := st.serials.LastSubmitted()
+        match mut st.native {
+            .Dx(d) { _ = d.WaitSerial(io, last) else {} }
+            _ {}
+        }
+        st.serials.Complete(last)
     }
 }
 
 /// Waits until the GPU and the presentation engine are done with the
 /// images, then releases them. Not cancellable; never fails.
 export Swapchain.Close(self, io: Io, dev: mut Device) {
-    _ = io
+    WaitSwapchainClose(io, dev)
     Swapchain(slot, generation, device) := self
     if device != dev.serial {
         Panic("gpu: a handle closed with another device")
@@ -186,6 +371,7 @@ export linear view struct SurfaceTexture {
     sc: mut Swapchain
     target: TextureView
     image: u32
+    sc_nh: u64
 }
 
 /// The outcome of Acquire.
@@ -201,19 +387,23 @@ export enum Acquired {
 /// latency) and takes the next image. Errors: DeviceLost, SurfaceLost,
 /// Canceled (repeatable: nothing taken). Suspends. Allocates nothing.
 export Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from sc {
-    _ = io
     try self.CheckAlive()
     if sc.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     try self.FlushPreSubmit()
+    a := self.heap.Alloc()
     st := self.state.Mut()
     if !st.swapchains.IsLive(sc.slot, sc.generation) {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
-    se := st.swapchains.Get(sc.slot)
-    vslot := se.view_slot
-    vgen := se.view_gen
+    vslot := st.swapchains.Get(sc.slot).view_slot
+    vgen := st.swapchains.Get(sc.slot).view_gen
+    sc_nh := st.swapchains.Get(sc.slot).native_handle
+    v_nh := st.views.Get(vslot).native_handle
+    cur_w := st.swapchains.Get(sc.slot).info.width
+    cur_h := st.swapchains.Get(sc.slot).info.height
+    handed_out := st.swapchains.Get(sc.slot).handed_out
     match mut st.native {
         .Stub(s) {
             if s.acquire_outdated {
@@ -224,16 +414,43 @@ export Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from 
                 s.acquire_hidden = false
                 return Acquired.Hidden
             }
-            if se.info.width == 0 || se.info.height == 0 {
+            if cur_w == 0 || cur_h == 0 {
                 return Acquired.Hidden
             }
             return Acquired.Ready(frame: SurfaceTexture(
                 sc: sc,
                 target: TextureView(slot: vslot, generation: vgen, device: self.serial),
                 image: 0,
+                sc_nh: 0,
             ))
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            if handed_out {
+                dx.AbandonSwapchain(sc_nh)
+                return Acquired.Outdated
+            }
+            ar := d.AcquireSwapchain(io, sc_nh, v_nh, cur_w, cur_h) else e {
+                SyncDxMessages(a, st)
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            SyncDxMessages(a, st)
+            if ar.status == 1 {
+                return Acquired.Outdated
+            }
+            if ar.status == 2 {
+                return Acquired.Hidden
+            }
+            st.swapchains.GetMut(sc.slot).handed_out = true
+            return Acquired.Ready(frame: SurfaceTexture(
+                sc: sc,
+                target: TextureView(slot: vslot, generation: vgen, device: self.serial),
+                image: ar.image_idx,
+                sc_nh: sc_nh,
+            ))
+        }
+        .Vk(v: _) {
             fail Unsupported
         }
     }
@@ -247,8 +464,11 @@ export SurfaceTexture.View(&self): &TextureView from self {
 /// Gives the image back unpresented. The next Acquire answers Outdated and
 /// Resize recreates the swapchain. Never fails; needs no device. O(1).
 export SurfaceTexture.Abandon(self) {
-    SurfaceTexture(sc: _, target, image: _) := self
+    SurfaceTexture(sc: _, target, image: _, sc_nh) := self
     TextureView(slot: _, generation: _, device: _) := target
+    if sc_nh != 0 {
+        dx.AbandonSwapchain(sc_nh)
+    }
 }
 
 /// What a present reported.
@@ -257,10 +477,12 @@ export struct Presented {
     export suboptimal: bool
 }
 
-CheckAndPresentStub(st: mut DeviceState, sc: &Swapchain): Error!void {
+CheckAndPresent(a: &Alloc, st: mut DeviceState, sc: &Swapchain): Error!bool {
     if !st.swapchains.IsLive(sc.slot, sc.generation) {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
+    sc_nh := st.swapchains.Get(sc.slot).native_handle
+    last_sub := st.serials.LastSubmitted()
     match mut st.native {
         .Stub(s) {
             match s.fail_next_submit {
@@ -272,8 +494,20 @@ CheckAndPresentStub(st: mut DeviceState, sc: &Swapchain): Error!void {
                 }
                 none {}
             }
+            return false
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            sub := d.PresentSwapchain(sc_nh, last_sub) else e {
+                SyncDxMessages(a, st)
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            SyncDxMessages(a, st)
+            st.swapchains.GetMut(sc.slot).handed_out = false
+            return sub
+        }
+        .Vk(v: _) {
             fail Unsupported
         }
     }
@@ -288,17 +522,16 @@ export Device.Present(mut self, io: Io, t: SurfaceTexture): Error!Presented {
     if t.sc.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
-    try CheckAndPresentStub(self.state.Mut(), &*t.sc)
-    SurfaceTexture(sc: _, target, image: _) := t
+    sub := try CheckAndPresent(self.heap.Alloc(), self.state.Mut(), &*t.sc)
+    SurfaceTexture(sc: _, target, image: _, sc_nh: _) := t
     TextureView(slot: _, generation: _, device: _) := target
-    return Presented(suboptimal: false)
+    return Presented(suboptimal: sub)
 }
 
 /// Recreates the images at width by height once the GPU and presentation
 /// engine are done with them. Errors: DeviceLost, SurfaceLost, Canceled
 /// (repeatable). Suspends.
 export Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: int): Error!void {
-    _ = io
     try self.CheckAlive()
     if sc.device != self.serial {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
@@ -307,18 +540,33 @@ export Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: in
         fail Invalid(misuse: Misuse.LimitExceeded, at: -1)
     }
     try self.FlushPreSubmit()
+    a := self.heap.Alloc()
     st := self.state.Mut()
     if !st.swapchains.IsLive(sc.slot, sc.generation) {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
-    se := st.swapchains.GetMut(sc.slot)
-    se.info.width = width
-    se.info.height = height
-    v := st.views.GetMut(se.view_slot)
-    v.width = width
-    v.height = height
+    sc_nh := st.swapchains.Get(sc.slot).native_handle
+    view_slot := st.swapchains.Get(sc.slot).view_slot
+    v_nh := st.views.Get(view_slot).native_handle
+    last_sub := st.serials.LastSubmitted()
     match mut st.native {
         .Stub(s: _) {}
-        .Dx(d: _) | .Vk(v: _) { fail Unsupported }
+        .Dx(d) {
+            d.ResizeSwapchain(io, sc_nh, v_nh, width, height, last_sub) else e {
+                SyncDxMessages(a, st)
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            SyncDxMessages(a, st)
+        }
+        .Vk(v: _) { fail Unsupported }
     }
+    se := st.swapchains.GetMut(sc.slot)
+    se.handed_out = false
+    se.info.width = width
+    se.info.height = height
+    v := st.views.GetMut(view_slot)
+    v.width = if width > 0 { width } else { 1 }
+    v.height = if height > 0 { height } else { 1 }
 }

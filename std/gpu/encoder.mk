@@ -8,6 +8,9 @@
 // the device's active CommandStream, records the first misuse for Submit to
 // report, and rolls back resource states via the undo log on Abandon.
 
+import std.mem
+import std.gpu.dx
+
 /// A copy's size in texels and layers.
 export struct Extent {
     export width: int
@@ -43,6 +46,7 @@ export linear view struct Encoder {
 export Device.Encoder(mut self, label: str): Error!Encoder from self {
     _ = label
     try self.CheckAlive()
+    try self.FlushPreSubmit()
     st := self.state.Mut()
     st.stream.ResetKeepChunks()
     st.encoder_active = true
@@ -167,13 +171,14 @@ export Encoder.CopyBufferToTexture(mut self, src: &Buffer, layout: DataLayout, d
     a := self.dev.heap.Alloc()
     st := self.dev.state.Mut()
     words := [
-        PackHdr(OpCopyBufferToTexture, 7, u16(pmask), Cast[u32](dst.mip)),
+        PackHdr(OpCopyBufferToTexture, 8, u16(pmask), Cast[u32](dst.mip)),
         src_nh,
         dst_nh,
         Cast[u64](layout.offset),
         PackU32Pair(Cast[u32](layout.bytes_per_row), Cast[u32](layout.rows_per_layer)),
         PackU32Pair(Cast[u32](dst.x), Cast[u32](dst.y)),
         PackU32Pair(Cast[u32](size.width), Cast[u32](size.height)),
+        PackU32Pair(Cast[u32](dst.layer), Cast[u32](size.layers)),
     ]
     _ = st.stream.WriteSlice(a, mut st.chunk_pool, words[..]) else {
         st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
@@ -211,13 +216,14 @@ export Encoder.CopyTextureToBuffer(mut self, src: TextureRegion, dst: &Buffer, l
     a := self.dev.heap.Alloc()
     st := self.dev.state.Mut()
     words := [
-        PackHdr(OpCopyTextureToBuffer, 7, u16(pmask), Cast[u32](src.mip)),
+        PackHdr(OpCopyTextureToBuffer, 8, u16(pmask), Cast[u32](src.mip)),
         src_nh,
         dst_nh,
         Cast[u64](layout.offset),
         PackU32Pair(Cast[u32](layout.bytes_per_row), Cast[u32](layout.rows_per_layer)),
         PackU32Pair(Cast[u32](src.x), Cast[u32](src.y)),
         PackU32Pair(Cast[u32](size.width), Cast[u32](size.height)),
+        PackU32Pair(Cast[u32](src.layer), Cast[u32](size.layers)),
     ]
     _ = st.stream.WriteSlice(a, mut st.chunk_pool, words[..]) else {
         st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
@@ -265,12 +271,14 @@ export Encoder.CopyTexture(mut self, src: TextureRegion, dst: TextureRegion, siz
     a := self.dev.heap.Alloc()
     st := self.dev.state.Mut()
     words := [
-        PackHdr(OpCopyTexture, 6, u16(pmask), Cast[u32](size.layers)),
+        PackHdr(OpCopyTexture, 8, u16(pmask), Cast[u32](size.layers)),
         src_nh,
         dst_nh,
         PackU32Pair(Cast[u32](src.mip), Cast[u32](dst.mip)),
         PackU32Pair(Cast[u32](src.x), Cast[u32](src.y)),
         PackU32Pair(Cast[u32](size.width), Cast[u32](size.height)),
+        PackU32Pair(Cast[u32](src.layer), Cast[u32](dst.layer)),
+        PackU32Pair(Cast[u32](dst.x), Cast[u32](dst.y)),
     ]
     _ = st.stream.WriteSlice(a, mut st.chunk_pool, words[..]) else {
         st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
@@ -310,7 +318,24 @@ export Encoder.WriteBuffer(mut self, dst: &Buffer, at: int, data: []u8): Error!v
             a := self.dev.heap.Alloc()
             try st.stream.Write3(a, mut st.chunk_pool, PackHdr(OpCopyBuffer, 3, 0, Cast[u32](data.Len())), nh, Cast[u64](at))
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            if data.Len() > 0 {
+                (res_ptr, off: src_off) := d.StageUploadData(data) else e {
+                    ge := MapDxError(e)
+                    RecordDxFailure(st, ge)
+                    fail ge
+                }
+                a := self.dev.heap.Alloc()
+                _ = try st.stream.WriteSlice(a, mut st.chunk_pool, [
+                    PackHdr(OpCopyBuffer, 5, 1, Cast[u32](data.Len())),
+                    res_ptr,
+                    nh,
+                    src_off,
+                    Cast[u64](at),
+                ][..])
+            }
+        }
+        .Vk(v: _) {
             fail Unsupported
         }
     }
@@ -404,12 +429,17 @@ export Encoder.Submit(self): Error!void {
     try self.dev.CheckAlive()
     try CheckStreamForSubmit(self.dev.state.Mut())
     try self.dev.FlushPreSubmit()
-    var is_stub := false
+    var is_supported := false
+    var is_dx := false
     match &self.dev.state.Ref().native {
-        .Stub(s: _) { is_stub = true }
-        .Dx(d: _) | .Vk(v: _) {}
+        .Stub(s: _) { is_supported = true }
+        .Dx(d: _) {
+            is_supported = true
+            is_dx = true
+        }
+        .Vk(v: _) {}
     }
-    if !is_stub {
+    if !is_supported {
         a := self.dev.heap.Alloc()
         st := self.dev.state.Mut()
         submit_serial := st.serials.Advance()
@@ -417,10 +447,115 @@ export Encoder.Submit(self): Error!void {
         st.encoder_active = false
         fail Unsupported
     }
-    Encoder(dev, stream: _) := self
-    a := dev.heap.Alloc()
-    st := dev.state.Mut()
+    a := self.dev.heap.Alloc()
+    st := self.dev.state.Mut()
+    if is_dx {
+        st.dx_chunks.Clear()
+        for ci in 0..st.stream.chunk_ids.Len() {
+            cid := st.stream.chunk_ids[ci]
+            end_w := st.stream.ChunkEndWord(ci)
+            ch := st.chunk_pool.chunks[cid].Ref()
+            span := dx.MakeChunkSpan(ch.words[0..end_w])
+            st.dx_chunks.Push(a, span) else e {
+                submit_serial := st.serials.Advance()
+                st.stream.RecycleToPool(a, mut st.chunk_pool, submit_serial, true)
+                st.encoder_active = false
+                fail e
+            }
+        }
+        st.dx_barriers.Clear()
+        for bi in 0..st.stream.barriers.Len() {
+            b := &st.stream.barriers[bi]
+            item := if b.is_tex {
+                dx.BarrierSpec(
+                    is_tex: true,
+                    nh: st.textures.Get(b.tex.slot).native_handle,
+                    all_sub: b.tex.all_sub,
+                    first_mip: b.tex.first_mip,
+                    mip_count: b.tex.mip_count,
+                    first_layer: b.tex.first_layer,
+                    layer_count: b.tex.layer_count,
+                    plane_mask: b.tex.plane_mask,
+                    old_state: b.tex.old_state,
+                    new_state: b.tex.new_state,
+                    is_uav: false,
+                )
+            } else if b.buf.for_vk_only {
+                mem.Zeroed[dx.BarrierSpec]()
+            } else {
+                dx.BarrierSpec(
+                    is_tex: false,
+                    nh: st.buffers.Get(b.buf.slot).native_handle,
+                    all_sub: true,
+                    first_mip: 0,
+                    mip_count: 1,
+                    first_layer: 0,
+                    layer_count: 1,
+                    plane_mask: 1,
+                    old_state: b.buf.old_state,
+                    new_state: b.buf.new_state,
+                    is_uav: b.buf.is_uav,
+                )
+            }
+            st.dx_barriers.Push(a, item) else e {
+                submit_serial := st.serials.Advance()
+                st.stream.RecycleToPool(a, mut st.chunk_pool, submit_serial, true)
+                st.encoder_active = false
+                fail e
+            }
+        }
+        st.dx_passes.Clear()
+        for pi in 0..st.stream.passes.Len() {
+            ps := &st.stream.passes[pi]
+            var cols: [8]dx.PassColorSpec = [mem.Zeroed[dx.PassColorSpec](); 8]
+            for ci in 0..ps.color_count {
+                c := &ps.colors[ci]
+                rtv := dx.ViewRtvInfo(c.view_nh)
+                res_v := dx.ViewRtvInfo(c.resolve_view_nh)
+                cols[ci] = dx.PassColorSpec(
+                    is_swapchain: rtv.is_swapchain,
+                    res_ptr: rtv.res_ptr,
+                    rtv_ptr: rtv.rtv_ptr,
+                    has_resolve: c.resolve_view_nh != 0,
+                    resolve_res_ptr: res_v.res_ptr,
+                    resolve_sub: c.resolve_sub,
+                    src_sub: c.subresource,
+                    dxgi_format: c.dxgi_format,
+                    load_op: c.load_op,
+                    clear_r: c.clear_r,
+                    clear_g: c.clear_g,
+                    clear_b: c.clear_b,
+                    clear_a: c.clear_a,
+                )
+            }
+            dsv_ptr := if ps.depth.has_depth { dx.ViewDsvInfo(ps.depth.view_nh, ps.depth.read_only) } else { 0 }
+            dp := dx.PassDepthSpec(
+                has_depth: ps.depth.has_depth,
+                dsv_ptr: dsv_ptr,
+                read_only: ps.depth.read_only,
+                depth_load: ps.depth.depth_load,
+                stencil_load: ps.depth.stencil_load,
+                depth_clear: ps.depth.depth_clear,
+                stencil_clear: ps.depth.stencil_clear,
+                has_stencil: ps.depth.has_stencil,
+            )
+            pspec := dx.PassReplaySpec(
+                width: ps.width,
+                height: ps.height,
+                color_count: ps.color_count,
+                colors: cols,
+                depth: dp,
+            )
+            st.dx_passes.Push(a, pspec) else e {
+                submit_serial := st.serials.Advance()
+                st.stream.RecycleToPool(a, mut st.chunk_pool, submit_serial, true)
+                st.encoder_active = false
+                fail e
+            }
+        }
+    }
     submit_serial := st.serials.Advance()
+    skip_pb := st.planted_bug == PlantedBug.SkipPassBarrier
     match mut st.native {
         .Stub(s) {
             s.RecordStreamOps(a, &st.stream, &st.chunk_pool)
@@ -429,10 +564,25 @@ export Encoder.Submit(self): Error!void {
                 st.sticky_err = some(e)
             }
         }
-        .Dx(d: _) | .Vk(v: _) {}
+        .Dx(d) {
+            d.ReplayAndSubmit(
+                st.dx_chunks.Items(),
+                st.dx_barriers.Items(),
+                st.stream.labels.Items(),
+                st.dx_passes.Items(),
+                skip_pb,
+                submit_serial,
+            ) else e {
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+            }
+            SyncDxMessages(a, st)
+        }
+        .Vk(v: _) {}
     }
     st.stream.RecycleToPool(a, mut st.chunk_pool, submit_serial, false)
     st.encoder_active = false
+    Encoder(dev: _, stream: _) := self
 }
 
 /// Drops what was recorded and recycles the stream. Never fails. O(1).
@@ -472,7 +622,14 @@ export Device.WriteBuffer(mut self, b: &Buffer, at: int, data: []u8): Error!void
             }
             try st.pre_submit.Write3(a, mut st.chunk_pool, PackHdr(OpCopyBuffer, 3, 0, Cast[u32](data.Len())), nh, Cast[u64](at))
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            d.QueueWriteBuffer(nh, at, data) else e {
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+        }
+        .Vk(v: _) {
             fail Unsupported
         }
     }
@@ -510,7 +667,21 @@ export Device.WriteTexture(mut self, dst: TextureRegion, data: []u8, size: Exten
         .Stub(s: _) {
             try st.pre_submit.Write3(a, mut st.chunk_pool, PackHdr(OpCopyBufferToTexture, 3, u16(pmask), Cast[u32](dst.mip)), nh, PackU32Pair(Cast[u32](size.width), Cast[u32](size.height)))
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            asp := match dst.aspect {
+                .Depth { u8(1) }
+                .Stencil { u8(2) }
+                _ { u8(0) }
+            }
+            plane := if asp == 2 { 1 } else { 0 }
+            cur_s := st.textures.Get(dst.texture.slot).state.StateAt(plane, dst.mip, dst.layer)
+            d.QueueWriteTexture(nh, dst.mip, dst.layer, dst.x, dst.y, size.width, size.height, size.layers, asp, cur_s, data) else e {
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+        }
+        .Vk(v: _) {
             fail Unsupported
         }
     }
@@ -553,7 +724,27 @@ export Device.ReadTexture(mut self, a: &Arena, io: Io, src: TextureRegion, size:
             out := try a.Slice[u8](need)
             return out[..]
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            asp := match src.aspect {
+                .Depth { u8(1) }
+                .Stencil { u8(2) }
+                _ { u8(0) }
+            }
+            plane := if asp == 2 { 1 } else { 0 }
+            src_nh := st.textures.Get(src.texture.slot).native_handle
+            cur_s := st.textures.Get(src.texture.slot).state.StateAt(plane, src.mip, src.layer)
+            read_serial := st.serials.Advance()
+            out := d.ReadTextureSync(a, io, src_nh, src.mip, src.layer, src.x, src.y, size.width, size.height, size.layers, asp, cur_s, need, read_serial) else e {
+                SyncDxMessages(self.heap.Alloc(), st)
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            st.serials.Complete(read_serial)
+            SyncDxMessages(self.heap.Alloc(), st)
+            return out
+        }
+        .Vk(v: _) {
             fail Unsupported
         }
     }

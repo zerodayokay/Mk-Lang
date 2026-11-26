@@ -45,7 +45,15 @@ export Device.MapRead(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Mapp
             try s.WaitSerial(wait_target)
             st.serials.Complete(wait_target)
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            d.WaitSerial(io, wait_target) else e {
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            st.serials.Complete(wait_target)
+        }
+        .Vk(v: _) {
             fail Unsupported
         }
     }
@@ -62,7 +70,10 @@ export Mapped.Bytes(&self): []u8 from self {
             idx := Cast[int](nh - 1)
             return s.buf_mems[idx].bytes.Items()[self.at..(self.at + self.n)]
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            return d.BufferMappedSlice(nh, self.at, self.n)
+        }
+        .Vk(v: _) {
             Panic("gpu: mapped bytes on unimplemented backend")
         }
     }
@@ -84,7 +95,6 @@ export linear view struct MappedMut {
 /// Waits until the GPU's last use of b is done and maps n bytes at at for
 /// writing. Errors: as MapRead, with map_write.
 export Device.MapWrite(mut self, io: Io, b: &Buffer, at: int, n: int): Error!MappedMut from self, b {
-    _ = io
     try self.CheckAlive()
     last_use := try PrepMapCheck(self.state.Ref(), self.serial, b, true, at, n)
     try self.FlushPreSubmit()
@@ -95,7 +105,15 @@ export Device.MapWrite(mut self, io: Io, b: &Buffer, at: int, n: int): Error!Map
             try s.WaitSerial(wait_target)
             st.serials.Complete(wait_target)
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            d.WaitSerial(io, wait_target) else e {
+                ge := MapDxError(e)
+                RecordDxFailure(st, ge)
+                fail ge
+            }
+            st.serials.Complete(wait_target)
+        }
+        .Vk(v: _) {
             fail Unsupported
         }
     }
@@ -112,7 +130,10 @@ export MappedMut.Bytes(mut self): mut []u8 from self {
             idx := Cast[int](nh - 1)
             return mut s.buf_mems[idx].bytes.ItemsMut()[self.at..(self.at + self.n)]
         }
-        .Dx(d: _) | .Vk(v: _) {
+        .Dx(d) {
+            return d.BufferMappedSliceMut(nh, self.at, self.n)
+        }
+        .Vk(v: _) {
             Panic("gpu: mapped bytes on unimplemented backend")
         }
     }

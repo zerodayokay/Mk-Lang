@@ -343,10 +343,9 @@ ValidatePipelineLayoutGroups(st: &DeviceState, serial: u32, groups: []&BindGroup
 /// Invalid(LimitExceeded) (groups, per-stage counts, immediates). O(entries);
 /// one root signature or VkPipelineLayout.
 export Device.NewPipelineLayout(mut self, groups: []&BindGroupLayout, immediates: int, label: str): Error!PipelineLayout {
-    _ = label
     try self.CheckAlive()
     var entry := try ValidatePipelineLayoutGroups(self.state.Ref(), self.serial, groups, immediates)
-    nh := try self.NativeCreatePipelineLayout()
+    nh := try self.NativeCreatePipelineLayout(groups, immediates, label)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().pipe_layouts.Alloc(a, entry) {
@@ -647,7 +646,7 @@ export Device.NewBindGroup(mut self, layout: &BindGroupLayout, entries: []BindEn
     }
     a := self.heap.Alloc()
     var entry := try BuildBindGroupEntry(a, self.state.Ref(), self.serial, layout, entries)
-    nh := self.NativeCreateBindGroup() else e {
+    nh := self.NativeCreateBindGroup(layout.slot, entries) else e {
         entry.Free(a)
         fail e
     }

@@ -469,7 +469,7 @@ export Device.NewRenderPipeline(mut self, io: Io, layout: &PipelineLayout, vs: &
         none { u32(0) }
     }
     var entry := try ValidateRenderPipelineDesc(self.state.Ref(), self.serial, layout, vs, fs, fs_slot, &d)
-    nh := try self.NativeCreatePipeline()
+    nh := try self.NativeCreateRenderPipeline(io, layout.slot, vs.slot, fs_slot, &d)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().render_pipes.Alloc(a, entry) {
@@ -588,7 +588,7 @@ export Device.NewComputePipeline(mut self, io: Io, layout: &PipelineLayout, cs: 
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     var entry := try ValidateComputePipelineDesc(self.state.Ref(), layout, cs)
-    nh := try self.NativeCreatePipeline()
+    nh := try self.NativeCreateComputePipeline(io, layout.slot, cs.slot, label)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().compute_pipes.Alloc(a, entry) {

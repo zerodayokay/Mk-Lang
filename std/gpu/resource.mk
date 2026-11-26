@@ -67,20 +67,30 @@ ValidateBufferUsage(u: &BufferUsage): Invalid!void {
 /// DeviceLost. O(1) driver calls; may allocate a memory block; allocates a
 /// slot entry from the device's heap when its table grows.
 export Device.NewBuffer(mut self, size: int, usage: BufferUsage, label: str): Error!Buffer {
-    _ = label
     try self.CheckAlive()
     try ValidateBufferUsage(&usage)
     if size <= 0 || size > self.Limits().max_buffer_size {
         fail Invalid(misuse: Misuse.LimitExceeded, at: -1)
     }
-    nh := try self.NativeCreateBuffer(size)
+    nh := try self.NativeCreateBuffer(size, usage, label)
     a := self.heap.Alloc()
     onerr self.state.Mut().native.DestroyBuffer(a, nh)
     fixed := usage.map_read || usage.map_write
     fixed_st := if usage.map_read { ResCopyDst } else if usage.map_write { ResCopySrc } else { ResCommon }
     entry := BufferEntry(size: size, usage: usage, state: BufState.New(fixed, fixed_st), native_handle: nh)
     match self.state.Mut().buffers.Alloc(a, entry) {
-        .Ok(slot, gen_) { return Buffer(slot: slot, generation: gen_, device: self.serial) }
+        .Ok(slot, gen_) {
+            st := self.state.Mut()
+            match &st.native {
+                .Dx(d) {
+                    if d.HasPendingPreSubmit() {
+                        st.buffers.StampUse(slot, st.serials.next)
+                    }
+                }
+                _ {}
+            }
+            return Buffer(slot: slot, generation: gen_, device: self.serial)
+        }
         .Oom(val: _) {
             self.state.Mut().native.DestroyBuffer(a, nh)
             fail OutOfMemory
@@ -260,7 +270,7 @@ export Device.NewTexture(mut self, d: TextureDesc): Error!Texture {
     for i in 0..d.view_formats.Len() {
         try vfs.Push(a, d.view_formats[i])
     }
-    nh := try self.NativeCreateTexture()
+    nh := try self.NativeCreateTexture(&d)
     onerr self.state.Mut().native.DestroyTexture(nh)
     planes := PlaneCount(d.format)
     entry := TextureEntry(
@@ -276,7 +286,18 @@ export Device.NewTexture(mut self, d: TextureDesc): Error!Texture {
         native_handle: nh,
     )
     match self.state.Mut().textures.Alloc(a, entry) {
-        .Ok(slot, gen_) { return Texture(slot: slot, generation: gen_, device: self.serial) }
+        .Ok(slot, gen_) {
+            st := self.state.Mut()
+            match &st.native {
+                .Dx(d: dx_dev) {
+                    if dx_dev.HasPendingPreSubmit() {
+                        st.textures.StampUse(slot, st.serials.next)
+                    }
+                }
+                _ {}
+            }
+            return Texture(slot: slot, generation: gen_, device: self.serial)
+        }
         .Oom(val) {
             val.Free(a)
             self.state.Mut().native.DestroyTexture(nh)
@@ -491,7 +512,7 @@ export Device.NewView(mut self, t: &Texture, d: ViewDesc): Error!TextureView {
         fail Invalid(misuse: Misuse.StaleHandle, at: -1)
     }
     var entry := try ValidateViewDesc(self.state.Ref(), t, &d)
-    nh := try self.NativeCreateView()
+    nh := try self.NativeCreateView(&entry)
     entry.native_handle = nh
     a := self.heap.Alloc()
     match self.state.Mut().views.Alloc(a, entry) {
@@ -622,7 +643,7 @@ export Device.NewSampler(mut self, d: SamplerDesc): Error!Sampler {
     if self.state.Ref().samplers.LiveCount() >= self.Limits().max_sampler_descriptors {
         fail Invalid(misuse: Misuse.LimitExceeded, at: -1)
     }
-    nh := try self.NativeCreateSampler()
+    nh := try self.NativeCreateSampler(&d)
     a := self.heap.Alloc()
     match self.state.Mut().samplers.Alloc(a, SamplerEntry(comparison: d.compare.IsSome(), native_handle: nh)) {
         .Ok(slot, gen_) { return Sampler(slot: slot, generation: gen_, device: self.serial) }

@@ -68,6 +68,43 @@ struct StreamLoc {
     word_idx: int
 }
 
+struct PassColorStreamRec {
+    view_nh: u64
+    tex_nh: u64
+    subresource: u32
+    resolve_view_nh: u64
+    resolve_tex_nh: u64
+    resolve_sub: u32
+    dxgi_format: u32
+    load_op: u8
+    store_op: u8
+    clear_r: f32
+    clear_g: f32
+    clear_b: f32
+    clear_a: f32
+}
+
+struct PassDepthStreamRec {
+    has_depth: bool
+    view_nh: u64
+    read_only: bool
+    depth_load: u8
+    depth_store: u8
+    stencil_load: u8
+    stencil_store: u8
+    depth_clear: f32
+    stencil_clear: u8
+    has_stencil: bool
+}
+
+struct PassStreamRec {
+    width: int
+    height: int
+    color_count: int
+    colors: [8]PassColorStreamRec
+    depth: PassDepthStreamRec
+}
+
 struct CommandStream {
     chunk_ids: HeapList[int]
     cur_chunk: int
@@ -75,6 +112,7 @@ struct CommandStream {
     cmd_count: int
     first_error: ?Invalid
     barriers: HeapList[BarrierItem]
+    passes: HeapList[PassStreamRec]
     labels: HeapList[u8]
     undo: HeapList[UndoOp]
     touched_slots: HeapList[u64]
@@ -90,6 +128,7 @@ CommandStream.New(a: &Alloc): CommandStream {
         cmd_count: 0,
         first_error: none,
         barriers: HeapList[BarrierItem].New(a),
+        passes: HeapList[PassStreamRec].New(a),
         labels: HeapList[u8].New(a),
         undo: HeapList[UndoOp].New(a),
         touched_slots: HeapList[u64].New(a),
@@ -216,6 +255,7 @@ CommandStream.ResetKeepChunks(mut self) {
     self.cmd_count = 0
     self.first_error = none
     self.barriers.Clear()
+    self.passes.Clear()
     self.labels.Clear()
     self.undo.Clear()
     self.touched_slots.Clear()
@@ -236,9 +276,10 @@ CommandStream.RecycleToPool(mut self, a: &Alloc, pool: mut ChunkPool, serial: u6
 }
 
 CommandStream.FreeAll(self, a: &Alloc) {
-    CommandStream(chunk_ids, cur_chunk: _, cur_word: _, cmd_count: _, first_error: _, barriers, labels, undo, touched_slots, debug_depth: _, pass_debug_base: _) := self
+    CommandStream(chunk_ids, cur_chunk: _, cur_word: _, cmd_count: _, first_error: _, barriers, passes, labels, undo, touched_slots, debug_depth: _, pass_debug_base: _) := self
     chunk_ids.Free(a)
     barriers.Free(a)
+    passes.Free(a)
     labels.Free(a)
     undo.Free(a)
     touched_slots.Free(a)
