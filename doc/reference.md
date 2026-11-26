@@ -4269,7 +4269,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - In a `match` on an error-set value, the members are written without `err`: `NotFound(id) { ... }`.
-- `ok(p)` and `err(p)` nest like any pattern wherever an `E!T` value sits: in the ok payload of an `E!(F!T)`, which a generic whose result is its type parameter returns ([results](#results-et)), as `ok(ok(n))` and `ok(err(F))`, and in a `some`, a field or a variant's payload. An alternative may join both sides: `ok(0) | err(_)`.
+- `ok(p)` and `err(p)` nest like any pattern wherever an `E!T` value sits: in the ok payload of an `E!(F!T)`, which a generic whose result is its type parameter returns ([results](#results-et)), as `ok(ok(n))` and `ok(err(F))`, and in a `some`, a field or a variant's payload that a type argument makes an `E!T`, as `some(ok(v))` and `S(r: err(F))`. An alternative may join both sides: `ok(0) | err(_)`.
 
 ```mk
 // verdict: ok

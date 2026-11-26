@@ -1,11 +1,11 @@
 // Why: ok(p) and err(p) take any pattern p, and an E!T can sit inside the
 // scrutinee (the ok payload of an E!(F!int), a field, a some payload), so
-// lower's pattern compiler must take nested ok and err patterns apart; each
-// was an internal error ("pattern *ast.OkPattern in a match", MKH-912).
+// lower's pattern compiler must take nested ok and err patterns apart, and
+// a top-level alternative may join both sides of a match on an E!T.
 // What: TestNestedUnionPatterns.
 // How: a grid of matches, each kind of pattern under each kind that can
-// hold an E!T, checked and lowered (lowerModule fails on any ICE); the
-// inexhaustive ones must be E0306, never E0000.
+// hold an E!T, checked, lowered and validated (lowerModule fails on any
+// ICE); the inexhaustive ones must be E0306, never E0000.
 
 package lower
 
@@ -19,7 +19,7 @@ import (
 
 // nestedPrelude declares the errors and the generics that make an E!T a
 // value: a generic whose result is its type parameter, at an error union,
-// returns the union (MKH-407).
+// returns the union.
 const nestedPrelude = `error E
 error F
 error F2(code: int)
@@ -139,7 +139,7 @@ func TestNestedUnionPatterns(t *testing.T) {
 		}
 	}
 }`, ""},
-		{"stored/mut",`Use(p: *R, bad: bool): int {
+		{"stored/mut", `Use(p: *R, bad: bool): int {
 	var r: E!R = Get[R](p, bad)
 	match mut r {
 		ok(ok(n)) { *n = *n + 1 }
