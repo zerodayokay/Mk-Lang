@@ -1,0 +1,5 @@
+script
+$CASES/scripts/hidden.script
+--backend
+vulkan
+--validate
