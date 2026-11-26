@@ -249,6 +249,7 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"dl.NotFound":                       {Module: "std.dl", Lines: []string{"error NotFound"}},
 	"dl.Open":                           {Module: "std.dl", Lines: []string{"dl.Open(io: Io, name: str, search: Search): dl.Error!Library"}},
 	"dl.Os":                             {Module: "std.dl", Lines: []string{"error Os(code: i64)"}},
+	"dl.Present":                        {Module: "std.dl", Lines: []string{"dl.Present[F](io: Io, f: F): bool"}},
 	"dl.Search":                         {Module: "std.dl", Lines: []string{"enum Search"}},
 	"dl.Unsupported":                    {Module: "std.dl", Lines: []string{"error Unsupported"}},
 	"dyn.Of":                            {Module: "std.dyn", Lines: []string{"dyn.Of(g: mut Gen, i: Type)"}},
@@ -903,5 +904,4 @@ var surfaceDocs2 = map[string]surfaceDoc{
 	"simd.Vec.Zero":                     {Module: "std.simd", Lines: []string{"Vec[T, N].Zero(): Vec[T, N] requires N == 2 || N == 4 || N == 8 || N == 16 || N == 32 || N == 64"}},
 	"sqlite.Busy":                       {Module: "std.db.sqlite", Lines: []string{"error Busy"}},
 	"sqlite.Db.Close":                   {Module: "std.db.sqlite", Lines: []string{"Db.Close(self)"}},
-	"sqlite.Db.Exec":                    {Module: "std.db.sqlite", Lines: []string{"Db.Exec(&self, io: Io, sql: str): sqlite.Error!void"}},
 }
