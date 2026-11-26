@@ -1,6 +1,6 @@
 # Dogfoods
 
-Eighteen complete programs written in Mk: command-line tools, servers, a scripting language, a ray tracer and a kernel. Each is a real package with a command line, real input formats, error messages and exit codes, and its own tests. Read them to see how Mk code looks at the scale of a few thousand lines, and how the standard library fits together.
+Nineteen complete programs written in Mk: command-line tools, servers, a scripting language, a ray tracer, a GPU renderer and a kernel. Each is a real package with a command line, real input formats, error messages and exit codes, and its own tests. Read them to see how Mk code looks at the scale of a few thousand lines, and how the standard library fits together.
 
 ## The programs
 
@@ -22,6 +22,7 @@ Eighteen complete programs written in Mk: command-line tools, servers, a scripti
 | [`pack`](pack) | Archiver with signing and encryption | Ed25519 signatures, X25519 sealing in fixed-size chunks, streaming zstd, gzip and zlib |
 | [`procman`](procman) | Process manager and task runner for Procfiles | One task per process, restart back-off, `proc.Supervise`, a status port |
 | [`raft`](raft) | A five-node Raft cluster over UDP with a linearizability checker | `std.sim` partitions, loss and corruption rolled from a seed; recordings of failing seeds |
+| [`scene`](scene) | 3D renderer and viewer over a text scene format, on Direct3D 12 and Vulkan | `std.gpu` shadow, MSAA, instancing and compute passes, `std.window` with an orbit camera, images compared across backends with `std.image` |
 | [`textkit`](textkit) | Unicode text tools: wc, grep, sort, norm, fold, words, width, convert | `std.text` segmentation and normalization, WHATWG encodings, streaming UTF-8 checks |
 | [`tracer`](tracer) | Path tracer and function plotter | A deterministic per-pixel sampler, so the image is the same on any number of carriers; a uniform grid for meshes |
 

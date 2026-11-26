@@ -1,0 +1,7 @@
+render
+$CASES/scenes/post.scene
+$WORK/post.png
+--warp
+--validate
+--compare
+$CASES/golden/post.png

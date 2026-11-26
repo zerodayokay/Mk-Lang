@@ -36,7 +36,10 @@
 // the profiles with mk profile merge, maps each record with a non-zero
 // entry count to its std function, adds the static references of mk query
 // uses --json, writes Dogfoods/COVERAGE.md, and exits 1 when a library
-// line is neither covered nor exempt.
+// line is neither covered nor exempt. A line counts as executed when some
+// case ran it on every hosted target cover ran on, except a line of a
+// hardware-bound module (std.gpu, std.window and their submodules): a case
+// limited by a .targets file running it on its own target is enough.
 //
 // The harness imports nothing of the compiler (internal/archtest checks): it
 // runs mk, QEMU and the WSL lock's script as processes. It builds mk from

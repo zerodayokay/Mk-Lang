@@ -1,0 +1,7 @@
+render
+$CASES/scenes/shadow.scene
+$WORK/shadow.png
+--warp
+--validate
+--compare
+$CASES/golden/shadow.png
