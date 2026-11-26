@@ -4,8 +4,9 @@
 //
 // What: TaskState (the scheduler's process state), the scheduler loop Run
 // and FindRunnable; Ready, Park, ParkUntil and Complete (the park
-// handshake), YieldNow; WakeOne, Spin, Found, Linger, Idle, AnyWork and
-// StealRounds; Reap, TrimSpare and the test gates IdleGate and ReapGate.
+// handshake), YieldNow; WakeOne, Spin, Found, Linger, AnyWork and
+// StealRounds; Reap. Idle, FlushSlots, TrimSpare and the test gates IdleGate
+// and ReapGate are in sched_idle.mk.
 //
 // How: the loop runs on each carrier's system stack. No preemption: a task
 // runs until it suspends. The rest of this comment states who may touch

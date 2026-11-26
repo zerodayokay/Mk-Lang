@@ -50,7 +50,7 @@ export Main(sys: &System): OutOfMemory|WriteError!void {
 `
 
 // TestSortCacheNoTBAA pins what SortStable's stack scratch (mem_drift.mk,
-// DriftStackCap) and SortStableInPlace's stack cache (core_sort.mk,
+// DriftStackCap) and SortStableInPlace's stack cache (core_sort_stable.mk,
 // BlkCacheCap) rest on: each is a [512]u64 local that holds values of any T
 // aligned to at most 8, written and read through a raw pointer cast, which
 // is sound only while the compiler emits no type-based alias metadata; with

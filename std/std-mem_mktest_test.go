@@ -1,5 +1,6 @@
 // Why: the arena and heap test blocks in std.core (core/tests_arena.mk,
-// core/tests_heap.mk) must judge leaks and panics, and be seen to.
+// core/tests_arena_fuzz.mk, core/tests_heap.mk) must judge leaks and
+// panics, and be seen to.
 // What: runs those blocks with mk test --std=std.core, and planted bugs
 // (a leak, a Reset that frees nothing, an OwnerCheck that never panics).
 // How: the counting heap fails a leaking block with exit 102; "[exit N: text]"
@@ -188,10 +189,9 @@ func judgeMemBlock(t *testing.T, name string, r stdTestResult, ok bool) {
 	}
 }
 
-// TestStdMem_MkTestBlocks: every block of core/tests_arena.mk and
-// core/tests_heap.mk ends as its name asks, at dev and at release; a block
-// with an [env] tag runs again alone with that environment (MK_CARRIERS=1:
-// the same tasks on one carrier).
+// TestStdMem_MkTestBlocks: every block of memTestFiles ends as its name
+// asks, at dev and at release; a block with an [env] tag runs again alone
+// with that environment (MK_CARRIERS=1: the same tasks on one carrier).
 func TestStdMem_MkTestBlocks(t *testing.T) {
 	t.Parallel()
 	var names []string

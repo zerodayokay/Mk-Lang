@@ -2,7 +2,7 @@
 // stable and do exactly what the Go models do.
 // What: TestStdColl_BlockMergeMatchesGo over Slice[T].SortStable
 // (mem_drift.mk, coll_sort.mk) and Slice[T].SortStableInPlace
-// (core_sort.mk's StableSort).
+// (core_sort_stable.mk's StableSort).
 // How: a Mk program sorts every blkPattern around the block sizes; digests
 // must match slices.SortStableFunc and less counts the models'.
 

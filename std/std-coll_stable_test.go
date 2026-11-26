@@ -1,7 +1,7 @@
 // Why: SortStable, SortStableInPlace and Search are called from user code, so
 // their order and cost must hold through check's Slice routing too.
-// What: TestStdColl_StableSortMatchesGo over core_sort.mk, mem_drift.mk and
-// coll_sort.mk.
+// What: TestStdColl_StableSortMatchesGo over core_sort.mk,
+// core_sort_stable.mk, mem_drift.mk and coll_sort.mk.
 // How: less counts against the Go models (driftRunModel, blkRunModel), order
 // against slices.SortStableFunc, Search against sort.Search and its loop's
 // call count (searchModel); also at compile time.
