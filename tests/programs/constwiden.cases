@@ -1,0 +1,4 @@
+# A run test of widening another module's negative consts: sign-extended, as
+# the module's own; both profiles, both targets.
+case ok
+stdout constwiden.out
