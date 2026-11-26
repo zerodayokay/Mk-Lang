@@ -580,7 +580,7 @@ func TestInstallPs1EntryNames(t *testing.T) {
 		{"stream", "{top}/bin/mk.exe:escaped", "unsafe archive entry"},
 		{"device", "{top}/lib/con.txt", "unsafe archive entry"},
 		{"trailing space", "{top}/lib /escaped", "unsafe archive entry"},
-		{"one file by case", "{top}/BIN/MK.EXE", "already exists"},
+		{"one file by case", "{top}/BIN/MK.EXE", "ExtractToFile"},
 		{"directory with data", "{top}/lib/", "contains data"},
 	}
 	for i, c := range cases {
