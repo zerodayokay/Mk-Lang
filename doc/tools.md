@@ -305,10 +305,12 @@ mk apidiff ../mylib-1.0 .
 
 ### `mk cimport`
 
-`mk cimport` translates the package's C imports and prints one block per import: the generated Mk declarations, the share of the headers' declarations it bound, and the declarations it skipped, with the reason for each.
+`mk cimport` translates the package's C imports and prints one block per import: the generated Mk declarations, the share of the headers' declarations it bound, and the declarations it skipped, with the reason for each. `--skipped` lists each skipped declaration with its kind and reason; `--why <name>` explains what happened to a single C name.
 
 ```sh
 mk cimport
+mk cimport --skipped
+mk cimport --why INVALID_HANDLE_VALUE
 ```
 
 ### `mk sdk`

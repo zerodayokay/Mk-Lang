@@ -321,6 +321,8 @@ func (u *unit) unsafeCall(e ast.Node, it types.ItemID, d *types.FuncDecl) {
 		op = "call of a bodiless extern"
 	case op == "" && d.Naked:
 		op = "naked-call"
+	case op == "" && u.cComMethod(it):
+		op = "c-vtable-method"
 	}
 	if op != "" {
 		u.err(diag.E1101, e.Span(), unsafeCallText(op)+" needs an `unsafe \"reason\" { }` block").Text("operation", op)
@@ -336,6 +338,8 @@ func unsafeCallText(op string) string {
 		return "the call of a bodiless extern"
 	case "naked-call":
 		return "calling a naked function"
+	case "c-vtable-method":
+		return "calling a C vtable method"
 	case "mmio":
 		return "calling a std.mmio function"
 	}
@@ -499,6 +503,10 @@ func (u *unit) unsafeValue(at ast.Node, it types.ItemID) {
 	}
 	if d, ok := u.c.cfg.Items.Get(it).Decl.(*types.FuncDecl); ok && d.Sig.Extern && d.Bodiless {
 		u.err(diag.E1101, at.Span(), "naming a bodiless extern as a value needs an `unsafe \"reason\" { }` block").Text("operation", "extern-value")
+		return
+	}
+	if u.cComMethod(it) {
+		u.err(diag.E1101, at.Span(), "naming a C vtable method as a value needs an `unsafe \"reason\" { }` block").Text("operation", "c-vtable-method")
 	}
 }
 

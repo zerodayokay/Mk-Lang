@@ -37,11 +37,16 @@ type jnode struct {
 	Inline              bool              `json:"inline"`
 	Variadic            bool              `json:"variadic"`
 	IsBitfield          bool              `json:"isBitfield"`
-	Value               string            `json:"value"`
+	Value               json.RawMessage   `json:"value"`
+	Init                string            `json:"init"`
+	Opcode              string            `json:"opcode"`
+	CastKind            string            `json:"castKind"`
 	FixedUnderlyingType *jtype            `json:"fixedUnderlyingType"`
 	OwnedTagDecl        *jref             `json:"ownedTagDecl"`
 	Decl                *jref             `json:"decl"`
+	ReferencedDecl      *jref             `json:"referencedDecl"`
 	Inner               []json.RawMessage `json:"inner"`
+	ArrayFiller         []json.RawMessage `json:"array_filler"`
 	Loc                 jloc              `json:"loc"`
 	at                  string            // "anon:<file>:<line>:<col>" of a top-level node
 	kids                []jnode           // the decoded Inner, once children ran
@@ -81,6 +86,35 @@ func (n *jnode) children() []jnode {
 	}
 	n.kids, n.kidsOK = out, true
 	return out
+}
+
+// fillerNodes decodes n's array_filler nodes (for partially initialized
+// arrays: element 0 is the filler, elements 1.. are the explicit ones).
+func (n *jnode) fillerNodes() []jnode {
+	if len(n.ArrayFiller) == 0 {
+		return nil
+	}
+	out := make([]jnode, 0, len(n.ArrayFiller))
+	for _, raw := range n.ArrayFiller {
+		var c jnode
+		if json.Unmarshal(raw, &c) == nil {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// valueStr returns n's JSON "value" field as a string (unquoting JSON strings
+// and keeping JSON numbers or booleans as text), or "" when absent.
+func (n *jnode) valueStr() string {
+	if len(n.Value) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(n.Value, &s) == nil {
+		return s
+	}
+	return strings.TrimSpace(string(n.Value))
 }
 
 // declKind is the kind of a top-level C declaration.
@@ -151,8 +185,10 @@ type decl struct {
 	ctypeText string // the function type's spelling, for the comment
 
 	// dVar
-	vt     *ctype
-	extern bool
+	vt       *ctype
+	extern   bool
+	constVar bool
+	initExpr *jnode
 
 	// probeIdx is a probe variable's macro index (__mk_m_<k>), -1 else.
 	probeIdx int
@@ -167,6 +203,7 @@ type unit struct {
 	anon     map[string]*decl // anon loc to its record or enum
 	probes   map[int]*decl    // macro index to its probe variable
 	funcs    map[string]*decl // C function name to its (defining, else last) decl
+	enumVals map[string]int64 // EnumConstantDecl ID to its integer value
 	total    int              // top-level nodes read
 
 	file string // the location state: the last file and line Clang wrote
@@ -239,7 +276,7 @@ const probePrefix = "__mk_m_"
 // top-level elements decoded in parallel (split.go) and applied in order.
 func readUnit(r io.Reader) (*unit, error) {
 	u := &unit{byID: map[string]*decl{}, tags: map[string]*decl{}, typedefs: map[string]*decl{},
-		anon: map[string]*decl{}, probes: map[int]*decl{}, funcs: map[string]*decl{}}
+		anon: map[string]*decl{}, probes: map[int]*decl{}, funcs: map[string]*decl{}, enumVals: map[string]int64{}}
 	imp := -1
 	err := decodeElements(r, func(e *element) error {
 		n := &e.n
@@ -360,12 +397,55 @@ func (u *unit) top(n *jnode, imp int) {
 			}
 			return
 		}
-		d := &decl{kind: dVar, id: n.ID, name: n.Name, imp: imp, probeIdx: -1, extern: n.StorageClass == "extern"}
+		d := &decl{kind: dVar, id: n.ID, name: n.Name, imp: imp, probeIdx: -1, extern: n.StorageClass == "extern", constVar: isTopConst(n.Type)}
 		if n.Type != nil {
 			d.vt = parseType(n.Type.QualType)
 		}
+		if d.constVar && n.Init != "" && !n.IsInvalid {
+			for i := range n.children() {
+				c := &n.kids[i]
+				if !strings.HasSuffix(c.Kind, "Attr") {
+					d.initExpr = c
+					break
+				}
+			}
+		}
 		u.add(d)
 	}
+}
+
+// isTopConst reports whether t is top-level const (not merely a pointer
+// to const): "const int", "const struct _GUID", "char *const", not "const char *".
+func isTopConst(t *jtype) bool {
+	if t == nil {
+		return false
+	}
+	qt := t.Desugared
+	if qt == "" {
+		qt = t.QualType
+	}
+	depth, lastStar := 0, -1
+	for i := 0; i < len(qt); i++ {
+		switch qt[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case '*':
+			if depth == 0 {
+				lastStar = i
+			}
+		}
+	}
+	tail := qt[lastStar+1:]
+	for _, tok := range lexType(tail) {
+		if tok.word && tok.s == "const" {
+			return true
+		}
+	}
+	return false
 }
 
 func (u *unit) add(d *decl) {
@@ -406,7 +486,7 @@ func (u *unit) record(n *jnode, imp int, nested bool) *decl {
 			if c.IsBitfield {
 				for _, e := range c.children() {
 					if e.Kind == "ConstantExpr" {
-						if v, err := strconv.Atoi(e.Value); err == nil {
+						if v, err := strconv.Atoi(e.valueStr()); err == nil {
 							f.bits = v
 						}
 					}
@@ -481,6 +561,9 @@ func (u *unit) enum(n *jnode, imp int) {
 			}
 		}
 		d.consts = append(d.consts, enumConst{name: c.Name, value: v})
+		if c.ID != "" {
+			u.enumVals[c.ID] = v
+		}
 		if first || v < d.enumMin {
 			d.enumMin = v
 		}
@@ -507,7 +590,8 @@ func enumValue(n jnode, depth int) (string, bool) {
 	}
 	for _, e := range n.children() {
 		if e.Kind == "ConstantExpr" {
-			return e.Value, e.Value != ""
+			v := e.valueStr()
+			return v, v != ""
 		}
 		if v, ok := enumValue(e, depth+1); ok {
 			return v, true

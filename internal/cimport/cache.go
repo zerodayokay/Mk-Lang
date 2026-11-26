@@ -30,7 +30,7 @@ import (
 )
 
 // formatVersion changes whenever the mapping changes what it writes.
-const formatVersion = "mk.cimport.v3"
+const formatVersion = "mk.cimport.v4"
 
 // Key is the cache key of r translated by the Clang of identity: every
 // input but the header contents, which the entry checks itself.
@@ -65,6 +65,8 @@ type entry struct {
 	Shim      string
 	ShimFuncs []ShimFunc
 	Stats     []Stats
+	FuncLike  [][]string
+	Merged    []map[string]string
 	Deps      []depHash
 	Neg       []string
 }
@@ -242,7 +244,7 @@ func Load(st *cache.Store, key source.Hash) (*Result, bool) {
 			return nil, false
 		}
 	}
-	res := &Result{Modules: e.Modules, Shim: e.Shim, ShimFuncs: e.ShimFuncs, Stats: e.Stats}
+	res := &Result{Modules: e.Modules, Shim: e.Shim, ShimFuncs: e.ShimFuncs, Stats: e.Stats, FuncLike: e.FuncLike, Merged: e.Merged}
 	for _, d := range e.Deps {
 		res.Deps = append(res.Deps, d.Path)
 	}
@@ -256,7 +258,7 @@ func Save(st *cache.Store, key source.Hash, res *Result) {
 	if st == nil {
 		return
 	}
-	e := entry{Modules: res.Modules, Shim: res.Shim, ShimFuncs: res.ShimFuncs, Stats: res.Stats, Neg: Negatives(res.Deps, res.SearchDirs)}
+	e := entry{Modules: res.Modules, Shim: res.Shim, ShimFuncs: res.ShimFuncs, Stats: res.Stats, FuncLike: res.FuncLike, Merged: res.Merged, Neg: Negatives(res.Deps, res.SearchDirs)}
 	dh := NewDepHasher(st)
 	defer dh.Save()
 	for _, d := range res.Deps {

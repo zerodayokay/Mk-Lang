@@ -36,6 +36,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -71,7 +72,9 @@ type Result struct {
 	// ShimFuncs are Shim's functions one by one, so a build can define
 	// only those the program names (KeptShim).
 	ShimFuncs []ShimFunc
-	Stats     []Stats // one per Import
+	Stats     []Stats             // one per Import
+	FuncLike  [][]string          // sorted un-prototyped function-like macro names per Import
+	Merged    []map[string]string // C typedef name -> Mk name it merged into, per Import
 	// Deps are every file the translation unit read (-MD), absolute, in
 	// Clang's order; SearchDirs the ordered header search path.
 	Deps       []string
@@ -338,11 +341,13 @@ func Translate(ctx context.Context, cl Clang, resourceDir string, r Request) (*R
 	start = time.Now()
 	e := &emitter{u: u, lay: parseLayouts(string(dump)), long64: !strings.Contains(r.Triple, "windows"), win: strings.Contains(r.Triple, "windows"), imports: r.Imports,
 		mkName: map[*decl]string{}, skip: map[*decl]string{}, emitted: map[*decl]bool{},
-		ptrOnly: map[*decl]string{}, sseRec: map[*decl]string{}}
+		ptrOnly: map[*decl]string{}, sseRec: map[*decl]string{},
+		structFields: map[*decl][]mkField{}, constVals: map[string]constScalar{}, constValsByName: map[string]constScalar{}}
 	for range r.Imports {
 		e.scopes = append(e.scopes, newScope())
 		e.mods = append(e.mods, &modOut{uses: map[int]bool{}})
 		e.stats = append(e.stats, Stats{})
+		e.merged = append(e.merged, map[string]string{})
 	}
 	e.name()
 	vals := irValues(string(ir))
@@ -362,23 +367,40 @@ func Translate(ctx context.Context, cl Clang, resourceDir string, r Request) (*R
 	mark("emit", start)
 	steps = append(steps, Step{"total", time.Since(t0)})
 	fs := shimDefs(e.shims)
-	return &Result{Modules: mods, Shim: ShimText(r.Imports, fs), ShimFuncs: fs, Stats: e.stats, Deps: deps,
+	flByImp := make([][]string, len(r.Imports))
+	for name, imp := range funcLike {
+		if imp >= 0 && imp < len(flByImp) {
+			flByImp[imp] = append(flByImp[imp], name)
+		}
+	}
+	for i := range flByImp {
+		slices.Sort(flByImp[i])
+	}
+	return &Result{Modules: mods, Shim: ShimText(r.Imports, fs), ShimFuncs: fs, Stats: e.stats, FuncLike: flByImp, Merged: e.merged, Deps: deps,
 		SearchDirs: SearchDirs(r, resourceDir), Steps: steps}, nil
 }
 
 // macroType is the Mk type of a macro whose probe variable has type t: an
-// integer, float or bool type (or an alias of one), or str for a string
-// literal; "" for anything else.
+// integer, float or bool type (or an alias of one), str or []u16/[]i32/[]u32
+// for a string literal, or uint for a pointer constant; "" for anything else.
 func (e *emitter) macroType(t *ctype, imp int) string {
 	r := e.resolve(t)
 	if r == nil {
 		return ""
 	}
 	if r.kind == tArray {
-		if el := e.resolve(r.elem); el != nil && el.kind == tBuiltin && strings.HasSuffix(el.name, "char") {
-			return "str"
+		if el := e.resolve(r.elem); el != nil && el.kind == tBuiltin {
+			if strings.HasSuffix(el.name, "char") {
+				return "str"
+			}
+			if m, _, ok := e.builtin(el.name); ok && (m == "u16" || m == "i32" || m == "u32") {
+				return "[]" + m
+			}
 		}
 		return ""
+	}
+	if r.kind == tPointer {
+		return "uint"
 	}
 	if r.kind != tBuiltin && r.kind != tEnum {
 		return ""
@@ -398,16 +420,16 @@ func (e *emitter) declaredMacros() {
 			st.Decls++
 			name, ret, ps, ok := parseProto(proto)
 			if !ok {
-				e.skipped(i, "macro prototype")
+				e.skippedDecl(i, "macro", proto, "macro prototype")
 				continue
 			}
-			if !e.funcLike[name] || !shimmable(ret, ps) || !e.scopes[i].claim(name) {
-				e.skipped(i, "declared macro")
+			if _, isFL := e.funcLike[name]; !isFL || !shimmable(ret, ps) || !e.scopes[i].claim(name) {
+				e.skippedDecl(i, "macro", name, "declared macro")
 				continue
 			}
 			sig, why := e.signature(name, ret, ps, false, i)
 			if why != "" {
-				e.skipped(i, why)
+				e.skippedDecl(i, "macro", name, why)
 				continue
 			}
 			fmt.Fprintf(&e.mods[i].items, "\n// C: #define %s(...), declared in pkg.mk as %s; defined by the shim\nexport extern %s\n", name, proto, sig)
