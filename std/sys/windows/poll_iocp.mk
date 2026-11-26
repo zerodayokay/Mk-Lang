@@ -571,14 +571,16 @@ export PollCancel(op: *Op) {
     }
 }
 
-// A child wait (OpProcWait) keeps the registered wait at OsWait and
-// its state word at OsProcState: 0 idle (before the submission, or after a
-// failed one), 1 armed, 2 the process ended (ProcFired posted the packet),
-// 3 cancelled (ProcCancel posted it). The one packet comes from whichever of
-// the two Cas(1, ..) wins, so exactly one completion arrives, and a cancel
-// before the submission or after the completion finds no 1 and does
-// nothing. The callback reads only the state word and the port; the
-// registered wait lives until the task's PollRelease, whose blocking
+// A child wait (OpProcWait) or object wait (OpReady) keeps the registered wait
+// at OsWait and its state word at OsProcState: 0 idle (before the submission,
+// or after a failed one), 1 armed, 2 the object signalled / process ended
+// (ProcFired posted the packet), 3 cancelled (ProcCancel posted it), 4 fired
+// after cancel (ProcFired saw ProcCancelled after the signal was consumed),
+// 5 timed out (ProcFired with timed != 0 posted the packet). The one packet
+// comes from whichever of the two Cas(1, ..) wins, so exactly one completion
+// arrives, and a cancel before the submission or after the completion finds
+// no 1 and does nothing. The callback reads only the state word and the port;
+// the registered wait lives until the task's PollRelease, whose blocking
 // UnregisterWaitEx waits out a callback still running, so the os area (in
 // the task's frame) outlives every callback. This is the child wait of
 // libuv's uv_process (RegisterWaitForSingleObject, WT_EXECUTEINWAITTHREAD,
@@ -589,9 +591,12 @@ const OsProcState: int = 64
 const ProcArmed: u32 = 1
 const ProcEnded: u32 = 2
 const ProcCancelled: u32 = 3
+const ProcCancelledFired: u32 = 4
+const ProcTimedOut: u32 = 5
 const WtExecuteInWaitThread: u32 = 4
 const WtExecuteOnlyOnce: u32 = 8
 const Infinite: u32 = 0xFFFF_FFFF
+const WaitFailed: u32 = 0xFFFF_FFFF
 
 ProcState(o: *u8): *raw.Atomic[u32] {
     unsafe "the state word of op's os area, 4-byte aligned" {
@@ -599,20 +604,33 @@ ProcState(o: *u8): *raw.Atomic[u32] {
     }
 }
 
-// SubmitProcWait: a process that has ended finishes at once with its exit
-// code; else a one-shot registered wait posts op's packet when it ends.
+// SubmitProcWait: a process that has ended or an object already signalled
+// finishes at once; else a one-shot registered wait posts op's packet when
+// it fires or times out. OpReady uses op.pos as timeout_ns (negative: forever).
 SubmitProcWait(op: *Op, o: *u8): bool {
     unsafe "kernel32; op is the caller's pending operation" {
         h := (*op).h
-        if WaitForSingleObject(h, 0) == 0 {
+        wf := WaitForSingleObject(h, 0)
+        if wf == 0 {
             (*op).res = if (*op).kind == OpReady { Ok(0) } else { ProcExit(h) }
             return false
         }
+        if (*op).kind == OpReady && (*op).pos == 0 {
+            if wf == WaitTimeout {
+                (*op).res = Ok(1)
+                return false
+            }
+            if wf == WaitFailed {
+                (*op).res = LastError()
+                return false
+            }
+        }
+        ms: u32 = if (*op).kind == OpReady && (*op).pos >= 0 { Millis((*op).pos) } else { Infinite }
         // Armed before the wait exists, so its callback finds 1. Edge: the
         // Store is sequentially consistent with the callback's and the
         // cancel's Cas (every atomic here is SC).
         (*ProcState(o)).Store(ProcArmed)
-        if RegisterWaitForSingleObject(raw.PtrCast[u8, uint](raw.Offset(o, OsWait)), h, ProcFired, o, Infinite,
+        if RegisterWaitForSingleObject(raw.PtrCast[u8, uint](raw.Offset(o, OsWait)), h, ProcFired, o, ms,
             WtExecuteInWaitThread | WtExecuteOnlyOnce) == 0 {
             r := LastError()
             // A cancel that ran meanwhile already posted the packet: that
@@ -629,13 +647,22 @@ SubmitProcWait(op: *Op, o: *u8): bool {
 
 // ProcFired is the registered wait's callback, on the system's wait thread
 // (a foreign thread: atomics and one system call only). Edge: its Cas from
-// armed is the one-completion rule's; the packet it posts is how Finish,
-// on a carrier, learns of it (the port is the release/acquire edge).
+// armed is the one-completion rule's; when a signal arrived after ProcCancel
+// won (timed == 0), Cas(ProcCancelled, ProcCancelledFired) records it for
+// PollRelease after UnregisterWaitEx waits out this callback.
 ProcFired(o: *u8, timed: u8) {
     unsafe "o is the os area of a pending op, alive until PollRelease" {
+        if timed != 0 {
+            if (*ProcState(o)).Cas(ProcArmed, ProcTimedOut) {
+                _ = PostQueuedCompletionStatus(Port(), 0, 0, o)
+            }
+            return
+        }
         if (*ProcState(o)).Cas(ProcArmed, ProcEnded) {
             _ = PostQueuedCompletionStatus(Port(), 0, 0, o)
+            return
         }
+        _ = (*ProcState(o)).Cas(ProcCancelled, ProcCancelledFired)
     }
 }
 
@@ -690,6 +717,9 @@ export PollRelease(op: *Op) {
         if w != 0 {
             _ = UnregisterWaitEx(w, InvalidHandle)
             Put64(o, at, 0)
+        }
+        if (*op).kind == OpReady && (*ProcState(o)).Load() == ProcCancelledFired {
+            (*op).len = 1
         }
         if (*op).kind == OpAccept {
             ShareEventClose(o)
@@ -768,6 +798,8 @@ Finish(op: *Op, o: *u8, status: u64, bytes: u32): bool {
         if k == OpProcWait || k == OpReady {
             if status != 0 {
                 (*op).res = FailWith(core.SysErr.Canceled)
+            } else if k == OpReady && (*ProcState(o)).Load() == ProcTimedOut {
+                (*op).res = Ok(1)
             } else {
                 (*op).res = if k == OpReady { Ok(0) } else { ProcExit((*op).h) }
             }
