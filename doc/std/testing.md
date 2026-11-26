@@ -38,7 +38,7 @@ import std.testing
 
 A fuzz target is a function `f: fn([]u8)` that fails by panicking: a failed `Assert`, an overflow, an index out of bounds. One `test` block calls `testing.Fuzz(f)` once, and the test's name names its inputs.
 
-- Plain `mk test` calls `f` once per file in `testdata/fuzz/<test name>/` under the package root, except the `.report` files, in file-name order, with the file's bytes. Before each call it writes `fuzz input <file name>` to the test's output, so a failure names its input.
+- Plain `mk test` calls `f` once per file in `testdata/fuzz/<test name>/` under the package root, except the `.report` files, in file-name order, with the file's bytes. Before each call it writes `fuzz input <file name>` to the test's output, after what the test has printed so far, so a failure names its input and each input's output follows its line.
 - With no such directory, or an empty one, `f` is not called and the test passes.
 - Outside `mk test`, for example in `mk run`, `Fuzz` calls nothing.
 - Give fuzz tests names that are plain file names. Any other name gets a directory of its own, `<name>~<8 hex digits>`, with each character that a Windows file name cannot hold written `_`. That happens to:
@@ -446,7 +446,8 @@ export Fuzz(f: fn([]u8))
 Fuzz makes f the fuzz target of the test block that calls it, and runs
 it. Plain `mk test` calls f once per file of testdata/fuzz/<test name>/
 except the .report files, in name order, with the file's bytes, and
-names each file in the test's output before the call.
+names each file in the test's output before the call, after what the
+test printed before it, so what f prints for a file follows its name.
 `mk test --fuzz <test name>` instead calls f on inputs it mutates,
 guided by the blocks they reach, until the fuzz time ends or 20 runs
 have failed. It saves an input that panics, leaks, hangs or exits
