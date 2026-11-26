@@ -118,9 +118,9 @@ export NewCountingHeapState(inner: &core.Alloc): CountingHeapState {
 
 /// A heap that counts each call in st and passes it to st's inner
 /// allocator. The heap borrows st. No errors. O(1); allocates nothing.
-export MakeCountingHeap(st: mut CountingHeapState): core.Heap from st {
-    unsafe "the heap's context is st, which the result borrows, so st outlives every call through the table; CountingHeapTable is a constant" {
-        return core.MakeHeap(raw.PtrCast[CountingHeapState, u8](raw.OfMut(st)), raw.Of(&CountingHeapTable))
+export MakeCountingHeap(st: &CountingHeapState): core.Heap from st {
+    unsafe "the heap's context is st, which the result borrows, so st outlives every call through the table; the entries change st only through its atomics, so a shared loan suffices; CountingHeapTable is a constant" {
+        return core.MakeHeap(raw.PtrCast[CountingHeapState, u8](raw.Of(st)), raw.Of(&CountingHeapTable))
     }
 }
 
