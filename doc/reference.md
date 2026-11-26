@@ -10046,6 +10046,7 @@ How C declarations appear in Mk:
 | `struct geom_point` | `struct GeomPoint`, its fields in snake_case: `maxCount` is `max_count` |
 | `enum geom_kind` and its constants | `type GeomKind = i32` and `const GeomKindLine: GeomKind = 1` |
 | `union num` | A struct of bytes with a getter and a setter per member: `Num.I`, `Num.SetI` |
+| A record whose layout no Mk struct has (a packed record with a bitfield, say) | Also a struct of bytes with a getter and a setter per member and bitfield. A member or a bitfield's unit that the record's alignment does not align is read and written at alignment 1 |
 | An incomplete `struct opaque` | An empty `struct Opaque`, used through `*Opaque` |
 | A typedef | A type alias: `typedef int32_t` is `Int32T = i32` |
 | `#define NAME 3` | `const Name: i32 = 3` |
