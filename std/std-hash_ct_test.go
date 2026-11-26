@@ -185,7 +185,7 @@ func h2CtChecked(fn string) bool {
 // it once (h2CtTrain), and merges its profile.
 func h2CtProfile(t *testing.T, root, stdDir string) string {
 	t.Helper()
-	gen := h2CtTrainExe(t, root)
+	gen := h2CtTrainExe(t)
 	if out, st := mkCmd(t, root, stdDir, "build", "--release", "--pgo-gen", "-o", gen, "main.mk"); st != 0 {
 		t.Fatalf("mk build --pgo-gen: exit %d\n%s", st, out)
 	}
@@ -211,11 +211,18 @@ func h2CtProfile(t *testing.T, root, stdDir string) string {
 const h2CtTrainLen = 200
 
 // h2CtTrainExe is the path h2CtProfile builds the instrumented probe at: in
-// a directory of root whose name pads the path to h2CtTrainLen bytes. The
-// runtime reads its own path at exit to name the profile, a few counters per
-// byte, so without the pad a longer temporary directory moves the counts.
-func h2CtTrainExe(t *testing.T, root string) string {
+// a directory of its own under the temporary directory, whose name pads the
+// path to h2CtTrainLen bytes. The runtime reads its own path at exit to name
+// the profile, a few counters per byte, so without the pad a longer
+// temporary directory moves the counts; the test's directory, which holds
+// the test's name, would leave no room for the pad under a long one.
+func h2CtTrainExe(t *testing.T) string {
 	t.Helper()
+	root, err := os.MkdirTemp(os.Getenv("GOTMPDIR"), "mkct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
 	name := "gen"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
@@ -235,11 +242,11 @@ func h2CtTrainExe(t *testing.T, root string) string {
 // program name and the arguments "a b c", the working directory root, and
 // MK_PROFILE_DIR=prof (relative to root) as the whole environment, to which
 // exec adds SYSTEMROOT on Windows. The runtime decodes the environment block
-// and the command line at start: an inherited environment of 5,000
-// characters was 70% of the probe's entry counts, so the hot threshold,
-// LLVM's profile summary and the PGO builds the tests read followed the
-// runner's shell. What still reaches the profile from the runner is the
-// number of separators in gen's path and the digits of the process id.
+// and the command line at start, so an inherited environment would be most
+// of the probe's entry counts and would move the hot threshold, LLVM's
+// profile summary and the PGO builds the tests read with the runner's
+// shell. What still reaches the profile from the runner is the number of
+// separators in gen's path and the digits of the process id.
 func h2CtTrain(gen, root string) *exec.Cmd {
 	cmd := exec.Command(gen, "a", "b", "c")
 	cmd.Args[0] = "gen"
