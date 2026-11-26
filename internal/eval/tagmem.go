@@ -48,7 +48,7 @@ type tseg struct {
 }
 
 // tlocal is one local of a frame allocation: its bytes, whether a linear
-// value is owned there, and the field paths already consumed without a move.
+// value is owned there, and the paths already taken or narrowed.
 type tlocal struct {
 	lo, hi uint32
 	owned  bool

@@ -4,7 +4,7 @@
 //
 // What: tacc (the access rule), ownerAccess, taggedAccess, retag and
 // retagRef, tgEnter and tgPopFrame (function entry and exit), tgScopeEnd,
-// tgMoved, tgConsumed, the fallible-call error edge (tgArgUndo, tgErrorEdge,
+// tgMoved, tgTake, the fallible-call error edge (tgArgUndo, tgErrorEdge,
 // tgErrorExit), and tgStorePtr.
 //
 // How: an access checks liveness, then interior bytes (liveness, init and
@@ -344,10 +344,9 @@ func (m *Machine) tgPushFrame(f *frame) {
 	tg.callItems[tg.calls] = f.item
 }
 
-// linearOwner reports whether a local of ti owns a linear value while its
-// bytes are written: a linear named type (an optional or an error union of
-// one may hold none or an error, so its bytes say nothing; the linear rule
-// there is borrow's, through the payload's own local).
+// linearOwner reports whether initializing a local of ti creates a linear
+// obligation. Optionals and error unions can hold none or an error, so
+// borrow checks their linear rule through the payload's own local.
 func linearOwner(ti *tinfo) bool {
 	if ti.layout.Shape.Kind != types.Linear {
 		return false
@@ -359,9 +358,8 @@ func linearOwner(ti *tinfo) bool {
 	return true
 }
 
-// tgNarrow follows a switch on a freshly read discriminant. A whole enum
-// temporary in a plain variant has no linear payload left to own. A test
-// of a user binding or a field alone does not consume its local.
+// tgNarrow follows a switch on a freshly read discriminant. A plain variant
+// discharges the tested part of a match temporary.
 func (m *Machine) tgNarrow(f *frame, on mir.Operand, discr uint64) {
 	if on.Kind != mir.OpCopy || on.Place.Proj.Len != 0 {
 		return
@@ -376,12 +374,21 @@ func (m *Machine) tgNarrow(f *frame, on mir.Operand, discr uint64) {
 		return
 	}
 	p := s.Rvalue.Place
-	if p.Proj.Len != 0 || b.Locals[p.Local].Kind != mir.LocalTemp {
+	if b.Locals[p.Local].Kind != mir.LocalTemp {
 		return
 	}
-	l := &m.tg.rec(f.base).locals[p.Local]
-	ti := f.code.localTI[p.Local]
-	if !l.owned || ti.ty.Kind != types.KNamed || m.items().Get(ti.ty.Item).Kind != types.KindEnum {
+	if !m.tg.rec(f.base).locals[p.Local].owned {
+		return
+	}
+	ti := m.ti(b.PlaceType(p))
+	switch ti.ty.Kind {
+	case types.KOptional, types.KErrorUnion:
+	case types.KNamed:
+		if m.items().Get(ti.ty.Item).Kind == types.KindEnum {
+			break
+		}
+		return
+	default:
 		return
 	}
 	for _, v := range ti.layout.Variants {
@@ -393,7 +400,7 @@ func (m *Machine) tgNarrow(f *frame, on mir.Operand, discr uint64) {
 				return
 			}
 		}
-		l.owned = false
+		m.tgTake(f, p)
 		return
 	}
 }
@@ -505,24 +512,16 @@ func (m *Machine) tgScopeEnd(f *frame, x mir.LocalID) {
 	ta.merge()
 }
 
-// tgMoved runs after an operand moved a non-plain value out of place p
-// (located at src): with no dereference in p, the moved bytes are no longer
-// written and p's local no longer owns a linear value. A move
-// through a dereference does not occur in safe MIR (E0409).
-//
-// A move of a plain field out of a local is a take that consumes the whole
-// value (destructuring consumes): lower ends a destructure whose bindings all
-// copy with one such take (lower/stmt.go destructure), and borrow reads it as
-// the consumption, so the local no longer owns a linear value; the plain bytes
-// stay written.
+// tgMoved empties the moved bytes of a local. In a temporary a projected
+// move is a take, including the move of a plain field during destructuring.
 func (m *Machine) tgMoved(f *frame, p mir.Place, src loc) {
-	plain := src.ti.layout.Shape.Kind == types.Plain || src.ti.size == 0
+	plain := src.ti.layout.Shape.Kind == types.Plain
 	if plain && p.Proj.Len == 0 {
 		return
 	}
 	b := f.code.body
-	for i := p.Proj.Start; i < p.Proj.End(); i++ {
-		if b.Projections[i].Kind == mir.ProjDeref {
+	for _, pr := range b.Proj(p) {
+		if pr.Kind == mir.ProjDeref {
 			return
 		}
 	}
@@ -530,18 +529,20 @@ func (m *Machine) tgMoved(f *frame, p mir.Place, src loc) {
 	if !ta.frame || src.a != f.base {
 		return
 	}
-	if !plain {
+	if !plain && src.ti.size != 0 {
 		clearBits(ta.init, src.off, src.off+uint32(src.ti.size))
 	}
-	if int(p.Local) < len(ta.locals) {
-		ta.locals[p.Local].owned = false
+	if p.Proj.Len != 0 && b.Locals[p.Local].Kind == mir.LocalTemp {
+		m.tgTake(f, p)
+		return
 	}
+	l := &ta.locals[p.Local]
+	l.owned, l.taken = false, nil
 }
 
-// tgConsumed ends a fieldless struct at p without changing the init bits.
-// A projection consumes only its own part, even if it shares the byte
-// offset of another empty field.
-func (m *Machine) tgConsumed(f *frame, p mir.Place) {
+// tgTake discharges the ownership of a whole local or one part of it.
+// Field paths distinguish parts even when their byte offsets coincide.
+func (m *Machine) tgTake(f *frame, p mir.Place) {
 	ta := m.tg.rec(f.base)
 	if !ta.frame || int(p.Local) >= len(ta.locals) {
 		return
@@ -655,7 +656,7 @@ func (m *Machine) tgArgUndo(caller *frame, a *mir.Arg) {
 	}
 	src := m.place(caller, op.Place)
 	ta := m.tg.rec(caller.base)
-	if !ta.frame || src.a != caller.base || src.ti.size == 0 || uint64(src.off)+src.ti.size > uint64(ta.size) {
+	if !ta.frame || src.a != caller.base || (src.ti.size == 0 && src.zeroLocal == 0) || uint64(src.off)+src.ti.size > uint64(ta.size) {
 		return
 	}
 	// An argument slot (t = move x, then the call takes move t) restores x
@@ -772,12 +773,25 @@ func (m *Machine) tgCopyInit(dst, src loc, n uint64) {
 	}
 }
 
-// tgCopy is the tagged half of a copy of n bytes from src to dst: a read of
+// tgCopyCheck is the tagged half of a copy of n bytes from src to dst: a read of
 // the source through its tag, a write of the destination through its tag,
 // then (after the bytes moved) the init bits.
 func (m *Machine) tgCopyCheck(dst, src loc, n uint64) {
+	if n == 0 {
+		m.tgWriteZero(dst)
+		return
+	}
 	m.tacc(src.a, src.off, n, src.tag, accRead)
 	m.tacc(dst.a, dst.off, n, dst.tag, accWrite)
+}
+
+// tgWriteZero records a whole linear local's initialization without a
+// byte access. Projections do not carry the whole local's identity.
+func (m *Machine) tgWriteZero(dst loc) {
+	if dst.zeroLocal != 0 {
+		l := &m.tg.rec(dst.a).locals[dst.zeroLocal-1]
+		l.owned, l.taken = true, nil
+	}
 }
 
 // tgDied records where allocation a ended (a page freed, a frame popped), so

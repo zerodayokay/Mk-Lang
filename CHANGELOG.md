@@ -55,6 +55,11 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 - A linear struct with no fields is taken apart by a struct pattern that names it. In a by-value `match`, the arms `some(Token())` and `Token()` consume it, where they were a false E0402, and `Token() := t` destructures it, where it was E0101 `nothing to bind`. A nested `S(t: Token(), n) := s` was a false E0402, and `Only(t: Token()) := o` an internal error. Any other pattern that names nothing, `()`, `[]` or `T(..)`, is still E0101.
 - A destructure consumes each nested linear struct, including when all the bindings copy plain fields: `Two(a: Ticket(id), b: Ticket(id: j)) := w` no longer reports E0402.
 
+### Tagged evaluator
+
+- In tagged evaluation, a switch that narrows an enum field of a match temporary to a plain variant discharges that field's obligation. A projected move likewise discharges only the part it takes. A linear sibling still has to be consumed.
+- Tagged evaluation tracks ownership of zero-byte linear locals through initialization, moves and scope exit, including when two locals share a frame offset.
+
 ## 0.6.0 (2026-11-24)
 
 ### Language

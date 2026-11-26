@@ -37,7 +37,7 @@ func (m *Machine) stmt(f *frame, st *mir.Statement) {
 	case mir.StNop:
 	case mir.StConsume:
 		if m.tg != nil {
-			m.tgConsumed(f, st.Place)
+			m.tgTake(f, st.Place)
 		}
 	case mir.StAsm:
 		// An asm has no compile-time meaning.
@@ -377,6 +377,9 @@ func (m *Machine) aggregate(f *frame, dst loc, r *mir.Rvalue) {
 // for a zero-size element however large Len is.
 func (m *Machine) repeat(f *frame, dst loc, r *mir.Rvalue) {
 	n := m.constArg(r.Len)
+	if m.tg != nil && dst.ti.size == 0 {
+		m.tgWriteZero(dst)
+	}
 	if n == 0 {
 		return
 	}
