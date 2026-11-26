@@ -7,6 +7,7 @@ on:
       - 'std/gpu/**'
       - 'std/window/**'
       - 'std/task/**'
+      - 'std/sys/linux/**'
       - 'std/sys/macos/**'
       - 'Dogfoods/scene/**'
       - 'Dogfoods/sketch/**'
@@ -78,6 +79,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           "$RUNNER_TEMP/mk" test --timeout 15s --std std.task --run RT-MainThreadService
+
+      - name: Check glibc thread joins on Linux
+        if: runner.os == 'Linux'
+        run: go test -p 1 -timeout 5m ./internal/driver -run '^TestFFI_JoinedThread$'
 
       - name: Render and present on Linux
         if: runner.os == 'Linux'
