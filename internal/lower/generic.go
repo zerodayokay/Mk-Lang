@@ -75,9 +75,9 @@ func (bl *builder) typeTest(s *ast.IfStmt, c *ast.IsCond) {
 			continue
 		}
 		loc := bl.b.Locals[l]
-		if bl.tab.Kind(lt) == types.KFn {
-			// A fn value is copied at X only when the branch names it:
-			// one it never calls needs no copy.
+		if !bl.mentionsOutsideFn(lt, uint32(param)) {
+			// T is only in fn types of lt: the value is copied at X only
+			// when the branch names it, as one it never calls needs none.
 			if named == nil {
 				named = namesIn(s.Then)
 			}
@@ -253,6 +253,31 @@ func (bl *builder) substArgs(t types.TypeID, args []types.GenericArg) types.Type
 		}
 	}
 	return t
+}
+
+// mentionsOutsideFn reports whether KParam(i) occurs in t outside every fn
+// type, where substParam changes t without looking into a fn type.
+func (bl *builder) mentionsOutsideFn(t types.TypeID, i uint32) bool {
+	ty := bl.tab.Get(t)
+	switch ty.Kind {
+	case types.KParam:
+		return ty.Index == i
+	case types.KRef, types.KMut, types.KSlice, types.KMutSlice, types.KRawPtr, types.KOptional, types.KArray, types.KErrorUnion:
+		return bl.mentionsOutsideFn(ty.Elem, i)
+	case types.KNamed:
+		for _, a := range ty.Args {
+			if !a.IsConst && bl.mentionsOutsideFn(a.Type, i) {
+				return true
+			}
+		}
+	case types.KRecord:
+		for _, f := range ty.Fields {
+			if bl.mentionsOutsideFn(f.Type, i) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // substParam replaces KParam(i) by x throughout t.
