@@ -34,11 +34,13 @@ export linear struct Shader {
 struct ShaderEntry {
     stage: Stage
     refl: SpirvReflection
+    entry_buf: [128]u8
+    entry_len: int
     native_handle: u64
 }
 
 ShaderEntry.Free(self, a: &Alloc) {
-    ShaderEntry(stage: _, refl, native_handle: _) := self
+    ShaderEntry(stage: _, refl, entry_buf: _, entry_len: _, native_handle: _) := self
     refl.Free(a)
 }
 
@@ -48,7 +50,6 @@ ShaderEntry.Free(self, a: &Alloc) {
 /// Invalid(UnsignedDxil), Invalid(StageMismatch). O(blob words); Vulkan
 /// makes a VkShaderModule, D3D12 copies the DXIL into the device's heap.
 export Device.NewShader(mut self, code: ShaderCode, stage: Stage, entry: str, label: str): Error!Shader {
-    _ = label
     try self.CheckAlive()
     if code.spirv.Len() == 0 {
         fail Invalid(misuse: Misuse.MissingSpirv, at: -1)
@@ -69,11 +70,17 @@ export Device.NewShader(mut self, code: ShaderCode, stage: Stage, entry: str, la
             fail e
         }
     }
-    nh := self.NativeCreateShader(code, stage, entry) else e {
+    nh := self.NativeCreateShader(code, stage, entry, label) else e {
         refl.Free(a)
         fail e
     }
-    se := ShaderEntry(stage: stage, refl: refl, native_handle: nh)
+    var ebuf: [128]u8 = [0; 128]
+    ebs := entry.AsBytes()
+    elen := if ebs.Len() > 128 { 128 } else { ebs.Len() }
+    for ei in 0..elen {
+        ebuf[ei] = ebs[ei]
+    }
+    se := ShaderEntry(stage: stage, refl: refl, entry_buf: ebuf, entry_len: elen, native_handle: nh)
     st := self.state.Mut()
     match st.shaders.Alloc(a, se) {
         .Ok(slot, gen_) {

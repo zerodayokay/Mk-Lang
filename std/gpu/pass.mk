@@ -639,7 +639,96 @@ export Encoder.RenderPass(mut self, d: &PassDesc): RenderPass from self {
         return RenderPass(enc: self, pipeline: 0, dirty: 0)
     }
     st.pass_shadow.barrier_loc = loc
-    _ = st.stream.Write2(a, mut st.chunk_pool, PackHdr(OpBeginRendering, 2, Cast[u16](d.colors.Len()), Cast[u32](w)), Cast[u64](h)) else {
+    cc := d.colors.Len()
+    has_d := d.depth.IsSome()
+    var words: [60]u64 = [0; 60]
+    flags := Cast[u16](cc) | (if has_d { u16(0x10) } else { u16(0) })
+    var dflags: u32 = 0
+    var dview_nh: u64 = 0
+    var dclear_u: u32 = 0
+    var sclear_u: u32 = 0
+    match d.depth {
+        some(da) {
+            dview_nh = st.views.Get(da.target.slot).native_handle
+            dl: u32 = match da.depth_load {
+                .Clear(depth) {
+                    dclear_u = F32ToU32(depth)
+                    0
+                }
+                .Keep { 1 }
+                .DontCare { 2 }
+            }
+            ds: u32 = match da.depth_store {
+                .Store { 0 }
+                .Discard { 1 }
+            }
+            sl: u32 = match da.stencil_load {
+                .Clear(value) {
+                    sclear_u = value
+                    0
+                }
+                .Keep { 1 }
+                .DontCare { 2 }
+            }
+            ss: u32 = match da.stencil_store {
+                .Store { 0 }
+                .Discard { 1 }
+            }
+            dve := st.views.Get(da.target.slot)
+            ro_bit: u32 = if da.read_only { 64 } else { 0 }
+            has_s_bit: u32 = if HasStencilAspect(dve.format) { 128 } else { 0 }
+            dflags = dl | (ds << 2) | (sl << 3) | (ss << 5) | ro_bit | has_s_bit
+        }
+        none {}
+    }
+    total_w := 2 + cc * 7 + (if has_d { 2 } else { 0 })
+    words[0] = PackHdr(OpBeginRendering, Cast[u8](total_w), flags, Cast[u32](w))
+    words[1] = PackU32Pair(Cast[u32](h), dflags)
+    var cur := 2
+    for ci in 0..cc {
+        ca := &d.colors[ci]
+        ve := st.views.Get(ca.target.slot)
+        tnh := ve.native_handle
+        rnh := match ca.resolve {
+            some(rv) { st.views.Get(rv.slot).native_handle }
+            none { 0 }
+        }
+        var cr: f64 = 0.0
+        var cg: f64 = 0.0
+        var cb: f64 = 0.0
+        var ca_v: f64 = 0.0
+        cl: u32 = match ca.load {
+            .Clear(r, g, b, a: a_v) {
+                cr = r
+                cg = g
+                cb = b
+                ca_v = a_v
+                0
+            }
+            .Keep { 1 }
+            .DontCare { 2 }
+        }
+        cs: u32 = match ca.store {
+            .Store { 0 }
+            .Discard { 1 }
+        }
+        nk := u32(RowOf(ve.format).num_class)
+        meta := cl | (cs << 2) | (nk << 3)
+        words[cur] = tnh
+        words[cur + 1] = rnh
+        words[cur + 2] = PackU32Pair(meta, 0)
+        words[cur + 3] = cr.Bits()
+        words[cur + 4] = cg.Bits()
+        words[cur + 5] = cb.Bits()
+        words[cur + 6] = ca_v.Bits()
+        cur += 7
+    }
+    if has_d {
+        words[cur] = dview_nh
+        words[cur + 1] = PackU32Pair(dclear_u, sclear_u)
+        cur += 2
+    }
+    _ = st.stream.WriteSlice(a, mut st.chunk_pool, words[0..cur]) else {
         st.stream.RecordError(Misuse.LimitExceeded, st.stream.cmd_count)
     }
     return RenderPass(enc: self, pipeline: 0, dirty: 0)
