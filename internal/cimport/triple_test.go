@@ -7,7 +7,11 @@
 
 package cimport
 
-import "testing"
+import (
+	"testing"
+
+	"mk/internal/source"
+)
 
 // layoutHeader: under mingw-w64's triple A is 12 bytes with w at byte 8, R
 // is 8 bytes with w at byte 4, and L is 32 bytes aligned to 16; under the
@@ -40,4 +44,22 @@ func TestCImport_WindowsLayoutTriple(t *testing.T) {
 		"// C: bitfield w, 20 bits at bit 0 of the u32 at byte 1",
 		"// C: struct R, 5 bytes, align 1: opaque, members through accessors",
 		"// C: bitfield w, 20 bits at bit 0 of the u32 at byte 1")
+}
+
+func TestCImport_WindowsClangTarget(t *testing.T) {
+	const want = "x86_64-pc-windows-msvc19.33.0"
+	req := Request{Target: "x86_64-windows", Triple: ParseTriple("x86_64-windows")}
+	if got := baseArgs(req, "")[0]; got != "--target="+want {
+		t.Errorf("target arg = %q, want --target=%s", got, want)
+	}
+	var id source.Hash
+	key := Key(id, "", req)
+	req.Triple = want
+	if key != Key(id, "", req) {
+		t.Error("the unversioned MSVC triple must key the effective triple")
+	}
+	req.Triple = "x86_64-pc-windows-msvc19.40.0"
+	if key == Key(id, "", req) {
+		t.Error("different MSVC versions share a cache key")
+	}
 }

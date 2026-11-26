@@ -30,6 +30,7 @@ import (
 
 	"mk/internal/cache"
 	"mk/internal/source"
+	"mk/internal/toolchain"
 )
 
 // formatVersion changes whenever the mapping changes what it writes or what
@@ -42,7 +43,7 @@ func Key(identity source.Hash, resourceDir string, r Request) source.Hash {
 	h := source.NewHasher(formatVersion)
 	h.Hash(identity)
 	h.String(r.Target)
-	h.String(r.Triple)
+	h.String(toolchain.ClangTargetArg(r.Triple))
 	h.String(resourceDir)
 	h.Uvarint(uint64(len(r.Imports)))
 	for _, im := range r.Imports {

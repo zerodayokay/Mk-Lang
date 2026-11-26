@@ -383,9 +383,9 @@ func clangVersionLine(clang string) (string, error) {
 	return string(out), err
 }
 
-// Identity is the hash of the rule that chose the directory and of every
-// path, size and version line in Tools: part of every key whose value
-// depends on the toolchain (data layouts, import libraries, object packs),
+// Identity is the hash of the rule that chose the directory, the pinned MSVC
+// version and every path, size and version line in Tools. It is part of every
+// key that depends on the toolchain (data layouts, import libraries, object packs),
 // never of check keys. The rule is in it so that a cache never mixes the
 // outputs of two toolchains.
 func (t *Tools) Identity() source.Hash {
@@ -397,7 +397,20 @@ func (t *Tools) Identity() source.Hash {
 		h.Varint(t.sizes[i])
 	}
 	h.String(t.Version.Line)
+	h.String(ClangTargetArg(windowsMSVCTriple))
 	return h.Sum()
+}
+
+const windowsMSVCTriple = "x86_64-pc-windows-msvc"
+
+// ClangTargetArg pins Clang's default MSVC compatibility version so the
+// effective triple and predefined macros never depend on an installed cl.exe.
+// An explicitly versioned triple keeps its version.
+func ClangTargetArg(triple string) string {
+	if triple == windowsMSVCTriple {
+		triple += "19.33.0"
+	}
+	return "--target=" + triple
 }
 
 // Need reports the tools a native build for the triple needs that are

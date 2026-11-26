@@ -482,14 +482,14 @@ func isBitcode(path string) (bool, error) {
 // thinTriple is the triple the backends compile for. linkArgs links only
 // x64 COFF (/machine:x64), and the backend takes its CPU from each
 // function's "target-cpu" attribute, as lld-link's backend does.
-const thinTriple = "x86_64-pc-windows-msvc"
+const thinTriple = windowsMSVCTriple
 
 // thinBackendArgs is the clang command line of one backend, run in the
 // module's directory: the codegen flags of compileArgs for COFF, at -O3,
 // then the loop alignment and t's backend options (for the zero Tuning,
 // ltoUnroll alone).
 func thinBackendArgs(module, index, out string, t Tuning) []string {
-	args := []string{"--target=" + thinTriple, "-O3", "-x", "ir", module, "-fthinlto-index=" + index,
+	args := []string{ClangTargetArg(thinTriple), "-O3", "-x", "ir", module, "-fthinlto-index=" + index,
 		"-c", "-o", out, "-Wno-override-module", "-ffunction-sections", "-fdata-sections", "-fno-addrsig",
 		"-fdebug-compilation-dir=.", "-mno-incremental-linker-compatible", "-Xclang", "-gno-codeview-command-line",
 		"-falign-loops=32"}

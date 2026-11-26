@@ -52,7 +52,7 @@ func (t *Tools) Probe(ctx context.Context, triple string) (TargetFacts, error) {
 
 // probeArgs is the probe's clang command line after the executable.
 func probeArgs(triple, empty string) []string {
-	return []string{"--target=" + triple, "-x", "ir", "-S", "-emit-llvm", "-o", "-", empty}
+	return []string{ClangTargetArg(triple), "-x", "ir", "-S", "-emit-llvm", "-o", "-", empty}
 }
 
 // parseProbe reads the two lines from clang's textual module.

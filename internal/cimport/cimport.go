@@ -140,7 +140,7 @@ func SearchDirs(r Request, resourceDir string) []string {
 
 // baseArgs are the flags every run shares.
 func baseArgs(r Request, resourceDir string) []string {
-	args := []string{"--target=" + r.Triple, "-nostdinc", "-x", "c", "-std=gnu11", "-fno-caret-diagnostics",
+	args := []string{toolchain.ClangTargetArg(r.Triple), "-nostdinc", "-x", "c", "-std=gnu11", "-fno-caret-diagnostics",
 		"-fmacro-backtrace-limit=0", "-ferror-limit=0", "-Wno-everything", "-fno-color-diagnostics"}
 	if len(r.Sysroot) > 0 {
 		args = append(args, "--sysroot="+r.Sysroot[0])

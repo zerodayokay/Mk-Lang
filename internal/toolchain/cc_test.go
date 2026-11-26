@@ -7,6 +7,7 @@ package toolchain
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -39,6 +40,44 @@ func TestCArgs(t *testing.T) {
 	}
 	if _, err := CArgs(CJob{Triple: "x", Input: "rel.c", Output: abs("o")}, false); err == nil {
 		t.Error("a relative input was accepted")
+	}
+}
+
+func TestWindowsClangTarget(t *testing.T) {
+	const triple = "x86_64-pc-windows-msvc"
+	const want = "--target=x86_64-pc-windows-msvc19.33.0"
+	dir := t.TempDir()
+	ll := filepath.Join(dir, "input.ll")
+	out := filepath.Join(dir, "output.o")
+	for _, tc := range []struct {
+		name string
+		args func() ([]string, error)
+	}{
+		{"source", func() ([]string, error) {
+			return CArgs(CJob{Triple: triple, Input: filepath.Join(dir, "input.c"), Output: out}, false)
+		}},
+		{"shim", func() ([]string, error) {
+			return CArgs(CJob{Triple: triple, Input: filepath.Join(dir, "shim.c"), Output: out, Hosted: true}, false)
+		}},
+		{"assembly", func() ([]string, error) {
+			return CArgs(CJob{Triple: triple, Input: filepath.Join(dir, "input.S"), Output: out}, true)
+		}},
+		{"IR", func() ([]string, error) {
+			return compileArgs(CompileJob{Triple: triple, Input: ll, Output: out})
+		}},
+		{"probe", func() ([]string, error) { return probeArgs(triple, ll), nil }},
+		{"CPU probe", func() ([]string, error) { return nativeArgs(triple, ll, out), nil }},
+		{"ThinLTO", func() ([]string, error) { return thinBackendArgs(ll, ll+".thinlto.bc", out, Tuning{}), nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args, err := tc.args()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(args, want) || slices.Contains(args, "--target="+triple) {
+				t.Errorf("args = %v, want %s", args, want)
+			}
+		})
 	}
 }
 

@@ -44,7 +44,7 @@ func TestCompileCommandLine(t *testing.T) {
 		want []string
 	}{
 		{CompileJob{Triple: "x86_64-pc-windows-msvc", Input: in, Output: out},
-			append([]string{"--target=x86_64-pc-windows-msvc", "-x", "ir", "-c", in, "-o", out, "-O0"}, coff...)},
+			append([]string{"--target=x86_64-pc-windows-msvc19.33.0", "-x", "ir", "-c", in, "-o", out, "-O0"}, coff...)},
 		{CompileJob{Triple: "x86_64-unknown-linux-gnu", Input: in, Output: out, Opt: O3, LTO: true, CPU: "x86-64-v2"},
 			append([]string{"--target=x86_64-unknown-linux-gnu", "-x", "ir", "-c", in, "-o", out, "-O3", "-flto=thin", "-march=x86-64-v2"}, tail...)},
 		{CompileJob{Triple: "aarch64-unknown-linux-gnu", Input: in, Output: out, Opt: O3, CPU: "neoverse-n1"},
