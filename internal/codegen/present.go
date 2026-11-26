@@ -14,6 +14,8 @@
 package codegen
 
 import (
+	"slices"
+
 	"mk/internal/llvm"
 	"mk/internal/mir"
 	"mk/internal/source"
@@ -61,58 +63,68 @@ func (fg *fnGen) presentCall(key string, t *mir.Terminator) bool {
 }
 
 // presentTarget is the function a Present call names: its last argument,
-// a fn const or a local whose one definition is an RvFnRef, a fn const or
-// a copy of another such local.
+// a fn const or a local whose whole-local assignments all name one
+// function, by an RvFnRef, a fn const or a copy of another such local (a
+// loop, an inlined body or a copy may give the local several).
 func presentTarget(b *mir.Body, consts *types.ConstTable, t *mir.Terminator) (types.ItemID, []types.GenericArg, bool) {
 	if t.Args.Len == 0 {
 		return types.NoItem, nil, false
 	}
-	op := b.Args[t.Args.End()-1].Operand
-	for range len(b.Locals) + 1 {
-		switch op.Kind {
-		case mir.OpConst:
-			cv := consts.Get(op.Const)
-			if cv == nil || len(cv.Relocs) != 1 || cv.Relocs[0].Kind != types.RelocFn {
-				return types.NoItem, nil, false
-			}
-			return cv.Relocs[0].Fn.Item, cv.Relocs[0].Fn.Args, true
-		case mir.OpCopy, mir.OpMove:
-			if op.Place.Proj.Len != 0 {
-				return types.NoItem, nil, false
-			}
-			rv, ok := soleDef(b, op.Place.Local)
-			if !ok {
-				return types.NoItem, nil, false
-			}
-			switch rv.Kind {
-			case mir.RvFnRef:
-				return rv.Fn.Item, b.GenericArgs[rv.Fn.Args.Start:rv.Fn.Args.End()], true
-			case mir.RvUse:
-				op = rv.A
-				continue
-			}
+	return presentOperand(b, consts, b.Args[t.Args.End()-1].Operand, len(b.Locals))
+}
+
+// presentOperand is the function operand o names, following at most depth
+// copies.
+func presentOperand(b *mir.Body, consts *types.ConstTable, o mir.Operand, depth int) (types.ItemID, []types.GenericArg, bool) {
+	switch o.Kind {
+	case mir.OpConst:
+		cv := consts.Get(o.Const)
+		if cv == nil || len(cv.Relocs) != 1 || cv.Relocs[0].Kind != types.RelocFn {
+			return types.NoItem, nil, false
 		}
-		return types.NoItem, nil, false
+		return cv.Relocs[0].Fn.Item, cv.Relocs[0].Fn.Args, true
+	case mir.OpCopy, mir.OpMove:
+		if o.Place.Proj.Len != 0 || depth <= 0 {
+			return types.NoItem, nil, false
+		}
+		return presentLocal(b, consts, o.Place.Local, depth-1)
 	}
 	return types.NoItem, nil, false
 }
 
-// soleDef is the rvalue of local l's one whole-local assignment in b.
-func soleDef(b *mir.Body, l mir.LocalID) (*mir.Rvalue, bool) {
-	var rv *mir.Rvalue
+// presentLocal is the one function every whole-local assignment of l
+// names; false when there is none, when one is of another form or
+// assigns part of l, or when two name different functions.
+func presentLocal(b *mir.Body, consts *types.ConstTable, l mir.LocalID, depth int) (types.ItemID, []types.GenericArg, bool) {
+	item, found := types.NoItem, false
+	var args []types.GenericArg
 	for bi := range b.Blocks {
 		for si := range b.Blocks[bi].Stmts {
 			st := &b.Blocks[bi].Stmts[si]
 			if st.Kind != mir.StAssign || st.Place.Local != l {
 				continue
 			}
-			if st.Place.Proj.Len != 0 || rv != nil {
-				return nil, false
+			if st.Place.Proj.Len != 0 {
+				return types.NoItem, nil, false
 			}
-			rv = &st.Rvalue
+			var it types.ItemID
+			var a []types.GenericArg
+			ok := true
+			switch rv := &st.Rvalue; rv.Kind {
+			case mir.RvFnRef:
+				it, a = rv.Fn.Item, b.GenericArgs[rv.Fn.Args.Start:rv.Fn.Args.End()]
+			case mir.RvUse:
+				it, a, ok = presentOperand(b, consts, rv.A, depth)
+			default:
+				ok = false
+			}
+			if !ok || found && (it != item || !slices.Equal(a, args)) {
+				return types.NoItem, nil, false
+			}
+			item, args, found = it, a, true
 		}
 	}
-	return rv, rv != nil
+	return item, args, found
 }
 
 // presentFacts hashes, per Present call of pack p's members, the symbol

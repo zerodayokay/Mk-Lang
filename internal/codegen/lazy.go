@@ -115,8 +115,11 @@ jmpq *(%rax)
 // Per name the 40-byte descriptor __imp_S in .data: the slot (the first
 // stub until resolved), the library record, the NUL-terminated name, the
 // first stub's address (the slot's unbound value) and the name's length.
-// Same libs, same bytes.
-func EmitLazy(libs []LazyLib, cfg Config, w io.Writer) error {
+// Each name of bound, which an object of the link defines, gets only a
+// descriptor whose slot is that definition and whose first-stub field is 0,
+// so the resolver finds it bound and dl.Present is true. Same input, same
+// bytes.
+func EmitLazy(libs []LazyLib, bound []string, cfg Config, w io.Writer) error {
 	var werr error
 	err := guard("lazy bindings", source.Span{}, func() {
 		if cfg.Target.OS != types.OSWindows || cfg.Target.Arch != types.ArchX64 {
@@ -147,6 +150,12 @@ func EmitLazy(libs []LazyLib, cfg Config, w io.Writer) error {
 				fmt.Fprintf(&text, "\t.def %s;\n\t.scl 3;\n\t.type 32;\n\t.endef\n%s:\n\tleaq %s(%%rip), %%rax\n\tjmp %s\n",
 					first, first, slot, symLazyStub)
 			}
+		}
+		for _, n := range bound {
+			if !LazySymOK(n) {
+				source.ICEf(source.Span{}, "codegen: lazy name %q is not a C identifier", n)
+			}
+			fmt.Fprintf(&data, "\t.globl %s\n\t.p2align 3\n%s:\n\t.quad %s\n\t.quad 0\n\t.quad 0\n\t.quad 0\n\t.quad 0\n", LazySlot(n), LazySlot(n), n)
 		}
 		s.asm.WriteString("\t.text\n" + text.String())
 		s.asm.WriteString("\t.data\n" + data.String())

@@ -28,7 +28,9 @@ package driver
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -217,11 +219,93 @@ type lazyUse struct {
 	names []string
 }
 
+// lazyLink is what a bin's link binds lazily: uses, the names each lazy
+// library supplies (Mk externs, and C's calls of those); bound, the lazily
+// listed names a Mk extern declares that an object of the link defines
+// (the definition wins, as over any DLL, and dl.Present is true for them);
+// cOnly, the lazily listed names only C calls, each with its library.
+type lazyLink struct {
+	uses  []lazyUse
+	bound []string
+	cOnly []lazyRef
+}
+
+// lazyRef is one name and the library that would bind it lazily.
+type lazyRef struct {
+	name string
+	lib  *lazyLib
+}
+
+// empty reports whether the link binds nothing lazily.
+func (l lazyLink) empty() bool { return len(l.uses) == 0 && len(l.bound) == 0 }
+
+// faults are E0001 for each name only C calls: the resolver is collected
+// with the first Mk extern that binds lazily, before the C objects are
+// read, so such a name would have no resolver.
+func (l lazyLink) faults() []*diag.Diagnostic {
+	var out []*diag.Diagnostic
+	for _, r := range l.cOnly {
+		out = append(out, diag.New(diag.E0001, source.Span{}, fmt.Sprintf("C code calls %s, which binds lazily to %s, and no Mk extern declares it: declare `extern %s` in a Mk module of the package, or link %s \"dynamic\"",
+			r.name, r.lib.file, r.name, r.lib.file)).Text("tool", "mk").Text("symbol", r.name))
+	}
+	return out
+}
+
+// split takes the lazily bound names out of a Windows link: used, the Mk
+// extern symbols, loses them; cUndef, the shim's undefined names, is
+// returned without them; and the plan (nil for none) records them, so no
+// import library takes them, with each lazy .dll to copy. A name an object
+// of the link defines stays out of the uses (bound, when a Mk extern
+// declares it).
+func (b *lazyBinds) split(used map[string]bool, cUndef []string, plan *linkPlan) ([]string, lazyLink) {
+	var l lazyLink
+	if b == nil {
+		return cUndef, l
+	}
+	var defs map[string]bool
+	cside := cUndef
+	if !plan.empty() {
+		defs = plan.defs
+		cside = append(slices.Clone(plan.cand), cUndef...)
+	}
+	mk := slices.Sorted(maps.Keys(used))
+	for _, n := range mk {
+		if b.of[n] != nil && defs[n] {
+			l.bound = append(l.bound, n)
+		}
+	}
+	_, l.uses = b.takeLazy(mk, defs, nil)
+	seen := map[string]bool{}
+	for _, n := range cside {
+		if lib := b.of[n]; lib != nil && !defs[n] && !used[n] && !seen[n] {
+			seen[n] = true
+			l.cOnly = append(l.cOnly, lazyRef{name: n, lib: lib})
+		}
+	}
+	slices.SortFunc(l.cOnly, func(x, y lazyRef) int { return strings.Compare(x.name, y.name) })
+	taken := map[string]bool{}
+	for _, u := range l.uses {
+		for _, n := range u.names {
+			taken[n] = true
+			delete(used, n)
+		}
+	}
+	rest := slices.DeleteFunc(slices.Clone(cUndef), func(n string) bool { return taken[n] })
+	if !plan.empty() {
+		plan.lazyNames = taken
+		for _, u := range l.uses {
+			if u.lib.copy != "" {
+				plan.copies = append(plan.copies, &dynLib{file: u.lib.file, copy: u.lib.copy})
+			}
+		}
+	}
+	return rest, l
+}
+
 // takeLazy splits the lazily bound names out of names (the link's
-// candidates: Mk externs and the shim's undefined names): it returns the
-// names left, and adds the lazy ones to uses, grouped by library in the
-// predicate's order, names sorted. A name an object of the link defines
-// (defs) is not a candidate.
+// candidates): it returns the names left, and adds the lazy ones to uses,
+// grouped by library in the predicate's order, names sorted. A name an
+// object of the link defines (defs) is not a candidate.
 func (b *lazyBinds) takeLazy(names []string, defs map[string]bool, uses []lazyUse) ([]string, []lazyUse) {
 	if b == nil {
 		return names, uses
@@ -254,17 +338,17 @@ func (b *lazyBinds) takeLazy(names []string, defs map[string]bool, uses []lazyUs
 	return rest, uses
 }
 
-// lazyObject builds the lazy-binding object of uses into work, or takes
+// lazyObject builds the lazy-binding object of l into work, or takes
 // it from the store: codegen.EmitLazy compiled as the support pack is
 // (native code, -O3, no LTO). It returns the object and its key (objKey
 // over the IR), which joins the link key.
-func (w *world) lazyObject(ctx context.Context, tools *toolchain.Tools, st *cache.Store, cfg codegen.Config, work string, uses []lazyUse) (string, source.Hash, []*diag.Diagnostic) {
-	libs := make([]codegen.LazyLib, len(uses))
-	for i, u := range uses {
+func (w *world) lazyObject(ctx context.Context, tools *toolchain.Tools, st *cache.Store, cfg codegen.Config, work string, l lazyLink) (string, source.Hash, []*diag.Diagnostic) {
+	libs := make([]codegen.LazyLib, len(l.uses))
+	for i, u := range l.uses {
 		libs[i] = codegen.LazyLib{File: u.lib.file, Flags: u.lib.flags, Names: u.names}
 	}
 	var b bytes.Buffer
-	if err := codegen.EmitLazy(libs, cfg, &b); err != nil {
+	if err := codegen.EmitLazy(libs, l.bound, cfg, &b); err != nil {
 		return "", source.Hash{}, []*diag.Diagnostic{diag.FromInternal(&source.InternalError{Where: "codegen lazy", What: err.Error()})}
 	}
 	ll := filepath.Join(work, "lazy.ll")

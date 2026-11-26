@@ -468,7 +468,8 @@ export Main(sys: &System): WriteError!void {
 
 // TestFFI_LazyRace: eight tasks on eight carriers (MK_CARRIERS=8) wait for
 // each other, then each makes the first calls of two functions of one
-// unloaded DLL at once; every result is right, run after run.
+// unloaded DLL at once; every result is right, run after run, and some
+// runs make them on more than one thread (the tasks' thread ids differ).
 func TestFFI_LazyRace(t *testing.T) {
 	needWindows(t)
 	tools := needTools(t)
@@ -479,10 +480,28 @@ func TestFFI_LazyRace(t *testing.T) {
 
 extern RaceA(x: i32): i32
 extern RaceB(x: i32): i32
+extern GetCurrentThreadId(): u32
+
+var First: atomic.AtomicInt = atomic.AtomicInt.New(0)
+var Threads: atomic.AtomicInt = atomic.AtomicInt.New(1)
 
 Job(io: Io, ready: &atomic.AtomicInt, bad: &atomic.AtomicInt, k: i32) {
+    var tid: i64 = 0
+    unsafe "kernel32" {
+        tid = i64(GetCurrentThreadId())
+    }
+    if First.Load() == 0 {
+        First.Store(tid)
+    } else if First.Load() != tid {
+        Threads.Store(2)
+    }
     _ = ready.Add(1)
+    // Spin a while before each yield, so idle carriers take the other
+    // tasks rather than this carrier running them one after another.
     for ready.Load() < 8 {
+        for _ in 0..20_000 {
+            atomic.Pause()
+        }
         io.Yield() else {}
     }
     var a: i32 = 0
@@ -510,7 +529,8 @@ export Main(sys: &System): WriteError!void {
         }
     }
     n := bad.Load()
-    try sys.Print("bad {n}\n", (n))
+    m := Threads.Load() > 1
+    try sys.Print("bad {n} {m}\n", (n, m))
 }
 `)
 	runs := 300
@@ -519,12 +539,21 @@ export Main(sys: &System): WriteError!void {
 	}
 	for _, prof := range []types.Profile{types.Dev, types.Release} {
 		exe := mustBuild(t, root, types.X86_64Windows, prof)
+		spread := 0 // runs whose first calls ran on more than one thread
 		for i := range runs {
 			out, errOut, code := lazyRun(t, exe, t.TempDir(), "MK_CARRIERS=8")
-			if code != 0 || out != "bad 0\n" {
+			if code != 0 || out != "bad 0 true\n" && out != "bad 0 false\n" {
 				t.Fatalf("%v run %d: exit %d, stdout %q, stderr %q", prof, i, code, out, errOut)
 			}
+			if out == "bad 0 true\n" {
+				spread++
+			}
 		}
+		// The race is real only when the calls ran on several carriers.
+		if spread == 0 {
+			t.Errorf("%v: in no run did the tasks run on more than one thread", prof)
+		}
+		t.Logf("%v: %d of %d runs made their first calls on more than one thread", prof, spread, runs)
 	}
 }
 
@@ -615,4 +644,114 @@ func TestFFI_LazyPresentKey(t *testing.T) {
 		t.Errorf("the app pack was not emitted again after MkPk left the lazy list: %v", runs[1].emittedMods())
 	}
 	pkVerify(t, cfg, out, runs[1].exe)
+}
+
+// TestFFI_LazyQualified: dl.Present takes a module-qualified extern
+// (ext.MkQ, declared in another module of the package) without unsafe,
+// and answers in a loop, in a helper called twice and in an if
+// expression, dev and release (where the helpers are inlined).
+func TestFFI_LazyQualified(t *testing.T) {
+	needWindows(t)
+	tools := needTools(t)
+	root := t.TempDir()
+	lazyDLL(t, tools, root, "mklazy.dll", lazyCalls, false)
+	w := types.X86_64Windows.Name
+	lazyWrite(t, filepath.Join(root, "pkg.mk"), lazyManifest(linkLit("mklazy.dll", "lazy", "mklazy.dll", w), linkLit("mkq.dll", "lazy", "mkq.def", w)))
+	lazyWrite(t, filepath.Join(root, "mkq.def"), "MkQ\n")
+	lazyWrite(t, filepath.Join(root, "ext", "ext.mk"), "/// MkQ is mkq.dll's, which the test never builds.\nexport extern MkQ(): i32\n")
+	lazyWrite(t, filepath.Join(root, "app", "main.mk"), `import std.dl
+import ext
+
+extern MkAdd(a: i32, b: i32): i32
+
+Has(io: Io): bool {
+    return dl.Present(io, MkAdd)
+}
+
+Count(io: Io): int {
+    var n := 0
+    for _ in 0..3 {
+        if dl.Present(io, ext.MkQ) {
+            n += 1
+        }
+        if dl.Present(io, MkAdd) {
+            n += 10
+        }
+    }
+    return n
+}
+
+export Main(sys: &System): WriteError!void {
+    a := Has(sys.io)
+    b := Has(sys.io)
+    c := Count(sys.io)
+    x := if dl.Present(sys.io, ext.MkQ) { 1 } else { 2 }
+    try sys.Print("{a} {b} {c} {x}\n", (a, b, c, x))
+}
+`)
+	for _, prof := range []types.Profile{types.Dev, types.Release} {
+		exe := mustBuild(t, root, types.X86_64Windows, prof)
+		if got := runOut(t, exe); got != "true true 30 2\n" {
+			t.Errorf("%v: printed %q", prof, got)
+		}
+	}
+}
+
+// TestFFI_LazyFromC: C calls a lazily bound function too, by a plain call
+// (the thunk) and through __declspec(dllimport) (the slot __imp_MkAdd),
+// when a Mk extern declares it; a lazily listed name only C calls is E0001
+// naming it; and a lazily listed name an archive defines takes the
+// archive's definition, with dl.Present true and no import of the DLL.
+func TestFFI_LazyFromC(t *testing.T) {
+	needWindows(t)
+	tools := needTools(t)
+	w := types.X86_64Windows.Name
+	t.Run("calls", func(t *testing.T) {
+		root := t.TempDir()
+		lazyDLL(t, tools, root, "mklazy.dll", lazyCalls, false)
+		cArchive(t, tools, filepath.Join(root, "lib", "via.lib"), types.X86_64Windows, []string{
+			"__declspec(dllimport) int MkAdd(int a, int b);\nint ViaImp(void) { return MkAdd(40, 2); }\n",
+			"int MkAdd(int a, int b);\nint ViaCall(void) { return MkAdd(1, 1); }\n"})
+		lazyWrite(t, filepath.Join(root, "pkg.mk"), lazyManifest(linkLit("mklazy.dll", "lazy", "mklazy.dll", w), linkLit("via", "static", "lib/via.lib", w)))
+		lazyWrite(t, filepath.Join(root, "app", "main.mk"), ffiMain("extern MkAdd(a: i32, b: i32): i32\nextern ViaImp(): i32\nextern ViaCall(): i32", "ViaImp() + ViaCall() + MkAdd(0, 0)"))
+		for _, prof := range []types.Profile{types.Dev, types.Release} {
+			exe := mustBuild(t, root, types.X86_64Windows, prof)
+			if got := runOut(t, exe); got != "44\n" {
+				t.Errorf("%v: printed %q", prof, got)
+			}
+			if slices.Contains(dlls(t, exe), "mklazy.dll") {
+				t.Errorf("%v: mklazy.dll imported", prof)
+			}
+		}
+	})
+	t.Run("c-only", func(t *testing.T) {
+		root := t.TempDir()
+		lazyDLL(t, tools, root, "mklazy.dll", lazyCalls, false)
+		cArchive(t, tools, filepath.Join(root, "lib", "via.lib"), types.X86_64Windows, []string{"int MkCount(void);\nint ViaCount(void) { return MkCount(); }\n"})
+		lazyWrite(t, filepath.Join(root, "pkg.mk"), lazyManifest(linkLit("mklazy.dll", "lazy", "mklazy.dll", w), linkLit("via", "static", "lib/via.lib", w)))
+		lazyWrite(t, filepath.Join(root, "app", "main.mk"), ffiMain("extern ViaCount(): i32", "ViaCount()"))
+		r, exe := ffiBuild(t, root, types.X86_64Windows, types.Dev, TestHooks{})
+		if exe != "" || len(r.Report.Diags) != 1 {
+			t.Fatalf("want one E0001, got:\n%s", r.Report.Text(r.Sources))
+		}
+		if d := r.Report.Diags[0].Diag; d.Code.String() != "E0001" || fact(d, "symbol") != "MkCount" || !strings.Contains(d.Message, "binds lazily") {
+			t.Errorf("got %s %q: %s", d.Code, fact(d, "symbol"), d.Message)
+		}
+	})
+	t.Run("archive wins", func(t *testing.T) {
+		root := t.TempDir()
+		cDLL(t, tools, filepath.Join(root, "lib"), "pick.dll", "__declspec(dllexport) int Pick(void) { return 1; }\n")
+		cArchive(t, tools, filepath.Join(root, "lib", "pick.lib"), types.X86_64Windows, []string{"int Pick(void) { return 2; }\n"})
+		lazyWrite(t, filepath.Join(root, "pkg.mk"), lazyManifest(linkLit("pick.dll", "lazy", "lib/pick.dll", w), linkLit("pick", "static", "lib/pick.lib", w)))
+		lazyWrite(t, filepath.Join(root, "app", "main.mk"), "import std.dl\n\nextern Pick(): i32\n\nexport Main(sys: &System): WriteError!void {\n    var n := 0\n    unsafe \"the archive's function\" {\n        n = int(Pick())\n    }\n    p := dl.Present(sys.io, Pick)\n    try sys.Print(\"{n} {p}\\n\", (n, p))\n}\n")
+		for _, prof := range []types.Profile{types.Dev, types.Release} {
+			exe := mustBuild(t, root, types.X86_64Windows, prof)
+			if got := runOut(t, exe); got != "2 true\n" {
+				t.Errorf("%v: printed %q, want the archive's Pick and true", prof, got)
+			}
+			if slices.Contains(dlls(t, exe), "pick.dll") {
+				t.Errorf("%v: pick.dll imported", prof)
+			}
+		}
+	})
 }

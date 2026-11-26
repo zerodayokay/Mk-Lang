@@ -19,14 +19,15 @@ import (
 )
 
 // lazyLibs are the two libraries of the lazy tests: a user link's flags
-// (0xA00) with two names, and std's System32 flags (0x800) with one.
+// (0xA00) with two names, and std's System32 flags (0x800) with one;
+// lazyLL adds MkLocal, a lazily listed name an object defines (bound).
 var lazyLibs = []LazyLib{{File: "mklazy.dll", Flags: 0xA00, Names: []string{"MkAdd", "MkSub"}},
 	{File: "crypt32.dll", Flags: 0x800, Names: []string{"CertOpenStore"}}}
 
 func lazyLL(t *testing.T) string {
 	t.Helper()
 	var b bytes.Buffer
-	if err := EmitLazy(lazyLibs, Config{Target: types.X86_64Windows}, &b); err != nil {
+	if err := EmitLazy(lazyLibs, []string{"MkLocal"}, Config{Target: types.X86_64Windows}, &b); err != nil {
 		t.Fatal(err)
 	}
 	return b.String()
@@ -84,6 +85,9 @@ func TestLazyUnwind(t *testing.T) {
 			}
 		}
 	}
+	if !strings.Contains(syms, " D "+LazySlot("MkLocal")) || !strings.Contains(syms, " U MkLocal") || strings.Contains(syms, " T MkLocal") {
+		t.Errorf("the bound name MkLocal needs a slot naming its outside definition and no thunk:\n%s", syms)
+	}
 	if !strings.Contains(syms, " U "+symLazyResolve) {
 		t.Errorf("the stub does not call %s:\n%s", symLazyResolve, syms)
 	}
@@ -103,10 +107,10 @@ func TestLazyRefusals(t *testing.T) {
 		}
 	}
 	var b bytes.Buffer
-	if err := EmitLazy([]LazyLib{{File: "x.dll", Names: []string{"a.b"}}}, Config{Target: types.X86_64Windows}, &b); err == nil {
+	if err := EmitLazy([]LazyLib{{File: "x.dll", Names: []string{"a.b"}}}, nil, Config{Target: types.X86_64Windows}, &b); err == nil {
 		t.Error("EmitLazy took a name with a dot")
 	}
-	if err := EmitLazy(lazyLibs, Config{Target: types.X86_64Linux}, &b); err == nil {
+	if err := EmitLazy(lazyLibs, nil, Config{Target: types.X86_64Linux}, &b); err == nil {
 		t.Error("EmitLazy emitted for x86_64-linux")
 	}
 }
