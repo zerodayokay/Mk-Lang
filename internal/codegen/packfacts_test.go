@@ -81,6 +81,15 @@ func TestPackFactsConfigFields(t *testing.T) {
 			cfg.PGO = &pgo.Profile{}
 		case "Display":
 			cfg.Display = map[string]string{"lib_00000000": "lib"}
+		case "Lazy":
+			// Read only at a dl.Present call (presentFacts), which pfUnit
+			// has none of: no pack moves. internal/driver's
+			// TestFFI_LazyPresentKey moves a pack that has one.
+			cfg.Lazy = map[string]bool{"Callee": true}
+			if now, _ := pfHash(u, 0, e, cfg); now != h0 {
+				t.Errorf("Config.Lazy moved a pack with no dl.Present call")
+			}
+			continue
 		case "Frames":
 			// A member's frame: only the packs holding a named member move.
 			cfg.Frames = map[string]string{e.Items().Get(u.Funcs[0].Item).Key.String(): ""}

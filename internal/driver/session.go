@@ -257,6 +257,9 @@ func (p *pipeline) front() bool {
 		if p.lazyStd && len(p.builds) > 1 && p.builds[0].isStd {
 			var fails []*diag.Diagnostic
 			fails, tooLarge = p.loadLazyStd(p.testing)
+			if len(fails) == 0 {
+				fails = p.loadSysViews() // after every build's files (sysviews.go)
+			}
 			return fails
 		}
 		var fails []*diag.Diagnostic
@@ -270,6 +273,9 @@ func (p *pipeline) front() bool {
 			f, big := b.readAll()
 			fails = append(fails, f...)
 			tooLarge = append(tooLarge, big...)
+		}
+		if len(fails) == 0 {
+			fails = p.loadSysViews() // after every build's files (sysviews.go)
 		}
 		return fails
 	}) {
@@ -404,6 +410,7 @@ func (s *Session) check(p *pipeline) {
 // run is Check after a clean manifest step.
 func (s *Session) run(p *pipeline, stdT, pkgT *srcTree, stdMan, pkgMan *Manifest) {
 	w := p.w
+	w.sysviews = &sysViews{dir: s.cacheDir()}
 	stdB := newBuild(w, nil)
 	pkgB := newBuild(w, stdB)
 	// A plain Check (mk lsp, the Query APIs) loads all of std unless the

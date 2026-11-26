@@ -39,3 +39,27 @@ func TestArMembers_LongNames(t *testing.T) {
 		})
 	}
 }
+
+func TestArMembers_Malformed(t *testing.T) {
+	badMagic := "!<arch>\n" + arHeader("m0", 2)
+	badMagic = badMagic[:len(badMagic)-2] + "XXab"
+	hugeSize := "!<arch>\n" + arHeader("m0", 0)[:48] + "1844674407`\n" + "ab"
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"negative BSD name", []byte("!<arch>\n" + arHeader("#1/-1", 4) + "abcd")},
+		{"oversized BSD name", []byte("!<arch>\n" + arHeader("#1/99", 4) + "abcd")},
+		{"negative long name", []byte("!<arch>\n" + arHeader("//", 4) + "a/\nb" + arHeader("/-1", 2) + "ab")},
+		{"oob long name", []byte("!<arch>\n" + arHeader("//", 4) + "a/\nb" + arHeader("/99", 2) + "ab")},
+		{"uint64 overflow size", []byte(hugeSize)},
+		{"truncated trailing header", []byte("!<arch>\n" + arHeader("m0", 2) + "ab" + "trunc")},
+		{"bad header magic", []byte(badMagic)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := arMembers(tc.data); err == nil {
+				t.Fatalf("arMembers accepted malformed archive (%s)", tc.name)
+			}
+		})
+	}
+}

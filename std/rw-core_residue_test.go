@@ -254,6 +254,10 @@ func (r residueRules) identResidue(id string) string {
 			return "lane id " + s
 		}
 	}
+	// The standard graphics term TextureView crosses the substring reView.
+	if id == "TextureView" {
+		return ""
+	}
 	if m := residueIdentWord.FindString(id); m != "" {
 		return "process word " + m
 	}
@@ -449,7 +453,7 @@ func TestStdNoProcessResidue_Rules(t *testing.T) {
 		{"a Fetch is closed (D8-30)", true},
 		{"Path.Base drops trailing separators", false},
 		{"UTF-8 round trip", false},
-		{"RT-F8-PanicTextIsCodeName the 16 panic texts", false},
+		{"RT-F8-PanicTextIsCodeName the 17 panic texts", false},
 	}
 	for _, c := range names {
 		if got := len(rules.testNameResidue(c.s)) > 0; got != c.want {

@@ -1,13 +1,14 @@
 // Why: std.x509's Verify with no pool of its own trusts what Windows trusts,
 // so it asks the platform's certificate verifier.
 //
-// What: CertVerify, CertVerifyWith and CertChainMax, over crypt32.dll
-// (Crypt32, CryptFn).
+// What: CertVerify, CertVerifyWith and CertChainMax, over crypt32.dll's
+// externs.
 //
-// How: crypt32.dll is loaded at run time on first use, from System32 only
-// (LoadLibraryExW with LOAD_LIBRARY_SEARCH_SYSTEM32), never through the
-// import table, so a binary that never verifies loads and imports nothing
-// new; the module stays loaded. Called only from a pool thread, since chain
+// How: crypt32.dll binds lazily (crypt32.lazy.def): it is loaded on the
+// first call, from System32 only, never through the import table, so a
+// binary that never verifies loads and imports nothing new; the module
+// stays loaded. CertVerifyWith asks LazyPresent for each entry first, so a
+// crypt32 that cannot be loaded is an error, not a panic. Called only from a pool thread, since chain
 // building may fetch an issuer from the network. As Go's crypto/x509
 // (verify_windows.go): the leaf as a context, the rest of the chain in a
 // memory store, CertGetCertificateChain for server authentication at the
@@ -28,7 +29,6 @@ const CertEncoding: u32 = 0x0001_0001
 const StoreMemory: uint = 2
 const StoreDeferClose: u32 = 4
 const AddAlways: u32 = 4
-const LoadSystem32: u32 = 0x800
 // FILETIME of the Unix epoch, in 100 ns units since 1601.
 const CertEpoch: i64 = 116_444_736_000_000_000
 // HostMax is a DNS name's most bytes (253) and its NUL, rounded up.
@@ -44,38 +44,22 @@ const StrongSignOid: u32 = 2
 // public key is not checked against the strong-sign policy.
 const StrongSignNoEndCheck: u32 = 1
 
-// Crypt32 is crypt32.dll's module handle, 0 before the first load.
-var Crypt32: raw.Atomic[u64] = raw.Atomic[u64].New(0)
+// crypt32.dll's entries, each with its documented signature (handles and
+// the store provider as uint).
+extern CertCreateCertificateContext(enc: u32, data: *u8, n: u32): uint
+extern CertOpenStore(provider: uint, enc: u32, prov: uint, flags: u32, para: uint): uint
+extern CertAddEncodedCertificateToStore(store: uint, enc: u32, data: *u8, n: u32, disposition: u32, out: uint): i32
+extern CertGetCertificateChain(engine: uint, cert: uint, time: *u8, store: uint, para: *u8, flags: u32, reserved: uint, ctx: *uint): i32
+extern CertVerifyCertificateChainPolicy(policy: uint, chain: uint, para: *u8, status: *u8): i32
+extern CertFreeCertificateChain(chain: uint)
+extern CertFreeCertificateContext(cert: uint): i32
+extern CertCloseStore(store: uint, flags: u32): i32
 
-// CryptFn is crypt32's entry named by name (NUL-terminated), loading the
-// module on first use; null when the load or the lookup fails.
-CryptFn(name: str): *u8 {
-    // Edge: this Load and the Store below are sequentially consistent, so a
-    // thread that reads a module address reads one LoadLibraryExW returned.
-    // Two first uses may both load: the second load is a reference to the
-    // same module, and both Stores write its one address.
-    var m := Trunc[uint](Crypt32.Load())
-    if m == 0 {
-        var name16: [16]u16 = [0; 16]
-        _ = Wide("crypt32.dll", mut name16[..])
-        unsafe "kernel32; name16 is NUL-terminated" {
-            m = LoadLibraryExW(raw.Data(name16[..]), 0, LoadSystem32)
-        }
-        if m == 0 {
-            return raw.Null[u8]()
-        }
-        // Edge: the Store pairs with the Load above (both sequentially
-        // consistent): it publishes the module LoadLibraryExW returned.
-        Crypt32.Store(u64(m))
-    }
-    unsafe "kernel32; name is a NUL-terminated constant" {
-        return GetProcAddress(m, raw.StrData(name))
-    }
-}
-
-// CertWord is f's address as a word to read a function value from.
-CertWord(f: *u8): u64 {
-    return u64(raw.Addr(f))
+// CertPresent reports whether every crypt32 entry CertVerifyWith calls can
+// be called, loading crypt32.dll on the first ask.
+CertPresent(): bool {
+    first := LazyPresent(CertCreateCertificateContext) && LazyPresent(CertOpenStore) && LazyPresent(CertAddEncodedCertificateToStore) && LazyPresent(CertGetCertificateChain)
+    return first && LazyPresent(CertVerifyCertificateChainPolicy) && LazyPresent(CertFreeCertificateChain) && LazyPresent(CertFreeCertificateContext) && LazyPresent(CertCloseStore)
 }
 
 // CertRecords checks chain's records (a 4-byte little-endian length, then
@@ -151,54 +135,28 @@ CertVerifyWith(chain: []u8, host: []u8, now: i64, flags: u32): OsResult {
             return FailWith(core.SysErr.Other)
         }
     }
-    fc := CryptFn("CertCreateCertificateContext\u{0}")
-    fs := CryptFn("CertOpenStore\u{0}")
-    fa := CryptFn("CertAddEncodedCertificateToStore\u{0}")
-    fg := CryptFn("CertGetCertificateChain\u{0}")
-    fv := CryptFn("CertVerifyCertificateChainPolicy\u{0}")
-    ffc := CryptFn("CertFreeCertificateChain\u{0}")
-    ffx := CryptFn("CertFreeCertificateContext\u{0}")
-    fcs := CryptFn("CertCloseStore\u{0}")
-    first := raw.IsNull(fc) || raw.IsNull(fs) || raw.IsNull(fa) || raw.IsNull(fg)
-    rest := raw.IsNull(fv) || raw.IsNull(ffc) || raw.IsNull(ffx) || raw.IsNull(fcs)
-    if first || rest {
+    if !CertPresent() {
         return LastError()
     }
-    var wc := CertWord(fc)
-    var ws := CertWord(fs)
-    var wa := CertWord(fa)
-    var wg := CertWord(fg)
-    var wv := CertWord(fv)
-    var wfc := CertWord(ffc)
-    var wfx := CertWord(ffx)
-    var wcs := CertWord(fcs)
-    unsafe "crypt32's entries, each read as its documented signature; chain's records are checked by CertRecords" {
-        create := raw.Read(raw.PtrCast[u64, fn(u32, *u8, u32): uint](raw.OfMut(mut wc)))
-        open := raw.Read(raw.PtrCast[u64, fn(uint, u32, uint, u32, uint): uint](raw.OfMut(mut ws)))
-        add := raw.Read(raw.PtrCast[u64, fn(uint, u32, *u8, u32, u32, uint): i32](raw.OfMut(mut wa)))
-        get := raw.Read(raw.PtrCast[u64, fn(uint, uint, *u8, uint, *u8, u32, uint, *uint): i32](raw.OfMut(mut wg)))
-        verify := raw.Read(raw.PtrCast[u64, fn(uint, uint, *u8, *u8): i32](raw.OfMut(mut wv)))
-        freechain := raw.Read(raw.PtrCast[u64, fn(uint)](raw.OfMut(mut wfc)))
-        freectx := raw.Read(raw.PtrCast[u64, fn(uint): i32](raw.OfMut(mut wfx)))
-        closestore := raw.Read(raw.PtrCast[u64, fn(uint, u32): i32](raw.OfMut(mut wcs)))
+    unsafe "crypt32's entries, present and declared with their documented signatures; chain's records are checked by CertRecords" {
         k0 := int(chain[0]) | (int(chain[1]) << 8) | (int(chain[2]) << 16) | (int(chain[3]) << 24)
-        leaf := create(CertEncoding, raw.Offset(raw.Data(chain), 4), Trunc[u32](k0))
+        leaf := CertCreateCertificateContext(CertEncoding, raw.Offset(raw.Data(chain), 4), Trunc[u32](k0))
         if leaf == 0 {
             return LastError()
         }
-        store := open(StoreMemory, 0, 0, StoreDeferClose, 0)
+        store := CertOpenStore(StoreMemory, 0, 0, StoreDeferClose, 0)
         if store == 0 {
             r := LastError()
-            _ = freectx(leaf)
+            _ = CertFreeCertificateContext(leaf)
             return r
         }
         var at := 4 + k0
         for _ in 1..n {
             k := int(chain[at]) | (int(chain[at + 1]) << 8) | (int(chain[at + 2]) << 16) | (int(chain[at + 3]) << 24)
-            if add(store, CertEncoding, raw.Offset(raw.Data(chain), at + 4), Trunc[u32](k), AddAlways, 0) == 0 {
+            if CertAddEncodedCertificateToStore(store, CertEncoding, raw.Offset(raw.Data(chain), at + 4), Trunc[u32](k), AddAlways, 0) == 0 {
                 r := LastError()
-                _ = closestore(store, 0)
-                _ = freectx(leaf)
+                _ = CertCloseStore(store, 0)
+                _ = CertFreeCertificateContext(leaf)
                 return r
             }
             at += 4 + k
@@ -236,10 +194,10 @@ CertVerifyWith(chain: []u8, host: []u8, now: i64, flags: u32): OsResult {
         // FILETIME of now; now / 100 cannot overflow the sum.
         var ft: [1]i64 = [now / 100 + CertEpoch]
         var ctx: uint = 0
-        if get(0, leaf, raw.PtrCast[i64, u8](raw.DataMut(mut ft[..])), store, pp, flags, 0, raw.OfMut(mut ctx)) == 0 {
+        if CertGetCertificateChain(0, leaf, raw.PtrCast[i64, u8](raw.DataMut(mut ft[..])), store, pp, flags, 0, raw.OfMut(mut ctx)) == 0 {
             r := LastError()
-            _ = closestore(store, 0)
-            _ = freectx(leaf)
+            _ = CertCloseStore(store, 0)
+            _ = CertFreeCertificateContext(leaf)
             return r
         }
         // SSL_EXTRA_CERT_CHAIN_POLICY_PARA (24 bytes), CERT_CHAIN_POLICY_PARA
@@ -258,15 +216,15 @@ CertVerifyWith(chain: []u8, host: []u8, now: i64, flags: u32): OsResult {
         var st: [3]u64 = [0; 3]
         pst := raw.PtrCast[u64, u8](raw.DataMut(mut st[..]))
         Put32(pst, 0, 24)
-        ok := verify(PolicySsl, ctx, ppol, pst)
+        ok := CertVerifyCertificateChainPolicy(PolicySsl, ctx, ppol, pst)
         var r := LastError()
         if ok != 0 {
             trust := Get32(raw.FromAddr[u8](ctx), 4)
             r = OsResult(value: i64(Get32(pst, 4)), err: core.SysErr.None, os: i64(trust))
         }
-        freechain(ctx)
-        _ = closestore(store, 0)
-        _ = freectx(leaf)
+        CertFreeCertificateChain(ctx)
+        _ = CertCloseStore(store, 0)
+        _ = CertFreeCertificateContext(leaf)
         return r
     }
 }

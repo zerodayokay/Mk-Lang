@@ -7,7 +7,8 @@
 // which hashes the -MD dependency files through a stat memo and answers
 // negative lookups.
 //
-// How: an entry holds the bindings, the shim, the dependency files with
+// How: an entry holds the bindings, the shim and its functions one by one
+// (a build defines only those it uses), the dependency files with
 // their content hashes, and the negative lookups: for each dependency under
 // search directory k, the same relative path under every directory before
 // k, none of which held a file when the entry was saved. A hit needs every
@@ -29,7 +30,7 @@ import (
 )
 
 // formatVersion changes whenever the mapping changes what it writes.
-const formatVersion = "mk.cimport.v3"
+const formatVersion = "mk.cimport.v4"
 
 // Key is the cache key of r translated by the Clang of identity: every
 // input but the header contents, which the entry checks itself.
@@ -60,11 +61,14 @@ func Key(identity source.Hash, resourceDir string, r Request) source.Hash {
 
 // entry is what the store holds for a key.
 type entry struct {
-	Modules []string
-	Shim    string
-	Stats   []Stats
-	Deps    []depHash
-	Neg     []string
+	Modules   []string
+	Shim      string
+	ShimFuncs []ShimFunc
+	Stats     []Stats
+	FuncLike  [][]string
+	Merged    []map[string]string
+	Deps      []depHash
+	Neg       []string
 }
 
 type depHash struct {
@@ -224,6 +228,9 @@ func Load(st *cache.Store, key source.Hash) (*Result, bool) {
 	if json.Unmarshal(data, &e) != nil {
 		return nil, false
 	}
+	if e.Shim != "" && len(e.ShimFuncs) == 0 {
+		return nil, false // written without the shim's functions: a build could not prune it
+	}
 	dh := NewDepHasher(st)
 	defer dh.Save()
 	for _, d := range e.Deps {
@@ -237,7 +244,7 @@ func Load(st *cache.Store, key source.Hash) (*Result, bool) {
 			return nil, false
 		}
 	}
-	res := &Result{Modules: e.Modules, Shim: e.Shim, Stats: e.Stats}
+	res := &Result{Modules: e.Modules, Shim: e.Shim, ShimFuncs: e.ShimFuncs, Stats: e.Stats, FuncLike: e.FuncLike, Merged: e.Merged}
 	for _, d := range e.Deps {
 		res.Deps = append(res.Deps, d.Path)
 	}
@@ -251,7 +258,7 @@ func Save(st *cache.Store, key source.Hash, res *Result) {
 	if st == nil {
 		return
 	}
-	e := entry{Modules: res.Modules, Shim: res.Shim, Stats: res.Stats, Neg: Negatives(res.Deps, res.SearchDirs)}
+	e := entry{Modules: res.Modules, Shim: res.Shim, ShimFuncs: res.ShimFuncs, Stats: res.Stats, FuncLike: res.FuncLike, Merged: res.Merged, Neg: Negatives(res.Deps, res.SearchDirs)}
 	dh := NewDepHasher(st)
 	defer dh.Save()
 	for _, d := range res.Deps {

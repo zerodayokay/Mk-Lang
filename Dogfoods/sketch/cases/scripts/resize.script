@@ -1,0 +1,35 @@
+# A stroke drawn across a resize of the window, focus lost mid-stroke,
+# and cursor and fullscreen changes.
+canvas 128 96
+cursor crosshair
+color 30 120 200
+brush 4
+move 10 10
+down
+move 40 40
+resize 400 300
+move 90 50
+move 120 80
+up
+print
+cursor hidden
+move 20 80
+down
+move 60 20
+focus off
+expect held none
+focus on
+expect strokes 1 undone 0
+cursor arrow
+move 64 10
+down
+move 64 90
+up
+expect strokes 2 undone 0
+print
+snapshot resize.png
+# Fullscreen last: it shows the window, and from then on the real mouse
+# moves over it (harmless while no button is held).
+fullscreen on
+fullscreen off
+expect strokes 2 undone 0

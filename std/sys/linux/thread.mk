@@ -71,7 +71,7 @@ export ThreadStart(entry: fn(*u8), arg: *u8, stack: int): OsResult {
         // of its own (pthread.mk), so the thread has its own control block.
         // A constant of the build: a static bin holds no
         // PthreadStart, and a libc-mode bin no clone path.
-        return PthreadStart(entry, arg, stack)
+        return PthreadStart(entry, arg, stack, false)
     }
     total := (stack + 4095) / 4096 * 4096 + 4096
     base := Reserve(total, 4096)

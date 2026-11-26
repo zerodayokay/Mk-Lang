@@ -1,0 +1,46 @@
+# Three strokes in two colours, an undo and a redo, a caption, and a save
+# and reload that must repaint to the same picture.
+canvas 160 120
+key 2
+brush 3
+move 20 20
+down
+expect held left
+move 60 30
+move 100 80
+move 140 90
+up
+expect held none
+key 4
+key bigger
+move 30 100
+down
+move 80 60
+move 130 20
+up
+key 1
+move 10 60
+down
+move 150 60
+up
+expect strokes 3 undone 0
+print
+key undo
+expect strokes 2 undone 1
+print
+key redo
+expect strokes 3 undone 0
+key type
+text hello sketch
+key backspace
+key escape
+expect caption hello sketc
+save drawing.sketch
+print
+key clear
+expect strokes 4 undone 0
+load drawing.sketch
+expect saved drawing.sketch
+expect strokes 3 undone 0
+print
+snapshot drawing.png

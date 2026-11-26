@@ -1,0 +1,1 @@
+scene ok: 128x128 msaa=1 shadows=false blur=false overlay=false meshes=1 textures=1 objects=1 instances=0 shaders=10

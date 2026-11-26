@@ -34,7 +34,12 @@ func (b *build) lookupImport(m *modNode, p string) (dep *modNode, reason string,
 		// without it is E0202 needs-cimport. A dependency's c.<name> is its
 		// own (module <dep>.c.<name>). std is C-free, so the C a std module
 		// binds must be the package's own c_sources: without one it is
-		// needs-cimport too.
+		// needs-cimport too. A system view's name reaches the view for a
+		// std module and a view, and for another module when its own C
+		// imports do not have the name (sysviews.go).
+		if dep, reason := b.sysViewFor(m, p); dep != nil || reason != "" {
+			return dep, reason, nil
+		}
 		if b.cBuild != nil {
 			if dep := b.cBuild.byName[b.prefix+p]; dep != nil && (!m.std || b.cBuild.cSources) {
 				return dep, "", nil
@@ -130,6 +135,9 @@ func (b *build) closest(m *modNode, p string) []string {
 	want := resolve.Fold(p)
 	var names []string
 	for _, x := range b.mods {
+		if x.sysview {
+			continue // imported by the view's import path, c.<view>
+		}
 		if m.tree == x.tree {
 			names = append(names, strings.TrimPrefix(x.name, b.prefix)) // as this package spells it
 		} else {
@@ -145,7 +153,7 @@ func (b *build) closest(m *modNode, p string) []string {
 			}
 		} else {
 			for _, x := range b.std.mods {
-				if !isStdInternal(x.name) || m.std {
+				if !x.sysview && (!isStdInternal(x.name) || m.std) {
 					names = append(names, x.name)
 				}
 			}
@@ -217,7 +225,10 @@ func (b *build) link() []*diag.Diagnostic {
 func (b *build) unknownMessage(p, reason string) string {
 	switch reason {
 	case "no-cimport":
-		return fmt.Sprintf("module %s: no pkg.CImport in pkg.mk's c_imports is named %s", p, strings.TrimPrefix(p, "c."))
+		return fmt.Sprintf("module %s: no pkg.CImport in pkg.mk's c_imports is named %s, and no system view is (the system views are %s; mk sdk views lists them)",
+			p, strings.TrimPrefix(p, "c."), strings.Join(sysViewNames(), ", "))
+	case "no-sysview":
+		return b.w.sysViewMessage(p)
 	case "needs-cimport":
 		name := strings.TrimPrefix(p, "c.")
 		if std := b.stdBuild(); std != nil && strings.HasPrefix(p, "std.") {

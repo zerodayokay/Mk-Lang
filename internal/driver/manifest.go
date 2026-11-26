@@ -104,6 +104,7 @@ type CImport struct {
 	Headers, Defines, Macros []string
 	Vendor                   bool
 	IncludeDirs              []string
+	SDK                      bool // the headers are read with the host's SDK (hostsdk.go)
 	Field                    string
 }
 
@@ -662,6 +663,9 @@ func (d *manDecoder) pkg(c cview, t types.TypeID) {
 				ci.IncludeDirs = d.strs(e, et, "include_dirs")
 				vo, _ := d.field(et, "vendor")
 				ci.Vendor = e.v.Bytes[e.base+vo] != 0
+				if so, ok := d.hasField(et, "sdk"); ok {
+					ci.SDK = e.v.Bytes[e.base+so] != 0
+				}
 				m.CImports = append(m.CImports, ci)
 			}
 		case "c_sources":
