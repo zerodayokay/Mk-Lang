@@ -139,7 +139,7 @@ For the borrow and flow codes, [the memory model](memory.md) explains the rules 
 | E0709 | const-arithmetic | Arithmetic on a `const` parameter inside a generic | Alternatives: use a slice |
 | E0711 | cannot-infer | No argument or expected type fixes a type parameter. Also a generic function named as a value without its type arguments, which are never inferred there | Proven when one type fits |
 | E0801 | error-not-in-set | A `fail` or `try` whose error is not in the function's error set | Alternatives: widen or handle |
-| E0802 | error-unhandled | An `E!T` used without `try`, `else` or `match`, passed, or stored anywhere but a binding that writes its type (a field or element, assigned or constructed), or a `scope` over a `Scope[E]` without `try` | Compiles: add `try` |
+| E0802 | error-unhandled | An `E!T` used without `try`, `else` or `match`, passed, or stored anywhere but a binding that writes its type (a field or element, assigned or constructed), or a `scope` over a `Scope[E]` without `try`. Also a binding that writes an `E!T` type assigned again, borrowed `mut`, or ending its scope on some path while the value it holds may be unread | Compiles: add `try` |
 | E0803 | else-falls-through | An `else` block where a value is needed whose last line is not a value | Alternatives: the value on its last line, or `return` |
 | E0804 | try-on-non-error | `try` on a value that is not an `E!T` | Proven: remove |
 | E0805 | missing-return | A path through the function reaches its end with no `return` | Proven for a tail expression; Compiles for a last `if` or `match` whose arms end in values: `return` before it |

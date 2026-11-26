@@ -26,5 +26,5 @@ Sum(c: bool, o: ?(Bad!int)): int {
     h := mem.Zeroed[H]()
     a := mem.Zeroed[[2]H]()
     p := &v
-    return v.Must() + h.r.Must() + a[1].r.Must() + (*p).Must() + p.Must() + (if c { v } else { w }).Must() + G.Must() + C.Must() + o.Must().Must()
+    return v.Must() + h.r.Must() + a[1].r.Must() + (*p).Must() + p.Must() + (if c { v } else { w }).Must() + w.Must() + G.Must() + C.Must() + o.Must().Must()
 }
