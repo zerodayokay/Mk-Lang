@@ -428,7 +428,8 @@ func compoundKind(op ast.TokenKind) (intOnly, shift bool) {
 }
 
 // isBinding reports whether e, already typed, is a local or a global
-// (parentheses allowed), the places a stored E!T may be assigned to.
+// (parentheses allowed): a local is the one place a stored E!T may be
+// assigned to, and a global is never assigned (borrow's E0507).
 func (u *unit) isBinding(e ast.Expr) bool {
 	switch e := e.(type) {
 	case *ast.Ident:

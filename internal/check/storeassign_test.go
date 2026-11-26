@@ -4,8 +4,8 @@
 // What: TestE0802_AssignedFallible.
 // How: body cases over every assignment target (a field, an element, a
 // record member, a dereference, a field of an implicit self) with a call's
-// and a stored E!T as the value, refused, and a typed local and a global
-// as the target, accepted.
+// and a stored E!T as the value, refused, and a typed local as the target,
+// accepted (a global is never assigned: borrow's E0507).
 
 package check
 
@@ -24,7 +24,6 @@ func TestE0802_AssignedFallible(t *testing.T) {
 		{"method's field", pre + "S.Set(mut self) {\n\tself.r = F()\n}\n", "E0802@12:11"},
 		{"typed local from a call", pre + "G(): int {\n\tvar v: E!int = F()\n\tv = F()\n\treturn v else { 0 }\n}\n", ""},
 		{"typed local from a local", pre + "G(): int {\n\tvar v: E!int = F()\n\tw: E!int = F()\n\tv = w\n\treturn v else { 0 }\n}\n", ""},
-		{"global", pre + "var Gl: E!int = F()\n\nG() {\n\tGl = F()\n}\n", ""},
 		{"whole struct holding one", pre + "G(s: mut S, o: S) {\n\t*s = o\n}\n", ""},
 		{"handled value into a field", pre + "G(s: mut S, n: mut int) {\n\t*n = F() else { 0 }\n\ts.r = s.r\n}\n", "E0802@13:8"},
 	})
