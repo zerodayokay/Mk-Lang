@@ -5535,7 +5535,7 @@ export Main(sys: &System): WriteError!void {
 ```
 
 - A signature always names its error set. Mk never infers one, so a function's errors are visible at its declaration.
-- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
+- An `E!T` value must be handled where it is made: by `try`, `else` or `match` (E0802). It cannot be passed, returned by a function that can fail, or stored in a field or element as it is; only a binding that writes its type, `var r: Negative!int = Root(n)`, keeps one to handle later. `return Root(n)` in a function of the same result type is also E0802: write `return try Root(n)`.
 - Inside the function, `return x` returns the success value and `fail e` the error.
 
 ```mk
