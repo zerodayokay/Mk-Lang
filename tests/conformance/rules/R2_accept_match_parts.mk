@@ -112,3 +112,11 @@ SameSome(o: ?Res): i32 {
         none { 1 }
     }
 }
+
+OkAlternatives(p: P[F!Res, G!int]): i32 {
+    return match p {
+        P(a: ok(Res(id: 1)) | ok(Res(id: 2)), r: _) { 0 }
+        P(a: ok(Res(id)), r: _) { id }
+        P(a: err(_), r: _) { 1 }
+    }
+}
