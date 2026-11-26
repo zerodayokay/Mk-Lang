@@ -72,6 +72,8 @@ var knownTypesFindings = []struct {
 		"std.build is not in the stand-in std"},
 	{"doc/std/core.md", "    _ = m.Remove(k)                          // <- E0701", "`Eq` has no method `Eq`",
 		"a block that implements std's Eq and Hash and calls HeapMap.Remove, Replace and Ensure, which the stand-in std lacks"},
+	{"doc/std/core.md", "    l.Push(r) else { // <- E0701", "has no member `Push`",
+		"a block that calls List.Push and HeapList.Push, which the stand-in std lacks"},
 	{"doc/std/raw.md", "    return raw.Read(p) // <- E1101", "module std.raw is internal",
 		"the stand-in std has no std.raw, so the import gives E0202"},
 	{"doc/std/raw.md", "    return a.LoadOrd(2) // <- E0706", "module std.raw is internal",

@@ -119,6 +119,12 @@ impl Free for CollTok {
     }
 }
 
+// CollTik is CollTok's plain twin for the arena containers, which hold no
+// linear value (MKH-596).
+struct CollTik {
+    id: int
+}
+
 CollFnv(h: u64, x: int): u64 {
     return (h ^ Trunc[u64](x)) *% 1099511628211
 }
@@ -127,17 +133,17 @@ CollEnsureHeap(m: mut HeapMap[int, CollTok], a: &Alloc, k: int, t: CollTok): Out
     _ = try m.Ensure(a, k, t)
 }
 
-CollEnsureArena(m: mut Map[int, CollTok], k: int, t: CollTok): OutOfMemory!void {
+CollEnsureArena(m: mut Map[int, CollTik], k: int, t: CollTik): OutOfMemory!void {
     old := try m.Replace(k, t)
     if o := old {
-        _ = CollTokId(o)
+        _ = o.id
     }
 }
 
-CollSetArena(m: mut Map[int, CollTok], k: int, t: CollTok): OutOfMemory!void {
+CollSetArena(m: mut Map[int, CollTik], k: int, t: CollTik): OutOfMemory!void {
     old := try m.Replace(k, t)
     if o := old {
-        _ = CollTokId(o)
+        _ = o.id
     }
 }
 
@@ -363,45 +369,45 @@ CollOomArena(w: mut Writer, a: &Alloc, fail_at: int): WriteError!int {
         var bad := 0
         var back := 0
         var plain := 0
-        var m := Map[int, CollTok].New(&ar)
+        var m := Map[int, CollTik].New(&ar)
         var st := Set[int].New(&ar)
-        var l := List[CollTok].New(&ar)
+        var l := List[CollTik].New(&ar)
         for i in 0..300 {
             k := i * 7919 % 1000
             before := CollLive(&c)
             n := m.Len()
-            t := CollTok(id: i)
+            t := CollTik(id: i)
             if i % 2 == 0 {
                 CollSetArena(mut m, k, t) else {
                     oom += 1
-                    back += CollTokId(t) + 1
+                    back += t.id + 1
                     if m.Len() != n || m.Has(&k) || CollLive(&c) != before {
                         bad += 1
                     }
-                    u := CollTok(id: i)
+                    u := CollTik(id: i)
                     CollSetArena(mut m, k, u) else {
                         bad += 1
-                        _ = CollTokId(u)
+                        _ = u.id
                     }
                 }
             } else {
                 CollEnsureArena(mut m, k, t) else {
                     oom += 1
-                    back += CollTokId(t) + 1
+                    back += t.id + 1
                     if m.Len() != n || m.Has(&k) || CollLive(&c) != before {
                         bad += 1
                     }
-                    u := CollTok(id: i)
+                    u := CollTik(id: i)
                     CollEnsureArena(mut m, k, u) else {
                         bad += 1
-                        _ = CollTokId(u)
+                        _ = u.id
                     }
                 }
             }
             if i % 3 == 2 {
                 old := (i - 1) * 7919 % 1000
                 if v := m.Remove(&old) {
-                    _ = CollTokId(v)
+                    _ = v.id
                 }
             }
             sn := st.t.Count()
@@ -420,17 +426,17 @@ CollOomArena(w: mut Writer, a: &Alloc, fail_at: int): WriteError!int {
             }
             lb := CollLive(&c)
             ln := l.Len()
-            lt := CollTok(id: i)
+            lt := CollTik(id: i)
             l.Push(lt) else {
                 oom += 1
-                back += CollTokId(lt) + 1
+                back += lt.id + 1
                 if l.Len() != ln || CollLive(&c) != lb {
                     bad += 1
                 }
-                lu := CollTok(id: i)
+                lu := CollTik(id: i)
                 l.Push(lu) else {
                     bad += 1
-                    _ = CollTokId(lu)
+                    _ = lu.id
                 }
             }
         }
@@ -455,12 +461,12 @@ CollOomArena(w: mut Writer, a: &Alloc, fail_at: int): WriteError!int {
         for i in 0..300 {
             k := i * 7919 % 1000
             if v := m.Remove(&k) {
-                _ = CollTokId(v)
+                _ = v.id
             }
         }
         for l.Len() > 0 {
             if t := l.Pop() {
-                _ = CollTokId(t)
+                _ = t.id
             }
         }
         ar.Free()

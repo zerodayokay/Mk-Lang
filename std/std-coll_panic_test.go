@@ -67,12 +67,12 @@ Linear(sys: &System, which: str) {
     h := sys.heap.Alloc()
     if which == "BTree.GetMut.linear" {
         // COLL2-2: GetMut updates a linear value in place (Replace fills
-        // the arena tree, whose Set takes no linear value); Has sees every
-        // key.
-        var t := coll.BTree[int, Tok].New(sys.arena)
+        // a tree of values that are not Free, whose Set takes none; an
+        // arena tree holds no linear value, MKH-596); Has sees every key.
+        var t := coll.HeapBTree[int, Tok].New(h)
         var u := coll.HeapBTree[int, Res].New(h)
         for i in 0..200 {
-            if o := t.Replace(i, Tok(n: i)).Must() {
+            if o := t.Replace(h, i, Tok(n: i)).Must() {
                 Burn(o)
             }
             y := Res(n: i)
@@ -111,6 +111,7 @@ Linear(sys: &System, which: str) {
         if !ok || t.Len() != 0 || u.Len() != 0 {
             Assert(false)
         }
+        t.FreeEmpty(h)
         u.FreeEmpty(h)
     } else if which == "HeapBTree.FreeEmpty.linear" {
         var u := coll.HeapBTree[int, Res].New(h)

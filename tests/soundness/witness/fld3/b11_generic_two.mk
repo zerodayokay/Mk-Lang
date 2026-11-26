@@ -1,7 +1,7 @@
 // verdict: reject E0503 E0505
-// note: line 1 and the markers are the verdict with shallow loans, line 3 the verdict without them. Put[T] with T = &Cell[str]: the cell loan lands in l deep (the argument's type as passed is &Cell[str]); Put(mut names, y) lands y shallow in names, which nothing reads after; G's y into l reaches cell
+// note: line 1 and the markers are the verdict with shallow loans, line 3 the verdict without them. Put[T: Plain] (an arena List takes no linear T, MKH-596) with T = &Cell[str]: the cell loan lands in l deep (the argument's type as passed is &Cell[str]); Put(mut names, y) lands y shallow in names, which nothing reads after; G's y into l reaches cell
 // before FLD-3: reject E0503 E0505 at 27 E0503, 29 E0505 (measured by M9 track P2 on m9-item2-r 5f07967, the corpus test harness, 2026-11-15)
-Put[T](l: mut List[T], x: T into l): OutOfMemory!void {
+Put[T: Plain](l: mut List[T], x: T into l): OutOfMemory!void {
     try l.Push(x)
 }
 

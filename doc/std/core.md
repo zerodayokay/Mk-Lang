@@ -338,7 +338,7 @@ A map made with `New` hashes with one fixed fast function and no key. Its order 
 
 ## Releasing what a container holds
 
-An arena container (`List`, `Map`, `Set`, `Text`) needs no release: the arena frees it. A heap container (`HeapList`, `HeapMap`, `TextMap`, `HeapText`) and a `Box` are linear, so the compiler rejects a path that drops one. Each remembers the allocator it was made with, and a call that allocates or frees with another one panics (code 12).
+An arena container (`List`, `Map`, `Set`, `Text`) needs no release: the arena frees it, and what it holds with it, unconsumed. So an arena container holds no linear value: every call that would store one is E0701 (below), and a container of linear values is a heap container. A heap container (`HeapList`, `HeapMap`, `TextMap`, `HeapText`) and a `Box` are linear, so the compiler rejects a path that drops one. Each remembers the allocator it was made with, and a call that allocates or frees with another one panics (code 12).
 
 **`Free`.** `HeapList`, `HeapMap`, `TextMap`, `HeapText`, `Box` and `Chan` implement `Free` when each element type is not linear or is itself `Free`; so do [`coll`](coll.md#freeing-a-heap-container)'s `HeapDeque` and `HeapBTree`. Their `Free(a)` frees every element, then the storage, so it never panics. It is O(1) when the elements have nothing to release, since nothing is walked; otherwise it walks the elements and calls their own `Free`.
 
@@ -385,7 +385,8 @@ A call with no allocator cannot free what it drops, so the dropped type must not
 - `Remove` by key on a map, a `Set` or a [`coll.BTree`](coll.md), which drops the stored key.
 - `Store` on a `Guard` or an [`atomic.SpinGuard`](atomic.md#spin). `Replace(g.Mut(), x)` gives the old value back instead.
 - [`mem.Pool`](mem.md#pools-and-handles)'s `Free` and `Sweep`.
-- An arena `Map`'s `Set`, `Ensure` and `Replace`, an arena `BTree`'s `Set` and `Replace`, and `Set.Add`, for the key or element they would drop.
+- An arena `Map`'s `Set`, `Ensure` and `Replace`, an arena `BTree`'s `Set` and `Replace`, and `Set.Add`, for the key and the value they would drop or store.
+- Every other call that moves a value into arena memory, where the arena would free it unconsumed: `List`'s `Push` and `Insert`, [`coll`](coll.md)'s `Deque.Push`, `Deque.PushFront` and `PriorityQueue.Push`, [`mem.Pool`](mem.md#pools-and-handles)'s `Add`, and `Arena.Put`. The diagnostic names the heap container that holds such a value (`HeapList`, `HeapDeque`, `HeapMap`, `HeapBTree`), or `Box` for `Arena.Put`. In a generic function the bounds must say the type is not linear, as `T: Plain` does.
 
 ```mk
 // verdict: reject E0701
@@ -415,11 +416,26 @@ Prune(a: &Alloc, m: mut HeapMap[Lease, int], k: &Lease): OutOfMemory!void {
 }
 ```
 
-So a linear value is never dropped behind your back: either the call refuses to compile, or one of these four checks at run time and panics:
+```mk
+// verdict: reject E0701
+// an arena List frees its elements with its arena, so it holds no linear value; a HeapList does
+Keep(l: mut List[Res], r: Res) {
+    l.Push(r) else { // <- E0701
+        r.Close()
+    }
+}
+
+KeepOnHeap(a: &Alloc, l: mut HeapList[Res], r: Res) {
+    l.Push(a, r) else {
+        r.Close()
+    }
+}
+```
+
+So a linear value is never dropped behind your back: either the call refuses to compile, or one of these three checks at run time and panics:
 
 - `FreeEmpty` of a container that is not empty (code 11).
-- `Clear` of a `List` (code 8) or a `HeapList` (code 11) that still holds linear elements. An emptied list clears.
-- A `List.Truncate` that would drop a linear element (code 8).
+- `Clear` of a `HeapList` that still holds linear elements (code 11). An emptied list clears.
 - The last [`sync.Shared`](sync.md#shared)'s `Free` of a linear value. A handle that is not the last frees.
 
 **Handles.** A value that owns an OS handle or a peer's protocol state, such as an `fs.Walker`, a `proc.Child` or a `net.Conn`, does not implement `Free`. It has its own `Close`. Release a container of such values with `FreeEach`.
@@ -1456,8 +1472,9 @@ export Arena.Put[T](&self, x: T into self): OutOfMemory!mut T from self
 
 Moves x into the arena and returns a writable reference to it, in fresh
 memory, disjoint from every other piece, on every call. OutOfMemory when
-no chunk can be had, and then the caller still owns x. O(1) amortized;
-allocates SizeOf[T]() bytes.
+no chunk can be had, and then the caller still owns x. T may not be linear
+(E0701 at the call, which names Box): the arena frees x unconsumed. O(1)
+amortized; allocates SizeOf[T]() bytes.
 
 ### `Arena.Reset`
 
@@ -2766,7 +2783,9 @@ export view struct List[T]
 A growable array in an arena. A growth makes the capacity the largest of
 4, twice the old capacity and what is needed. It grows in place when the
 buffer is the arena's last block; otherwise it takes a new buffer and
-leaves the old one to the arena.
+leaves the old one to the arena. The arena frees the elements unconsumed,
+so a List holds no linear value: Push and Insert of one are E0701. A
+HeapList holds one.
 
 ### `List.Clear`
 
@@ -2774,8 +2793,9 @@ leaves the old one to the arena.
 export List[T].Clear(mut self)
 ```
 
-Empties the list and keeps its capacity. A list that still holds linear
-elements panics (code 8) rather than drop them. O(1).
+Empties the list and keeps its capacity. O(1). A list holds no linear
+element, since Push and Insert refuse one; were it to hold one, Clear
+would panic (code 8) rather than drop it.
 
 ### `List.Done`
 
@@ -2798,8 +2818,8 @@ export List[T].Insert(mut self, i: int, x: T into self): OutOfMemory!void
 
 Inserts x before element i (i == Len() appends). Panics (code 2) unless
 0 <= i <= Len(), before any growth. OutOfMemory when the buffer cannot
-grow, and then the caller still owns x. O(Len() - i); growth allocates from
-the arena.
+grow, and then the caller still owns x. T may not be linear (E0701 at the
+call, as for Push). O(Len() - i); growth allocates from the arena.
 
 ### `List.Len`
 
@@ -2841,7 +2861,8 @@ export List[T].Push(mut self, x: T into self): OutOfMemory!void
 - Errors: OutOfMemory
 
 Appends x. OutOfMemory when the arena cannot grow the buffer, and then the
-caller still owns x. Amortized O(1); growth allocates from the arena.
+caller still owns x. T may not be linear (E0701 at the call, which names
+HeapList). Amortized O(1); growth allocates from the arena.
 
 ### `List.Remove`
 
@@ -2893,7 +2914,8 @@ export view struct Map[K: Hash + Eq, V]
 A hash map in an arena, a Swiss table. When the table grows, the old one
 is left to the arena. Iteration order is unspecified; it depends only on
 the key type, the insertions and removals, and the HashKey if there is
-one.
+one. The arena frees the entries unconsumed, so the map holds no linear
+key or value: every call that stores one is E0701. A HeapMap holds them.
 
 ### `Map.Ensure`
 
@@ -3005,8 +3027,9 @@ export Map[K, V].Replace(mut self, k: K into self, v: V into self): OutOfMemory!
 
 Sets k's value to v and returns the old one, or none when k was absent.
 When k is present the stored key stays and the given k is dropped, so a
-call with a linear K is E0701. V may be linear, since the old value comes
-back. OutOfMemory as Set. Expected O(1); growth is amortized O(1) and
+call with a linear K is E0701. A linear V is E0701 too: the arena would
+free the stored v unconsumed (the diagnostic names HeapMap). OutOfMemory
+as Set. Expected O(1); growth is amortized O(1) and
 allocates from the arena.
 
 ### `Map.Set`

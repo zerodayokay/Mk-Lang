@@ -16,7 +16,8 @@ import std.raw
 /// A hash map in an arena, a Swiss table. When the table grows, the old one
 /// is left to the arena. Iteration order is unspecified; it depends only on
 /// the key type, the insertions and removals, and the HashKey if there is
-/// one.
+/// one. The arena frees the entries unconsumed, so the map holds no linear
+/// key or value: every call that stores one is E0701. A HeapMap holds them.
 export view struct Map[K: Hash + Eq, V] {
     t: Table[K, V]
     alloc: &Alloc
@@ -97,8 +98,9 @@ export Map[K, V].Set(mut self, k: K into self, v: V into self): OutOfMemory!void
 
 /// Sets k's value to v and returns the old one, or none when k was absent.
 /// When k is present the stored key stays and the given k is dropped, so a
-/// call with a linear K is E0701. V may be linear, since the old value comes
-/// back. OutOfMemory as Set. Expected O(1); growth is amortized O(1) and
+/// call with a linear K is E0701. A linear V is E0701 too: the arena would
+/// free the stored v unconsumed (the diagnostic names HeapMap). OutOfMemory
+/// as Set. Expected O(1); growth is amortized O(1) and
 /// allocates from the arena.
 export Map[K, V].Replace(mut self, k: K into self, v: V into self): OutOfMemory!?V {
     hash := TableHash(&self.t, &k)

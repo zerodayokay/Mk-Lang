@@ -15382,7 +15382,7 @@ body m.Stack:Pop generics=1 params=1 {
     _2 = mut (*_1).0
     _3 = call std.core.List:Pop[$0](move _2) -> bb1
   bb1:
-    _0 = move _3
+    _0 = copy _3
     scope_end _3
     scope_end _2
     return normal
@@ -15396,7 +15396,7 @@ body m.Stack:Push generics=1 params=2 {
   let _5: void // temp
   bb0:
     _4 = mut (*_1).0
-    _5 = call std.core.List:Push[$0](move _4, move _2) -> bb2 err try _3 -> bb1
+    _5 = call std.core.List:Push[$0](move _4, copy _2) -> bb2 err try _3 -> bb1
   bb1:
     _0 = err(copy _3)
     scope_end _5

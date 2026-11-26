@@ -80,6 +80,8 @@ struct BtPos[K, V] {
 /// iteration in key order. K needs Ord. Its nodes live in the arena and
 /// are freed with it; a node emptied by Remove is reused by a later Set,
 /// so a tree that keeps changing does not grow the arena without bound.
+/// The arena frees the entries unconsumed, so the tree holds no linear key
+/// or value: every call that stores one is E0701. A HeapBTree holds them.
 export view struct BTree[K: Ord, V] {
     t: Tree[K, V]
     alloc: &Alloc
@@ -605,8 +607,8 @@ export BTree[K, V].Set(mut self, k: K into self, v: V into self): OutOfMemory!vo
 
 /// Stores v under k and returns the old value, or none when k was absent.
 /// A present key keeps the stored key and drops the given k, so K may not
-/// be linear (E0701 at the call); V may be anything, since its old value
-/// comes back. Fails with OutOfMemory as Set does, and then k and v are
+/// be linear (E0701 at the call); nor may V, since the arena would free the
+/// stored v unconsumed (E0701, naming HeapBTree). Fails with OutOfMemory as Set does, and then k and v are
 /// not consumed. O(log n) nodes and O(B log n) compares; allocates at most
 /// one node per level, and nothing for a present key.
 export BTree[K, V].Replace(mut self, k: K into self, v: V into self): OutOfMemory!?V {

@@ -1,8 +1,9 @@
 // Source: the release protocol's run-time checks. With no
-// argument, Clear of an emptied List clears, and Clear of one that still holds a linear
-// element panics; with one, a Shared handle that is not the last frees, and the last
-// Shared.Free of a linear value panics. Both are the library's explicit panic, code 8, so the
-// report is the message alone; the .err files move when std does.
+// argument, Clear of an emptied HeapList clears, and Clear of one that still holds a linear
+// element panics (code 11; an arena List holds no linear element, MKH-596); with one, a
+// Shared handle that is not the last frees, and the last Shared.Free of a linear value panics
+// (code 8). Both are the library's explicit panic, so the report is the message alone; the
+// .err files move when std does.
 import std.sync
 
 linear struct Token {
@@ -25,10 +26,12 @@ export Main(sys: &System): WriteError|OutOfMemory!void {
         s.Free(sys.heap)
         return
     }
-    var xs := List[Token].New(sys.arena)
+    a := sys.heap.Alloc()
+    var xs := HeapList[Token].New(a)
+    onerr xs.FreeEmpty(a)
     first := Token(id: 1)
     onerr first.Close()
-    try xs.Push(first)
+    try xs.Push(a, first)
     popped := xs.Pop() else { Token(id: 0) }
     id := popped.id
     popped.Close()
@@ -36,6 +39,7 @@ export Main(sys: &System): WriteError|OutOfMemory!void {
     try sys.Print("emptied {id} {n}\n", (id, n: xs.Len()))
     second := Token(id: 3)
     onerr second.Close()
-    try xs.Push(second)
+    try xs.Push(a, second)
     xs.Clear()
+    xs.FreeEmpty(a)
 }

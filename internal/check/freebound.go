@@ -33,40 +33,53 @@ type releaseRow struct {
 	// frees with its a); otherwise not linear (nothing to free with).
 	free bool
 	alts []string
+	// stores: the call moves the value into arena memory (an arena
+	// container's slot, or Arena.Put's fresh piece), which the arena frees
+	// with no consumer, so a linear value there would be lost (MKH-596).
+	stores bool
 }
 
 // releaseRows is the release protocol as a table. Clear of a List or
 // HeapList and the last Shared.Free check at run time and are not here;
-// Pool.Free is judged by poolFree.
+// Pool.Free is judged by poolFree. The stores rows are every call that
+// moves a value into arena memory: an arena container is never linear and
+// ends with its arena, so it must never hold a linear value.
 var releaseRows = []releaseRow{
-	{"std.core", "HeapList", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "HeapMap", "Free", []int{0, 1}, "K V", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "TextMap", "Free", []int{0}, "V", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "Chan", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "Box", "Free", []int{0}, "T", true, []string{"Take"}},
-	{"std.coll", "HeapDeque", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.coll", "HeapBTree", "Free", []int{0, 1}, "K V", true, []string{"FreeEmpty", "FreeEach"}},
-	{"std.core", "HeapMap", "Set", []int{0, 1}, "K V", true, []string{"Replace"}},
-	{"std.core", "HeapMap", "Ensure", []int{0, 1}, "K V", true, []string{"Replace"}},
-	{"std.core", "HeapMap", "Replace", []int{0}, "K", true, nil},
-	{"std.coll", "HeapBTree", "Set", []int{0, 1}, "K V", true, []string{"Replace"}},
-	{"std.coll", "HeapBTree", "Replace", []int{0}, "K", true, nil},
-	{"std.core", "TextMap", "Set", []int{0}, "V", true, []string{"Replace"}},
-	{"std.core", "TextMap", "Ensure", []int{0}, "V", true, []string{"Replace"}},
-	{"std.core", "Map", "Set", []int{0, 1}, "K V", false, []string{"Replace"}},
-	{"std.core", "Map", "Ensure", []int{0, 1}, "K V", false, nil},
-	{"std.core", "Map", "Replace", []int{0}, "K", false, nil},
-	{"std.core", "Map", "Remove", []int{0}, "K", false, nil},
-	{"std.coll", "BTree", "Set", []int{0, 1}, "K V", false, []string{"Replace"}},
-	{"std.coll", "BTree", "Replace", []int{0}, "K", false, nil},
-	{"std.core", "HeapMap", "Remove", []int{0}, "K", false, nil},
-	{"std.core", "Set", "Add", []int{0}, "T", false, nil},
-	{"std.core", "Set", "Remove", []int{0}, "T", false, nil},
-	{"std.coll", "BTree", "Remove", []int{0}, "K", false, nil},
-	{"std.coll", "HeapBTree", "Remove", []int{0}, "K", false, nil},
-	{"std.core", "Guard", "Store", []int{0}, "T", false, []string{"Replace(g.Mut(), x)"}},
-	{"std.atomic", "SpinGuard", "Store", []int{0}, "T", false, []string{"Replace(g.Mut(), x)"}},
-	{"std.mem", "Pool", "Sweep", []int{0}, "T", false, nil},
+	{"std.core", "List", "Push", []int{0}, "T", false, []string{"HeapList"}, true},
+	{"std.core", "List", "Insert", []int{0}, "T", false, []string{"HeapList"}, true},
+	{"std.coll", "Deque", "Push", []int{0}, "T", false, []string{"HeapDeque"}, true},
+	{"std.coll", "Deque", "PushFront", []int{0}, "T", false, []string{"HeapDeque"}, true},
+	{"std.coll", "PriorityQueue", "Push", []int{0}, "T", false, nil, true},
+	{"std.mem", "Pool", "Add", []int{0}, "T", false, nil, true},
+	{"std.core", "Arena", "Put", []int{0}, "T", false, []string{"Box"}, true},
+	{"std.core", "HeapList", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "HeapMap", "Free", []int{0, 1}, "K V", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "TextMap", "Free", []int{0}, "V", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "Chan", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "Box", "Free", []int{0}, "T", true, []string{"Take"}, false},
+	{"std.coll", "HeapDeque", "Free", []int{0}, "T", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.coll", "HeapBTree", "Free", []int{0, 1}, "K V", true, []string{"FreeEmpty", "FreeEach"}, false},
+	{"std.core", "HeapMap", "Set", []int{0, 1}, "K V", true, []string{"Replace"}, false},
+	{"std.core", "HeapMap", "Ensure", []int{0, 1}, "K V", true, []string{"Replace"}, false},
+	{"std.core", "HeapMap", "Replace", []int{0}, "K", true, nil, false},
+	{"std.coll", "HeapBTree", "Set", []int{0, 1}, "K V", true, []string{"Replace"}, false},
+	{"std.coll", "HeapBTree", "Replace", []int{0}, "K", true, nil, false},
+	{"std.core", "TextMap", "Set", []int{0}, "V", true, []string{"Replace"}, false},
+	{"std.core", "TextMap", "Ensure", []int{0}, "V", true, []string{"Replace"}, false},
+	{"std.core", "Map", "Set", []int{0, 1}, "K V", false, []string{"Replace"}, false},
+	{"std.core", "Map", "Ensure", []int{0, 1}, "K V", false, nil, false},
+	{"std.core", "Map", "Replace", []int{0, 1}, "K V", false, []string{"HeapMap"}, true},
+	{"std.core", "Map", "Remove", []int{0}, "K", false, nil, false},
+	{"std.coll", "BTree", "Set", []int{0, 1}, "K V", false, []string{"Replace"}, false},
+	{"std.coll", "BTree", "Replace", []int{0, 1}, "K V", false, []string{"HeapBTree"}, true},
+	{"std.core", "HeapMap", "Remove", []int{0}, "K", false, nil, false},
+	{"std.core", "Set", "Add", []int{0}, "T", false, nil, false},
+	{"std.core", "Set", "Remove", []int{0}, "T", false, nil, false},
+	{"std.coll", "BTree", "Remove", []int{0}, "K", false, nil, false},
+	{"std.coll", "HeapBTree", "Remove", []int{0}, "K", false, nil, false},
+	{"std.core", "Guard", "Store", []int{0}, "T", false, []string{"Replace(g.Mut(), x)"}, false},
+	{"std.atomic", "SpinGuard", "Store", []int{0}, "T", false, []string{"Replace(g.Mut(), x)"}, false},
+	{"std.mem", "Pool", "Sweep", []int{0}, "T", false, nil, false},
 }
 
 // releaseContainers are the containers whose Free deep-frees: an instance
@@ -191,7 +204,9 @@ func (u *unit) releaseBound(r *releaseRow, item types.ItemID, at source.Span, g 
 			why += ", since its element `" + es + "` " + ew + " and not `Free`"
 		}
 		msg := "`" + ts + "` " + why + ": `" + r.owner + "." + r.method + "` would drop it"
-		if r.method == "Set" || r.method == "Ensure" {
+		if r.stores {
+			msg = "`" + ts + "` " + why + ": `" + r.owner + "." + r.method + "` would store it in arena memory, which the arena frees without consuming it"
+		} else if r.method == "Set" || r.method == "Ensure" {
 			msg = "`" + ts + "` " + why + ": `" + r.owner + "." + r.method + "` would drop the value it replaces"
 		}
 		pn := "T"

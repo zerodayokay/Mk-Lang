@@ -1,6 +1,5 @@
 // Why: a container must never drop or free linear contents silently.
-// What: TestStdColl_LinearContentsPanic over List, HeapList, HeapMap and
-// TextMap.
+// What: TestStdColl_LinearContentsPanic over HeapList, HeapMap and TextMap.
 // How: each case expects exit 101 with its panic message and nothing after;
 // the same containers emptied first clear and free with no panic.
 
@@ -35,18 +34,7 @@ export Main(sys: &System) {
     out.Flush() else {
         return
     }
-    if which == "list-clear" {
-        var l := List[Tok].New(sys.arena)
-        t := Tok(n: 1)
-        l.Push(t) else {
-            Drop(t)
-            return
-        }
-        l.Clear()
-        for x := l.Pop() {
-            Drop(x)
-        }
-    } else if which == "heaplist-clear" {
+    if which == "heaplist-clear" {
         var l := HeapList[Tok].New(a)
         t := Tok(n: 1)
         l.Push(a, t) else {
@@ -84,15 +72,10 @@ export Main(sys: &System) {
         }
         m.FreeEmpty(a)
     } else {
-        var l := List[Tok].New(sys.arena)
         var h := HeapList[Tok].New(a)
         var m := HeapMap[int, Tok].New(a)
         var tm := TextMap[Tok].New(a)
         for i in 0..3 {
-            t1 := Tok(n: i)
-            l.Push(t1) else {
-                Drop(t1)
-            }
             t2 := Tok(n: i)
             h.Push(a, t2) else {
                 Drop(t2)
@@ -114,10 +97,6 @@ export Main(sys: &System) {
                 Drop(v)
             }
         }
-        for x := l.Pop() {
-            Drop(x)
-        }
-        l.Clear()
         for x := h.Pop() {
             Drop(x)
         }
@@ -142,19 +121,18 @@ export Main(sys: &System) {
 }
 `
 
-// TestStdColl_LinearContentsPanic: List.Clear of linear elements is code 8
-// ("would drop a linear value"); HeapList.Clear of linear elements and
+// TestStdColl_LinearContentsPanic: HeapList.Clear of linear elements and
 // FreeEmpty of a non-empty HeapMap or TextMap are code 11 (free non-empty);
 // their Free on linear values that are not Free is E0701. Each panics with
 // exit 101 and its message and prints nothing after; the same containers
-// emptied first (Pop, Remove) clear and free with no panic. HeapList.Free's
+// emptied first (Pop, Remove) clear and free with no panic. An arena List
+// holds no linear element (MKH-596), so it has no case here. HeapList.Free's
 // own case is conformance's tests/programs/panics/free_nonempty.mk, and the
 // map drops of code 8 are tested in regress_test.go.
 func TestStdColl_LinearContentsPanic(t *testing.T) {
 	t.Parallel()
 	exe := collBuild(t, collLinearProgram)
 	cases := []struct{ name, msg string }{
-		{"list-clear", "List.Clear would drop a linear value"},
 		{"heaplist-clear", "free non-empty: HeapList.Clear of linear elements"},
 		{"heapmap-freeempty", "free non-empty: HeapMap.FreeEmpty of a non-empty map"},
 		{"textmap-freeempty", "free non-empty: TextMap.FreeEmpty of a non-empty map"},
