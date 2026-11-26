@@ -112,8 +112,8 @@ The Writers that need no Arena and no Io are for a program with no heap or no Io
 ## std.http
 
 - `error ProxyRefused(code: int)` (both): no dogfood calls it. Covered instead: std/http/tests_proxy.mk's CONNECT blocks.
-- `http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in chat's web cases through ServeWith, and std/http/tests_serveon.mk's blocks.
-- `http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void` (both): no dogfood calls it. Covered instead: std/http/tests_servechan.mk's blocks.
+- `http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void` (reference): std runs it for a dogfood, but no dogfood's own source names it. Covered instead: its execution, which cover finds in chat's web cases through ServeWith, and std/http/tests_serveon.mk's blocks.
+- `http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void` (both): no dogfood calls it. Covered instead: std/http/tests_servechan.mk's blocks.
 
 ## std.crypto
 

@@ -1,7 +1,7 @@
 // Why: after a spike, the free task slots beyond rt.TrimKeep and the empty
 // heap segments beyond 8 must give their pages back and still be usable.
 // What: the RT14-Trim-* blocks (Slots, Heap, Race, RaceGate, Refused) over
-// TrimSpare in sched.mk.
+// TrimSpare in sched_idle.mk.
 // How: Linux reads the resident set (/proc/self/statm, IdleMem) and the
 // mapping count (/proc/self/maps), which macOS has no file for; every target
 // reads the runtime's own counts (rt.SlotCounts, rt.HeapEmptySegments).

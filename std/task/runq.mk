@@ -286,7 +286,7 @@ GlobalSplice(head: *Task, tail: *Task, n: u32) {
         // Edge: glen is raised after the tasks are linked and before the
         // lock is released; a carrier that reads glen > 0 then takes glock,
         // which orders it after this splice. An idle carrier's recheck
-        // reads glen after raising nidle (sched.mk, Idle).
+        // reads glen after raising nidle (sched_idle.mk, Idle).
         _ = (*st).glen.Add(n)
         rt.Unlock(&(*st).glock)
     }

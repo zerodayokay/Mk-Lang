@@ -2,7 +2,7 @@
 // model of the block merge must follow statement for statement.
 // What: the model's cache half: moveSC, moveCS, moveSS, clt, ltSC, cacheIn,
 // cacheOut, mergeToCache, mergeFromCache, mergeExternal and cacheLevel2/4.
-// How: each mirrors its Blk* function of core_sort.mk; the rest of the model and
+// How: each mirrors its Blk* function of core_sort_stable.mk; the rest of the model and
 // its tests are in std-coll_blockmerge_model_test.go (split for the size rule).
 
 package std

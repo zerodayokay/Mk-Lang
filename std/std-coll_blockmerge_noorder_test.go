@@ -1,4 +1,4 @@
-// Why: under an order the clamps of core_sort.mk never run, so the order
+// Why: under an order the clamps of core_sort_stable.mk never run, so the order
 // oracle cannot test them; relations that are no order can.
 // What: TestStdColl_BlockMergeIter, TestStdColl_BlockMergeModelTargeted and
 // TestStdColl_BlockMergeMkNoOrder, over SortStable and SortStableInPlace.
