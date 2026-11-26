@@ -1,8 +1,8 @@
 // Why: keyboard events must identify physical key positions independently
 // of layout, and map OS scancodes and virtual keys consistently.
 // What: Key (W3C UI Events physical key codes), KeyCode, KeyFromCode,
-// KeyFromScancode (IBM Set-1 + E0 extended) and KeyFromVk (Win32 VK).
-// How: pure lookup functions over constant code indices and Set-1/VK tables.
+// KeyFromScancode (IBM set 1 + E0 extended) and KeyFromVk (Win32 VK).
+// How: pure lookup functions over constant code indices and set 1/VK tables.
 
 /// Keys by position, named as W3C UI Events code values are.
 export open enum Key {
@@ -264,7 +264,7 @@ KeyFromCode(code: int): Key {
     return KeyList[code]
 }
 
-// KeyFromScancode maps an IBM PC Set-1 scancode (0..255) and extended flag
+// KeyFromScancode maps an IBM PC set 1 scancode (0..255) and extended flag
 // (bit 24 of Win32 lParam, 0xE0 prefix) to a physical Key.
 KeyFromScancode(scancode: u32, extended: bool): Key {
     sc := int(scancode & 0xFF)

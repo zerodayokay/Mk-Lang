@@ -1,7 +1,7 @@
-// Why: Set-1 scancodes, Win32 VK codes and compact key indices must map
+// Why: set 1 scancodes, Win32 VK codes and compact key indices must map
 // deterministically and stay within the 256-key InputState bitmap.
 // What: tests of KeyCode, KeyFromCode, KeyFromScancode and KeyFromVk.
-// How: verifies round-trip of all 106 keys and checks Set-1 extended vs
+// How: verifies round-trip of all 106 keys and checks set 1 extended vs
 // non-extended edge cases (Pause vs NumLock, PrintScreen vs NumpadMultiply).
 
 test "KeyCode round-trips every named Key and stays below 256" (sys: &System) {
@@ -15,7 +15,7 @@ test "KeyCode round-trips every named Key and stays below 256" (sys: &System) {
     Assert(KeyCode(KeyFromCode(106)) == 0)
 }
 
-test "KeyFromScancode distinguishes non-extended and extended Set-1 codes" (sys: &System) {
+test "KeyFromScancode distinguishes non-extended and extended set 1 codes" (sys: &System) {
     _ = sys
     Assert(KeyCode(KeyFromScancode(0x1E, false)) == KeyCode(Key.KeyA))
     Assert(KeyCode(KeyFromScancode(0x01, false)) == KeyCode(Key.Escape))
