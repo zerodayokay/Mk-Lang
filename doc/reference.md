@@ -11575,11 +11575,14 @@ This table lists the importable modules and the names each one exports. The [lib
 | `std.vm` | `PageSize Reserve Region CodeRegion CodeWriter Prot Misaligned Unsupported Os Error`, every call inside an unsafe block |
 | `std.linux` | `Syscall`, every call inside an unsafe block, on x86_64-linux only |
 | `std.testing` | `Fuzz Bench BenchSys ExpectPanic` |
+| `std.image` | `Compare DecodeLimits DecodePng DefaultDecodeLimits Difference EncodePng Error Image Invalid Pixels TooLarge Unsupported Why`, Provisional |
+| `std.window` | `Button Cursor CursorMode DefaultWindowOptions Error Event EventKind Fullscreen InputState Key Mods Native Open Os Surface Unsupported Window WindowOptions`, Experimental |
+| `std.gpu` | `Acquired AdapterId AdapterInfo AdapterKind Adapters Address Aspect Backend BindEntry BindGroup BindGroupLayout BindingKind Blend BlendComponent BlendFactor BlendOp BlendOver Bound Buffer BufferUsage Call CheckShader ColorAttachment ColorOf ColorTarget ColorWrites Compare ComputePass ComputePipeline Cull DataLayout DebugMode DefaultDeviceOptions DefaultRenderPipeline DefaultSamplerDesc DefaultSwapchainOptions DefaultTextureDesc DefaultViewDesc DepthAttachment DepthBias DepthOf DepthStencil Device DeviceLimits DeviceLost DeviceOptions Driver Encoder Error Extent Feature Features Filter FormatCaps FrontFace IndexFormat Invalid LayoutEntry Leaks Load LoadDepth LoadStencil LossReason Mapped MappedMut Message Missing Misuse NoAdapter NoBufferUsage NoFeatures NoTextureUsage Open OutOfDeviceMemory PassDesc PipelineLayout Power Presented PresentMode RenderPass RenderPipeline RenderPipelineDesc Sampler SamplerDesc SampleType Severity Shader ShaderCode Stage Stencil StencilFace StencilOp StepMode Store SurfaceLost SurfaceTexture Swapchain SwapchainInfo SwapchainOptions Texture TextureDesc TextureFormat TextureRegion TextureUsage TextureView Topology Unsupported VertexAttribute VertexFormat VertexLayout ViewDesc ViewDimension Visibility WriteAll`, Experimental |
 | `std.build` | `File Profile ProfileKind`, read at compile time only |
 
 `std.db.sqlite` needs a C import of SQLite ([std.db.sqlite](std/sqlite.md)).
 
-The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target` and `std.simd.kernel` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
+The modules `std.core`, `std.raw`, `std.rt`, `std.sys`, `std.task`, `std.target`, `std.simd.kernel`, `std.gpu.dx` and `std.gpu.vk` hold the library's own internals. Only standard library modules may import them, except `std.raw` ([who may write unsafe code](#who-may-write-unsafe-code)). Any other import of one is E0202.
 
 Every public item of std has a stability level, which says how it may change from one release to the next. The [library guide](std/README.md#9-stability) lists the modules and items that are not Stable and what each level allows before and after 1.0.
 
@@ -11653,6 +11656,9 @@ The [library guide](std/README.md) holds the conventions every module shares. Ea
 - [`std.sync`](std/sync.md)
 - [`std.term`](std/term.md)
 - [`std.testing`](std/testing.md)
+- [`std.image`](std/image.md)
+- [`std.window`](std/window.md)
+- [`std.gpu`](std/gpu.md)
 - [`std.text`](std/text.md)
 - [`std.time`](std/time.md), with `std.time.tzdata`
 - [`std.tls`](std/tls.md)
@@ -13680,6 +13686,87 @@ testing.Fuzz(f: fn([]u8))
 testing.Bench(f: fn(n: int))
 testing.BenchSys(sys: &System, f: fn(sys: &System, n: int))
 testing.ExpectPanic(want: str)
+
+// std.gpu
+gpu.Adapters(a: &Arena, io: Io, backend: Backend): Error!List[AdapterInfo] from a
+gpu.Open(heap: &Heap, io: Io, o: DeviceOptions): Error!Device from heap
+gpu.CheckShader(code: ShaderCode, stage: Stage, entry: str): Error!void
+gpu.ColorOf(format: TextureFormat): ColorTarget
+gpu.DepthOf(format: TextureFormat, compare: Compare): DepthStencil
+Device.Abandon(self, io: Io)
+Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from sc
+Device.Backend(&self): Backend
+Device.Close(self, io: Io): Leaks
+Device.Encoder(mut self, label: str): Error!Encoder from self
+Device.NewBindGroup(mut self, layout: &BindGroupLayout, entries: []BindEntry, label: str): Error!BindGroup
+Device.NewBindGroupLayout(mut self, entries: []LayoutEntry, label: str): Error!BindGroupLayout
+Device.NewBuffer(mut self, size: int, usage: BufferUsage, label: str): Error!Buffer
+Device.NewComputePipeline(mut self, io: Io, layout: &PipelineLayout, cs: &Shader, label: str): Error!ComputePipeline
+Device.NewPipelineLayout(mut self, groups: []&BindGroupLayout, immediates: int, label: str): Error!PipelineLayout
+Device.NewRenderPipeline(mut self, io: Io, layout: &PipelineLayout, vs: &Shader, fs: ?&Shader, d: RenderPipelineDesc): Error!RenderPipeline
+Device.NewSampler(mut self, d: SamplerDesc): Error!Sampler
+Device.NewShader(mut self, code: ShaderCode, stage: Stage, entry: str, label: str): Error!Shader
+Device.NewSwapchain(mut self, io: Io, w: &window.Window, o: SwapchainOptions): Error!Swapchain
+Device.NewTexture(mut self, d: TextureDesc): Error!Texture
+Device.NewView(mut self, t: &Texture, d: ViewDesc): Error!TextureView
+Device.Present(mut self, io: Io, t: SurfaceTexture): Error!Presented
+Device.ReadTexture(mut self, a: &Arena, io: Io, src: TextureRegion, size: Extent): Error![]u8 from a
+Device.Resize(mut self, io: Io, sc: mut Swapchain, width: int, height: int): Error!void
+Device.SwapchainInfo(&self, sc: &Swapchain): SwapchainInfo
+Device.TakeMessages(mut self, a: &Arena): OutOfMemory!List[Message] from a
+Device.WriteBuffer(mut self, b: &Buffer, at: int, data: []u8): Error!void
+Device.WriteTexture(mut self, dst: TextureRegion, data: []u8, size: Extent): Error!void
+Encoder.Abandon(self)
+Encoder.ComputePass(mut self, label: str): ComputePass from self
+Encoder.CopyBufferToTexture(mut self, src: &Buffer, layout: DataLayout, dst: TextureRegion, size: Extent)
+Encoder.CopyTextureToBuffer(mut self, src: TextureRegion, dst: &Buffer, layout: DataLayout, size: Extent)
+Encoder.PopDebugGroup(mut self)
+Encoder.PushDebugGroup(mut self, label: str)
+Encoder.RenderPass(mut self, d: &PassDesc): RenderPass from self
+Encoder.Submit(self): Error!void
+RenderPass.Draw(mut self, vertices: int, instances: int, first_vertex: int, first_instance: int)
+RenderPass.DrawIndexed(mut self, indices: int, instances: int, first_index: int, base_vertex: int, first_instance: int)
+RenderPass.End(self)
+RenderPass.PopDebugGroup(mut self)
+RenderPass.PushDebugGroup(mut self, label: str)
+RenderPass.SetBindGroup(mut self, index: int, g: &BindGroup, dynamic: []u32)
+RenderPass.SetImmediates(mut self, offset: int, data: []u8)
+RenderPass.SetIndexBuffer(mut self, b: &Buffer, format: IndexFormat, offset: int)
+RenderPass.SetPipeline(mut self, p: &RenderPipeline)
+RenderPass.SetVertexBuffer(mut self, slot: int, b: &Buffer, offset: int)
+ComputePass.Dispatch(mut self, x: int, y: int, z: int)
+ComputePass.End(self)
+ComputePass.PopDebugGroup(mut self)
+ComputePass.PushDebugGroup(mut self, label: str)
+ComputePass.SetBindGroup(mut self, index: int, g: &BindGroup, dynamic: []u32)
+ComputePass.SetImmediates(mut self, offset: int, data: []u8)
+ComputePass.SetPipeline(mut self, p: &ComputePipeline)
+SurfaceTexture.Abandon(self)
+SurfaceTexture.View(&self): &TextureView from self
+Swapchain.Close(self, io: Io, dev: mut Device)
+BindGroup.Close(self, dev: mut Device)
+BindGroupLayout.Close(self, dev: mut Device)
+Buffer.Close(self, dev: mut Device)
+ComputePipeline.Close(self, dev: mut Device)
+PipelineLayout.Close(self, dev: mut Device)
+RenderPipeline.Close(self, dev: mut Device)
+Sampler.Close(self, dev: mut Device)
+Shader.Close(self, dev: mut Device)
+Texture.Close(self, dev: mut Device)
+TextureView.Close(self, dev: mut Device)
+
+// std.window
+window.Open(heap: &Heap, io: Io, o: WindowOptions): Error!Window from heap
+Window.Close(self)
+Window.Poll(&self): ?Event
+Window.SetFullscreen(&self, f: Fullscreen): Error!void
+Window.Size(&self): (width: int, height: int)
+Window.Wait(&self, io: Io): Error!void
+
+// std.image
+image.Compare(a: &Image, b: &Image, tolerance: int): Error!Difference
+image.DecodePng(a: &Arena, bytes: []u8, limits: DecodeLimits): Error!Image from a
+image.EncodePng(a: &Arena, img: Image): Error![]u8 from a
 
 // std.build. ProfileKind below is build.ProfileKind; build.Profile is its constant, set by the driver
 build.File(path: str): []u8
