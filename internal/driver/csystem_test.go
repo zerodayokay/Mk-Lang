@@ -41,7 +41,11 @@ func requestSession(t *testing.T) (*Session, *Manifest, string, []cimport.Import
 		"k.h":      "int k_one(void);\n",
 		"src/a.mk": "export F(): int {\n    return 1\n}\n",
 	})
-	s, err := NewSession(Config{Root: dir, CacheDir: t.TempDir(), StdDir: writeTree(t, fakeStdFiles())})
+	win, _, ok := TargetNamed("x86_64-windows")
+	if !ok {
+		t.Fatal("no x86_64-windows target")
+	}
+	s, err := NewSession(Config{Root: dir, CacheDir: t.TempDir(), StdDir: writeTree(t, fakeStdFiles()), Target: win})
 	if err != nil {
 		t.Fatal(err)
 	}
