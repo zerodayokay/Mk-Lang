@@ -55,7 +55,7 @@ type Import struct {
 // Request is one package's translation unit for one target.
 type Request struct {
 	Target  string // the Mk target name, x86_64-windows or x86_64-linux
-	Triple  string // the Clang triple the headers are read for (ParseTriple)
+	Triple  string // the Clang triple the headers are read for (HeaderTriple)
 	Imports []Import
 	Include []string // -I directories, absolute (the package root)
 	// Sysroot are the target's system header directories, absolute; the
@@ -102,8 +102,9 @@ type Error struct {
 func (e *Error) Error() string { return e.Msg }
 
 // ParseTriple is the Clang triple the headers of a Mk target are read
-// for: mingw-w64's on Windows (the Windows header set, whose ABI is
-// the MSVC one for C records), musl's on Linux.
+// for by default: mingw-w64's on Windows (the Windows header set, whose ABI
+// is the MSVC one for C records), musl's on Linux. A Microsoft SDK as the
+// sysroot is read for the MSVC triple instead (HeaderTriple).
 func ParseTriple(target string) string {
 	switch target {
 	case "x86_64-windows":

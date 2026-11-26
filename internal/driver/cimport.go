@@ -231,7 +231,7 @@ func (s *Session) cImportsOf(stdB *build, man *Manifest, osRoot, dep, treePrefix
 	ci := &cImports{root: osRoot, man: man, dep: dep, treePrefix: treePrefix}
 	// The C and assembly sources see the target's system headers
 	// whether or not the package also imports C.
-	ci.sysdir = sysrootFor(target, os.Getenv)
+	ci.sysdir = s.cSystem(target).Dirs
 	if len(man.CImports) == 0 {
 		// Only c_sources or asm_sources: nothing to translate, objects to
 		// compile (cObjects).
@@ -402,8 +402,7 @@ func (s *Session) translateC(imports []cimport.Import, man *Manifest, osRoot, ta
 	if err != nil {
 		return nil, "", []*diag.Diagnostic{toolErr(err, "clang did not report its resource directory")}
 	}
-	req := cimport.Request{Target: target, Triple: cimport.ParseTriple(target), Imports: imports,
-		Include: cIncludeDirs(man, osRoot), Sysroot: sysrootFor(target, os.Getenv)}
+	req := s.cRequest(imports, man, osRoot, target)
 	ci.sysdir = req.Sysroot
 	st := w.openStore(s.cacheDir())
 	// The build ID is in the key: the mapping is code inside the mk binary.
