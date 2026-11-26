@@ -18,15 +18,15 @@ import (
 	"testing"
 )
 
-// surfaceKey reads the item a library line declares: `T.M(`,
-// `T[..].M(`, `mod.F(`, `F[..](`, or `struct|enum|error|interface|type
-// Name`. It returns the key (generic arguments dropped) and whether the
-// line declares an item.
+var surfaceTypeHeads = [...]string{"struct ", "mut view struct ", "enum ", "error ", "interface ", "type "}
+
+// surfaceKey reads the item a library line declares. It returns the key
+// (generic arguments dropped) and whether the line declares an item.
 func surfaceKey(l string) (string, bool) {
 	if l == "" || l[0] == ' ' || l[0] == '\t' || l[0] == '}' || strings.HasPrefix(l, "//") {
 		return "", false
 	}
-	for _, w := range []string{"struct ", "enum ", "error ", "interface ", "type "} {
+	for _, w := range surfaceTypeHeads {
 		if rest, ok := strings.CutPrefix(l, w); ok {
 			n := identPrefix(rest)
 			return n, n != ""
@@ -204,7 +204,7 @@ func generateSurfaceTable(t *testing.T) map[string][]byte {
 		// A type, and the owner of a method, is named by a span without a
 		// call: `Slice(p, n)` is std.raw's function, not the type Slice.
 		isType := false
-		for _, w := range []string{"struct ", "enum ", "error ", "interface ", "type "} {
+		for _, w := range surfaceTypeHeads {
 			isType = isType || strings.HasPrefix(e.lines[0], w)
 		}
 		for _, ps := range sentences {
@@ -296,6 +296,7 @@ func TestSurfaceKey(t *testing.T) {
 		"fs.ReadText(a: &Arena, io: Io, p: str)": "fs.ReadText",
 		"Print[A: Fields[Format] + Plain](w: mut Writer, const f: str, args: A): WriteError!void": "Print",
 		"struct Cell[T: Plain] {":  "Cell",
+		"mut view struct Fixed {":  "Fixed",
 		"type Error = NotFound | ": "Error",
 		"    export args: []str":   "",
 		"// std.fs":                "",
