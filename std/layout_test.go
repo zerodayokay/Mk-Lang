@@ -387,7 +387,7 @@ func TestPreludeDeclared(t *testing.T) {
 	}
 	text := all.String()
 	for _, n := range PreludeNames {
-		decl := regexp.MustCompile(`(?m)^export (linear |view |linear view |open )?(struct|enum|error|interface|type) ` + n + `\b|^export ` + n + `[\[(]`)
+		decl := regexp.MustCompile(`(?m)^export ((?:linear |mut |view |open )*)(struct|enum|error|interface|type) ` + n + `\b|^export ` + n + `[\[(]`)
 		found := decl.MatchString(text)
 		if !found {
 			t.Errorf("std.core does not export the prelude name %s", n)

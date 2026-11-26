@@ -21,7 +21,7 @@ import (
 )
 
 // memTestFiles are the arena and heap test-block files in std.core.
-var memTestFiles = []string{"core/tests_arena.mk", "core/tests_heap.mk"}
+var memTestFiles = []string{"core/tests_arena.mk", "core/tests_arena_fuzz.mk", "core/tests_heap.mk"}
 
 // memLeakBlocks plant the one leak a user program can write with these
 // types (an accepted cost): a Box moved into an arena, which Arena.Free

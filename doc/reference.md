@@ -12823,7 +12823,7 @@ error BadUrl
 error ProxyRefused(code: int)
 type Error = BadRequest | TooLarge | Status | net.Error | OutOfMemory | ReadError | WriteError | NoSecureTransport | BodyNotReplayable | TooManyRedirects | BadUrl | ProxyRefused
 http.ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): http.Error!Request from a
-http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void)): http.Error!void
+http.Serve[C: Share](sys: &System, addr: str, limit: int, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void): http.Error!void
 http.Fetch(a: &Arena, io: Io, method: str, url: str, headers: []Header, body: []u8, limit: int): http.Error!Reply from a
 Request.Header(&self, name: str): ?str from self
 Request.Param(&self, name: str): ?str from self
@@ -12843,9 +12843,9 @@ Client.Close(self)
 Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
 Exchange.Close(self, io: Io): http.Error!void
 Exchange.Abandon(self)
-http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
-http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
-http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: (fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+http.ServeWith[C: Share](sys: &System, addr: str, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
+http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
+http.ServeChan[C: Share, T: Send](h: &Heap into ch, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, ch: &Chan[T], handle: fn(c: &C, h: &Heap into ch, ch: &Chan[T], a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
 Response.Flush(mut self, io: Io, link: &Link): http.Error!void
 Link.Takeover(&self): ?Taken
 Taken.Abandon(self)
@@ -12914,7 +12914,7 @@ linear struct Taken {
 struct Route[C] {
     export method: str
     export pattern: str
-    export handler: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void)
+    export handler: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response): http.Error!void
 }
 
 // std.regex. Regex and Error below are regex.Regex and regex.Error

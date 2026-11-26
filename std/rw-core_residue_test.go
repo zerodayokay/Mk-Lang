@@ -104,6 +104,7 @@ var residueExternal = map[string]bool{
 	"Base": true, "PKCS": true, "DEFLATE": true, "HTTP": true, "TLS": true,
 	"Adler": true, "RSASSA": true, "Apache": true, "BSD": true,
 	"Toom": true, "BLAKE2b": true, "WTF": true, "RSA": true, "TEST": true,
+	"AVX": true,
 }
 
 // residueGenerated are generated Mk files whose text their generator
