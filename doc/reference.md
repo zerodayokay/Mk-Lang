@@ -13762,6 +13762,15 @@ Window.Poll(&self): ?Event
 Window.SetFullscreen(&self, f: Fullscreen): Error!void
 Window.Size(&self): (width: int, height: int)
 Window.Wait(&self, io: Io): Error!void
+Window.Next(&self, io: Io): Error!Event
+Window.Held(&self): InputState
+Window.SetTitle(&self, title: str): Error!void
+Window.SetCursor(&self, c: Cursor): Error!void
+Window.SetCursorMode(&self, m: CursorMode): Error!void
+Window.Surface(&self): Error!Surface
+Surface.Native(&self): Native
+Surface.Close(self)
+InputState.IsButtonDown(&self, b: Button): bool
 
 // std.image
 image.Compare(a: &Image, b: &Image, tolerance: int): Error!Difference

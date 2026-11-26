@@ -1,0 +1,28 @@
+usage: scene <command> [options] [arguments]
+
+commands:
+  check SCENE                 parse SCENE, load OBJ/PNG assets, check shaders
+  check-shaders               verify HLSL/SPIR-V/DXIL hashes and CheckShader
+  probe [--backend B] [--list]
+                              check shaders and probe GPU adapters
+  render SCENE OUT [options]  render SCENE offscreen to PNG OUT
+  view SCENE [options]        open an interactive orbit-camera window
+  help                        print this help text
+
+render and view options:
+  --backend auto|d3d12|vulkan select GPU backend (default auto)
+  --warp                      prefer the software adapter (WARP)
+  --validate                  enable the debug layer when present
+  --frames N                  render N frames (view: close after N presented)
+
+render options:
+  --strict                    require the debug layer; its errors fail
+  --compare FILE.png          compare the image with FILE.png
+  --compare-warp              also render on WARP and compare
+  --tol N                     channel tolerance for comparisons (default 2)
+
+view options:
+  --mode fifo|mailbox|immediate  swapchain present mode (default fifo)
+
+view keys: drag to orbit, wheel to zoom, M toggles 4x MSAA,
+F toggles fullscreen, Esc closes.

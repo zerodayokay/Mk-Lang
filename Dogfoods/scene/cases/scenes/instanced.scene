@@ -1,0 +1,6 @@
+# 4,096 instances of a small cube read from a storage buffer.
+size 128 128
+camera 0 4 6 0 -0.8 0 50
+instances 4096
+texture checker ../assets/checker.png
+mesh cube ../assets/cube.obj

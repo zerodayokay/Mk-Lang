@@ -474,6 +474,9 @@ export Device.Acquire(mut self, io: Io, sc: mut Swapchain): Error!Acquired from 
             ))
         }
         .Dx(d) {
+            if win_w == 0 || win_h == 0 {
+                return Acquired.Hidden
+            }
             if handed_out {
                 dx.AbandonSwapchain(sc_nh)
                 return Acquired.Outdated

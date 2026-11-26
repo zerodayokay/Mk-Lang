@@ -102,13 +102,14 @@ type LineCov struct {
 	GenRefs []string // dogfoods whose generated code (gen/) alone references it
 	// CodeRefs are the dogfoods that reference it from code a binary links:
 	// a site, own or generated, outside test blocks and tests_ files.
-	CodeRefs []string
-	Exec     []string // "dogfood/case (target)" with a non-zero entry count
-	ExecOn   []string // the targets some case executed it on
-	Present  bool     // some binary instrumented its function
-	Exempt   *Exemption
-	Verdict  string
-	Covered  bool
+	CodeRefs       []string
+	Exec           []string // "dogfood/case (target)" with a non-zero entry count
+	ExecOn         []string // the targets some case executed it on
+	ExecRestricted bool     // some executing case has a .targets file
+	Present        bool     // some binary instrumented its function
+	Exempt         *Exemption
+	Verdict        string
+	Covered        bool
 }
 
 // CoverSummary is the cover report's totals.
@@ -297,7 +298,7 @@ func (h *harness) cover(dogs []*Dogfood, covPath, exemptPath string) int {
 			if rr.profiles == "" {
 				continue
 			}
-			bins, err := h.collect(c, d, rr)
+			bins, err := h.collect(c, d, rr, cases)
 			if err != nil {
 				rr.Status, rr.Reason = "fail", "profiles: "+err.Error()
 				continue
@@ -355,7 +356,13 @@ func profileBin(path string) string {
 // such a file is skipped with a note naming the case,
 // the file and why, and so is a case whose profiles mk profile merge
 // still refuses; every other case is collected.
-func (h *harness) collect(c *coverage, d *Dogfood, rr *RunReport) ([]string, error) {
+func (h *harness) collect(c *coverage, d *Dogfood, rr *RunReport, cases []*Case) ([]string, error) {
+	restricted := map[string]bool{}
+	for _, cs := range cases {
+		if cs.Has("targets") {
+			restricted[cs.Name] = true
+		}
+	}
 	files, err := filepath.Glob(filepath.Join(rr.profiles, "*", "*.mkprof"))
 	if err != nil {
 		return nil, err
@@ -404,6 +411,9 @@ func (h *harness) collect(c *coverage, d *Dogfood, rr *RunReport) ([]string, err
 				if r.Entry > 0 {
 					lc.Exec = addOnce(lc.Exec, tag)
 					lc.ExecOn = addOnce(lc.ExecOn, rr.Target)
+					if restricted[cs] {
+						lc.ExecRestricted = true
+					}
 				}
 			}
 		}
@@ -718,9 +728,20 @@ func (c *coverage) refProfiled(lc *LineCov) bool {
 	return false
 }
 
+// isHardwareBound reports whether mod is a hardware-bound std module whose
+// functions may execute only on targets selected by a case's .targets file.
+func isHardwareBound(mod string) bool {
+	return mod == "std.gpu" || strings.HasPrefix(mod, "std.gpu.") ||
+		mod == "std.window" || strings.HasPrefix(mod, "std.window.")
+}
+
 // missingTargets are the hosted targets cover ran on where no case
-// executed lc.
+// executed lc. For a hardware-bound module executed by a .targets-restricted
+// case, execution on its allowed target(s) satisfies every hosted target.
 func (c *coverage) missingTargets(lc *LineCov) []string {
+	if isHardwareBound(lc.Item.Mod) && lc.ExecRestricted && len(lc.ExecOn) > 0 {
+		return nil
+	}
 	var out []string
 	for _, t := range c.hosted {
 		if !contains(lc.ExecOn, t) {
