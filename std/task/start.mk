@@ -237,10 +237,10 @@ export Start(sp: *u8): never {
         // slot, so it is a Large slot's size on both targets, and how deep
         // Main may recurse does not depend on whether the program
         // has tasks. On Windows it is mapped as a fresh slot is (Prepare),
-        // but with StartCommit committed at the top: then a PAGE_GUARD page
-        // below it, and the TEB's stack words in the context, so the kernel
-        // grows it on touch and reports EXCEPTION_STACK_OVERFLOW at its
-        // bottom.
+        // but with StartCommit committed at the top: then a WinGuardBytes
+        // PAGE_GUARD window below it matching TaskGuarantee, and the TEB's
+        // stack words in the context, so the kernel grows it on touch and
+        // reports EXCEPTION_STACK_OVERFLOW at its bottom.
         size := if rt.UsesTasks() { SystemStackSize } else { MainStackBytes }
         ps := sys.PageSize()
         g := if ps > 4096 { ps } else { 4096 }
@@ -255,7 +255,7 @@ export Start(sp: *u8): never {
         unsafe "base is a fresh reservation of size + 4 KiB" {
             if Target.os == Os.Windows {
                 top := raw.FromAddr[u8](boot.hi - Trunc[uint](StartCommit))
-                if !sys.Commit(top, StartCommit) || !sys.GuardPage(raw.Offset(top, -4096)) {
+                if !sys.Commit(top, StartCommit) || !sys.GuardPages(raw.Offset(top, -rt.WinGuardBytes), rt.WinGuardBytes) {
                     rt.Fatal("cannot reserve task stacks")
                 }
             } else if !sys.CommitStack(raw.Offset(base, g), size) {

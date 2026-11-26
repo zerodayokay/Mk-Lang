@@ -82,7 +82,7 @@ test "RT14-Trim-Slots after 1,000 tasks of 64 KiB, idle carriers give back the s
     (free, cold, cold_pages) := rt.SlotCounts(rt.ClassDefault)
     Assert(cold >= TrimTasks - rt.TrimKeep)
     if Target.os == Os.Windows {
-        // Every cold slot commits its top page alone (and the guard page
+        // Every cold slot commits its top page alone (and the guard pages
         // below it, which the count leaves out), as a fresh one does.
         Assert(cold_pages == cold)
     } else if Target.os == Os.Linux {

@@ -1,8 +1,9 @@
 // Why: std.vm's CodeWriter enforces W^X and exclusive write windows at compile
 // time through linearity, mut borrowing, !Send, and unsafe-only gating.
 // What: TestVm_CodeWriterDiscipline (compile-time rejection of leaked writers,
-// overlapping Entry/Edit/Commit/Release, escaping Bytes slices, cross-task
-// send, and outside-unsafe calls, plus cross-target check of valid usage).
+// overlapping Entry/Edit/Commit/Release, escaping Bytes slices, a CodeWriter
+// sent or shared to a task, and outside-unsafe calls, plus cross-target check
+// of valid usage, a CodeRegion crossing tasks and behind a lock included).
 // How: writes small packages in temp dirs and runs `mk check` against a copy
 // of std, verifying exact error codes and clean cross-target checking.
 
@@ -185,6 +186,140 @@ export Main(sys: &System): vm.Error!void {
 }
 `,
 			want: "E1001",
+		},
+		{
+			// A code space shared by compile tasks behind a lock.
+			name: "coderegion_behind_lock_crosses_tasks",
+			src: `import std.atomic
+import std.vm
+
+struct Pool {
+    region: ?vm.CodeRegion
+}
+
+UseSpin(p: &atomic.Spin[Pool]) {
+    var g := p.Lock()
+    g.Unlock()
+}
+
+UseMutex(io: Io, m: &Mutex[vm.CodeRegion]) {
+    var g := m.Lock(io) else {
+        return
+    }
+    defer g.Unlock()
+    unsafe "edit the region under the lock" {
+        var w := g.Mut().Edit() else {
+            return
+        }
+        defer w.Done()
+        w.Bytes()[0] = 0xC3
+        w.Flush(0, 1)
+    }
+}
+
+Run(c: &vm.CodeRegion, out: mut uint) {
+    unsafe "read the entry of a region no task edits" {
+        *out = c.Entry(0)
+    }
+}
+
+Own(c: vm.CodeRegion) {
+    unsafe "release the region this task owns" {
+        c.Release()
+    }
+}
+
+NeedSend[T: Send]() {
+}
+
+NeedShare[T: Share]() {
+}
+
+// The owners of doc/std/vm.md's Tasks table.
+Kinds() {
+    NeedSend[vm.Region]()
+    NeedShare[vm.Region]()
+    NeedSend[vm.CodeRegion]()
+    NeedShare[vm.CodeRegion]()
+    NeedSend[vm.Prot]()
+    NeedShare[vm.Prot]()
+    NeedSend[vm.Error]()
+    NeedShare[vm.Error]()
+}
+
+export Main(sys: &System): vm.Error!void {
+    unsafe "regions made, shared with tasks and released" {
+        r := try vm.CodeRegion.Reserve(vm.PageSize())
+        n := vm.CodeRegion.New(vm.PageSize()) else {
+            r.Release()
+            return
+        }
+        s := atomic.Spin[Pool].New(Pool(region: some(r)))
+        m := Mutex[vm.CodeRegion].New(n)
+        var a: uint = 0
+        var b: uint = 0
+        scope sc := sys.io.Scope() {
+            sc.go UseSpin(&s)
+            sc.go UseMutex(sys.io, &m)
+        }
+        Pool(region) := s.Into()
+        if x := region {
+            x.Release()
+        }
+        c := m.Into()
+        scope sc := sys.io.Scope() {
+            sc.go Run(&c, mut a)
+            sc.go Run(&c, mut b)
+        }
+        scope sc := sys.io.Scope() {
+            sc.go Own(c)
+        }
+    }
+}
+`,
+			want: "",
+		},
+		{
+			name: "share_codewriter_rejected",
+			src: `import std.vm
+
+Peek(w: &vm.CodeWriter) {
+}
+
+export Main(sys: &System): vm.Error!void {
+    unsafe "attempt to share a CodeWriter with a task" {
+        var c := try vm.CodeRegion.New(vm.PageSize())
+        onerr c.Release()
+        var w := try c.Edit()
+        scope s := sys.io.Scope() {
+            s.go Peek(&w)
+        }
+        w.Done()
+        c.Release()
+    }
+}
+`,
+			want: "E1002",
+		},
+		{
+			name: "codewriter_bounds_rejected",
+			src: `import std.vm
+
+NeedSend[T: Send]() {
+}
+
+NeedShare[T: Share]() {
+}
+
+Kinds() {
+    NeedSend[vm.CodeWriter]()
+    NeedShare[vm.CodeWriter]()
+}
+
+export Main(sys: &System) {
+}
+`,
+			want: "E0701",
 		},
 		{
 			name: "writer_methods_need_unsafe",

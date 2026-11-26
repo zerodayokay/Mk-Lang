@@ -3,14 +3,17 @@
 // including a new header that would now shadow one found before.
 //
 // What: Key (Clang identity, target, defines, sysroot hash, ordered search
-// paths), the cached entry with Load and Save, and DepHasher, which hashes
-// the -MD dependency files through a stat memo.
+// paths), the cached entry with Load and Save, Negatives, and DepHasher,
+// which hashes the -MD dependency files through a stat memo and answers
+// negative lookups.
 //
 // How: an entry holds the bindings, the shim, the dependency files with
-// their content hashes, and the negative lookups: for each dependency found
-// under search directory k, the same relative path under every directory
-// before k, none of which may exist. A hit needs every hash to match and
-// every negative to be absent.
+// their content hashes, and the negative lookups: for each dependency under
+// search directory k, the same relative path under every directory before
+// k, none of which held a file when the entry was saved. A hit needs every
+// hash to match and no negative to hold a file. A directory is no file
+// here: Clang's search passes over a directory named like the header, so
+// it shadows nothing until a file takes its place.
 
 package cimport
 
@@ -87,9 +90,10 @@ const depDomain = "mk.cimport.dep.v1"
 // again. So a warm check of a package importing windows.h stats its
 // headers and reads none. One goroutine uses a DepHasher.
 type DepHasher struct {
-	st    *cache.Store
-	hints *cache.Hints
-	reads int // files read and hashed, for tests
+	st     *cache.Store
+	hints  *cache.Hints
+	exists map[string]bool // Exists's answers
+	reads  int             // files read and hashed, for tests
 }
 
 // NewDepHasher is a DepHasher over st's memo; with a nil st it reads every
@@ -129,6 +133,30 @@ func (d *DepHasher) Hash(p string) (source.Hash, bool) {
 	return h, true
 }
 
+// Exists reports whether a file is at p (isFile), a negative lookup,
+// statting each path once per DepHasher: a package's C objects share most
+// of theirs. A DepHasher lasts one build's step (a Load, a Save, one
+// package's C objects), so a file added later is seen by the next build.
+func (d *DepHasher) Exists(p string) bool {
+	if e, ok := d.exists[p]; ok {
+		return e
+	}
+	e := isFile(p)
+	if d.exists == nil {
+		d.exists = map[string]bool{}
+	}
+	d.exists[p] = e
+	return e
+}
+
+// isFile reports whether an include lookup at p finds a header: something
+// other than a directory is there. Clang's search passes over a directory
+// named like the header, so a directory shadows nothing yet.
+func isFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
 // Save writes the memo; a failure costs a rehash next time.
 func (d *DepHasher) Save() {
 	if d.hints != nil {
@@ -136,9 +164,12 @@ func (d *DepHasher) Save() {
 	}
 }
 
-// negatives are the paths that would shadow a dependency: for a file
-// found as dirs[k]/rel, each dirs[j]/rel with j < k.
-func negatives(deps, dirs []string) []string {
+// Negatives are the negative lookups of a unit that read deps through the
+// ordered search path dirs: the paths that would shadow a dependency and
+// hold no file now (isFile). For a file under dirs[k] as rel, each
+// dirs[j]/rel with j < k. A C object's cache entry (internal/driver) keeps
+// them as a translation's does.
+func Negatives(deps, dirs []string) []string {
 	var out []string
 	// A path the unit read is no negative: #include_next reads a header
 	// under a later directory after the one under an earlier (Clang's
@@ -149,28 +180,30 @@ func negatives(deps, dirs []string) []string {
 	}
 	for _, d := range deps {
 		ad := filepath.Clean(d)
-		// The directory it was found through is the deepest one holding
-		// it: an include name is the shortest path (a header under the
-		// package root's inc/ found through a sysroot -isystem inc is
-		// <x.h>, not <inc/x.h>).
-		best, bestRel := -1, ""
+		// -MD does not say which directory found a file. Where directories
+		// nest (include_dirs "inc" and "inc/sub"), inc/sub/y.h is
+		// "sub/y.h" through inc or "y.h" through inc/sub, so every
+		// directory holding it counts, each with its own name for it.
 		for k, dir := range dirs {
 			rel, err := filepath.Rel(filepath.Clean(dir), ad)
-			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				continue
 			}
-			if best < 0 || len(rel) < len(bestRel) {
-				best, bestRel = k, rel
-			}
-		}
-		if best < 0 {
-			continue
-		}
-		for _, earlier := range dirs[:best] {
-			p := filepath.Clean(filepath.Join(earlier, bestRel))
-			if !seen[p] {
+			for _, earlier := range dirs[:k] {
+				p := filepath.Clean(filepath.Join(earlier, rel))
+				if seen[p] {
+					continue
+				}
 				seen[p] = true
-				out = append(out, p)
+				// A file there now was not picked by the unit (a quoted
+				// include found beside its includer first, which this does not
+				// model): it shadows nothing, and keeping it would make the
+				// entry miss on every build. A directory there stays a
+				// negative: Clang passed over it, and a header put in its
+				// place would shadow the dependency.
+				if !isFile(p) {
+					out = append(out, p)
+				}
 			}
 		}
 	}
@@ -200,7 +233,7 @@ func Load(st *cache.Store, key source.Hash) (*Result, bool) {
 		}
 	}
 	for _, n := range e.Neg {
-		if _, err := os.Stat(n); err == nil {
+		if isFile(n) {
 			return nil, false
 		}
 	}
@@ -218,7 +251,7 @@ func Save(st *cache.Store, key source.Hash, res *Result) {
 	if st == nil {
 		return
 	}
-	e := entry{Modules: res.Modules, Shim: res.Shim, Stats: res.Stats, Neg: negatives(res.Deps, res.SearchDirs)}
+	e := entry{Modules: res.Modules, Shim: res.Shim, Stats: res.Stats, Neg: Negatives(res.Deps, res.SearchDirs)}
 	dh := NewDepHasher(st)
 	defer dh.Save()
 	for _, d := range res.Deps {
