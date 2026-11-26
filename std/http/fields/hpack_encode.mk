@@ -3,8 +3,8 @@
 // cost compression and memory on both sides, and it must never write past
 // the caller's buffer or leave its table out of step with what it wrote.
 //
-// What: Encoder, with New, Free, SetMaxTable, Bound, Encode, Start, Write,
-// TableSize and TableLen (RFC 7541 4, 6).
+// What: Encoder, with New, Free, SetMaxTable, Bound, StartBound,
+// FieldBound, Encode, Start, Write, TableSize and TableLen (RFC 7541 4, 6).
 //
 // How: each field is looked up in the static table (one probe) and in two
 // direct-mapped caches of the dynamic table, by (name, value) and by
@@ -76,16 +76,28 @@ export Encoder.SetMaxTable(mut self, size: int) {
 }
 
 /// An upper bound of the bytes Encode writes for list, whatever the tables
-/// hold. O(Σ name + value); allocates nothing.
+/// hold: StartBound plus each field's FieldBound. O(fields); allocates
+/// nothing.
 export Encoder.Bound[F: Field](&self, list: []F): int {
-    idx := IntLen(StaticLen + self.table.ents.Len(), 4)
-    var n := 2 * IntLen(self.table.max, 5)
+    var n := self.StartBound()
     for f in &list {
-        nl := f.Name().Len()
-        vl := f.Value().Len()
-        n += idx + IntLen(nl, 7) + nl + IntLen(vl, 7) + vl
+        n += self.FieldBound(f.Name(), f.Value())
     }
     return n
+}
+
+/// An upper bound of the bytes Start writes. O(1); allocates nothing.
+export Encoder.StartBound(&self): int {
+    return 2 * IntLen(self.table.max, 5)
+}
+
+/// An upper bound of the bytes Write writes for (name, value) in any mode,
+/// whatever the tables hold: the longest index, then both strings raw (a
+/// Huffman string is never longer). O(1); allocates nothing.
+export Encoder.FieldBound(&self, name: []u8, value: []u8): int {
+    nl := name.Len()
+    vl := value.Len()
+    return IntLen(StaticLen + self.table.ents.Len(), 4) + IntLen(nl, 7) + nl + IntLen(vl, 7) + vl
 }
 
 /// Encodes one whole header block of list into out, from out[0], and
