@@ -61,6 +61,11 @@ NewLine(): Line {
     return Line(slot: raw.Atomic[*Slot].New(raw.Null[Slot]()), conn: none, rb: [0; 8192], s: 0, e: 0, mode: BodyNone, left: 0, ck: Chunk(state: CkSize, size: 0, digits: 0, off: 0, meta: 0), meta: MetaMax, done: true, failed: false, reuse: true, fresh: true, coded: false)
 }
 
+enum Carrier {
+    H1(m: &Mutex[Line])
+    H2(m: &Mutex[H2Stream])
+}
+
 /// A reply that Client.Do read: the status, the header fields, and the
 /// body through Body. It holds the connection until Close or Abandon. It
 /// is linear, and it borrows its arena and the client.
@@ -73,20 +78,29 @@ export linear struct Exchange {
     /// The reply's header fields in the order received.
     export headers: []Header
     client: &Client
-    line: &Mutex[Line]
+    carrier: Carrier
+    version: HttpVersion
     reader: mut Reader
     io: Io
     key: Origin
 }
 
+/// The HTTP protocol version of this exchange's reply. O(1); allocates nothing.
+export Exchange.Version(&self): HttpVersion {
+    return self.version
+}
+
 // ExFill is an Exchange's body Reader's fill: the decoded or raw body
 // Reader in the arena. At the body's end the raw body is read on to its
-// framing's end (SettleLine), so a decoder that stops at its own end still
-// leaves the connection fit for the pool.
+// framing's end (SettleLine / SettleH2), so a decoder that stops at its own
+// end still leaves the connection fit for the pool.
 ExFill(x: mut Exchange, io: Io, dst: mut []u8): ReadError!int {
     n := try x.reader.Read(dst)
     if n == 0 && dst.Len() > 0 {
-        try SettleLine(x.line, io)
+        match x.carrier {
+            Carrier.H1(m) { try SettleLine(m, io) }
+            Carrier.H2(m) { try SettleH2(m, io) }
+        }
     }
     return n
 }
@@ -153,19 +167,33 @@ export Exchange.Body(mut self, buf: mut []u8): Reader from self, buf {
 /// the connection is released anyway and the Exchange stays the caller's:
 /// write `onerr x.Abandon()` with `try x.Close(io)`.
 export Exchange.Close(self, io: Io): Error!void {
-    failed := LineFailed(self.line, self.io)
-    match TakeConn(self.line, self.io, true) {
-        some(conn) {
-            if e := CloseBounded(conn, io, self.client.limits.close) {
-                fail e
+    match self.carrier {
+        Carrier.H1(m) {
+            failed := LineFailed(m, self.io)
+            match TakeConn(m, self.io, true) {
+                some(conn) {
+                    if e := CloseBounded(conn, io, self.client.limits.close) {
+                        fail e
+                    }
+                }
+                none {}
+            }
+            if failed {
+                fail ReadError
             }
         }
-        none {}
+        Carrier.H2(m) {
+            try CloseH2Exchange(self.client, m, io, self.io)
+        }
     }
-    if failed {
-        fail ReadError
+    Exchange(status: _, headers: _, client: _, carrier: _, version: _, reader: _, io: _, key: _) := self
+}
+
+ExchangeOver(x: &Exchange, io: Io, limit: i64): bool {
+    match x.carrier {
+        Carrier.H1(m) { return LineOver(m, io, limit) }
+        Carrier.H2(m) { return H2StreamOver(m, io, limit) }
     }
-    Exchange(status: _, headers: _, client: _, line: _, reader: _, io: _, key: _) := self
 }
 
 // LineFailed: a read or a parse of the Line failed, so the Line is
@@ -195,8 +223,15 @@ LineOver(m: &Mutex[Line], io: Io, limit: i64): bool {
 /// peer. Use it on error paths. Never blocks or fails. O(1); allocates
 /// nothing.
 export Exchange.Abandon(self) {
-    DropConn(TakeConn(self.line, self.io, false))
-    Exchange(status: _, headers: _, client: _, line: _, reader: _, io: _, key: _) := self
+    match self.carrier {
+        Carrier.H1(m) {
+            DropConn(TakeConn(m, self.io, false))
+        }
+        Carrier.H2(m) {
+            AbandonH2Exchange(self.client, m, self.io)
+        }
+    }
+    Exchange(status: _, headers: _, client: _, carrier: _, version: _, reader: _, io: _, key: _) := self
 }
 
 // TakeConn ends the Line's hold on its connection. A pooled connection stays in

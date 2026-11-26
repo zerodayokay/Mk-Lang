@@ -3,7 +3,8 @@
 // flow-controlled request body writes, 1xx response skipping, and non-blocking
 // stream cleanup via Release.
 //
-// What: Conn.TryOpen, Conn.Send, Conn.Head, Conn.Read, and Conn.Release.
+// What: Conn.TryOpen, Conn.Send, Conn.Head, Conn.Read, Conn.Release and
+// Conn.Draining.
 //
 // How: TryOpen encodes request HEADERS inside wr+st and flushes inline; Send
 // delegates to SendDataStream under lead.Wait window waiting; Head and Read
@@ -352,4 +353,17 @@ ReleaseClientSlot(st: mut State, idx: int, gen_: u32): (matched: bool, sid: u32,
     slot2 := &st.streams.slots.Items()[idx]
     release := slot2.state == StClosed && slot2.refs == 0 && !slot2.in_owed
     return (matched: true, sid: sid, was_open: was_open, release: release, dropped_bytes: dropped_bytes)
+}
+
+/// Whether the connection can never open another stream: it failed, the
+/// peer sent GOAWAY, or its stream identifiers are used up (RFC 9113 5.1.1).
+/// Unlike Usable, a connection at its stream limit is not draining. Never
+/// fails. O(1); allocates nothing.
+export Conn.Draining(&self): bool {
+    nc := core.IoMasked(rt.NativeIo())
+    g := self.Core().st.Lock(nc).Must()
+    st := g.Ref()
+    d := st.fault.IsSome() || st.goaway_recvd || st.next_stream_id > MaxStreamId
+    g.Unlock()
+    return d
 }

@@ -1,6 +1,6 @@
 # std.http
 
-`std.http` is an HTTP/1.1 client and server. The client keeps a pool of connections that every task of a program shares. The server runs one task per connection and calls your handler with each request, either directly or through a table of routes. Use it for web services, web clients and anything that speaks HTTP/1.1. For a plain byte stream use [`std.net`](net.md); for WebSockets, [`std.websocket`](websocket.md), whose server side takes its connections from this module's server.
+`std.http` is an HTTP/1.1 client and server, with HTTP/2 when you turn it on ([HTTP/2](#the-client) below). The client keeps a pool of connections that every task of a program shares. The server runs one task per connection and calls your handler with each request, either directly or through a table of routes. Use it for web services, web clients and anything that speaks HTTP/1.1. For a plain byte stream use [`std.net`](net.md); for WebSockets, [`std.websocket`](websocket.md), whose server side takes its connections from this module's server.
 
 `std.http` does not import `std.tls`. A client speaks `https`, and a server TLS, when its settings name a connector from [`std.tls`](tls.md), so `import std.tls` is the opt-in. `std.http` is Stable, but `https` and a TLS server are [Experimental](README.md#a-stable-module-over-an-experimental-one) as long as `std.tls` is. Read the [library guide](README.md) first.
 
@@ -31,6 +31,7 @@ import std.http
 | Read a large reply as it arrives | `Client.Do`, then `Exchange.Body`, then `Exchange.Close` |
 | Upload a body from a `Reader` | `Client.DoStreaming` |
 | Use `https` | `ClientLimits.secure` set to `some(tls.Connector(&cfg))` |
+| Make requests over HTTP/2 | `ClientLimits.h2` (with `secure`) or `h2c`, and `Client.Drive` in a task |
 | Serve with the defaults | `Serve` |
 | Serve with limits, keep-alive and TLS | `ServeWith` with `ServerOptions` |
 | Serve a listener you made, from a task | `ServeOn`, or `ServeChan` to send values to other tasks |
@@ -69,6 +70,9 @@ Start from `DefaultClientLimits`:
 | `idle_connections` | 16 | the connection is closed instead of kept |
 | `decoders` | empty | no `Accept-Encoding` |
 | `allow`, `secure`, `proxy` | `none` | every address allowed, no `https`, no proxy |
+| `h2`, `h2c` | `false` | HTTP/1.1 only |
+| `h2_streams` | 100 | another HTTP/2 connection is opened |
+| `h2_window` | 1 MiB | the server waits for the client to read |
 
 A client keeps its limits, and with them what they borrow, such as the `tls.Config` behind `secure`. So it cannot outlive that `Config`:
 
@@ -96,6 +100,55 @@ An `https` URL with `secure` set to `none` fails with `NoSecureTransport`. A sec
 - A `CONNECT` status other than 2xx is `ProxyRefused(code)`, whether a body follows or not. A byte that arrives with a 2xx head is `BadRequest`.
 - The client writes no proxy credentials of its own. A request's own `Proxy-Authorization` field reaches the proxy on an `http` request only, and not after a redirect to another origin. None goes with the `CONNECT`.
 - std reads no proxy variable, such as `HTTP_PROXY`, from the environment.
+
+**HTTP/2.** The client speaks HTTP/2 only when you turn it on:
+
+- With `h2` and `secure` set, an `https` connection offers `h2` and then `http/1.1` by ALPN, and the request goes over HTTP/2 when the server picks `h2`. A connection on which the server picked `http/1.1` joins the HTTP/1.1 pool, and the next request to that origin reuses it before it dials again.
+- With `h2c`, every `http` request goes over HTTP/2 by prior knowledge (RFC 9113 3.3): there is no fallback, so a server that does not speak HTTP/2 fails the request. Through a proxy, `http` requests stay on HTTP/1.1. Use it for tests, proxies and internal services.
+- Requests to one origin share one connection, at most `h2_streams` of them at once and never more than the server allows. Past that the client opens another connection. It keeps at most 16 HTTP/2 connections, apart from the HTTP/1.1 pool; a request that finds all of them busy gets a connection of its own, which its `Exchange` closes. The first requests to an origin wait for one connection instead of dialling one each.
+- `h2_window` is each stream's receive window (1 MiB). The connection's window is 16 MiB, and the client returns credit as DATA arrives, so one slow reader does not stall the others.
+- `Exchange.Version` says `Http2`. `Close` on a body not read to its end resets the stream (`RST_STREAM(CANCEL)`) and keeps the connection, where HTTP/1.1 would close it.
+- A request the server did not process is retried on another stream, whatever its method, at most 8 times: a refused stream (`REFUSED_STREAM`) or a stream above a `GOAWAY`'s last stream id. An idempotent request whose connection failed is retried once, as on HTTP/1.1. A request whose streamed body was read from is never retried.
+- A server that answers before it reads the whole upload and then resets the stream delivers its complete reply.
+- Field names go out lower-cased. `Host` becomes `:authority`, and the fields HTTP/2 forbids (`Connection`, `Keep-Alive`, `Proxy-Connection`, `Transfer-Encoding`, `Upgrade`) are dropped. HPACK never indexes `Authorization`, `Cookie` or `Proxy-Authorization`.
+
+HTTP/2 asks an endpoint to read frames as soon as they arrive (RFC 9113 5.2.2). Without help, a client connection is read only while some request waits on it, and nobody reads an idle pooled connection. That is harmless to correctness: a request reads the backlog in order before it acts, and a request that finds the connection dead (after a server gave up on an unanswered PING, say) is retried on a new one. But the server sees no answer to its PINGs and SETTINGS until then. `Client.Drive` reads every pooled HTTP/2 connection in the background: it answers PING and SETTINGS while idle, sees a `GOAWAY` at once, and closes a connection idle past `idle`. Run it as a task of a scope that outlives the requests, then `Stop`, the scope's end, and `Close`; `Close` consumes the client, so it cannot come first:
+
+```mk
+// verdict: ok
+import std.http
+import std.url
+
+const NoHeaders: []http.Header = []
+
+DriveTask(c: &http.Client, io: Io) {
+    c.Drive(io) else {}
+}
+
+Get(c: &http.Client, a: &Arena, io: Io, target: str into a): http.Error|url.Error!int {
+    u := try url.Parse(a, target, none)
+    req := http.ClientRequest(method: "GET", url: &u, headers: NoHeaders, body: "".AsBytes())
+    reply := try c.Fetch(a, io, &req)
+    return reply.status
+}
+
+Run(h: &Heap, a: &Arena, io: Io): http.Error|url.Error!int {
+    var l := http.DefaultClientLimits
+    l.h2c = true
+    c := http.Client.New(h, l)
+    defer c.Close()
+    var status := 0
+    scope s := io.Scope() {
+        s.go DriveTask(&c, io)
+        status = Get(&c, a, io, "http://127.0.0.1:8080/") else e {
+            c.Stop()
+            fail e
+        }
+        c.Stop()
+    }
+    return status
+}
+```
 
 `Fetch`, the plain function, is the smallest client: one request over a new connection with `Connection: close`, the whole reply in memory, no pool, no redirects and no `https`.
 

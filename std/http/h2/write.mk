@@ -282,13 +282,6 @@ EmitOwed(a: &Alloc into st, wr: mut WriteState, st: mut State, wout: mut HeapLis
         }
         try AppendFixedPing(a, wout, &p, true)
     }
-    for {
-        sz := st.owed.PopSettingsAck() else {
-            break
-        }
-        try AppendFixedSettingsAck(a, wout)
-        wr.enc.SetMaxTableSize(sz)
-    }
     for st.owed.conn_credit > 0 {
         grant := if st.owed.conn_credit > MaxWindow { MaxWindow } else { st.owed.conn_credit }
         st.owed.conn_credit -= grant
@@ -324,6 +317,17 @@ EmitOwed(a: &Alloc into st, wr: mut WriteState, st: mut State, wout: mut HeapLis
     if wr.cur.Len() > 0 {
         try wout.Extend(a, wr.cur.Items())
         wr.cur.Clear()
+    }
+    // The SETTINGS ACK goes after every frame already built: an ACK tells
+    // the peer the new settings are in force (RFC 9113 6.5.3), and frames in
+    // wr.cur were built under the old ones (a client's HEADERS opened under
+    // the old MAX_CONCURRENT_STREAMS, blocks encoded at the old table size).
+    for {
+        sz := st.owed.PopSettingsAck() else {
+            break
+        }
+        try AppendFixedSettingsAck(a, wout)
+        wr.enc.SetMaxTableSize(sz)
     }
     for dr in deferred_rst.Items() {
         try AppendFixedRst(a, wout, dr.sid, dr.code)

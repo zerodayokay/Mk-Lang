@@ -505,6 +505,17 @@ Conn.FinishClose(self, io: Io) {
     }
 }
 
+/// Ends the connection without consuming it, for a pool that cannot close
+/// it while others hold it: sends GOAWAY(NO_ERROR) within the close limit if
+/// it can, then shuts the transport down both ways, which ends every waiter
+/// (a Drive task included) with an error. The connection is freed later by
+/// Close or Abandon. Never fails: a GOAWAY that cannot be sent is skipped.
+/// O(streams) for the frames owed; allocates nothing.
+export Conn.Evict(&self, io: Io) {
+    self.SendCloseGoaway(io) else {}
+    self.NetConn().Shutdown(io.NoCancel(), net.Shutdown.Both) else {}
+}
+
 /// Sends GOAWAY(NO_ERROR) best-effort within close_limit, closes the underlying
 /// transport, and frees all connection buffers. On error, self stays the
 /// caller's to Abandon. O(streams); allocates nothing.
