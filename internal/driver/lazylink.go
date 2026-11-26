@@ -63,6 +63,16 @@ var lazyRuntimeKeys = []types.Key{
 	types.ItemKey("std.task", "MkSystemRun"),
 }
 
+// isLazyRuntime reports whether k is one of lazyRuntimeKeys.
+func isLazyRuntime(k types.Key) bool {
+	for _, l := range lazyRuntimeKeys {
+		if l.Compare(k) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // lazyLib is one lazily bound DLL: the loader's file name, its flags, and
 // the .dll a link copies beside the executable ("" for none).
 type lazyLib struct {

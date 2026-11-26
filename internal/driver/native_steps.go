@@ -4,8 +4,8 @@
 //
 // What: emitPacks, compileOpts and compilePacks (codegen and clang per
 // pack), stagedHits and copyNewFile (how a stored object reaches the link),
-// importLib, neededImportLibs and writeImportLibs (the Windows import
-// libraries), and linkKey with nativeOptions (the key of the
+// importLib, neededImportLibs, windowsLibs and writeImportLibs (the Windows
+// import libraries and the lazy-binding object), and linkKey with nativeOptions (the key of the
 // content-addressed executable).
 //
 // How: packs run at most Jobs at a time with results in slots, so every
@@ -498,6 +498,28 @@ func (w *world) neededImportLibs(in *mono.Instances, cUndef []string, plan *link
 		libs, all = plan.namedImportLibs(libs, all)
 	}
 	return addSystemLibs(libs, all), lazy, nil
+}
+
+// windowsLibs is a Windows bin's import libraries (neededImportLibs), with
+// its extern var faults, and its lazy-binding object and that object's key
+// (lazylink.go; none when no name binds lazily). Only the shim's undefined
+// names reach the system DLLs: it is the C import's own code (a static
+// inline calling Win32). A C source links against std.libc alone, so its
+// other calls fail at link (E0001); a named link may supply them.
+func (w *world) windowsLibs(ctx context.Context, tools *toolchain.Tools, st *cache.Store, cfg codegen.Config, work string, insts *mono.Instances,
+	globals []codegen.Global, cobjs []string, plan *linkPlan) ([]importLib, []string, []source.Hash, []*diag.Diagnostic) {
+	specs, lazy, ds := w.neededImportLibs(insts, cObjectUndefined(shimObjects(cobjs)), plan)
+	if len(ds) == 0 {
+		ds = w.externVarFaults(globals, cobjs, plan, specs)
+	}
+	if len(ds) > 0 || len(lazy) == 0 {
+		return specs, nil, nil, ds
+	}
+	obj, key, ds := w.lazyObject(ctx, tools, st, cfg, work, lazy)
+	if len(ds) > 0 {
+		return nil, nil, nil, ds
+	}
+	return specs, []string{obj}, []source.Hash{key}, nil
 }
 
 // lazyHolds reports whether a lazy use binds name.
