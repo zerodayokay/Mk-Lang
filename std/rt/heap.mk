@@ -690,7 +690,8 @@ HugeAlloc(size: int, align: int): *u8 {
         extra = total *% (HugeSpare - 1)
     }
     // Edge: the atomic debit tests the shared spare budget's old balance.
-    // An insufficient balance refuses the reservation and restores the debit.
+    // An insufficient balance leaves the allocation with no spare and
+    // restores the debit.
     hs := HS()
     unsafe "the RtState page" {
         if (*hs).spare.Add(0 -% extra) < extra {

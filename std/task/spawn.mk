@@ -101,8 +101,8 @@ NewSlot(class: u8, need: int): *rt.SlotHeader {
                         if (*c).slot_count > 0 {
                             FlushSlots(c, int((*c).slot_count))
                         }
-                        // Edge: refill only when the shared demand and trim
-                        // checks leave the Default slot cache eligible.
+                        // Edge on the refill below: observed demand or
+                        // trim keeps Default slots in the shared region.
                     } else if (*TS()).slot_cache && (*TS()).slot_waiters.Load() == 0 && rt.TrimGateGet() == 0 {
                         var got := 0
                         h = rt.TakeSlotBatch(class, 64, mut got)
