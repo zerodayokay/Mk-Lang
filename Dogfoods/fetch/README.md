@@ -139,7 +139,7 @@ Crc32State.Bytes(mut self, data: []u8)
 Crc32State.Sum(self): u32
 // std.http
 error BodyNotReplayable
-http.ReadRequest(a: &Arena into a, io: Io, r: mut Reader, limit: int): http.Error!Request from a
+http.ReadRequest(a: &Arena, io: Io, r: mut Reader, limit: int): http.Error!Request from a
 Request.Header(&self, name: str): ?str from self
 Client.New(h: &Heap, l: ClientLimits): Client from h, l
 Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
@@ -172,7 +172,7 @@ crypto.ParsePrivateKey(der: []u8): crypto.Error!PrivateKey
 compress.Gzip(a: &Arena, data: []u8): OutOfMemory![]u8 from a
 compress.Zlib(a: &Arena, data: []u8): OutOfMemory![]u8 from a
 // std.sim
-Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim
+Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim from a
 Sim.Io(&self): Io
 Sim.FailNext(mut self, op: Op, f: Fault)
 Sim.SetNetFaults(mut self, f: NetFaults)

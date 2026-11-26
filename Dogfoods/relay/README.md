@@ -100,15 +100,23 @@ Semaphore.Release(&self, n: int)
 Client.New(h: &Heap, l: ClientLimits): Client from h, l
 Client.Do(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Exchange from a, self
 Client.Fetch(&self, a: &Arena, io: Io, req: &ClientRequest): http.Error!Reply from a
+Client.Drive(&self, io: Io): Canceled!void
+Client.Stop(&self)
 Client.Close(self)
+Exchange.Version(&self): HttpVersion
 Exchange.Body(mut self, buf: mut []u8): Reader from self, buf
 Exchange.Close(self, io: Io): http.Error!void
 Exchange.Abandon(self)
-http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: (fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void)): http.Error!void
+http.ServeOn[C: Share](h: &Heap, io: Io, l: &net.Listener, o: &ServerOptions, c: &C, handle: fn(c: &C, a: &Arena, io: Io, req: &Request, res: mut Response, link: &Link): http.Error!void): http.Error!void
 Response.Status(mut self, code: int)
 Response.Header(mut self, name: str, value: str): OutOfMemory!void
 Response.Body(mut self, data: []u8): OutOfMemory!void
 Response.Flush(mut self, io: Io, link: &Link): http.Error!void
+Link.Version(&self): HttpVersion
+
+// std.quic
+quic.Connector(c: &Config): net.MuxDialer from c
+quic.Acceptor(c: &Config): net.MuxServer from c
 
 // std.crypto
 crypto.ParsePrivateKey(der: []u8): crypto.Error!PrivateKey
@@ -119,6 +127,7 @@ encoding.ParsePem(a: &Arena, text: str into a): encoding.Error|OutOfMemory!List[
 // std.sim
 Sim.New(a: &Arena, seed: u64): OutOfMemory!Sim from a
 Sim.Io(&self): Io
+Sim.SetNetFaults(mut self, f: NetFaults)
 Sim.Free(self)
 
 // std.url

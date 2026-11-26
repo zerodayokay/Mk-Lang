@@ -700,13 +700,15 @@ export Client.Drive(&self, io: Io): Canceled!void
 
 - Errors: Canceled
 
-Runs one reader task per pooled HTTP/2 or HTTP/3 connection until Stop or
-cancellation. The reader processes control frames while idle, and HTTP/3
-keeps QUIC active until the client idle limit. Run Drive in a task of a
-scope that outlives the requests. Use WaitDriving to synchronize startup,
-and then Stop, the scope's end, and Close to shut down. Drive returns
-normally after Stop and fails with Canceled when io is canceled. O(pool
-slots) per wake; allocates one task per connection it drives.
+Reads pooled HTTP/2 and HTTP/3 connections in the background, one
+task per connection, until Stop or a cancel of io: each answers PING and
+SETTINGS while idle and sees a GOAWAY at once, and one idle past
+ClientLimits.idle with no stream is closed with GOAWAY(NO_ERROR). Run it
+as a task of a scope that outlives the requests; then Stop, the scope's
+end, and Close. After Stop it returns at once, so a later Drive of the
+same client returns too. Errors: Canceled when io is cancelled; it
+returns normally after Stop. O(16) per wake; allocates one task per
+connection it drives. WaitDriving synchronizes startup with requests.
 
 ### `Client.Fetch`
 
@@ -739,26 +741,28 @@ export Client.New(h: &Heap, l: ClientLimits): Client from h, l
 A client with the limits l and an empty pool. O(16): the pool has 16 slots;
 allocates nothing: the pool's table is inside the client.
 
-### `Client.WaitDriving`
-
-```mk
-// verdict: parse
-export Client.WaitDriving(&self, io: Io): Canceled!bool
-```
-
-Waits for `Client.Drive` to start. Returns false if `Client.Stop` has ended
-the drive lifecycle. The wait is cancellable and allocates nothing.
-
 ### `Client.Stop`
 
 ```
 export Client.Stop(&self)
 ```
 
-Makes Drive return and retires its HTTP/3 connections. HTTP/2 requests
-can read their pooled connections after Drive ends. Call Stop before the
-Drive scope ends. It is safe to call more than once or with no Drive running.
+Makes Drive return and retires the HTTP/3 connections it drove. HTTP/2
+requests can read their pooled connections after Drive ends. Call Stop
+before the Drive scope ends. Safe with no Drive running or repeated.
 Never blocks or fails. O(waiters); allocates nothing.
+
+### `Client.WaitDriving`
+
+```
+export Client.WaitDriving(&self, io: Io): Canceled!bool
+```
+
+- Errors: Canceled
+
+Waits for Drive to start. Returns false if Stop has already ended
+the client's drive lifecycle. Errors: Canceled. O(1) besides the
+wait. Allocates nothing.
 
 ### `ClientLimits`
 
@@ -1154,8 +1158,8 @@ export struct Request
 A request as the server read it: the method, the target split into path
 and query, the header fields in the order received, the path parameters
 Dispatch matched, and the body. path and query are the bytes received,
-never decoded or cleaned. Every string and slice is a view of the
-request's arena.
+never decoded or cleaned. Its strings and slices are valid for the
+duration of the handler.
 
 Fields:
 
@@ -1238,7 +1242,8 @@ Sends what the response holds so far, before the handler returns: for
 a reply produced over time, such as a long listing or server events.
 O(bytes sent); allocates nothing.
 
-The first Flush sends the head, with Transfer-Encoding: chunked in place
+On HTTP/2 and HTTP/3 this sends HEADERS followed by DATA on the request's
+stream. On HTTP/1.1 the first Flush sends the head, with Transfer-Encoding: chunked in place
 of the handler's framing fields, and the body so far as a chunk. Each
 later Flush sends what was added since as another chunk: the bytes of a
 Body set after the last Flush, whole, and what the Writer appended
