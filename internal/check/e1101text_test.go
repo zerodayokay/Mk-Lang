@@ -23,6 +23,7 @@ func TestE1101_CallTextNamesTheCall(t *testing.T) {
 	const tail = " needs an `unsafe \"reason\" { }` block"
 	for _, c := range []struct{ name, src, want string }{
 		{"raw", "import std.raw\n\nF(p: *u32): u32 {\n\treturn raw.ReadUnaligned[u32](p)\n}\n", "calling raw.ReadUnaligned" + tail},
+		{"raw store", "import std.raw\n\nF(p: *u32) {\n\traw.WriteUnaligned[u32](p, 1)\n}\n", "calling raw.WriteUnaligned" + tail},
 		{"naked", "naked Halt() {\n\tunsafe \"r\" {\n\t\tasm(\"hlt\")\n\t}\n}\n\nF() {\n\tHalt()\n}\n", "calling a naked function" + tail},
 		{"extern", "extern Ext(x: i32): i32\n\nF(): i32 {\n\treturn Ext(1)\n}\n", "the call of a bodiless extern" + tail},
 	} {
