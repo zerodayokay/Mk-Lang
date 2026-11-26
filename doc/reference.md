@@ -1090,7 +1090,7 @@ backtrace:
 | An enum with a tag type ([enum types](#enum-types)) | Its tag type, or what the tag type converts to |
 
 - `int` and `uint` count as 64 bits, so `int(x)` takes an `i64` or a `u32`, and `int(u)` of a `uint` is E0303.
-- A constant whose value fits passes `T(x)`: `u8(200)`, `i32(Max)` for a `const Max: int = 100`.
+- An integer constant whose value fits passes `T(x)`: `u8(200)`, `i32(Max)` for a `const Max: int = 100`, and a constant of another module or a C import named qualified, `i8(m.C)` for an `export const C: i32 = -4`. A constant of an enum type or of `char` is judged by its type, as a variant `i8(W.Hi)` or a char literal `u8('a')` is: write `Cast[u8](c)`.
 - A float literal or named float constant whose value is exactly an `f32` passes `f32(x)`: `f32(0.5)`, `f32(-1.5e3)`, `f32(Half)` for a `const Half: f64 = 0.5`. `f32(0.1)` and `f32(1e39)` would round or overflow, so they are E0303, and so is an operator over float literals or constants, `f32(0.25 + 0.25)` or `f32(Half + Half)`, which is not judged by its value: write `x: f32 = 0.1`, where the literal takes `f32` and is rounded once, or `Cast[f32](0.1)`.
 - `Cast` to an integer truncates a float toward zero, and panics on NaN, an infinity or a value out of range.
 - `Cast` from an integer to a float rounds to the nearest value, ties to even, and never panics: `Cast[f64](n)`.

@@ -138,6 +138,9 @@ func TestConstConversion(t *testing.T) {
 		{"bool from int", "F(): bool {\n\treturn bool(1)\n}\n", "E0302@2:9"},
 		{"float const exact in f32", "const Half: f64 = 0.5\n\nconst Quarter = -0.25\n\nF(): f32 {\n\treturn f32(Half) + f32(Quarter)\n}\n", ""},
 		{"float operator over literals", "F(): f32 {\n\treturn f32(0.25 + 0.25)\n}\n", "E0303@2:9"},
+		{"u64 const past int64", "const Top: u64 = 9223372036854775808\n\nconst Max: u64 = 9223372036854775807\n\nF(): i64 {\n\treturn i64(Top) + i64(Max)\n}\n", "E0303@6:9"},
+		{"enum const by type", "enum W: i32 {\n\tLo = -2\n\tHi = 300\n}\n\nconst K: W = W.Hi\n\nF(): i8 {\n\treturn i8(K)\n}\n", "E0303@9:9"},
+		{"char const by type", "const Ch: char = '\\u{1F600}'\n\nconst A: char = 'a'\n\nF(): u8 {\n\treturn u8(Ch) + u8(A)\n}\n", "E0303@6:18 E0303@6:9"},
 		{"float operator over named consts", "const Half: f64 = 0.5\n\nF(): f32 {\n\treturn f32(Half + Half)\n}\n\nG(): u8 {\n\treturn u8(-(Half * Half))\n}\n", "E0303@4:9 E0303@8:9"},
 	})
 }
