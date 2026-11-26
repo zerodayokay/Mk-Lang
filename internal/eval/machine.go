@@ -405,6 +405,9 @@ func (m *Machine) traceTail(st *stop, last source.Span) ([]types.ItemID, []sourc
 func (m *Machine) traceError(st *stop, j int, fi []types.ItemID, fs []source.Span, ti []types.ItemID, ts []source.Span, at source.Span) *types.EvalError {
 	src := st.err
 	e := &types.EvalError{Kind: src.Kind, Panic: src.Panic, Message: src.Message, Refusal: src.Refusal, File: src.File, Path: src.Path, Steps: m.segs[j].steps, At: at}
+	if src.Kind == types.EvalFuel {
+		e.Fuel = m.segs[j].fuel
+	}
 	e.Items, e.Trace = capJoin(fi, fs, ti, ts)
 	return e
 }

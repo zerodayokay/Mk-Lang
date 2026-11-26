@@ -6,8 +6,9 @@
 // How: zeroed and `[7; n]` tables of 512 KiB and 16 MiB and a nested
 // [256][256]u64, as var and as const, check clean, and so do tables a
 // function returns or builds two calls down (four to eight copies at once;
-// at 16 MiB the fuel floor binds too); a recursion with a table-sized
-// result still stops at the stack limit.
+// at 16 MiB the fuel floor binds too); a loop that fills a 4 MiB table
+// runs out of that floor and E0902 reports it, not the default fuel; a
+// recursion with a table-sized result still stops at the stack limit.
 
 package driver
 
@@ -58,6 +59,16 @@ func TestLargeInitializerValue(t *testing.T) {
 			clean(t, res)
 		})
 	}
+	t.Run("a loop past the fuel floor reports that fuel", func(t *testing.T) {
+		t.Parallel()
+		src := "Fill(): [1048576]u32 {\n    var t: [1048576]u32 = [0; 1048576]\n    for i in 0..1048576 {\n        t[i] = Cast[u32](i % 251)\n    }\n    return t\n}\n\n" +
+			"var T: [1048576]u32 = Fill()\n\nexport Read(i: int): u32 {\n    return T[i]\n}\n"
+		res, _, _ := gen10Check(t, map[string]string{"a/a.mk": src}, types.Dev)
+		text := res.Report.Text(res.Sources)
+		if got := codes(res); !slices.Equal(got, []string{"E0902"}) || !strings.Contains(text, "fuel: 8388608") || !strings.Contains(text, "fuel 16777216") {
+			t.Errorf("codes %q, want E0902 with the 4 MiB value's fuel of 8388608 and its double:\n%s", got, text)
+		}
+	})
 	t.Run("recursion still stops", func(t *testing.T) {
 		t.Parallel()
 		h := "export Down(n: int): [64]u64 {\n    if n == 0 {\n        return [0; 64]\n    }\n    return Down(n - 1)\n}\n"

@@ -172,7 +172,10 @@ func (c *Checker) renderEval(err *types.EvalError, req *types.EvalRequest) *diag
 		return diag.New(diag.E0901, site, "compile-time evaluation refused an operation: "+err.Refusal.String()).
 			Text("refused", err.Refusal.String()).Fact("trace", trace(true))
 	case types.EvalFuel:
-		fuel := req.Fuel
+		fuel := err.Fuel // the segment's own, which a large value may raise
+		if fuel == 0 {
+			fuel = req.Fuel
+		}
 		if fuel == 0 {
 			fuel = types.DefaultFuel
 		}

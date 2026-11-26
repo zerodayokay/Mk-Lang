@@ -74,11 +74,15 @@ func Render(err *types.EvalError, req *types.EvalRequest, items *types.Items, in
 		return diag.New(diag.E0901, site, "compile-time evaluation refused an operation: "+err.Refusal.String()).
 			Text("refused", err.Refusal.String()).Fact("trace", innermost())
 	case types.EvalFuel:
-		// The limit that ran out: a const's own fuel, never inherited,
-		// else the request's (slots.go constFuel).
-		fuel := req.Fuel
-		if d, ok := items.Get(req.Item).Decl.(*types.ConstDecl); ok && req.What == types.EvalConst && d.Fuel != 0 {
-			fuel = d.Fuel
+		// The limit that ran out: the segment's own, which a const's or
+		// global's large value may raise (err.Fuel); else a const's own
+		// fuel, never inherited, else the request's (slots.go constFuel).
+		fuel := err.Fuel
+		if fuel == 0 {
+			fuel = req.Fuel
+			if d, ok := items.Get(req.Item).Decl.(*types.ConstDecl); ok && req.What == types.EvalConst && d.Fuel != 0 {
+				fuel = d.Fuel
+			}
 		}
 		if fuel == 0 {
 			fuel = types.DefaultFuel
