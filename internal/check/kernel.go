@@ -160,7 +160,13 @@ func (u *unit) externVarWrite(e ast.Expr, how string) {
 	if !ok {
 		return
 	}
-	name := u.c.cfg.Interner.Str(u.c.cfg.Items.Get(it).Name)
+	in := u.c.cfg.Interner
+	name := in.Str(u.c.cfg.Items.Get(it).Name)
+	if field, ok := unparenExpr(e).(*ast.FieldExpr); ok {
+		if module, ok := unparenExpr(field.X).(*ast.Ident); ok {
+			name = in.Str(module.Name) + "." + name
+		}
+	}
 	u.err(diag.E0404, e.Span(), "extern var `"+name+"` is no Mk var: "+how+" it through its address, `*(&"+name+")`, in unsafe").
 		Text("reason", "extern-var")
 }
