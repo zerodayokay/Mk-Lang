@@ -4350,7 +4350,7 @@ export Main(sys: &System): WriteError!void {
 - Destructuring moves the value, or copies it if it is plain. It is how a method that takes `self` consumes a [`linear`](#linear-and-view-structs) struct.
 - `var` before the pattern makes every binding `var`.
 - A pattern that can fail, such as a literal, is E0306. Use `match`.
-- Only a record, a struct or an array pattern destructures. A variant, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`.
+- Only a record, a struct or an array pattern destructures. A variant, an error's, `some`, `ok` or `err` pattern on the left of `:=` is E0306: take an enum or an optional apart with `match`, or an optional with `if v := o`. An error is read by its fields (`e.code`) or taken apart with `match e { Bad(code) { ... } }`, the only form when the value may be one of several errors.
 - Outside the struct's module, a struct with private fields cannot be destructured (E0204).
 - A `for` loop may destructure each element with a record pattern: `for (key, value) in m.Iter()`. A struct pattern there is E0101. See [`for`](#for-loops).
 

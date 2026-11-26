@@ -2,11 +2,11 @@
 // `[a, b] := arr`) must be irrefutable and must not skip a field or element
 // that needs dropping or reach into another module's private fields.
 //
-// What: destructure, recordPat, arrayPat, structPat, patBind and poisonPat:
-// E0309 with a proven rename, E0305 for a missing field or an element count
-// that is not the array's length, E0306 for a refutable sub-pattern, E0408
-// for a non-plain field skipped by `..`, E0204 for another module's struct
-// with private fields.
+// What: destructure, recordPat, arrayPat, structPat, errorPat, patBind and
+// poisonPat: E0309 with a proven rename, E0305 for a missing field or an
+// element count that is not the array's length, E0306 for a refutable
+// sub-pattern or an error's pattern, E0408 for a non-plain field skipped by
+// `..`, E0204 for another module's struct with private fields.
 //
 // How: the pattern is matched against the value's type field by field; a
 // struct pattern takes the struct's fields with the type's arguments
@@ -204,6 +204,9 @@ func (u *unit) structPat(path *ast.Path, p *ast.RecordPat, t types.TypeID) ([]ty
 		return nil, false
 	}
 	it := u.c.cfg.Items.Get(types.ItemID(r.A))
+	if it.Kind == types.KindError && u.errorPat(p.Span(), it, t) {
+		return nil, false
+	}
 	d, isStruct := u.c.declOfItem(it).(*types.StructDecl)
 	ty := u.tab.Get(t)
 	if !isStruct || ty.Kind != types.KNamed || ty.Item != it.ID {
@@ -228,6 +231,38 @@ func (u *unit) structPat(path *ast.Path, p *ast.RecordPat, t types.TypeID) ([]ty
 		out[i].Type = u.c.subst(f.Type, ty.Args, types.NoType)
 	}
 	return out, true
+}
+
+// errorPat is E0306 for an error's pattern `Bad(code: c)` in a destructure
+// of t, an error set holding that error: only a record, a struct or an
+// array pattern destructures, so the error's fields are read (`e.code`) or
+// the value is taken apart with `match`, the only form when t holds other
+// errors too. It reports false, and nothing, when t holds no such error
+// (a type mismatch).
+func (u *unit) errorPat(at source.Span, it *types.Item, t types.TypeID) bool {
+	ty := u.tab.Get(t)
+	if ty.Kind != types.KErrorSet {
+		return false
+	}
+	ms := u.tab.Members(ty.Errors)
+	in := false
+	for _, m := range ms {
+		in = in || !m.IsParam && m.Item == it.ID
+	}
+	if !in {
+		return false
+	}
+	name := u.c.cfg.Interner.Str(it.Name)
+	msg := "only a record, a struct or an array pattern destructures: `" + name + "` is an error"
+	if len(ms) > 1 {
+		msg += ", and the value may be any of `" + u.str(t) + "`"
+	}
+	d := u.err(diag.E0306, at, msg+"; take it apart with `match`").Text("reason", "refutable").
+		Alt("use `match e { " + name + "(..) { ... } }`")
+	if len(ms) == 1 {
+		d.Alt("read the error's fields: `e.field`")
+	}
+	return true
 }
 
 // matchPatternPath reports whether a destructure's path, with ref r, names
@@ -294,6 +329,11 @@ func (u *unit) irrefutable(p ast.Pattern, t types.TypeID) {
 			rp.Base = p.Base
 			u.recordPat(rp, t)
 			return
+		}
+		if r := u.ref(p.Path); r.Kind == resolve.RefItem {
+			if it := u.c.cfg.Items.Get(types.ItemID(r.A)); it.Kind == types.KindError && u.errorPat(p.Span(), it, t) {
+				return
+			}
 		}
 	case *ast.BadPattern:
 		return

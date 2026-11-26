@@ -1,0 +1,37 @@
+// Why: only a record, a struct or an array pattern destructures, so an
+// error's pattern on the left of `:=` must say so and name the forms that
+// work, not report a mismatch whose two sides print the same name.
+// What: TestErrorPatternDestructure.
+// How: body cases over an error value of one error and of a set of two, at
+// the top of the pattern and nested in a struct's field, and an error's
+// pattern over a value that holds no such error (a mismatch, with two
+// different names).
+
+package check
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestErrorPatternDestructure(t *testing.T) {
+	const pre = "error Bad(code: int)\n\nerror Other\n\nstruct W {\n\te: Bad\n}\n\n" // lines 1-8
+	for _, tc := range []struct{ name, src, want, msg string }{
+		{"one error", pre + "F(e: Bad): int {\n\tBad(code: c) := e\n\treturn c\n}\n", "E0306@10:2", "`Bad` is an error; take it apart with `match`"},
+		{"a set of two", pre + "F(e: Bad | Other): int {\n\tBad(code: c) := e\n\treturn c\n}\n", "E0306@10:2", "the value may be any of `Bad|Other`"},
+		{"nested", pre + "F(w: W): int {\n\tW(e: Bad(code: c)) := w\n\treturn c\n}\n", "E0306@10:7", "`Bad` is an error"},
+		{"no such error", pre + "F(e: Other): int {\n\tBad(code: c) := e\n\treturn c\n}\n", "E0301@10:2", "the pattern names `Bad`, the value is `Other`"},
+		{"the forms that work", pre + "F(e: Bad): int {\n\tn := e.code\n\treturn match e {\n\t\tBad(code) { code + n }\n\t}\n}\n", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := checkBody(t, newWorld(t, true), tc.want, tc.src)
+			if tc.msg == "" {
+				return
+			}
+			if d := b.bodyDiags(t)[0]; !strings.Contains(d.Message, tc.msg) {
+				t.Fatalf("message %q, want it to say %q", d.Message, tc.msg)
+			}
+		})
+	}
+}
