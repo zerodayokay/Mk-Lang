@@ -2,7 +2,8 @@
 // each C form must map the same way every time and on every target.
 // What: TestCImport_Mapping, _Linux, _Names, _TwoImportsOneIdentity,
 // _Deterministic, _HeaderError, _Negatives, _NegativesNested,
-// _NegativesExisting and TestCTypeParse.
+// _NegativesExisting, _NegativesBesideIncluder, _EditedHeaderCached and
+// TestCTypeParse.
 // How: translates sampleHeader through clang and checks the Mk lines, in order.
 
 package cimport
@@ -11,8 +12,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"mk/internal/cache"
+	"mk/internal/source"
 )
 
 // TestCImport_Mapping: the sample header's declarations, mapped as cimport
@@ -171,14 +176,16 @@ func TestCTypeParse(t *testing.T) {
 }
 
 // TestCImport_Negatives: a dependency found under search directory k
-// makes the same path under each earlier directory a negative lookup,
-// except a path the unit read itself (#include_next: Clang's stdint.h,
-// then the sysroot's).
+// makes the same path under each earlier directory a negative lookup, and
+// under each directory a dependency lives in (a quoted include searches
+// beside its includer first: /s/w.h's "a.h" would find /s/a.h), except a
+// path the unit read itself (#include_next: Clang's stdint.h, then the
+// sysroot's).
 func TestCImport_Negatives(t *testing.T) {
 	root, res, sys := filepath.FromSlash("/p"), filepath.FromSlash("/r/include"), filepath.FromSlash("/s")
 	deps := []string{filepath.Join(root, "a.h"), filepath.Join(res, "stdint.h"), filepath.Join(sys, "stdint.h"), filepath.Join(sys, "w.h")}
-	got := Negatives(deps, []string{root, res, sys})
-	want := []string{filepath.Join(root, "stdint.h"), filepath.Join(root, "w.h"), filepath.Join(res, "w.h")}
+	got := Negatives(deps, []string{root, res, sys}, nil)
+	want := []string{filepath.Join(res, "a.h"), filepath.Join(sys, "a.h"), filepath.Join(root, "stdint.h"), filepath.Join(root, "w.h"), filepath.Join(res, "w.h")}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
 	}
@@ -187,12 +194,13 @@ func TestCImport_Negatives(t *testing.T) {
 // TestCImport_NegativesNested: where search directories nest, a file
 // counts as found through each directory holding it, by its name under
 // that one: inc/sub/y.h is "sub/y.h" through inc, which root/sub/y.h
-// would shadow, as well as "y.h" through inc/sub.
+// would shadow, as well as "y.h" through inc/sub; each name also under
+// inc/sub, the directory of a file of the unit.
 func TestCImport_NegativesNested(t *testing.T) {
 	root := filepath.FromSlash("/p")
 	inc, sub := filepath.Join(root, "inc"), filepath.Join(root, "inc", "sub")
-	got := Negatives([]string{filepath.Join(sub, "y.h")}, []string{root, inc, sub})
-	want := []string{filepath.Join(root, "sub", "y.h"), filepath.Join(root, "y.h"), filepath.Join(inc, "y.h")}
+	got := Negatives([]string{filepath.Join(sub, "y.h")}, []string{root, inc, sub}, nil)
+	want := []string{filepath.Join(sub, "inc", "sub", "y.h"), filepath.Join(root, "sub", "y.h"), filepath.Join(sub, "sub", "y.h"), filepath.Join(root, "y.h"), filepath.Join(inc, "y.h")}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
 	}
@@ -212,8 +220,70 @@ func TestCImport_NegativesExisting(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got := Negatives([]string{filepath.Join(b, "x.h"), filepath.Join(b, "y.h")}, []string{a, b})
+	got := Negatives([]string{filepath.Join(b, "x.h"), filepath.Join(b, "y.h")}, []string{a, b}, nil)
 	if want := []string{filepath.Join(a, "x.h")}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("negatives %q, want %q", got, want)
 	}
+}
+
+// TestCImport_NegativesBesideIncluder (MKH-902): c/api.h's quoted "dep.h"
+// is found in a/inc, but Clang first searches c (the includer's directory),
+// and on the msvc target the directories of every file of the include
+// stack (the root src/m.c's src): both are negatives, and so is a name
+// with a directory, "sub/z.h", under each; nothing beside the includer
+// needs the header's own text.
+func TestCImport_NegativesBesideIncluder(t *testing.T) {
+	root := t.TempDir()
+	a, c, src := filepath.Join(root, "a", "inc"), filepath.Join(root, "c"), filepath.Join(root, "src")
+	deps := []string{filepath.Join(c, "api.h"), filepath.Join(a, "dep.h"), filepath.Join(a, "sub", "z.h")}
+	got := Negatives(deps, []string{root, a}, []string{filepath.Join(src, "m.c")})
+	for _, p := range []string{filepath.Join(c, "dep.h"), filepath.Join(src, "dep.h"), filepath.Join(c, "sub", "z.h"),
+		filepath.Join(src, "sub", "z.h"), filepath.Join(root, "dep.h"), filepath.Join(src, "c", "api.h")} {
+		if !slices.Contains(got, p) {
+			t.Errorf("no negative %s in %q", p, got)
+		}
+	}
+	if slices.Contains(got, filepath.Join(a, "dep.h")) {
+		t.Errorf("a dependency is a negative: %q", got)
+	}
+}
+
+// TestCImport_EditedHeaderCached (MKH-901): after a header edit the stored
+// translation misses, and the one saved for the new content hits on the
+// next load, as the old one does again once the header is restored: a
+// key holds one candidate per header content.
+func TestCImport_EditedHeaderCached(t *testing.T) {
+	st, err := cache.Open(t.TempDir(), cache.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := filepath.Join(t.TempDir(), "dep.h")
+	key := Key(source.HashBytes("test", []byte("id")), "rd", Request{Target: "x86_64-windows"})
+	edit := func(v string) {
+		t.Helper()
+		if err := os.WriteFile(dep, []byte("#define DEP_MAGIC "+v+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	load := func(want string) {
+		t.Helper()
+		res, ok := Load(st, key)
+		if got := ""; ok {
+			got = res.Shim
+			if got != want {
+				t.Errorf("loaded %q, want %q", got, want)
+			}
+		} else if want != "" {
+			t.Errorf("miss, want %q", want)
+		}
+	}
+	edit("1")
+	Save(st, key, &Result{Shim: "one", Deps: []string{dep}})
+	load("one")
+	edit("9")
+	load("")
+	Save(st, key, &Result{Shim: "nine", Deps: []string{dep}})
+	load("nine")
+	edit("1")
+	load("one")
 }

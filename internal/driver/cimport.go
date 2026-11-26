@@ -6,16 +6,17 @@
 // directories of a package's C), cImports and cImportsOf (the
 // translated imports of one package), prune, translateC and vendoredViews,
 // the C object builds (cObjects, cObjectsOf, asmSourcesFor) with their
-// cache keys (cobjObjKey, cobjCandidate, saveCobjCandidate,
-// cobjSearchDirs), and Session.CImports for the tools.
+// cache keys (cobjObjKey, cobjCandidate, cobjKey, cobjSearchDirs), and
+// Session.CImports for the tools.
 //
 // How: the package's C imports are translated once per target
 // (internal/cimport) into one memory build whose modules are c.<name>; the
 // readable binding is written to gen/<target>/c/<name>.mk, and the shim,
 // the C sources and the assembly sources become objects of the link. A C
 // object's key covers the content hash of every header its -MD file lists,
-// and its cache entry the negative lookups a translation's entry keeps:
-// a header added earlier on the search path is a miss.
+// and its candidate (cimport.Cand, the translation's shape) the negative
+// lookups: a header added earlier on the search path, the source's own
+// flags' directories included, or beside an includer, is a miss.
 // The translation, the shim and the C sources search the same -I
 // directories: the package root, then every C import's include_dirs (the
 // package's C imports are one translation unit, so they share one path).
@@ -25,7 +26,6 @@ package driver
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -660,8 +660,11 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 		}
 		h.Bytes(src)
 		base := h.Sum()
-		if st != nil {
-			if key, ok := cobjCandidate(st, dh, base); ok {
+		// A flag that moves the header search in a way cobjSearchDirs does
+		// not model leaves the object uncached: a miss, never a stale hit.
+		dirs, modelled := cobjSearchDirs(cj)
+		if st != nil && modelled {
+			if key, ok := cobjCandidate(dh, cimport.Cands(st, cobjListKey(base)), base); ok {
 				if p, ok, _ := st.FilePath(cache.KindCObj, key); ok {
 					if data, err := os.ReadFile(p); err == nil && os.WriteFile(out, data, 0o644) == nil {
 						objs, keys = append(objs, out), append(keys, key)
@@ -685,9 +688,9 @@ func (w *world) cObjectsOf(ctx context.Context, ci *cImports, dir string, tools 
 			}
 			return nil, nil, []*diag.Diagnostic{toolErrIn(cerr, "clang", what+" did not compile", work)}
 		}
-		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in, cobjSearchDirs(cj))
-		if st != nil && ok {
-			saveCobjCandidate(st, base, cand)
+		key, cand, ok := cobjKey(dh, base, cj.DepFile, j.in, dirs)
+		if st != nil && ok && modelled {
+			cimport.PutCand(st, cobjListKey(base), cand)
 			_ = st.PutFile(cache.KindCObj, key, out)
 			if _, err := os.Stat(out); err != nil {
 				// PutFile moved it into the store: copy it back for the link.
@@ -716,29 +719,10 @@ func asmSourcesFor(man *Manifest, target string) []int {
 	return out
 }
 
-// cobjCand is one candidate of a C object's KindManifest entry: the files
-// the compile read (-MD), with their content hashes, and the negative
-// lookups (cimport.Negatives over the compile's search path), none of
-// which may exist: a header added to an earlier search directory would
-// shadow a dependency. The object's key is cobjObjKey of the entry's base
-// and the dependencies (the negatives follow from them and the search
-// path, which base holds).
-type cobjCand struct {
-	Deps []cobjDep
-	Neg  []string `json:",omitempty"`
-}
-
-type cobjDep struct {
-	Path string
-	Hash source.Hash
-}
-
-// maxCobjCands bounds an entry's candidates; the oldest go.
-const maxCobjCands = 4
-
 // cobjObjKey is the object's key: the command line and source (base),
-// then every dependency's path and content.
-func cobjObjKey(base source.Hash, c cobjCand) source.Hash {
+// then every dependency's path and content (the negatives follow from
+// them and the search path, which base holds).
+func cobjObjKey(base source.Hash, c cimport.Cand) source.Hash {
 	h := source.NewHasher("mk.driver.cobj.obj.v1")
 	h.Hash(base)
 	h.Uvarint(uint64(len(c.Deps)))
@@ -749,40 +733,25 @@ func cobjObjKey(base source.Hash, c cobjCand) source.Hash {
 	return h.Sum()
 }
 
-// cobjListKey is the KindManifest key of a C object's candidates.
+// cobjListKey is the KindManifest key of a C object's candidates
+// (cimport.Cand, the translation's shape).
 func cobjListKey(base source.Hash) source.Hash {
-	// The domain names the candidates' format, which carries negative
-	// lookups: a list written without them is never read.
-	h := source.NewHasher("mk.driver.cobj.cands.v2")
+	// The domain names the candidates' format and what their negatives
+	// cover: a list written by an older rule is never read. v3: negatives
+	// beside each includer and under the source's own flags' directories
+	// (MKH-902, MKH-903).
+	h := source.NewHasher("mk.driver.cobj.cands.v3")
 	h.Hash(base)
 	return h.Sum()
 }
 
-// cobjCandidate finds, among base's candidates, the first whose every
-// dependency still has its hash and whose every negative lookup still
-// finds nothing, and returns that object's key.
-func cobjCandidate(st *cache.Store, dh *cimport.DepHasher, base source.Hash) (source.Hash, bool) {
-	raw, ok, _ := st.Get(cache.KindManifest, cobjListKey(base))
-	if !ok {
-		return source.Hash{}, false
-	}
-	var cands []cobjCand
-	if json.Unmarshal(raw, &cands) != nil {
-		return source.Hash{}, false
-	}
-next:
+// cobjCandidate is the object key of the first of base's candidates cands
+// that still holds (DepHasher.Holds).
+func cobjCandidate(dh *cimport.DepHasher, cands []cimport.Cand, base source.Hash) (source.Hash, bool) {
 	for _, c := range cands {
-		for _, d := range c.Deps {
-			if h, ok := dh.Hash(d.Path); !ok || h != d.Hash {
-				continue next
-			}
+		if dh.Holds(c) {
+			return cobjObjKey(base, c), true
 		}
-		for _, n := range c.Neg {
-			if dh.Exists(n) {
-				continue next
-			}
-		}
-		return cobjObjKey(base, c), true
 	}
 	return source.Hash{}, false
 }
@@ -790,10 +759,10 @@ next:
 // cobjKey reads the dependency file a compile wrote (none for a plain .s
 // file, whose only input is the source) and returns the object's key and
 // its candidate, with the negative lookups of dirs, the compile's ordered
-// header search path (cobjSearchDirs); false when a dependency cannot be
-// read (the object is then not stored).
-func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dirs []string) (source.Hash, cobjCand, bool) {
-	var c cobjCand
+// header search path (cobjSearchDirs), and of the source's directory;
+// false when a dependency cannot be read (the object is then not stored).
+func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dirs []string) (source.Hash, cimport.Cand, bool) {
+	var c cimport.Cand
 	if depFile != "" {
 		var deps []string
 		text, err := os.ReadFile(depFile)
@@ -812,43 +781,83 @@ func cobjKey(dh *cimport.DepHasher, base source.Hash, depFile, input string, dir
 			if !ok {
 				return base, c, false
 			}
-			c.Deps = append(c.Deps, cobjDep{Path: p, Hash: h})
+			c.Deps = append(c.Deps, cimport.Dep{Path: p, Hash: h})
 			deps = append(deps, p)
 		}
-		c.Neg = cimport.Negatives(deps, dirs)
+		c.Neg = cimport.Negatives(deps, dirs, []string{input})
 	}
 	return cobjObjKey(base, c), c, true
 }
 
 // cobjSearchDirs is the ordered header search path of the compile cj, as
-// Clang searches it under -nostdinc: every -I, then the -isystem
-// directories in command-line order (cArgs: the resource headers first,
-// then cj.System). A directory the manifest's own flags add is not in it.
-func cobjSearchDirs(cj toolchain.CJob) []string {
-	out := append([]string{}, cj.Include...)
+// Clang searches it under -nostdinc: the -iquote directories (quoted
+// includes only; Negatives may treat them as searched by every include,
+// which only adds misses), every -I (cj.Include, then the flags'), the
+// -isystem directories (the resource headers, cj.System, then the
+// flags'), then the -idirafter ones. A flag's relative directory is
+// Clang's, under its working directory, the output's (CompileC). False
+// when a flag changes the search in a way this does not model: the
+// object is then not cached.
+func cobjSearchDirs(cj toolchain.CJob) ([]string, bool) {
+	var quote, inc, sys, after []string
+	cwd := filepath.Dir(cj.Output)
+	for i := 0; i < len(cj.Flags); i++ {
+		f := cj.Flags[i]
+		if unmodelledSearchFlag(f) {
+			return nil, false
+		}
+		var to *[]string
+		var opt string
+		switch {
+		case strings.HasPrefix(f, "-iquote"):
+			to, opt = &quote, "-iquote"
+		case strings.HasPrefix(f, "-isystem"):
+			to, opt = &sys, "-isystem"
+		case strings.HasPrefix(f, "-idirafter"):
+			to, opt = &after, "-idirafter"
+		case strings.HasPrefix(f, "-I"):
+			to, opt = &inc, "-I"
+		default:
+			continue
+		}
+		d := strings.TrimPrefix(f, opt)
+		if d == "" { // the separate form, "-I dir"
+			if i++; i == len(cj.Flags) {
+				return nil, false
+			}
+			d = cj.Flags[i]
+		}
+		if strings.HasPrefix(d, "=") || strings.HasPrefix(d, "$SYSROOT") {
+			return nil, false // under the sysroot: not modelled
+		}
+		if !filepath.IsAbs(d) {
+			d = filepath.Join(cwd, d)
+		}
+		*to = append(*to, filepath.Clean(d))
+	}
+	out := append(quote, cj.Include...)
+	out = append(out, inc...)
 	if cj.ResourceDir != "" {
 		out = append(out, filepath.Join(cj.ResourceDir, "include"))
 	}
-	return append(out, cj.System...)
+	out = append(out, cj.System...)
+	out = append(out, sys...)
+	return append(out, after...), true
 }
 
-// saveCobjCandidate puts c first among base's candidates.
-func saveCobjCandidate(st *cache.Store, base source.Hash, c cobjCand) {
-	lk := cobjListKey(base)
-	cands := []cobjCand{c}
-	if raw, ok, _ := st.Get(cache.KindManifest, lk); ok {
-		var old []cobjCand
-		if json.Unmarshal(raw, &old) == nil {
-			for _, o := range old {
-				if len(cands) < maxCobjCands && !slices.Equal(o.Deps, c.Deps) {
-					cands = append(cands, o)
-				}
-			}
+// unmodelledSearchFlag reports whether the clang flag f changes where a
+// header is found in a way cobjSearchDirs does not model: a forced or
+// prefixed include, a framework or overlay, a sysroot for -I=, a response
+// file or a flag passed through to the front end unseen.
+func unmodelledSearchFlag(f string) bool {
+	for _, p := range []string{"-include", "-imacros", "-iprefix", "-iwithprefix", "-iwithsysroot", "-isysroot",
+		"-isystem-after", "-iframework", "-ivfsoverlay", "-cxx-isystem", "-iembed-dir", "--embed-dir", "-F", "-I-",
+		"--include", "--sysroot", "-Xclang", "-Xpreprocessor", "-Wp,", "-fmodule", "-fmodules", "@"} {
+		if strings.HasPrefix(f, p) {
+			return true
 		}
 	}
-	if data, err := json.Marshal(cands); err == nil {
-		_ = st.Put(cache.KindManifest, lk, data)
-	}
+	return false
 }
 
 // missingShim is the E0001 of a build whose vendored binding (read because
