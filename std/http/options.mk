@@ -137,12 +137,13 @@ export struct ServerOptions {
     export h2: bool
     /// Without secure, serve a connection starting with the HTTP/2 preface as HTTP/2.
     export h2c: bool
-    /// SETTINGS_MAX_CONCURRENT_STREAMS for h2 (and QUIC max streams for h3).
+    /// SETTINGS_MAX_CONCURRENT_STREAMS for h2 and active handlers per h3 connection.
     export h2_streams: int
     /// Made by quic.Acceptor; ServeWith and ServeOn also bind UDP when set.
     export h3: ?net.MuxServer
     /// With h3, add Alt-Svc header to h1 and h2 replies that set none.
     export alt_svc: bool
+    h3_port: int
     sealed: u8
 }
 
@@ -151,4 +152,4 @@ export struct ServerOptions {
 /// plain TCP.
 export const DefaultServerOptions: ServerOptions = ServerOptions(connections: 10000, header_bytes: 32768, body_bytes: 8388608,
     request_header: time.Seconds(30), keep_alive: time.Seconds(75), secure: none, h2: false, h2c: false,
-    h2_streams: 100, h3: none, alt_svc: true, sealed: 0)
+    h2_streams: 100, h3: none, alt_svc: true, h3_port: 0, sealed: 0)

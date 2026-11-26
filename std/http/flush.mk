@@ -68,6 +68,18 @@ export Response.Flush(mut self, io: Io, link: &Link): Error!void {
         try CancelCheck(io)
         fail WriteError
     }
+    try self.AdvertiseH3(link.h3_port)
+    if target := link.h3 {
+        scope sending := io.Scope() {
+            sending.CancelAfter(link.pace)
+            self.SendH3(io, target, false) else e {
+                self.fl.failed = true
+                try CancelCheck(io)
+                fail e
+            }
+        }
+        return
+    }
     if target := link.h2 {
         self.FlushH2(io, target) else e {
             self.fl.failed = true

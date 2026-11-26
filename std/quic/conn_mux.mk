@@ -374,7 +374,25 @@ QConn.MuxLimits(&self): net.MuxLimits {
 // Processes queued packets/timers without blocking and reports usability (MuxEngine.Usable).
 QConn.MuxUsable(&self, io: Io): bool {
     nc := io.NoCancel()
-    self.DrainIncomingNonBlocking(nc)
+    // A blocked socket read owns the datagram's read mutex. Only the
+    // read-token holder can poll without waiting behind that reader.
+    var rx := self.eng.Lock(nc).Must()
+    var party := -1
+    if !rx.Ref().tok.Reading() && rx.Ref().tok.Waiting() == 0 && !rx.Ref().IsDead() {
+        party = rx.Mut().AllocParty(PartyWant.Drive) else { -1 }
+        if party >= 0 {
+            _ = rx.Mut().tok.Enter(party)
+        }
+    }
+    rx.Unlock()
+    if party >= 0 {
+        self.DrainIncomingNonBlocking(nc)
+        next := self.End(nc, party)
+        if next >= 0 {
+            self.Party(next).NotifyOne()
+        }
+        self.ReleaseParty(nc, party)
+    }
     self.Timers(nc)
     var g := self.eng.Lock(nc).Must()
     e := &*g.Mut()

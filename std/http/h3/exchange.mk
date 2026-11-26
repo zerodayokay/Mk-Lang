@@ -415,6 +415,13 @@ export Exchange.Open[F: hf.Field](s: &Session, io: Io, pseudo: &hf.Pseudo, heade
         fail Closed
     }
     onerr s.m.Release(stream)
+    if goaway := s.Goaway() {
+        if Unprocessed(stream.Id(), goaway) {
+            s.m.Reset(&stream, H3RequestCancelled)
+            s.m.Stop(&stream, H3RequestCancelled)
+            fail net.StreamReset(code: H3RequestRejected)
+        }
+    }
 
     if bound + 16 <= 4096 {
         var buf: [4096]u8 = [0; 4096]

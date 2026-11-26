@@ -23,6 +23,7 @@
 
 import std.core
 import std.http.h2
+import std.http.h3
 import std.net
 import std.time
 
@@ -40,6 +41,8 @@ export view struct Link {
     version: HttpVersion
     cell: ?&Mutex[?net.Conn]
     h2: ?H2FlushTarget
+    h3: ?&h3.Exchange
+    h3_port: int
     io: Io
     rest: []u8
     // pace: the longest a piece of a Flush may wait for the client to take

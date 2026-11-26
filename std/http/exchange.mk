@@ -64,6 +64,7 @@ NewLine(): Line {
 enum Carrier {
     H1(m: &Mutex[Line])
     H2(m: &Mutex[H2Stream])
+    H3(m: &Mutex[H3Body])
 }
 
 /// A reply that Client.Do read: the status, the header fields, and the
@@ -100,6 +101,7 @@ ExFill(x: mut Exchange, io: Io, dst: mut []u8): ReadError!int {
         match x.carrier {
             Carrier.H1(m) { try SettleLine(m, io) }
             Carrier.H2(m) { try SettleH2(m, io) }
+            Carrier.H3(m) { try SettleH3(m, io) }
         }
     }
     return n
@@ -185,6 +187,11 @@ export Exchange.Close(self, io: Io): Error!void {
         Carrier.H2(m) {
             try CloseH2Exchange(self.client, m, io, self.io)
         }
+        Carrier.H3(m) {
+            if self.client.ReleaseH3(m, io, false) {
+                fail ReadError
+            }
+        }
     }
     Exchange(status: _, headers: _, client: _, carrier: _, version: _, reader: _, io: _, key: _) := self
 }
@@ -193,6 +200,7 @@ ExchangeOver(x: &Exchange, io: Io, limit: i64): bool {
     match x.carrier {
         Carrier.H1(m) { return LineOver(m, io, limit) }
         Carrier.H2(m) { return H2StreamOver(m, io, limit) }
+        Carrier.H3(m) { return H3BodyOver(m, io, limit) }
     }
 }
 
@@ -229,6 +237,9 @@ export Exchange.Abandon(self) {
         }
         Carrier.H2(m) {
             AbandonH2Exchange(self.client, m, self.io)
+        }
+        Carrier.H3(m) {
+            _ = self.client.ReleaseH3(m, self.io, true)
         }
     }
     Exchange(status: _, headers: _, client: _, carrier: _, version: _, reader: _, io: _, key: _) := self
