@@ -3,7 +3,7 @@
 // never a crash.
 //
 // What: Archive, Open (header checks, the index's tables taken in place),
-// and the reads: Meta, ID, Len, Item, ItemDeps, Lookup and Text (the texts
+// and the reads: Meta, ID, Len, Head, Item, ItemDeps, Lookup and Text (the texts
 // of a set of items, inflating only the chunks that hold them).
 //
 // How: the index's fixed-width tables are sliced out of the archive's bytes
@@ -206,6 +206,18 @@ func (a *Archive) record(i int) (record, error) {
 func (a *Archive) ItemDeps(i int) ([]Ref, bool, error) {
 	e, err := a.record(i)
 	return e.deps, e.flags&1 != 0, err
+}
+
+// Head is item i's kind and the names it defines, its text not read.
+func (a *Archive) Head(i int) (kind string, defs []string, err error) {
+	e, err := a.record(i)
+	if err != nil {
+		return "", nil, err
+	}
+	for _, d := range e.defs {
+		defs = append(defs, string(a.str(d)))
+	}
+	return string(a.str(e.kind)), defs, nil
 }
 
 // Item decodes item i whole, its text included (one chunk inflated).

@@ -254,6 +254,13 @@ type TestHooks struct {
 	// items its importers name (cimport.PruneAll), so a test can check the
 	// whole of a large header's binding (TestCImport_WindowsHMeasure).
 	CImportWhole bool
+	// SysViews replaces the system view archives mk carries: the archive
+	// of view name generated for target, false when there is none (a test's
+	// fake view, or a build of mk without the data).
+	SysViews func(target, name string) ([]byte, bool)
+	// SysViewWhole gives every system view the program names whole
+	// instead of the items it uses.
+	SysViewWhole bool
 	// PlaceObject, when set, replaces the hard link or copy that places a
 	// stored pack object in the work directory for a staged link
 	// (stagedHits), so a test can make it fail as a store emptied during

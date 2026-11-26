@@ -37,14 +37,17 @@ type world struct {
 	cimports *cImports
 	// depCImports are the dependencies' C fields, in build order.
 	depCImports []*cImports
-	sm          *source.SourceMap
-	in          *source.Interner
-	items       *types.Items
-	tab         *types.Table // the session's type table (stage 5 on)
-	rs          *resolve.Session
-	sem5        *semantics // check, lower and eval; nil until stage 5 starts
-	data        dataCache  // build.File and Gen.Input reads (datafile.go)
-	sem         chan struct{}
+	// sysviews are the system views the program names (sysviews.go); nil
+	// outside a package, file or directory check.
+	sysviews *sysViews
+	sm       *source.SourceMap
+	in       *source.Interner
+	items    *types.Items
+	tab      *types.Table // the session's type table (stage 5 on)
+	rs       *resolve.Session
+	sem5     *semantics // check, lower and eval; nil until stage 5 starts
+	data     dataCache  // build.File and Gen.Input reads (datafile.go)
+	sem      chan struct{}
 	// links are the pkg.Link values of the package graph, the root's
 	// first, then each dependency's in build order (links.go).
 	links []pkgLink
@@ -188,6 +191,9 @@ type modNode struct {
 	// cimport: a C import's binding, c.<name> (cimport.go): unsafe, and it
 	// may import std.raw for its accessors.
 	cimport bool
+	// sysview: a system view's module, c.sys.<view> (sysviews.go): in the
+	// std build, cimport and unsafe, never std.
+	sysview bool
 	binRoot bool // ModuleInput.BinRoot
 	// libBoundary marks a module of a package with a library bin
 	// (ModuleInput.Library: its export extern functions cross a library

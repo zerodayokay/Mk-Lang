@@ -9929,6 +9929,39 @@ How C declarations appear in Mk:
 - The SDK includes four headers of the MSVC toolset that it does not ship: `vcruntime.h`, `vadefs.h`, `vcruntime_string.h` and `excpt.h`. mk supplies its own, generated, before the SDK's directories, and uses them even when the list names a toolset directory, so a binding's names never depend on the machine. With them `size_t` is `SizeT`, as on every target, and the SDK's `SIZE_T` is `SizeTType`. No `setjmp.h` is supplied: a header that includes `<wchar.h>` or `<intrin.h>` fails with `'setjmp.h' file not found`. A function of the SDK links as any extern does ([linking](#linking-libraries)): through `pkg.Link`, or the system DLLs mk links on a Windows host.
 - The bindings are made per target. `mk check --all-targets` translates them for both `x86_64-windows` and `x86_64-linux` and reports an item the package uses whose API differs (E0213). A constant's value is not part of the API. It needs each target's system headers, from `MK_SYSROOT_<target>`, or `vendor: true` to read the committed `gen/<target>/c/` files instead. Without either, it is E0213, `reason: no-sysroot`.
 
+#### System views
+
+A system view is a C import that ships inside mk: `import c.windows` needs no `pkg.CImport`, no header, no SDK and no Clang, on any machine, and binds the same declarations everywhere.
+
+```mk
+// verdict: parse
+import c.windows
+
+export Main(sys: &System): WriteError!void {
+    var pid: windows.Dword = 0
+    unsafe "GetCurrentProcessId takes nothing and cannot fail" {
+        pid = windows.GetCurrentProcessId()
+    }
+    try sys.Print("{pid}\n", (pid))
+}
+```
+
+| View | Headers | Generated from | Targets |
+|---|---|---|---|
+| `c.windows` | `windows.h`, `windowsx.h` | Windows SDK 10.0.28000.0 | `x86_64-windows` |
+| `c.dxgi` | `dxgi1_6.h`, `dxgidebug.h` | the same | `x86_64-windows` |
+| `c.d3d12` | `d3d12.h`, `d3d12sdklayers.h` | the same | `x86_64-windows` |
+| `c.d3dcompiler` | `d3dcompiler.h` | the same | `x86_64-windows` |
+| `c.vulkan` | `vulkan/vulkan.h` | Vulkan-Headers | `x86_64-windows`, `x86_64-linux`, `aarch64-linux` |
+| `c.posix` | the POSIX headers | glibc | `x86_64-linux`, `aarch64-linux` |
+
+- The views of one target are generated together, as one translation unit, by `go run ./tools/sysview`, from the inputs `mk sdk views` prints: the SDK's version, mk's toolset headers, the importer's format and Clang's version. A declaration several views reach belongs to the first in the table, so `HWND` is `windows.HwndType` in every view, and `c.dxgi`'s items name `c.windows`'s types. The whole of every view type-checks; what does not is left out and listed, and so is every `static inline` function, which only a shim compiled from the headers could define. This mk carries no `c.vulkan` or `c.posix` yet: importing one is E0202, `reason: no-sysview`, which says how to generate it.
+- A view's names are a C import's: functions keep their C names, types and constants are PascalCase, fields snake_case. The view is a C import's binding for every rule: calling its functions needs `unsafe`, reading a C function pointer is E1101, and its `extern var`s are C's, never defined by the build.
+- A build takes only the items its files name and what those items need, from every view a view needs. The rest of `windows.h` costs nothing. The items a program uses are one module for the whole program, so a `windows.HwndType` from a dependency or from the standard library is the package's.
+- `import c.<name>` is, first, the package's `pkg.CImport` of that name, which wins over a view of the same name. Else it is the system view of that name. Else it is E0202 `no-cimport`, whose message names the views. In a standard-library module it is always the system view.
+- A view may be imported in a build for any target: its declarations are plain Mk. A build for a target the view is not generated for reads the view of the table's first target, so `c.windows` checks in a build for `x86_64-linux`. A function that is never reached emits nothing, so a call behind `if Target.os == Os.Windows` builds for Linux. A call that is reached on such a target is E0001 at the link, naming the function and its view.
+- A view's functions link as any extern does ([linking](#linking-libraries)): `kernel32`, `user32` and the other system DLLs on a Windows host, any other DLL (`d3d12.dll`, `dxgi.dll`) through `pkg.Link`.
+
 ### C sources and assembly files
 
 The manifest builds C and assembly files with the package:

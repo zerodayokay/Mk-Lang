@@ -156,6 +156,16 @@ C import is a native step, because a generator's fuel and determinism rules do n
 - Items load lazily, because one system header can declare tens of thousands.
 - All C imports of a package form one translation unit, so a C type has one identity in the package.
 
+### System views
+
+A system view (`import c.windows` with no `pkg.CImport`) is a C import's binding generated ahead of time and embedded in mk (`internal/sysview`).
+
+- `go run ./tools/sysview` runs the importer once per target over `sysview.Table`, one import per row in table order, and cuts each binding into items: one per block of `prune` (`cimport.ViewItems`), with the items each refers to resolved to indexes. A name's first block lists the name's other blocks (a struct's accessors), so a user refers to one. Externs only a shim defines are dropped. The whole of every view is then checked as vendored C imports with pruning off; an item a diagnostic lands in is dropped with every item that needs it, until the check is clean.
+- An archive (`internal/sysview/data/<target>/<view>.mksv`) is a header with the metadata, an uncompressed index of fixed-width tables (string and item offsets, the folded names sorted for binary search) and the item texts in 16 KiB DEFLATE chunks. Opening it decodes nothing; extraction walks item indexes and inflates only the chunks holding kept items. Its identity is a hash of its content, independent of the layout, so a regenerated archive is compared by identity, not bytes.
+- After the read step, the driver collects the `import c.<view>` lines of every build and the names they use (`cimport.Uses`), opens the views named and those they require, and extracts the wanted items into one module per view, `c.sys.<view>`, which joins the std build after std's own modules. A std module that imports a view is therefore not late (it needs no package C build), and the view's types are one type in the program. The module is marked as a C import's binding (`cimport`, unsafe permitted); its path does not start with `std.`, so its externs switch to the system stack as a package's do.
+- The extracted texts are cached under a key of the archives' identities and the sorted names wanted: an edit that names nothing new hits, a new use misses and re-extracts. The module's text is then a function of those names, so its interface, and every importer's key, change only when the set of names does.
+- A program that imports no view forms nothing: no module, no file, no read.
+
 ## 8. Back end
 
 LLVM is the only back end, run as a process in every profile: `clang -O0` for dev builds, `-O3` with ThinLTO for release. The IR may use LLVM 21's features, so LLVM 21 or newer is required. There is no `opt` or `llc` step and no C source. The driver finds the tools from `--llvm`, then `MK_LLVM`, then a toolchain bundle's `llvm/bin` (the directory `../llvm/bin` from the `mk` executable's directory, used only when it holds both `clang` and the linker), then the platform's usual install location, then `PATH`. `mk version` prints what it found.
