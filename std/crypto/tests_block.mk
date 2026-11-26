@@ -136,6 +136,52 @@ TxBlInitial(a: &Arena): Prk {
     return HkdfExtract(salt, cid, HashKind.Sha256)
 }
 
+// TxBlEvalBlocks is FIPS 197 C.1's and C.3's blocks through Aes, the first
+// 16 bytes of RFC 8439 2.3.2's block through ChaCha20Block and RFC 9001
+// A.1's client hp key through HkdfExpandLabel, in that order; the
+// evaluator runs it for TxBlEval.
+TxBlEvalBlocks(): [64]u8 {
+    var key: [32]u8 = [0; 32]
+    var pt: [16]u8 = [0; 16]
+    for i in 0..32 {
+        key[i] = Trunc[u8](i)
+    }
+    for i in 0..16 {
+        pt[i] = Trunc[u8](0x11 * i)
+    }
+    var r: [64]u8 = [0; 64]
+    c1 := Aes.New(key[0..16]).Must() // a 16-byte key
+    e1 := c1.Encrypt(&pt).Must()     // a live key
+    (mut r[0..16]).CopyFrom(e1[..])
+    c3 := Aes.New(key[..]).Must() // a 32-byte key
+    e3 := c3.Encrypt(&pt).Must()  // a live key
+    (mut r[16..32]).CopyFrom(e3[..])
+    var nonce: [12]u8 = [0; 12]
+    nonce[3] = 0x09
+    nonce[7] = 0x4a
+    b := ChaCha20Block(&key, 1, &nonce)
+    (mut r[32..48]).CopyFrom(b[0..16])
+    salt: [20]u8 = [0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a]
+    cid: [8]u8 = [0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]
+    init := HkdfExtract(salt[..], cid[..], HashKind.Sha256)
+    var cs: [32]u8 = [0; 32]
+    HkdfExpandLabel(&init, "client in", "".AsBytes(), mut cs[..]).Must() // a valid label and length
+    p := Prk.FromBytes(HashKind.Sha256, cs[..]).Must()                   // 32 bytes
+    HkdfExpandLabel(&p, "quic hp", "".AsBytes(), mut r[48..64]).Must()   // a valid label and length
+    return r
+}
+
+// TxBlEval is TxBlEvalBlocks computed at compile time.
+const TxBlEval: [64]u8 = TxBlEvalBlocks()
+
+test "Block: compile-time evaluation runs Aes, ChaCha20Block and HkdfExpandLabel and agrees with native code" (sys: &System) {
+    a := sys.arena
+    Assert(TxA2Hex(a, TxBlEval[0..32]) == "69c4e0d86a7b0430d8cdb78070b4c55a8ea2b7ca516745bfeafc49904b496089")
+    Assert(TxA2Hex(a, TxBlEval[32..64]) == "10f1e7e4d13b5915500fdd1fa32071c49f50449e04a0e810283a1e9933adedd2")
+    run := TxBlEvalBlocks()
+    Assert(Equal(run[..], TxBlEval[..]))
+}
+
 test "Block: Aes encrypts FIPS 197 Appendix C.1 and C.3's block under AES-128 and AES-256, on the kernel path and the portable one" (sys: &System) {
     a := sys.arena
     pt := "00112233445566778899aabbccddeeff"

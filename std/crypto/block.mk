@@ -8,7 +8,7 @@
 // How: the AES of aes.mk and std.simd.kernel, the code AesGcm runs: the key
 // schedule AesSchedule, and per block the kernel's AesEncryptBlocks with
 // AesEncrypt4 as the portable fallback, which bitslices four blocks and so
-// is given one block and three of zeros. Aes is a key of its own, never an
+// is given four copies of the one. Aes is a key of its own, never an
 // AesGcm's: one block under a GCM key would hand out E(K, J0), which masks
 // the GCM tag. ChaCha20Block is chacha20.mk's ChaBlock, serialized little
 // endian (RFC 8439 2.3). Constant time as the code they reuse is: what
@@ -64,15 +64,19 @@ export Aes.Wipe(mut self) {
 
 // AesBlock is AES(K, b) for the round keys rk (FIPS 197's w, for the
 // kernel) and sk (bitsliced, for AesEncrypt4) of nr rounds. The portable
-// path encrypts b beside three zero blocks; their output, E(K, 0), is
-// AES-GCM's hash key H, so it is wiped.
+// path gives AesEncrypt4 four copies of b, so it computes nothing but
+// AES(K, b): three zero blocks would compute E(K, 0), AES-GCM's hash key
+// H, into its frame. It calls no Wipe, which compile-time evaluation
+// refuses (E0901), so AesGcm and Aes run there too.
 AesBlock(rk: []u8, sk: []u8, nr: int, b: &[16]u8): [16]u8 {
     var e: [64]u8 = [0; 64]
     if !kernel.AesEncryptBlocks(rk[0..16 * (nr + 1)], b[..], mut e[0..16]) {
         var s: [64]u8 = [0; 64]
         (mut s[0..16]).CopyFrom(b[..])
+        (mut s[16..32]).CopyFrom(b[..])
+        (mut s[32..48]).CopyFrom(b[..])
+        (mut s[48..64]).CopyFrom(b[..])
         AesEncrypt4(sk, nr, s[..], mut e[..])
-        Wipe(mut e[16..64])
     }
     var r: [16]u8 = [0; 16]
     (mut r[..]).CopyFrom(e[0..16])
