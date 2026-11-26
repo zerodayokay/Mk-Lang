@@ -101,7 +101,7 @@ Client.ReleaseH3(&self, m: &Mutex[H3Body], io: Io, abandon: bool): bool {
     stream := Replace(mut g.Mut().stream, none)
     g.Unlock()
     if ex := stream {
-        pg := self.h3_pool.Lock(nc).Must()
+        pg := self.H3State().Must().pool.Lock(nc).Must()
         conn := H3ConnRef((*pg.Ref())[idx].conn)
         pg.Unlock()
         if reset {

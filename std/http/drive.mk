@@ -76,9 +76,9 @@ export Client.Drive(&self, io: Io): Canceled!void {
                     d.go DriveMuxConn(self, sl, io, gen_)
                 }
             }
-            if self.limits.h3.IsSome() {
+            if state := self.H3State() {
                 for i in 0..H3Slots {
-                    var g := self.h3_pool.Lock(io.NoCancel()).Must()
+                    var g := state.pool.Lock(io.NoCancel()).Must()
                     slot := mut (*g.Mut())[i]
                     if !slot.dialing && !slot.driving && !slot.retired && !raw.IsNull(slot.conn) {
                         slot.driving = true

@@ -244,7 +244,7 @@ AltIndex(cache: &[64]AltOrigin, key: &Origin, now: time.Instant): int {
 Client.H3Routes(&self, io: Io, key: &Origin, port: int): AltRoutes {
     nc := io.NoCancel()
     now := time.Now(nc)
-    g := self.alt_cache.Lock(nc).Must()
+    g := self.H3State().Must().routes.Lock(nc).Must()
     e := &(*g.Ref())[AltIndex(g.Ref(), key, now)]
     var routes := NoAltRoutes
     same := OriginEq(&e.key, key)
@@ -278,7 +278,7 @@ Client.H3Routes(&self, io: Io, key: &Origin, port: int): AltRoutes {
 Client.H3Broken(&self, io: Io, key: Origin) {
     nc := io.NoCancel()
     now := time.Now(nc)
-    var g := self.alt_cache.Lock(nc).Must()
+    var g := self.H3State().Must().routes.Lock(nc).Must()
     i := AltIndex(g.Ref(), &key, now)
     e := mut (*g.Mut())[i]
     if !OriginEq(&e.key, &key) {
@@ -326,9 +326,10 @@ Client.RememberAltSvc(&self, io: Io, host: str, key: Origin, ex: &Exchange) {
         self.H3Retire(io, &key)
     }
     if found {
+        state := self.EnsureH3State() else { return }
         nc := io.NoCancel()
         now := time.Now(nc)
-        var g := self.alt_cache.Lock(nc).Must()
+        var g := state.routes.Lock(nc).Must()
         i := AltIndex(g.Ref(), &key, now)
         e := mut (*g.Mut())[i]
         if !OriginEq(&e.key, &key) {
