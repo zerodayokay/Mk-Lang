@@ -212,9 +212,10 @@ test "Command.handles: Spawn refuses an MK_HANDLES entry, 65 handles and a pipe 
     s1.Close()
     tl.Close()
     // A Unix-domain listener: Unsupported on Windows (the child could not
-    // tell its family), given on Linux.
+    // tell its family), given on Linux. Use a relative name in the child's
+    // scratch directory so the socket address fits even with a long TEMP.
     if SpWin() {
-        (file: tf, path: up) := fs.CreateTemp(sys.arena, io, "", "mk-proc-ux-").Must()
+        (file: tf, path: up) := fs.CreateTemp(sys.arena, io, ".", "mk-proc-ux-").Must()
         tf.Close(io).Must()
         fs.Remove(io, up).Must()
         // Windows 10 1803 and later (the hosts this runs on) have them.

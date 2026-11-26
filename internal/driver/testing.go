@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"mk/internal/toolchain"
+	"mk/internal/types"
 )
 
 // The environment of a test child that std.testing reads.
@@ -126,6 +127,13 @@ func blockText(t string) string {
 	return t
 }
 
+// stdUnixScratchFiles are the std test files whose fixtures bind relative
+// AF_UNIX names on Windows, to stay within sun_path whatever TEMP is. Their
+// tests run in a private working directory, so the socket files stay out of
+// the caller's tree and two runs from one directory do not share a name.
+var stdUnixScratchFiles = []string{"std/net/tests_unix.mk", "std/proc/tests_handles.mk",
+	"std/task/tests_defects.mk", "std/task/tests_unix.mk"}
+
 // runTestChild runs selected test i (tc) into out: the fuzz loop under
 // --fuzz, the repetitions under mk bench, else one plain child, whose
 // environment names the test's seed corpus when it has one.
@@ -141,6 +149,18 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 		return
 	}
 	env = childEnv(env, via, TestingExpectEnv+"="+opt.expectToken)
+	workDir := ""
+	if s.cfg.Target.OS == types.OSWindows && s.cfg.StdTests != "" {
+		if f := s.w.sm.File(s.w.items.Get(tc.item).Span.File); f != nil && slices.Contains(stdUnixScratchFiles, f.Path) {
+			var err error
+			workDir, err = os.MkdirTemp("", "mk-unix-test-")
+			if err != nil {
+				out.Result, out.Status, out.Output = "fail", -1, "Unix socket scratch: "+err.Error()
+				return
+			}
+			defer os.RemoveAll(workDir)
+		}
+	}
 	dir := s.fuzzCorpusDir(tc, opt)
 	note := s.fuzzCorpusNote(tc, opt)
 	defer func() { out.Note = note }() // after runChild, which sets the rest
@@ -160,10 +180,10 @@ func (s *Session) runTestChild(out *TestCase, tc testCase, argv, env []string, i
 	if opt.coverDir != "" { // cover.go: this child's counts file
 		counts := filepath.Join(opt.coverDir, strconv.Itoa(i))
 		env = childEnv(env, via, opt.cover.coverEnv(hostPath(argv, counts)))
-		runChild(out, argv, env, i, s.cfg.TestTimeout, func() { out.coverAcked = coverAsk(counts) })
+		runChild(out, argv, env, i, workDir, s.cfg.TestTimeout, func() { out.coverAcked = coverAsk(counts) })
 		return
 	}
-	runChild(out, argv, env, i, s.cfg.TestTimeout)
+	runChild(out, argv, env, i, workDir, s.cfg.TestTimeout)
 }
 
 // fuzzInputLines displays tagged seed markers at the start of a line in

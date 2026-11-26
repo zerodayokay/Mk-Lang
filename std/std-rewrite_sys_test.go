@@ -155,9 +155,10 @@ export SysProbe(sys0: &System): WriteError|ParseError!void {
         m := rt.HeapAlloc(n, 8)
         u := rt.HeapUsable(m, 8)
         fits := rt.HeapResize(m, n, u, 8)
-        over := rt.HeapResize(m, n, u + 1, 8)
-        rt.HeapFree(m, u, 8)
-        try Print(mut out, "usable {n} {u} {fits} {over}\n", (n, u, fits, over))
+        over := rt.HeapResize(m, u, u + 1, 8)
+        grown := rt.HeapUsable(m, 8)
+        rt.HeapFree(m, grown, 8)
+        try Print(mut out, "usable {n} {u} {fits} {over} {grown}\n", (n, u, fits, over, grown))
     }
     zero := rt.HeapUsable(rt.HeapAlloc(0, 8), 8)
     try Print(mut out, "usable0 {zero}\n", (zero))
@@ -197,23 +198,26 @@ func sysProbeWant(linux bool) []string {
 	}
 }
 
-// sysUsableOK judges one "usable n u fits over" line: u >= n, the bound is
-// exact (fits, not over), and a small request gets its class size.
-func sysUsableOK(line string) bool {
+// sysUsableOK checks the class size or span bound and the huge block's
+// committed capacity. A failed extra commit leaves the capacity unchanged.
+func sysUsableOK(line string, n int) bool {
 	f := strings.Fields(line)
-	if len(f) != 5 || f[0] != "usable" {
+	if len(f) != 6 || f[0] != "usable" || f[1] != strconv.Itoa(n) || f[3] != "true" {
 		return false
 	}
-	n, _ := strconv.Atoi(f[1])
-	u, _ := strconv.Atoi(f[2])
-	if u < n || f[3] != "true" || f[4] != "false" {
+	u, err := strconv.Atoi(f[2])
+	grown, growErr := strconv.Atoi(f[5])
+	if err != nil || growErr != nil || u < n {
 		return false
 	}
 	small := map[int]int{1: 16, 16: 16, 17: 32, 100: 112, 8192: 8192}
 	if want, ok := small[n]; ok && u != want {
 		return false
 	}
-	return true
+	if n > 1<<20 && f[4] == "true" {
+		return grown > u
+	}
+	return f[4] == "false" && grown == u
 }
 
 func sysProbeCheck(t *testing.T, stdout string, linux bool) {
@@ -235,9 +239,9 @@ func sysProbeCheck(t *testing.T, stdout string, linux bool) {
 			t.Errorf("line %d: got %q, want %q", i, got[i], w)
 		}
 	}
-	for _, l := range got[len(want) : len(got)-1] {
-		if !sysUsableOK(l) {
-			t.Errorf("bad HeapUsable line %q", l)
+	for i, n := range []int{1, 16, 17, 100, 8192, 8193, 70000, 2000000} {
+		if line := got[len(want)+i]; !sysUsableOK(line, n) {
+			t.Errorf("bad HeapUsable line for %d bytes: %q", n, line)
 		}
 	}
 	if last := got[len(got)-1]; last != "usable0 0" {

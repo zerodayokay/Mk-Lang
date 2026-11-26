@@ -1,5 +1,6 @@
 # std.net over loopback: listener options, stream options and addresses, a half-close, net.Conn,
-# a Unix-domain socket in the system temporary directory, an Accept cut by a deadline, refusals.
+# a Unix-domain socket (named relative to the run directory on Windows, else in the system
+# temporary directory), an Accept cut by a deadline, refusals.
 # The timeout is wide for a loaded Windows host, where a dial to a closed port can wait seconds
 # for the refusal.
 case ok

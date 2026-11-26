@@ -327,7 +327,9 @@ func ioStreamLockContention(t *testing.T, h ioHost) {
 	exe := h.build(t, map[string]string{"core/io_zmn.mk": mnCore, "proc/zmn.mk": mnProc}, mnProgram)
 	var calls []ioCall
 	for _, carriers := range []int{1, 2, 4, 8, 16} {
-		env := []string{fmt.Sprintf("MK_CARRIERS=%d", carriers)}
+		// The record oracle handles one panic headline. Runtime backtrace
+		// frames are unrelated to the program's stream writes.
+		env := []string{fmt.Sprintf("MK_CARRIERS=%d", carriers), "MK_BACKTRACE=0"}
 		calls = append(calls, ioCall{env: env, watch: 60, args: []string{strconv.Itoa(tasks), strconv.Itoa(rounds), "-1", "full"}})
 		for rep := 0; rep < 3; rep++ {
 			for _, mode := range []string{"exit", "solo", "panic"} {

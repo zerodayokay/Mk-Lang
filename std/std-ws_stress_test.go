@@ -200,7 +200,7 @@ func wsStressRun(t *testing.T, exe string, senders, msgs, pings int) {
 	}
 	port := fmt.Sprint(l.Addr().(*net.TCPAddr).Port)
 	l.Close()
-	_, wait := net3Start(t, exe, port, fmt.Sprint(senders), fmt.Sprint(msgs))
+	_, wait := net3Start(t, exe, "", port, fmt.Sprint(senders), fmt.Sprint(msgs))
 	var c net.Conn
 	for start := time.Now(); ; {
 		c, err = net.DialTimeout("tcp", "127.0.0.1:"+port, 5*time.Second)
