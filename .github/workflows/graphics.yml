@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     env:
@@ -34,8 +34,8 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Linux toolchain and Vulkan ICD
-        if: runner.os == 'Linux'
+      - name: Linux x86-64 toolchain and Vulkan dependencies
+        if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |
           . /etc/os-release
           major=${LLVM_VERSION%%.*}
@@ -46,8 +46,25 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/mk-graphics-llvm.gpg] https://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-$major main" |
             sudo tee /etc/apt/sources.list.d/mk-graphics-llvm.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "clang-$major" "lld-$major" "llvm-$major" gdb libglfw3 libvulkan1 mesa-vulkan-drivers xvfb xauth
+          sudo apt-get install -y --no-install-recommends "clang-$major" "lld-$major" "llvm-$major" gdb libglfw3 libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb xauth
           echo "MK_LLVM=/usr/lib/llvm-$major/bin" >> "$GITHUB_ENV"
+
+      - name: Linux ARM64 toolchain and Wayland dependencies
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: |
+          name="LLVM-$LLVM_VERSION-Linux-ARM64"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o llvm.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.xz"
+          echo '65ce0b329514e5643407db2d02a5bd34bf33d159055dafa82825c8385bd01993  llvm.tar.xz' | sha256sum -c -
+          tar -xJf llvm.tar.xz
+          rm -f llvm.tar.xz
+          echo "MK_LLVM=$RUNNER_TEMP/$name/bin" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libglfw3-wayland libvulkan1 mesa-vulkan-drivers weston
+
+      - name: Select lavapipe on Linux
+        if: runner.os == 'Linux'
+        run: |
           icd=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
           test -n "$icd"
           echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
@@ -84,8 +101,8 @@ jobs:
         if: runner.os == 'Linux'
         run: go test -p 1 -timeout 5m ./internal/driver -run '^TestFFI_JoinedThread$'
 
-      - name: Render and present on Linux
-        if: runner.os == 'Linux'
+      - name: Validate rendering and present through X11 on Linux x86-64
+        if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |
           run_native() {
             local rc=0
@@ -110,9 +127,39 @@ jobs:
           }
           scene=Dogfoods/scene/cases/scenes/shadow.scene
           run_native probe --backend vulkan --list
-          run_native render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
+          run_native render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan --strict
           test -s "$RUNNER_TEMP/shadow.png"
           output=$(xvfb-run -a "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3)
+          printf '%s\n' "$output"
+          grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"
+
+      - name: Render and present through Wayland on Linux ARM64
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: |
+          runtime=$(mktemp -d "$RUNNER_TEMP/mk-wayland.XXXXXX")
+          export XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=mk-smoke
+          unset DISPLAY
+          log="$RUNNER_TEMP/weston.log"
+          weston --backend=headless --renderer=pixman --no-config --socket="$WAYLAND_DISPLAY" > "$log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true; wait "$weston_pid" 2>/dev/null || true' EXIT
+          for ((attempt=0; attempt<100; attempt++)); do
+            if [ -S "$runtime/$WAYLAND_DISPLAY" ] || ! kill -0 "$weston_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$runtime/$WAYLAND_DISPLAY" ]; then
+            cat "$log"
+            exit 1
+          fi
+          scene=Dogfoods/scene/cases/scenes/shadow.scene
+          "$RUNNER_TEMP/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
+          test -s "$RUNNER_TEMP/shadow.png"
+          if ! output=$(timeout 90s "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3); then
+            cat "$log"
+            exit 1
+          fi
           printf '%s\n' "$output"
           grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"
 
@@ -129,3 +176,16 @@ jobs:
           output=$("$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3)
           printf '%s\n' "$output"
           grep -Fxq 'view: vulkan presented 3 frames' <<< "$output"
+
+  intel-metal:
+    runs-on: macos-15-intel
+    timeout-minutes: 5
+    steps:
+      - name: Probe for a Metal device on Intel macOS
+        run: |
+          devices=$(swift -e 'import Metal; for device in MTLCopyAllDevices() { print(device.name) }')
+          if [ -n "$devices" ]; then
+            printf 'Intel macOS Metal devices:\n%s\n' "$devices" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'The Intel macOS runner exposes no Metal device.' | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
