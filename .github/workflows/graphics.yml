@@ -60,7 +60,7 @@ jobs:
           rm -f llvm.tar.xz
           echo "MK_LLVM=$RUNNER_TEMP/$name/bin" >> "$GITHUB_ENV"
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libglfw3-wayland libvulkan1 mesa-vulkan-drivers weston
+          sudo apt-get install -y --no-install-recommends gdb libglfw3-wayland libvulkan1 mesa-vulkan-drivers weston
 
       - name: Select lavapipe on Linux
         if: runner.os == 'Linux'
@@ -157,7 +157,18 @@ jobs:
           "$RUNNER_TEMP/scene" render "$scene" "$RUNNER_TEMP/shadow.png" --backend vulkan
           test -s "$RUNNER_TEMP/shadow.png"
           if ! output=$(timeout 90s "$RUNNER_TEMP/scene" view "$scene" --backend vulkan --frames 3); then
+            printf '%s\n' "$output"
             cat "$log"
+            echo "::group::ARM64 Wayland native backtrace"
+            if "$RUNNER_TEMP/mk" build --debug Dogfoods/scene -o "$RUNNER_TEMP/scene-debug"; then
+              timeout -k 5s 90s gdb -nx -batch \
+                -ex 'set print thread-events off' \
+                -ex 'handle SIGURG nostop noprint pass' \
+                -ex 'handle SIGPIPE nostop noprint pass' \
+                -ex run -ex 'bt 16' -ex 'x/8i $pc' -ex 'info sharedlibrary' \
+                --args "$RUNNER_TEMP/scene-debug" view "$scene" --backend vulkan --frames 3 || true
+            fi
+            echo "::endgroup::"
             exit 1
           fi
           printf '%s\n' "$output"
