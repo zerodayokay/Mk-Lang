@@ -127,7 +127,8 @@ Table.SetCap(mut self, c: int) {
     }
 }
 
-// Table.Insert adds (name, value) as the newest entry, first evicting the
+// Table.Insert adds (name, value) as the newest entry, with index the
+// static index of its name, first evicting the
 // oldest entries until it fits; an entry larger than the capacity empties
 // the table and is not added (RFC 7541 4.4). Neither slice may be a view of
 // the table, which the caller's loans already rule out. O(name + value +

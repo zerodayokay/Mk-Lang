@@ -5,9 +5,7 @@
 // What: benchmarks of Decode and Encode over the RFC 7541 C.4 and C.6
 // sequences, and of HuffDecode over 4 KiB of header text.
 //
-// How: each benchmark builds its decoder or encoder and its arena once,
-// then per iteration empties the dynamic table (a capacity of 0, then the
-// old one) and runs the three blocks of a sequence, resetting the arena.
+// How: each benchmark builds its decoder or encoder and its FieldBlock\n// once, then per iteration empties the dynamic table (a capacity of 0,\n// then the old one) and runs the three blocks of a sequence.
 // Plain mk test runs each once, as a check that it works.
 
 import std.testing

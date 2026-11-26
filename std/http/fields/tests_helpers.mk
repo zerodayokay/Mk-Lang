@@ -3,7 +3,7 @@
 //
 // What: Unhex (an RFC hex dump to bytes), Same, PairsAre (a FieldBlock
 // against "name: value" lines), TableIs (a table against the RFC's
-// listing), TField and ToFields (fields to encode), and Block (one block of
+// listing), TField and ToFields (fields to encode), and RfcBlock (one block of
 // an Appendix C sequence, both ways).
 //
 // How: plain helpers over the module's own types; nothing here is
@@ -121,11 +121,11 @@ Fits(h: &Alloc, dec: mut Decoder, got: mut FieldBlock, block: []u8): DecodeError
     Assert(try dec.Decode(h, got, block) == Outcome.Fits)
 }
 
-// Block checks one block of an RFC 7541 Appendix C sequence both ways:
+// RfcBlock checks one block of an RFC 7541 Appendix C sequence both ways:
 // hex decodes with dec to list and leaves dec's table as table (newest
 // first) of size size, and list encodes with enc to exactly hex and leaves
 // enc's table the same.
-Block(a: &Arena, h: &Alloc, dec: mut Decoder, enc: mut Encoder, got: mut FieldBlock, hex: str, list: []str, table: []str, size: int): DecodeError|OutOfMemory|TooSmall!void *list into a {
+RfcBlock(a: &Arena, h: &Alloc, dec: mut Decoder, enc: mut Encoder, got: mut FieldBlock, hex: str, list: []str, table: []str, size: int): DecodeError|OutOfMemory|TooSmall!void *list into a {
     wire := try Unhex(a, hex)
     try Fits(h, dec, got, wire)
     Assert(PairsAre(&*got, list))

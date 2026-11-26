@@ -55,8 +55,8 @@ impl Field for BField {
 const Pool = ["x-trace", "x-request-id", "cookie", "user-agent", "x-a"]
 const Values = ["", "0", "gzip, deflate", "Mozilla/5.0 (X11)", "id=12345; path=/"]
 
-// Bytes is n random bytes in a; lower case letters and '-' when name.
-Bytes(a: &Arena, r: mut Rng, n: int, name: bool): OutOfMemory![]u8 from a {
+// RandomBytes is n random bytes in a; lower case letters and '-' when name.
+RandomBytes(a: &Arena, r: mut Rng, n: int, name: bool): OutOfMemory![]u8 from a {
     out := try a.Slice[u8](n)
     for i in 0..n {
         out[i] = if name { Trunc[u8](if r.Below(27) == 26 { 0x2D } else { 0x61 + r.Below(26) }) } else { Trunc[u8](r.Next()) }
@@ -72,12 +72,12 @@ RandomList(a: &Arena, r: mut Rng, max: int): OutOfMemory![]BField from a {
         name := match r.Below(3) {
             0 { StaticTable[r.Below(StaticLen)].name.AsBytes() }
             1 { Pool[r.Below(Pool.Len())].AsBytes() }
-            _ { try Bytes(a, r, 1 + r.Below(12), true) }
+            _ { try RandomBytes(a, r, 1 + r.Below(12), true) }
         }
         value := match r.Below(3) {
             0 { StaticTable[r.Below(StaticLen)].value.AsBytes() }
             1 { Values[r.Below(Values.Len())].AsBytes() }
-            _ { try Bytes(a, r, r.Below(60), false) }
+            _ { try RandomBytes(a, r, r.Below(60), false) }
         }
         try out.Push(BField(name: name, value: value, sensitive: r.Below(8) == 0))
     }

@@ -97,3 +97,37 @@ test "a dynamic entry that wraps the ring's end reaches the sink whole" (sys: &S
     try Fits(h, mut dec, mut got, out[0..1])
     Assert(got.Get(0).value == vals[4])
 }
+
+test "EncodeBlock forwards a FieldBlock as it came, never-indexed fields still never indexed" (sys: &System) {
+    a := sys.arena
+    h := sys.heap.Alloc()
+    var dec := try Decoder.New(h, DefaultTableBytes, 1 << 16)
+    defer dec.Free(h)
+    var got := FieldBlock.New(h)
+    defer got.Free(h)
+    // C.4.1, Huffman coded: encoded again with Huffman, the same bytes.
+    wire := try Unhex(a, "8286 8441 8cf1 e3c2 e5f2 3a6b a0ab 90f4 ff")
+    try Fits(h, mut dec, mut got, wire)
+    var enc := try Encoder.New(h, DefaultTableBytes, true)
+    defer enc.Free(h)
+    out := try a.Slice[u8](enc.BlockBound(&got))
+    n := try enc.EncodeBlock(out, &got)
+    Assert(BytesEq(out[0..n], wire))
+    // A short buffer is TooSmall and changes nothing.
+    var small: [4]u8 = [0; 4]
+    _ = enc.EncodeBlock(mut small[..], &got) else e {
+        match e {
+            TooSmall(need) { Assert(need == enc.BlockBound(&got)) }
+        }
+        0
+    }
+    Assert(enc.TableLen() == 1)
+    // C.2.3's password: secret goes out never indexed again.
+    try Fits(h, mut dec, mut got, try Unhex(a, "1008 7061 7373 776f 7264 0673 6563 7265 74"))
+    var enc2 := try Encoder.New(h, DefaultTableBytes, false)
+    defer enc2.Free(h)
+    var buf: [64]u8 = [0; 64]
+    m := try enc2.EncodeBlock(mut buf[..], &got)
+    Assert(BytesEq(buf[0..m], try Unhex(a, "1008 7061 7373 776f 7264 0673 6563 7265 74")))
+    Assert(enc2.TableLen() == 0)
+}
