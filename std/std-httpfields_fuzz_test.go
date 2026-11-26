@@ -13,7 +13,11 @@
 // decodes one Huffman string, compared here with hfHuffDecodeRef, and its
 // re-encoding with hfHuffEncodeRef.
 //
-//	go test ./std -run '^$' -fuzz FuzzStdHttpFields_Hpack -fuzztime 5m -parallel 2
+//	go test ./std -run '^$' -fuzz FuzzStdHttpFields_Hpack -fuzztime 5m -parallel 2 -fuzzminimizetime 100x
+//
+// Each execution is a round trip to the driver, so go test's default
+// minimisation (60 s a new input) would take most of a run on a cold fuzz
+// cache; the gate passes -fuzzminimizetime 100x for both targets.
 //
 // Its fuzz targets read untrusted input; tools/gate/safety.go lists each untrusted-input target.
 
@@ -204,8 +208,8 @@ FzHpack(a: &Arena, h: &Alloc, w: mut Writer, input: []u8): WriteError|OutOfMemor
         if raw.bytes.Len() + 32 * raw.spans.Len() > limit {
             Panic("the sink got more than the list budget")
         }
-        if fb.Len() > raw.spans.Len() || (fb.Len() < raw.spans.Len()) != fb.NotText() {
-            Panic("the FieldBlock dropped fields other than those not UTF-8")
+        if !FzBlockSame(&raw, &fb) {
+            Panic("the FieldBlock holds other fields than the copying sink")
         }
         if decb.TableSize() != dec.TableSize() || decb.TableLen() != dec.TableLen() {
             Panic("two decoders of one input hold different tables")
@@ -228,9 +232,42 @@ FzHpack(a: &Arena, h: &Alloc, w: mut Writer, input: []u8): WriteError|OutOfMemor
             try w.Str("too large\n")
         }
         if !more {
+            // A decoder that failed refuses every later block.
+            var again := FzRaw(bytes: HeapList[u8].New(h), spans: HeapList[FzSpan].New(h))
+            defer again.Free(h)
+            match dec.Decode(h, mut again, rest[cuts[k + 1]..]) {
+                ok(_) { Panic("a decoder took a block after it failed") }
+                err(e2) { try Print(w, "again {e2}\n", (e2)) }
+            }
             return
         }
     }
+}
+
+// FzUtf8 is whether b is UTF-8.
+FzUtf8(b: []u8): bool {
+    _ = str.From(b) else {
+        return false
+    }
+    return true
+}
+
+// FzBlockSame is whether a FieldBlock holds exactly a copying sink's
+// fields, with Text some exactly for those whose name and value are UTF-8.
+FzBlockSame(r: &FzRaw, fb: &fields.FieldBlock): bool {
+    if fb.Len() != r.spans.Len() {
+        return false
+    }
+    for i in 0..fb.Len() {
+        f := fb.Get(i)
+        if f.sensitive != r.spans[i].never_index || !FzEq(f.name, FzName(r, i)) || !FzEq(f.value, FzValue(r, i)) {
+            return false
+        }
+        if fb.Text(i).IsSome() != (FzUtf8(f.name) && FzUtf8(f.value)) {
+            return false
+        }
+    }
+    return true
 }
 
 // FzHuffman decodes input as one Huffman string (the value of :path),
@@ -463,6 +500,13 @@ func FuzzStdHttpFields_Hpack(f *testing.F) {
 			in = in[:8192]
 		}
 		for _, l := range hfAsk(t, 'h', in) {
+			if strings.HasPrefix(l, "again ") {
+				// After an error the decoder refuses the next block.
+				if !strings.HasSuffix(l, "Unusable") {
+					t.Fatalf("input %x: a failed decoder answered %q", in, l)
+				}
+				continue
+			}
 			if l != "short" && l != "too large" && !strings.HasPrefix(l, "ok ") && !strings.HasPrefix(l, "err ") {
 				t.Fatalf("input %x: answer %q", in, l)
 			}

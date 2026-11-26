@@ -61,6 +61,7 @@ Every user-visible change to Mk, newest first. The format follows [Keep a Change
 - `simd.Utf16LenBytes(b: []u8): int`, `simd.Utf16Len` for bytes: the UTF-16 length of UTF-8 or WTF-8 held as `[]u8`, such as a lone surrogate's three bytes, which `str.From` refuses. It shares `Utf16Len`'s vector kernels, and `Utf16Len` is now `Utf16LenBytes` over the string's bytes.
 - `simd.Utf16Len` and `Utf16LenBytes` give the same count on every CPU for any bytes, not only UTF-8 and WTF-8: their scalar form (below 16 bytes and on `x86_64-freestanding`) now counts as the vector forms do, one unit per byte that is not a continuation byte and one more per byte from `0xF0` on.
 - `hash.Sip13State` is SipHash-1-3 over input that arrives in pieces: `Sip13State.New(key)`, then `Bytes(data)` any number of times, then `Sum()`. Any split gives `hash.Sip13` of the concatenation. Like `Xx64State` and the SHA and BLAKE3 states it is not zero-valid, so `Arena.Slice[hash.Sip13State]` is E0701.
+- `std.http.fields` is a new internal module, the HPACK codec of RFC 7541 for HTTP/2 (static table, dynamic table, Huffman code, decoder into a sink the caller implements, encoder), which `std.http` is to use; like `std.simd.kernel`, only the standard library may import it (E0202 outside it).
 
 ### Loan checker
 

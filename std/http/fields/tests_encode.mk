@@ -115,7 +115,7 @@ test "a sensitive field is never indexed, and the decoder says so" (sys: &System
         defer got.Free(h)
         try Fits(h, mut dec, mut got, out[0..n])
         Assert(got.Len() == 2 && got.Get(0).sensitive && got.Get(1).sensitive)
-        Assert(got.Get(1).value == "GET" && got.Get(1).name_index == 2 && got.Get(0).name_index == 23)
+        Assert(Same(got.Get(1).value, "GET") && got.Get(1).name_index == 2 && got.Get(0).name_index == 23)
     }
     Assert(enc.TableLen() == 0 && dec.TableLen() == 0)
 }

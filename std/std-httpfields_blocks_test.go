@@ -5,7 +5,9 @@
 // What: TestHttpFields_Blocks.
 // How: reads every block name of http/fields/tests_*.mk, runs
 // `mk test --std=std.http.fields` over a copy of std in dev and release,
-// and wants a PASS line for each name and nothing else failing.
+// each on 1 and 8 carriers (tests_task.mk moves a decoder and a block
+// between tasks), and wants a PASS line for each name and nothing else
+// failing.
 
 package std
 
@@ -31,13 +33,18 @@ func TestHttpFields_Blocks(t *testing.T) {
 	root := t.TempDir()
 	stdDir := copyStd(t, root, nil)
 	t.Setenv("MK_CACHE", filepath.Join(root, "cache"))
-	for _, flags := range [][]string{nil, {"--release"}} {
-		args := append([]string{"test", "--std=std.http.fields"}, flags...)
+	type cfg struct {
+		flags    []string
+		carriers int
+	}
+	for _, c := range []cfg{{nil, 1}, {nil, 8}, {[]string{"--release"}, 1}, {[]string{"--release"}, 8}} {
+		t.Setenv("MK_CARRIERS", fmt.Sprint(c.carriers))
+		args := append([]string{"test", "--std=std.http.fields"}, c.flags...)
 		out, status := mkCmd(t, root, stdDir, args...)
 		if strings.Contains(out, "no usable LLVM") {
 			t.Skipf("needs the LLVM toolchain: %s", out)
 		}
-		where := "mk " + strings.Join(args, " ")
+		where := fmt.Sprintf("mk %s, MK_CARRIERS=%d", strings.Join(args, " "), c.carriers)
 		for _, n := range names {
 			if !strings.Contains(out, fmt.Sprintf("PASS std.http.fields %q", n)) {
 				t.Errorf("%s: %q did not pass (status %d)\n%s", where, n, status, out)

@@ -41,7 +41,7 @@ export linear view struct Encoder {
 /// with OutOfMemory. O(table_bytes); allocates about table_bytes +
 /// table_bytes / 32 × 16 bytes from a, once; the struct holds two 2 KiB
 /// caches.
-export Encoder.New(a: &Alloc, table_bytes: int, huffman: bool): OutOfMemory!Encoder from a {
+export Encoder.New(a: &Alloc, table_bytes: int, huffman: bool): OutOfMemory!Encoder {
     t := try Table.New(a, table_bytes)
     return Encoder(table: t, huffman: huffman, pending: false, low: 0, pairs: [0; 256], names: [0; 256])
 }
@@ -129,7 +129,7 @@ export Encoder.Encode[F: Field](mut self, out: mut []u8, list: []F): TooSmall!in
 export Encoder.BlockBound(&self, b: &FieldBlock): int {
     var n := self.StartBound()
     for f in b.Iter() {
-        n += self.FieldBound(f.name.AsBytes(), f.value.AsBytes())
+        n += self.FieldBound(f.name, f.value)
     }
     return n
 }
@@ -147,7 +147,7 @@ export Encoder.EncodeBlock(mut self, out: mut []u8, b: &FieldBlock): TooSmall!in
     var o := self.Start(out).Must()
     for f in b.Iter() {
         mode := if f.sensitive { Mode.Never } else { Mode.Index }
-        o += self.Write(mut out[o..], f.name.AsBytes(), f.value.AsBytes(), mode).Must()
+        o += self.Write(mut out[o..], f.name, f.value, mode).Must()
     }
     return o
 }
@@ -180,12 +180,15 @@ export Encoder.Start(mut self, out: mut []u8): TooSmall!int {
 /// short, and then changes nothing. O(name + value); allocates nothing.
 export Encoder.Write(mut self, out: mut []u8, name: []u8, value: []u8, mode: Mode): TooSmall!int {
     (index: sidx, exact) := StaticFind(name, value)
+    if exact && mode != Mode.Never {
+        return try Indexed(out, sidx)
+    }
     nh := Fnv(FnvBasis, name)
-    pslot := PairSlot(nh, value)
+    // The pair slot is read for an index and written on insertion; a
+    // never-indexed field does neither.
+    var pslot := 0
     if mode != Mode.Never {
-        if exact {
-            return try Indexed(out, sidx)
-        }
+        pslot = PairSlot(nh, value)
         if abs := self.Cached(self.pairs[pslot], name, value, true) {
             return try Indexed(out, self.Index(abs))
         }
@@ -204,17 +207,18 @@ export Encoder.Write(mut self, out: mut []u8, name: []u8, value: []u8, mode: Mod
             if insert { (p: 6, flags: Trunc[u8](0x40)) } else { (p: 4, flags: Trunc[u8](0x00)) }
         }
     }
-    nc := StrCost(name, 7, self.huffman)
+    // A name sent by index costs no string.
+    nc := if nidx == 0 { StrCost(name, 7, self.huffman) } else { (len: 0, huff: false, data: 0) }
     vc := StrCost(value, 7, self.huffman)
-    need := IntLen(nidx, p) + (if nidx == 0 { nc.len } else { 0 }) + vc.len
+    need := IntLen(nidx, p) + nc.len + vc.len
     if out.Len() < need {
         fail TooSmall(need: need)
     }
     var o := PutInt(out, nidx, p, flags)
     if nidx == 0 {
-        o += PutStr(mut out[o..], name, 7, 0, nc.huff)
+        o += PutStr(mut out[o..], name, 7, 0, nc)
     }
-    o += PutStr(mut out[o..], value, 7, 0, vc.huff)
+    o += PutStr(mut out[o..], value, 7, 0, vc)
     if insert {
         abs := self.table.inserted
         self.table.Insert(name, value, if sidx == 0 { 0 } else { int(FirstIndex[sidx]) })

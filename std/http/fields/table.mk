@@ -6,7 +6,8 @@
 // What: Table, the dynamic table: New, Free, Insert (Fit then Add),
 // SetCap, Evict, the lookups by absolute index (Has, NameLen, ValueLen,
 // NameAt, ValueAt, NameIndex, CopyName, CopyValue, NameIs, ValueIs), Ring and
-// Whole for views of the byte ring, and EntrySize.
+// Whole for views of the byte ring, EntrySize, and Zeroes, which sizes the
+// decoder's buffers too.
 //
 // How: a byte ring of max bytes holds the entries' names and values back
 // to back, oldest first, and a ring of Ent records holds each entry's
@@ -55,27 +56,37 @@ struct Table {
     inserted: int
 }
 
+// The largest table: an Ent holds offsets and lengths in u32. A
+// SETTINGS_HEADER_TABLE_SIZE is a u32 too (RFC 9113 6.5.1).
+const MaxTableBytes = 0xFFFF_FFFF
+
 // EntrySize is the size of an entry of these lengths (RFC 7541 4.1).
 EntrySize(name: int, value: int): int {
     return name + value + EntryOverhead
 }
 
 // Table.New is an empty table of capacity max with its rings allocated
-// from a, once. max below 0 is 0. O(max); allocates about max + max / 32 ×
-// 12 bytes.
+// from a, once. max below 0 is 0, above MaxTableBytes MaxTableBytes.
+// O(max); allocates about max + max / 32 × 16 bytes.
 Table.New(a: &Alloc, max: int): OutOfMemory!Table {
-    m := if max < 0 { 0 } else { max }
+    m := if max < 0 { 0 } else if max > MaxTableBytes { MaxTableBytes } else { max }
     var t := Table(bytes: HeapList[u8].New(a), ents: HeapList[Ent].New(a), max: m, cap: m, size: 0, first: 0, count: 0, head: 0, inserted: 0)
     onerr t.Free(a)
-    for t.bytes.Len() < m {
-        k := if m - t.bytes.Len() < Zeros.Len() { m - t.bytes.Len() } else { Zeros.Len() }
-        try t.bytes.Extend(a, Zeros[0..k])
-    }
+    try Zeroes(a, mut t.bytes, m)
     slots := m / EntryOverhead
     for t.ents.Len() < slots {
         try t.ents.Push(a, Ent(at: 0, name: 0, value: 0, index: 0))
     }
     return t
+}
+
+// Zeroes grows b with zero bytes to length n. O(n - b.Len()); allocates
+// from a, a growth from empty to a power of two being exact.
+Zeroes(a: &Alloc, b: mut HeapList[u8], n: int): OutOfMemory!void {
+    for b.Len() < n {
+        k := if n - b.Len() < Zeros.Len() { n - b.Len() } else { Zeros.Len() }
+        try b.Extend(a, Zeros[0..k])
+    }
 }
 
 // Table.Free releases the rings. O(1).
