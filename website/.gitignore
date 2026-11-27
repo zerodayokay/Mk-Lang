@@ -1,0 +1,21 @@
+node_modules/
+.vitepress/cache/
+.vitepress/dist/
+
+# Generated from the repository's documentation by .vitepress/sync.ts
+src/reference/language/
+src/reference/std/
+src/reference/kits/
+src/reference/memory.md
+src/reference/errors.md
+src/reference/grammar.md
+src/tools/
+src/examples/cookbook.md
+src/examples/programs.md
+src/guide/style.md
+src/guide/codebase.md
+src/guide/rationale.md
+src/development/compiler.md
+src/development/contributing.md
+src/development/changelog.md
+src/development/design/

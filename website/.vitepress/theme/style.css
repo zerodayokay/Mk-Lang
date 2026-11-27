@@ -1,0 +1,433 @@
+/*
+ * Mk's look on top of VitePress's default theme: one accent colour, quiet
+ * neutrals, and code that reads well. Only theme variables and the few
+ * components the site adds are styled here.
+ */
+
+/* ------------------------------------------------------------------ tokens */
+
+:root {
+  --mk-accent: #0d7a6f;
+  --mk-accent-strong: #0a6259;
+  --mk-accent-weak: #11998b;
+  --mk-accent-soft: rgba(13, 122, 111, 0.1);
+
+  --vp-c-brand-1: var(--mk-accent);
+  --vp-c-brand-2: var(--mk-accent-strong);
+  --vp-c-brand-3: var(--mk-accent);
+  --vp-c-brand-soft: var(--mk-accent-soft);
+
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-alt: #f6f7f7;
+  --vp-c-bg-soft: #f1f3f3;
+  --vp-c-bg-elv: #ffffff;
+  --vp-c-divider: #e3e6e6;
+  --vp-c-gutter: #e3e6e6;
+
+  --vp-font-family-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  --vp-code-font-size: 0.875em;
+  --vp-code-line-height: 1.65;
+  --vp-code-block-bg: #f6f7f7;
+  --vp-code-copy-code-bg: var(--vp-c-bg);
+  --vp-code-copy-code-hover-bg: var(--vp-c-bg-soft);
+  --vp-code-color: var(--mk-accent-strong);
+  --vp-code-bg: var(--vp-c-bg-soft);
+
+  --vp-home-hero-name-color: var(--vp-c-text-1);
+
+  --vp-button-brand-bg: var(--mk-accent);
+  --vp-button-brand-hover-bg: var(--mk-accent-strong);
+  --vp-button-brand-active-bg: var(--mk-accent-strong);
+
+  --vp-custom-block-tip-bg: var(--mk-accent-soft);
+  --vp-custom-block-tip-border: transparent;
+
+  --vp-layout-max-width: 1440px;
+
+  --mk-radius: 8px;
+  --mk-reject: #b42318;
+  --mk-reject-soft: rgba(180, 35, 24, 0.08);
+}
+
+.dark {
+  --mk-accent: #4fd1bf;
+  --mk-accent-strong: #79dfd1;
+  --mk-accent-weak: #37b3a2;
+  --mk-accent-soft: rgba(79, 209, 191, 0.12);
+
+  --vp-c-brand-1: var(--mk-accent);
+  --vp-c-brand-2: var(--mk-accent-weak);
+  --vp-c-brand-3: #1f8a7d;
+
+  --vp-c-bg: #111315;
+  --vp-c-bg-alt: #0c0e10;
+  --vp-c-bg-soft: #191c1f;
+  --vp-c-bg-elv: #16191c;
+  --vp-c-divider: #262a2e;
+  --vp-c-gutter: #08090a;
+
+  --vp-code-block-bg: #15181b;
+  --vp-code-color: var(--mk-accent);
+
+  --vp-button-brand-text: #06201d;
+  --vp-button-brand-hover-text: #06201d;
+  --vp-button-brand-active-text: #06201d;
+  --vp-button-brand-bg: var(--mk-accent);
+  --vp-button-brand-hover-bg: var(--mk-accent-strong);
+  --vp-button-brand-active-bg: var(--mk-accent-strong);
+
+  --mk-reject: #f97066;
+  --mk-reject-soft: rgba(249, 112, 102, 0.1);
+}
+
+/* ------------------------------------------------------------- navigation */
+
+.VPNavBarTitle .title {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.VPSidebarItem.level-0 > .item > .text {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-2);
+}
+
+.VPSidebarItem .link,
+.VPLink,
+.vp-doc a,
+.VPButton {
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+/* Keyboard focus is always visible, in both themes. */
+:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* --------------------------------------------------------------- content */
+
+.vp-doc h1 {
+  letter-spacing: -0.02em;
+}
+
+.vp-doc h2 {
+  letter-spacing: -0.01em;
+}
+
+.vp-doc table {
+  display: block;
+  overflow-x: auto;
+  font-size: 14px;
+}
+
+.vp-doc th {
+  white-space: nowrap;
+}
+
+.vp-doc :not(pre) > code {
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+/* ------------------------------------------------------------ code blocks */
+
+/* Operators must read as typed: `!=` never becomes a ligature. */
+code,
+kbd,
+pre {
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+}
+
+.vp-doc div[class*='language-'] {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--mk-radius);
+}
+
+.vp-doc div[class*='language-'] > span.lang {
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 639px) {
+  .vp-doc div[class*='language-'] {
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+}
+
+/* Tabbed code groups share one outline with their tab bar. */
+.vp-doc .vp-code-group .tabs {
+  border: 1px solid var(--vp-c-divider);
+  border-bottom: 0;
+  border-radius: var(--mk-radius) var(--mk-radius) 0 0;
+}
+
+.vp-doc .vp-code-group div[class*='language-'] {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+@media (max-width: 639px) {
+  .vp-doc .vp-code-group .tabs {
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+}
+
+/* The output that follows an example sits directly under it. */
+.vp-doc div[class*='language-mk']:has(+ .mk-output),
+.vp-doc .mk-rejected:has(+ .mk-output) div[class*='language-mk'] {
+  margin-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.vp-doc .mk-output {
+  position: relative;
+}
+
+.vp-doc .mk-output div[class*='language-'] {
+  margin-top: -1px;
+  border-top-style: dashed;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  background-color: var(--vp-c-bg-alt);
+}
+
+.vp-doc .mk-output div[class*='language-'] > span.lang {
+  font-size: 0;
+}
+
+.vp-doc .mk-output div[class*='language-'] > span.lang::after {
+  content: 'output';
+  font-size: 11px;
+}
+
+/* An example the compiler rejects, labelled with its error codes. */
+.vp-doc .mk-rejected {
+  margin: 16px 0;
+}
+
+.vp-doc .mk-rejected div[class*='language-'] {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.vp-doc .mk-rejected-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 14px;
+  border: 1px solid var(--vp-c-divider);
+  border-bottom: 0;
+  border-radius: var(--mk-radius) var(--mk-radius) 0 0;
+  background: var(--mk-reject-soft);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.vp-doc .mk-rejected-title {
+  font-weight: 600;
+  color: var(--mk-reject);
+}
+
+.vp-doc .mk-rejected-title::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+}
+
+.vp-doc a.mk-code {
+  font-family: var(--vp-font-family-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--vp-c-text-1);
+  text-decoration: none;
+  padding: 0 6px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 4px;
+  background: var(--vp-c-bg);
+}
+
+.vp-doc a.mk-code:hover {
+  border-color: var(--mk-reject);
+  color: var(--mk-reject);
+}
+
+@media (max-width: 639px) {
+  /* The wrapper bleeds to the screen edge, so the code inside must not bleed again. */
+  .vp-doc .mk-rejected {
+    margin: 16px -24px;
+  }
+  .vp-doc .mk-rejected div[class*='language-'] {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .vp-doc .mk-rejected-label {
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+}
+
+/* ------------------------------------------------------------------- home */
+
+.VPHome .VPHero .name {
+  font-family: var(--vp-font-family-mono);
+  letter-spacing: -0.04em;
+}
+
+.VPHome .VPHero .text {
+  max-width: 720px;
+  letter-spacing: -0.02em;
+}
+
+.VPHome .VPFeature {
+  border: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg);
+  transition: border-color 0.2s ease;
+}
+
+.VPHome .VPFeature:hover {
+  border-color: var(--vp-c-brand-1);
+}
+
+.VPHome .VPFeature .title {
+  font-size: 15px;
+}
+
+/* The home page's markdown already sits in VitePress's centred container,
+   which lines up with the hero and features, so add vertical space only. */
+.mk-home {
+  padding: 48px 0 96px;
+}
+
+@media (min-width: 960px) {
+  .mk-home {
+    padding: 72px 0 112px;
+  }
+}
+
+.mk-home h2 {
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  font-size: 24px;
+  letter-spacing: -0.01em;
+}
+
+.mk-home .mk-lede {
+  margin: 0 0 24px;
+  max-width: 720px;
+  color: var(--vp-c-text-2);
+}
+
+.mk-home section + section {
+  margin-top: 64px;
+}
+
+.mk-taste {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 960px) {
+  .mk-taste {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 3fr);
+    align-items: start;
+  }
+}
+
+.mk-taste .vp-doc > div[class*='language-'],
+.mk-taste .vp-doc .mk-output div[class*='language-'] {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.mk-taste-notes p {
+  margin: 0 0 16px;
+  line-height: 1.7;
+  color: var(--vp-c-text-2);
+}
+
+.mk-taste-notes code {
+  font-size: 0.875em;
+}
+
+.mk-paths {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 640px) {
+  .mk-paths {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .mk-paths {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.mk-paths a {
+  display: block;
+  padding: 20px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.mk-paths a:hover {
+  border-color: var(--vp-c-brand-1);
+}
+
+.mk-paths strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 15px;
+  color: var(--vp-c-text-1);
+}
+
+.mk-paths span {
+  display: block;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

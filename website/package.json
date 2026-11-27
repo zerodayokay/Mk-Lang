@@ -1,0 +1,29 @@
+{
+  "name": "mk-lang-website",
+  "version": "0.6.0",
+  "private": true,
+  "description": "The documentation website for the Mk programming language.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "sync": "tsx scripts/sync-docs.ts",
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview",
+    "typecheck": "vue-tsc --noEmit",
+    "check:links": "tsx scripts/check-links.ts",
+    "check:examples": "tsx scripts/check-examples.ts",
+    "check": "npm run typecheck && npm run build && npm run check:links"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitepress": "^1.6.4",
+    "vue": "^3.5.13",
+    "vue-tsc": "^3.1.0"
+  }
+}
