@@ -61,7 +61,7 @@ Some tests check Mk against outside data that is too large for the repository or
 | `compress/zstd/` | zstd golden test files | github.com/facebook/zstd, tag v1.5.7 |
 | `vendor/zstd-1.5.7/`, `vendor/zdec/` | zstd 1.5.7 source release, and `zdec.c`, the reference decoder `tools/gate` builds from it for std's zstd tests | github.com/facebook/zstd releases |
 | `vendor/zlib-1.3.1/` | zlib 1.3.1 source release (benchmark reference) | github.com/madler/zlib releases |
-| `vendor/sqlite/` | SQLite 3.54.1 amalgamation (`Dogfoods/notes` builds with it) | sqlite.org |
+| `vendor/sqlite/` | SQLite 3.54.1 amalgamation for standard library tests | sqlite.org |
 | `jsontestsuite/` | JSONTestSuite | github.com/nst/JSONTestSuite, commit 1ef36fa0 |
 | `iana/` | `zoneinfo.zip`, IANA tz 2026c | Go 1.27.3's `lib/time` |
 | `cldr/` | CLDR 49 `windowsZones.xml` | github.com/unicode-org/cldr, tag release-49 |

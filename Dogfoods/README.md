@@ -1,6 +1,6 @@
 # Dogfoods
 
-Twenty complete programs written in Mk: command-line tools, servers, a scripting language, a ray tracer, a GPU renderer, a paint program and a kernel. Each is a real package with a command line, real input formats, error messages and exit codes, and its own tests. Read them to see how Mk code looks at the scale of a few thousand lines, and how the standard library fits together.
+Twenty-one complete programs written in Mk: command-line tools, servers, a scripting language, a ray tracer, a GPU renderer, a paint program and a kernel. Each is a real package with a command line, real input formats, error messages and exit codes, and its own tests. Read them to see how Mk code looks at the scale of a few thousand lines, and how the standard library fits together.
 
 ## The programs
 

@@ -9,7 +9,7 @@
  * DEFECT DF-notes-05: the header is named by its path from the package root,
  * the one include directory mk is known to pass.
  */
-#include "../../../Mk-evidence/vendor/sqlite/sqlite3.h"
+#include "csrc/sqlite/sqlite3.h"
 #include "normtext.h"
 
 static int is_space(unsigned char c) {
