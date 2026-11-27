@@ -187,13 +187,16 @@ func (r *reader) readFact(d *Decoder, depth int) diag.Fact {
 // writeReads writes reads sorted (types.Read.Compare), deduplicated: count,
 // then per read kind, key, name, hash, the writes ReadSet.Hash makes.
 func writeReads(e *Encoder, rs []types.Read) {
-	var s types.ReadSet
-	for _, r := range rs {
-		s.Add(r)
+	// Cache records usually arrive in canonical order from ReadSet.Sorted.
+	for i, r := range rs {
+		if !r.Kind.IsValid() || (i > 0 && rs[i-1].Compare(r) >= 0) {
+			s := readSetOf(rs)
+			rs = s.Sorted()
+			break
+		}
 	}
-	sorted := s.Sorted()
-	e.Uvarint(uint64(len(sorted)))
-	for _, r := range sorted {
+	e.Uvarint(uint64(len(rs)))
+	for _, r := range rs {
 		e.Uvarint(uint64(r.Kind))
 		e.String(r.Key.String())
 		e.String(r.Name)
@@ -213,7 +216,7 @@ func readReads(d *Decoder) []types.Read {
 		r.Key = types.KeyFromString(d.String())
 		r.Name = d.String()
 		r.Hash = d.Hash()
-		if d.Err == nil && (r.Kind == 0 || r.Kind.String() == "read?") {
+		if d.Err == nil && !r.Kind.IsValid() {
 			d.Failf("read kind %d", r.Kind)
 		}
 		if len(out) > 0 && out[len(out)-1].Compare(r) >= 0 {

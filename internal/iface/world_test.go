@@ -10,6 +10,7 @@ package iface
 import (
 	"bytes"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -133,6 +134,40 @@ func TestRoundTripReadSets(t *testing.T) {
 	bad[1] = 99
 	if _, err := DecodeReads(bad); err == nil {
 		t.Error("an unknown read kind decoded")
+	}
+}
+
+func TestWriteCanonicalReads(t *testing.T) {
+	a := types.Read{Kind: types.ReadValue, Key: types.KeyFromString("m.X")}
+	b := a
+	b.Hash[31] = 1
+	for _, reads := range [][]types.Read{nil, {a}, {a, b}} {
+		var e Encoder
+		writeReads(&e, reads)
+		got, err := DecodeReads(e.Out())
+		if err != nil || !slices.Equal(got, reads) {
+			t.Fatalf("round trip of %v: got %v, %v", reads, got, err)
+		}
+		// With room for the output, an already canonical list needs no scratch space.
+		if n := testing.AllocsPerRun(10, func() {
+			e.buf = e.buf[:0]
+			writeReads(&e, reads)
+		}); n != 0 {
+			t.Errorf("writing %d canonical reads allocated %g times", len(reads), n)
+		}
+	}
+	mixed := []types.Read{b, a, b}
+	original := slices.Clone(mixed)
+	if !bytes.Equal(EncodeReads(mixed), EncodeReads([]types.Read{a, b})) || !slices.Equal(mixed, original) {
+		t.Error("normalizing reads changed the encoding or the caller's input")
+	}
+}
+
+func TestEncodeReadsRejectsInvalidKind(t *testing.T) {
+	for _, k := range []types.ReadKind{0, 255} {
+		if !catchICE(func() { EncodeReads([]types.Read{{Kind: k}}) }) {
+			t.Errorf("encoding read kind %d did not raise an ICE", k)
+		}
 	}
 }
 

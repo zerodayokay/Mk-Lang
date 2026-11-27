@@ -67,6 +67,9 @@ const (
 var readKindNames = [numReadKinds]string{"", "signature", "shape", "fields", "value", "body", "layout",
 	"impl", "no-impl", "no-item", "exports", "target", "pkg", "file", "data"}
 
+// IsValid reports whether k names a recorded dependency.
+func (k ReadKind) IsValid() bool { return k > 0 && k < numReadKinds }
+
 // String names the kind.
 func (k ReadKind) String() string {
 	if k < numReadKinds {
@@ -115,7 +118,7 @@ const readSetScan = 16
 
 // Add records a read; a repeated read is ignored.
 func (s *ReadSet) Add(r Read) {
-	if r.Kind == 0 || r.Kind >= numReadKinds {
+	if !r.Kind.IsValid() {
 		source.ICEf(source.Span{}, "ReadSet.Add: kind %d", r.Kind)
 	}
 	if s.seen != nil {
