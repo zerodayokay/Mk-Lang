@@ -15,8 +15,8 @@ func TestVersionPrintsReleaseAndCommit(t *testing.T) {
 	if first != "mk "+Release+" commit "+Commit() {
 		t.Errorf("first line %q", first)
 	}
-	if Release != "0.7.0" {
-		t.Errorf("Release %q, want 0.7.0", Release)
+	if Release != "0.7.1" {
+		t.Errorf("Release %q, want 0.7.1", Release)
 	}
 	for _, c := range []struct {
 		set  []debug.BuildSetting
