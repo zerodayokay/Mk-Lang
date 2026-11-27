@@ -16,7 +16,6 @@
 
 import std.encoding
 import std.rt
-import std.simd
 
 /// Splits a query (without its '?') into name and value pairs, as the URL
 /// Standard's application/x-www-form-urlencoded parser does. Each
@@ -98,11 +97,10 @@ FormDecode(out: mut []u8, o: int, s: []u8): int {
 // (std.encoding's DecodeKeepBom). O(n); allocates nothing for
 // valid UTF-8, else the decoding.
 FormText(a: &Arena, bytes: []u8): OutOfMemory!str from a, bytes {
-    if simd.ValidUtf8(bytes) {
-        // Must: simd.ValidUtf8 accepted bytes.
-        return rt.StrFrom(bytes).Must()
+    text := rt.StrFrom(bytes) else {
+        return try encoding.Utf8.DecodeKeepBom(a, bytes)
     }
-    return try encoding.Utf8.DecodeKeepBom(a, bytes)
+    return text
 }
 
 // FormKeeps is whether the serializer writes c as it is: an ASCII letter
