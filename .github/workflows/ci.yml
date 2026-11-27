@@ -270,6 +270,11 @@ jobs:
         if: matrix.part == 'checks'
         run: go run ./cmd/mk corpus
 
+      - name: Test the standalone notes dogfood
+        if: matrix.part == 'checks'
+        working-directory: Dogfoods/notes
+        run: go run ../../cmd/mk test
+
       - name: Test
         if: matrix.part != 'checks'
         env:

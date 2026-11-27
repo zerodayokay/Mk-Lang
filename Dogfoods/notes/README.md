@@ -4,7 +4,7 @@ A notes service: an HTTP JSON API over SQLite and its command-line client, in on
 
 ## Running it
 
-From the program's folder:
+From the program's folder, with the bundled SQLite amalgamation:
 
 ```
 cd Dogfoods/notes
@@ -58,7 +58,6 @@ Any other method on a known path is 405 with `Allow`; an unknown path is 404; a 
 
 ## Limits
 
-- notes needs the SQLite amalgamation at `../../../Mk-evidence/vendor/sqlite` (`sqlite3.c` and `sqlite3.h`), outside the repository; `pkg.mk` names it there and it is never copied in.
 - `--log FILE` replaces the file: `std.fs` has no append mode.
 - sqlite writes files through its own VFS, not through the `Io`, so disk faults under `std.sim` cannot reach the store.
 

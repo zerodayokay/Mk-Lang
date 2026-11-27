@@ -23,3 +23,6 @@ tests/bench-lanes/**/*.go linguist-vendored
 # The system view archives mk embeds (internal/sysview): generated binary data.
 internal/sysview/data/**/*.mksv binary linguist-generated
 internal/sysview/data/**/views.txt linguist-generated
+
+# Upstream SQLite amalgamation, kept verbatim.
+Dogfoods/notes/csrc/sqlite/sqlite3.[ch] linguist-vendored -whitespace

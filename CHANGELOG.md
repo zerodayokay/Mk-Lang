@@ -2,6 +2,10 @@
 
 Every user-visible change to Mk, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). What a 0.x release may change, at each stability level, is in [stability](doc/std/README.md#9-stability).
 
+## 0.7.1 (2026-11-27)
+
+- The `notes` dogfood builds from a fresh checkout with its bundled SQLite 3.54.1 amalgamation. The Dogfoods overview now lists the correct count of 21 programs.
+
 ## 0.7.0 (2026-11-26)
 
 - `import c.posix` supplies glibc declarations on x86-64 and ARM64 Linux. Reaching a versioned POSIX function selects system-libc mode and links the matching symbol without a `pkg.Link`. Imports used for types or constants keep the existing link mode. [System views](doc/reference.md#system-views)
